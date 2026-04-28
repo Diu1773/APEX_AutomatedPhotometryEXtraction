@@ -28,14 +28,18 @@ from PyQt5.QtGui import QFont, QFontDatabase
 
 _HERE = Path(__file__).parent
 
-# Sub-project entry points (Phase 1: still at original locations)
-_AAPKC_MAIN = (
+# APEX mode entry points
+_CMD_MAIN = _HERE / "apex" / "cmd" / "main.py"
+_LC_MAIN  = _HERE / "apex" / "lightcurve" / "main.py"
+
+# Legacy fallbacks (used when APEX mode entry point is missing)
+_LEGACY_CMD = (
     _HERE.parent
     / "Aperture_Photometry_KNUEMAO"
     / "AAPKC_GUI_project"
     / "main.py"
 )
-_AAPKL_MAIN = (
+_LEGACY_LC = (
     _HERE.parent
     / "Aperture_Photometry_KNUEMAO"
     / "AAPKL_GUI_project"
@@ -101,7 +105,8 @@ def _configure_app_fonts(app: QApplication) -> None:
         pass
 
 
-def _launch(script: Path) -> None:
+def _launch(apex_script: Path, legacy_script: Path) -> None:
+    script = apex_script if apex_script.exists() else legacy_script
     if not script.exists():
         QMessageBox.critical(
             None, "실행 오류",
@@ -176,13 +181,13 @@ class LauncherWindow(QWidget):
             "성단측광", "Cluster CMD Photometry",
             "#1565C0", "#1976D2", "#0D47A1",
         )
-        btn_cmd.clicked.connect(lambda: _launch(_AAPKC_MAIN))
+        btn_cmd.clicked.connect(lambda: _launch(_CMD_MAIN, _LEGACY_CMD))
 
         btn_lc = ModeButton(
             "시계열분석", "Light Curve Analysis",
             "#2E7D32", "#388E3C", "#1B5E20",
         )
-        btn_lc.clicked.connect(lambda: _launch(_AAPKL_MAIN))
+        btn_lc.clicked.connect(lambda: _launch(_LC_MAIN, _LEGACY_LC))
 
         btn_row = QHBoxLayout()
         btn_row.setSpacing(20)

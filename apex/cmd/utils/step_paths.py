@@ -105,3 +105,14 @@ def legacy_step10_selection_dir(result_dir: PathLike) -> Path:
         if c.exists():
             return c
     return d / "cmd_selection"
+
+
+# step9_dir: legacy AAPKC forced-phot / step9_photometry directory alias
+def step9_dir(result_dir: PathLike) -> Path:
+    """Legacy AAPKC step9 photometry directory (step9_photometry/)."""
+    d = _as_path(result_dir)
+    for name in ("step9_photometry", "step5_aperture"):
+        c = d / name
+        if c.exists():
+            return c
+    return d / "step5_aperture"

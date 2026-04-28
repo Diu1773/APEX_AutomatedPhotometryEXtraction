@@ -91,3 +91,9 @@ def find_best_lightcurve_csv(result_dir: PathLike, star_id: int) -> Path | None:
             if matches:
                 return matches[-1]
     return None
+
+
+# step5_photometry_dir: AAPKL canonical name alias
+def step5_photometry_dir(result_dir: PathLike) -> Path:
+    """AAPKL canonical aperture photometry directory alias."""
+    return step5_aperture_dir(result_dir)

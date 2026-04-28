@@ -18,15 +18,17 @@ class ProjectState:
     unchanged for both cmd (13 steps) and lightcurve (12 steps) modes.
     """
 
-    def __init__(self, project_dir: Path, steps: List[str]):
+    def __init__(self, project_dir: Path, steps: Optional[List[str]] = None):
         """
         Args:
             project_dir: Directory containing project data and state file.
             steps: Ordered list of step key names for this pipeline mode.
+                   If None, an empty list is used (steps can be set later
+                   via assign_steps()).
         """
         self.project_dir = Path(project_dir)
         self.state_file = self.project_dir / "project_state.json"
-        self.steps = list(steps)
+        self.steps: List[str] = list(steps) if steps is not None else []
 
         self.state: Dict[str, Any] = {
             "project_name": "Untitled Project",
@@ -39,6 +41,11 @@ class ProjectState:
 
         if self.state_file.exists():
             self.load()
+
+    def assign_steps(self, steps: List[str]) -> None:
+        """Set the step list after construction and re-normalize state."""
+        self.steps = list(steps)
+        self._normalize_state()
 
     # ── Step access helpers ───────────────────────────────────────────────────
 
