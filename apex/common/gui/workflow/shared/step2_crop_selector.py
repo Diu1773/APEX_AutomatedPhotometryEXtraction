@@ -18,9 +18,9 @@ from matplotlib.backends.backend_qt5agg import FigureCanvasQTAgg as FigureCanvas
 from matplotlib.figure import Figure
 from matplotlib.patches import Rectangle
 
-from .step_window_base import StepWindowBase
-from ...utils.constants import get_parallel_workers
-from ...utils.step_paths_base import crop_rect_path, step2_dir, step2_cropped_dir
+from ..step_window_base import StepWindowBase
+from ....utils.constants import get_parallel_workers
+from ....utils.step_paths_base import crop_rect_path, step2_dir, step2_cropped_dir
 
 
 class CropSelectorWindow(StepWindowBase):

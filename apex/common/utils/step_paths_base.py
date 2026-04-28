@@ -1,9 +1,19 @@
 """
 Step path helpers shared across all APEX modes.
 
-Only steps 1-4 (file selection, crop, sky preview, detection) have canonical
-directory names that are the same in every pipeline variant.  Steps 5+ diverge
-between cmd/ and lightcurve/ and are defined in each mode's own step_paths.py.
+Steps 1-8 use the same canonical directory names in every pipeline variant.
+Steps 9+ diverge between cmd/ and lightcurve/ and are defined in each mode's
+own step_paths.py.
+
+Canonical layout:
+  step1_file_selection/   File selection + FITS header scan
+  step2_crop/             Crop region + cropped images
+  step3_sky_preview/      Sky preview QC metadata
+  step4_detection/        Source detection + frame QC
+  step5_aperture/         Aperture photometry
+  step6_wcs/              WCS plate solving
+  step7_refbuild/         Reference catalog build
+  step8_idmatch/          Star ID matching
 """
 
 from __future__ import annotations
@@ -52,3 +62,27 @@ def step3_dir(result_dir: PathLike) -> Path:
 
 def step4_dir(result_dir: PathLike) -> Path:
     return step_dir(result_dir, STEP4_DIRNAME)
+
+
+# ── Steps 5-8: shared pipeline steps ─────────────────────────────────────────
+
+STEP5_APERTURE_DIRNAME = "step5_aperture"
+STEP6_WCS_DIRNAME      = "step6_wcs"
+STEP7_REFBUILD_DIRNAME = "step7_refbuild"
+STEP8_IDMATCH_DIRNAME  = "step8_idmatch"
+
+
+def step5_aperture_dir(result_dir: PathLike) -> Path:
+    return step_dir(result_dir, STEP5_APERTURE_DIRNAME)
+
+
+def step6_wcs_dir(result_dir: PathLike) -> Path:
+    return step_dir(result_dir, STEP6_WCS_DIRNAME)
+
+
+def step7_refbuild_dir(result_dir: PathLike) -> Path:
+    return step_dir(result_dir, STEP7_REFBUILD_DIRNAME)
+
+
+def step8_idmatch_dir(result_dir: PathLike) -> Path:
+    return step_dir(result_dir, STEP8_IDMATCH_DIRNAME)

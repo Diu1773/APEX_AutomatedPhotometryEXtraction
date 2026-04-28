@@ -25,8 +25,8 @@ from matplotlib.backends.backend_qt5agg import NavigationToolbar2QT as Navigatio
 from matplotlib.figure import Figure
 from matplotlib.patches import Circle
 
-from .step_window_base import StepWindowBase
-from ...utils.step_paths_base import step1_dir, step2_cropped_dir, crop_is_active
+from ..step_window_base import StepWindowBase
+from ....utils.step_paths_base import step1_dir, step2_cropped_dir, crop_is_active
 
 
 class SkyPreviewWindow(StepWindowBase):

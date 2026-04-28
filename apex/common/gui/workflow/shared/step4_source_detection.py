@@ -31,15 +31,15 @@ from matplotlib.figure import Figure
 from scipy.ndimage import gaussian_filter, median_filter
 from scipy.spatial import cKDTree as KDTree
 
-from .step_window_base import StepWindowBase
-from ...utils.constants import get_parallel_workers
-from ...utils.step_paths_base import (
+from ..step_window_base import StepWindowBase
+from ....utils.constants import get_parallel_workers
+from ....utils.step_paths_base import (
     step2_cropped_dir,
     crop_is_active,
     step4_dir,
 )
-from ...utils.cache_utils import norm_path_key
-from ...utils.astro_utils import compute_airmass_from_header
+from ....utils.cache_utils import norm_path_key
+from ....utils.astro_utils import compute_airmass_from_header
 
 _DETECT_MODE_PRESETS = {
     "normal": {
