@@ -31,8 +31,6 @@ from threading import Lock
 import numpy as np
 import pandas as pd
 from astropy.io import fits
-from astropy.stats import SigmaClip, sigma_clipped_stats
-from scipy.spatial import cKDTree
 
 from PyQt5.QtWidgets import (
     QVBoxLayout, QHBoxLayout, QPushButton, QLabel, QGroupBox, QMessageBox,
@@ -46,10 +44,16 @@ from matplotlib.backends.backend_qt5agg import FigureCanvasQTAgg as FigureCanvas
 from matplotlib.figure import Figure
 
 from apex.common.gui.workflow.step_window_base import StepWindowBase
+from apex.common.gui.workflow.shared.step5_aperture_worker import ApertureWorker as Step5ApertureWorker  # noqa: F401
 from ...utils.step_paths import (
     step2_cropped_dir, step4_dir, step5_aperture_dir, crop_is_active,
 )
 from ....common.utils.constants import get_parallel_workers
+from ....common.utils.photometry_utils import (
+    circle_mask as _circle_mask,
+    refine_local_centroid as _refine_local_centroid,
+    phot_one_star as _phot_one_target,
+)
 from ...utils import normalize_filter_name
 
 
@@ -122,118 +126,6 @@ def _get_exptime(fits_path: Path, default=1.0):
     return float(default)
 
 
-# ── Core photometry engine ────────────────────────────────────────────────────
-
-def _circle_mask(shape, cx, cy, r):
-    h, w = shape
-    y = np.arange(h)[:, None]
-    x = np.arange(w)[None, :]
-    return (x - cx) ** 2 + (y - cy) ** 2 <= (r * r)
-
-
-def _refine_local_centroid(img, x, y, fwhm_used, cbox_scale):
-    h, w = img.shape
-    r = int(max(cbox_scale * max(float(fwhm_used), 2.0), 6.0))
-    xi, yi = int(round(x)), int(round(y))
-    x0, x1 = max(0, xi - r), min(w, xi + r + 1)
-    y0, y1 = max(0, yi - r), min(h, yi + r + 1)
-    if (x1 - x0) < 9 or (y1 - y0) < 9:
-        return x, y
-    cut = img[y0:y1, x0:x1]
-    _, med, _ = sigma_clipped_stats(cut, sigma=3.0)
-    z = cut - med
-    z[~np.isfinite(z)] = 0.0
-    z[z < 0] = 0.0
-    s = np.nansum(z)
-    if s <= 0:
-        return x, y
-    yy, xx = np.mgrid[y0:y1, x0:x1]
-    xc = float(np.nansum(xx * z) / s)
-    yc = float(np.nansum(yy * z) / s)
-    return xc, yc
-
-
-def _phot_one_target(
-    img_cut, xc, yc, r_ap, r_in, r_out,
-    sigma_clip_val=3.0, maxiters=5,
-    gain=1.0, rn_param_e=7.5, sky_frame_e=np.nan,
-    sky_sigma_mode="local", sky_sigma_includes_rn=True,
-    min_n_sky_for_local=50, sat_adu=60000.0, datamax_adu=None,
-):
-    ap_mask = _circle_mask(img_cut.shape, xc, yc, r_ap)
-    ann_out_mask = _circle_mask(img_cut.shape, xc, yc, r_out)
-    ann_in_mask = _circle_mask(img_cut.shape, xc, yc, r_in)
-    ann_mask = ann_out_mask & (~ann_in_mask)
-
-    ann_vals = img_cut[ann_mask]
-    ann_vals = ann_vals[np.isfinite(ann_vals)]
-    if ann_vals.size:
-        sc = SigmaClip(sigma=sigma_clip_val, maxiters=maxiters)
-        vv = sc(ann_vals)
-        vv = vv.compressed() if np.ma.isMaskedArray(vv) else np.asarray(vv)
-        vv = vv[np.isfinite(vv)]
-        bkg_med = float(np.nanmedian(vv)) if vv.size else float(np.nanmedian(ann_vals))
-        bkg_std = float(np.nanstd(vv, ddof=1)) if vv.size > 1 else 0.0
-        n_sky = int(len(vv)) if vv.size else int(len(ann_vals))
-    else:
-        bkg_med, bkg_std, n_sky = 0.0, 0.0, 0
-
-    ap_sum = float(np.nansum(img_cut[ap_mask]))
-    ap_area = float(np.count_nonzero(ap_mask))
-    flux_net_adu = ap_sum - bkg_med * ap_area
-    flux_e = flux_net_adu * gain
-
-    sigma_local_e2 = (max(bkg_std, 0.0) * gain) ** 2 if np.isfinite(bkg_std) else np.nan
-    sigma_frame_e2 = float(sky_frame_e) ** 2 if np.isfinite(sky_frame_e) else np.nan
-
-    sky_sigma_mode = str(sky_sigma_mode or "local").strip().lower()
-    use_local = np.isfinite(sigma_local_e2) and bkg_std > 0 and (n_sky >= min_n_sky_for_local)
-
-    if sky_sigma_mode == "frame":
-        sigma_pix_e2 = sigma_frame_e2 if np.isfinite(sigma_frame_e2) else sigma_local_e2
-    elif sky_sigma_mode == "max":
-        sigma_pix_e2 = np.nanmax([sigma_local_e2, sigma_frame_e2])
-    else:
-        sigma_pix_e2 = sigma_local_e2 if use_local else sigma_frame_e2
-
-    if not np.isfinite(sigma_pix_e2):
-        sigma_pix_e2 = 0.0
-    if sky_sigma_includes_rn:
-        sigma_pix_e2 = max(sigma_pix_e2 - rn_param_e ** 2, 0.0)
-
-    var_source = max(flux_e, 0.0)
-    var_bkg_in_ap = ap_area * sigma_pix_e2
-    var_bkg_est = (ap_area ** 2 / max(n_sky, 1)) * sigma_pix_e2
-    var_readnoise = ap_area * rn_param_e ** 2 if sky_sigma_includes_rn else 0.0
-
-    var_e = var_source + var_bkg_in_ap + var_bkg_est + var_readnoise
-    sigma_e = float(np.sqrt(max(var_e, 0.0)))
-    snr = float(flux_e / sigma_e) if sigma_e > 0 else np.nan
-    peak_adu = float(np.nanmax(img_cut[ap_mask])) if ap_area > 0 else np.nan
-    is_sat = bool(np.isfinite(peak_adu) and (peak_adu >= float(sat_adu)))
-    is_nonlinear = False
-    if datamax_adu is not None and np.isfinite(datamax_adu) and float(datamax_adu) > 0:
-        is_nonlinear = bool(np.isfinite(peak_adu) and (peak_adu >= float(datamax_adu)))
-
-    return (flux_e, sigma_e, snr, ap_sum, bkg_med, bkg_std, ap_area, n_sky, is_sat, is_nonlinear)
-
-
-# ── Scale-grid helper ──────────────────────────────────────────────────────────
-
-def _build_scale_grid(start, stop, step):
-    start, stop, step = float(start), float(stop), float(step)
-    if step <= 0:
-        step = 0.25
-    if stop < start:
-        start, stop = stop, start
-    n = int(np.floor((stop - start) / step + 1e-9)) + 1
-    n = int(np.clip(n, 1, 200))
-    vals = [start + k * step for k in range(n)]
-    if not vals or vals[-1] < stop - 1e-9:
-        vals.append(stop)
-    return [float(round(v, 6)) for v in vals]
-
-
 # ── Detect CSV / JSON helpers ──────────────────────────────────────────────────
 
 def _load_detect_positions(fname: str, cache_dir: Path, result_dir: Path):
@@ -289,286 +181,10 @@ def _load_fwhm_from_meta(fname: str, cache_dir: Path, result_dir: Path,
     return float(params_fwhm_guess)
 
 
-# ── Step5ApertureWorker – Apcorr / growth curve ───────────────────────────────
+# Step5ApertureWorker is imported from apex.common.gui.workflow.shared.step5_aperture_worker
+# (see import at top of file — aliased as Step5ApertureWorker for backwards compatibility)
 
-class Step5ApertureWorker(QThread):
-    """Compute optimal aperture per frame via growth curve analysis.
-
-    Reads: detect_{fname}.csv (x, y) from cache/step4
-    Writes: step5_aperture/ aperture_by_frame.csv, apcorr_summary.csv, growth_curve.csv
-    """
-    progress = pyqtSignal(int, int, str)
-    finished = pyqtSignal(dict)
-    error = pyqtSignal(str, str)
-    log = pyqtSignal(str)
-
-    def __init__(self, file_list, params, data_dir, result_dir, cache_dir, use_cropped=False):
-        super().__init__()
-        self.file_list = list(file_list)
-        self.params = params
-        self.data_dir = Path(data_dir)
-        self.result_dir = Path(result_dir)
-        self.cache_dir = Path(cache_dir)
-        self.use_cropped = use_cropped
-        self._stop_requested = False
-
-    def stop(self):
-        self._stop_requested = True
-
-    def _resolve_fits_path(self, fname: str) -> Path | None:
-        if self.use_cropped and crop_is_active(self.result_dir):
-            cdir = step2_cropped_dir(self.result_dir)
-            cpath = cdir / fname
-            if cpath.exists():
-                return cpath
-            legacy = self.result_dir / "cropped" / fname
-            if legacy.exists():
-                return legacy
-        fpath = self.data_dir / fname
-        return fpath if fpath.exists() else None
-
-    def run(self):  # noqa: C901
-        try:
-            P = self.params.P
-            output_dir = step5_aperture_dir(self.result_dir)
-            output_dir.mkdir(parents=True, exist_ok=True)
-
-            ap_scale = _to_float(getattr(P, "phot_aperture_scale", 1.0), 1.0)
-            ann_in_scale = _to_float(getattr(P, "fitsky_annulus_scale", 4.0), 4.0)
-            ann_out_scale = _to_float(getattr(P, "fitsky_dannulus_scale", 2.0), 2.0)
-            fwhm_px_min = _to_float(getattr(P, "fwhm_px_min", 3.5), 3.5)
-            fwhm_px_max = _to_float(getattr(P, "fwhm_px_max", 8.0), 8.0)
-            min_r_ap_px = _to_float(getattr(P, "min_r_ap_px", 4.0), 4.0)
-            ann_gap = _to_float(getattr(P, "annulus_min_gap_px", 6.0), 6.0)
-            apcorr_apply = bool(getattr(P, "apcorr_apply", True))
-            apcorr_use_min_n = _to_int(getattr(P, "apcorr_use_min_n", 20), 20)
-            apcorr_scatter_max = _to_float(getattr(P, "apcorr_scatter_max", 0.05), 0.05)
-            ann_sigma = _to_float(getattr(P, "annulus_sigma_clip", 3.0), 3.0)
-            ann_maxiter = _to_int(getattr(P, "fitsky_max_iter", 5), 5)
-            gc_scale_min = max(0.3, _to_float(getattr(P, "apcorr_scale_min", 0.5), 0.5))
-            gc_scale_max = max(gc_scale_min + 0.5, _to_float(getattr(P, "apcorr_scale_max", 5.0), 5.0))
-            gc_scale_step = max(0.1, _to_float(getattr(P, "apcorr_scale_step", 0.25), 0.25))
-            gc_large_ref_scale = _to_float(getattr(P, "apcorr_large_ref_scale", 5.0), 5.0)
-            gc_isolation_factor = max(1.0, _to_float(getattr(P, "apcorr_isolation_factor", 2.0), 2.0))
-            apcorr_max_sources = max(30, _to_int(getattr(P, "apcorr_max_sources", 250), 250))
-            gain = _to_float(getattr(P, "gain_e_per_adu", 1.0), 1.0)
-            rn_e = _to_float(getattr(P, "rdnoise_e", 7.5), 7.5)
-            fwhm_guess = _to_float(getattr(P, "fwhm_pix_guess", 6.0), 6.0)
-
-            gc_scales = _build_scale_grid(gc_scale_min, gc_scale_max, gc_scale_step)
-
-            rows_ap = []
-            rows_apcorr = []
-            rows_gc = []
-            total = len(self.file_list)
-
-            for i, fname in enumerate(self.file_list, 1):
-                if self._stop_requested:
-                    break
-                fwhm_med = _load_fwhm_from_meta(fname, self.cache_dir, self.result_dir, fwhm_guess)
-                fwhm_used = float(np.clip(fwhm_med, fwhm_px_min, fwhm_px_max))
-
-                radii_px = np.array([max(s * fwhm_used, min_r_ap_px) for s in gc_scales])
-                _, unique_idx = np.unique(np.round(radii_px, 4), return_index=True)
-                unique_idx = np.sort(unique_idx)
-                radii_px = radii_px[unique_idx]
-                scales_used = np.array(gc_scales)[unique_idx]
-
-                r_large_ref = max(gc_large_ref_scale * fwhm_used, radii_px[-1] if len(radii_px) else min_r_ap_px)
-                r_in = max(ann_in_scale * fwhm_used, r_large_ref + ann_gap)
-                r_out = r_in + ann_out_scale * fwhm_used
-                r_ap_default = max(ap_scale * fwhm_used, min_r_ap_px)
-
-                apc_row = dict(
-                    file=fname, fwhm_med=fwhm_med, fwhm_used=fwhm_used,
-                    optimal_scale=ap_scale, r_optimal=r_ap_default,
-                    r_large_ref=r_large_ref, n_used=0, apcorr=np.nan,
-                    mag_err_optimal=np.nan, snr_optimal=np.nan, apply=False,
-                    apply_reason="apcorr_not_run" if apcorr_apply else "apcorr_disabled",
-                )
-
-                if apcorr_apply:
-                    det_df = _load_detect_positions(fname, self.cache_dir, self.result_dir)
-                    img_path = self._resolve_fits_path(fname)
-                    if det_df is not None and len(det_df) and img_path is not None:
-                        try:
-                            img = fits.getdata(img_path).astype(float)
-                            h, w = img.shape
-                            xy_all = det_df[["x", "y"]].to_numpy(float)
-                            finite_xy = np.isfinite(xy_all[:, 0]) & np.isfinite(xy_all[:, 1])
-                            xy_all = xy_all[finite_xy]
-
-                            if len(xy_all):
-                                vals = img[xy_all[:, 1].astype(int).clip(0, h - 1),
-                                           xy_all[:, 0].astype(int).clip(0, w - 1)]
-                                order = np.argsort(vals)[::-1]
-                                xy_all = xy_all[order][:apcorr_max_sources]
-
-                            if len(xy_all):
-                                edge_pad = int(np.ceil(max(r_large_ref, r_out) + 2.0))
-                                edge_mask = (
-                                    (xy_all[:, 0] >= edge_pad) & (xy_all[:, 0] <= w - 1 - edge_pad) &
-                                    (xy_all[:, 1] >= edge_pad) & (xy_all[:, 1] <= h - 1 - edge_pad)
-                                )
-                                xy_all = xy_all[edge_mask]
-
-                            if len(xy_all) >= 3:
-                                tree = cKDTree(xy_all)
-                                dists, _ = tree.query(xy_all, k=min(2, len(xy_all)), workers=1)
-                                nn_dists = dists[:, 1] if dists.ndim > 1 else dists
-                                isolated = nn_dists > gc_isolation_factor * r_large_ref
-                                xy_iso = xy_all[isolated]
-                                if len(xy_iso) < 3:
-                                    xy_iso = xy_all
-
-                                # Growth curve measurement
-                                gc_mags = []
-                                gc_errs = []
-                                gc_snrs = []
-                                gc_n = []
-                                for r_ap in radii_px:
-                                    mags_here = []
-                                    errs_here = []
-                                    snrs_here = []
-                                    for xc, yc in xy_iso:
-                                        cut_r = int(np.ceil(r_out + 2))
-                                        xi, yi = int(round(xc)), int(round(yc))
-                                        x0, x1 = max(0, xi - cut_r), min(w, xi + cut_r + 1)
-                                        y0, y1 = max(0, yi - cut_r), min(h, yi + cut_r + 1)
-                                        img_cut = img[y0:y1, x0:x1]
-                                        lxc = xc - x0
-                                        lyc = yc - y0
-                                        try:
-                                            fe, se, snr, *_ = _phot_one_target(
-                                                img_cut, lxc, lyc, r_ap, r_in, r_out,
-                                                sigma_clip_val=ann_sigma, maxiters=ann_maxiter,
-                                                gain=gain, rn_param_e=rn_e,
-                                            )
-                                            if np.isfinite(fe) and fe > 0 and np.isfinite(se) and se > 0:
-                                                mags_here.append(-2.5 * np.log10(fe))
-                                                errs_here.append(2.5 / np.log(10) * se / fe)
-                                                snrs_here.append(snr)
-                                        except Exception:
-                                            pass
-                                    gc_mags.append(float(np.nanmedian(mags_here)) if mags_here else np.nan)
-                                    gc_errs.append(float(np.nanmedian(errs_here)) if errs_here else np.nan)
-                                    gc_snrs.append(float(np.nanmedian(snrs_here)) if snrs_here else np.nan)
-                                    gc_n.append(len(mags_here))
-
-                                # Reference at large aperture
-                                ref_mags = []
-                                for xc, yc in xy_iso:
-                                    cut_r = int(np.ceil(r_out + 2))
-                                    xi, yi = int(round(xc)), int(round(yc))
-                                    x0, x1 = max(0, xi - cut_r), min(w, xi + cut_r + 1)
-                                    y0, y1 = max(0, yi - cut_r), min(h, yi + cut_r + 1)
-                                    img_cut = img[y0:y1, x0:x1]
-                                    try:
-                                        fe, *_ = _phot_one_target(
-                                            img_cut, xc - x0, yc - y0,
-                                            r_large_ref, r_in, r_out,
-                                            sigma_clip_val=ann_sigma, maxiters=ann_maxiter,
-                                            gain=gain, rn_param_e=rn_e,
-                                        )
-                                        if np.isfinite(fe) and fe > 0:
-                                            ref_mags.append(-2.5 * np.log10(fe))
-                                    except Exception:
-                                        pass
-
-                                # Find optimal aperture (min mag_err)
-                                gc_errs_arr = np.array(gc_errs, dtype=float)
-                                valid_err = np.isfinite(gc_errs_arr)
-                                if np.any(valid_err):
-                                    opt_idx = int(np.argmin(gc_errs_arr[valid_err]))
-                                    valid_positions = np.where(valid_err)[0]
-                                    opt_pos = valid_positions[opt_idx]
-                                    r_optimal = float(radii_px[opt_pos])
-                                    sc_optimal = float(scales_used[opt_pos])
-                                    err_optimal = float(gc_errs_arr[opt_pos])
-                                    snr_optimal = float(gc_snrs[opt_pos]) if np.isfinite(gc_snrs[opt_pos]) else np.nan
-                                    n_used = int(gc_n[opt_pos])
-
-                                    # Aperture correction vs large reference
-                                    apcorr = np.nan
-                                    if ref_mags and len(gc_mags) > opt_pos:
-                                        opt_mags_arr = []
-                                        for xc, yc in xy_iso:
-                                            cut_r = int(np.ceil(r_out + 2))
-                                            xi, yi = int(round(xc)), int(round(yc))
-                                            x0, x1 = max(0, xi - cut_r), min(w, xi + cut_r + 1)
-                                            y0, y1 = max(0, yi - cut_r), min(h, yi + cut_r + 1)
-                                            img_cut = img[y0:y1, x0:x1]
-                                            try:
-                                                fe, *_ = _phot_one_target(
-                                                    img_cut, xc - x0, yc - y0,
-                                                    r_optimal, r_in, r_out,
-                                                    sigma_clip_val=ann_sigma, maxiters=ann_maxiter,
-                                                    gain=gain, rn_param_e=rn_e,
-                                                )
-                                                if np.isfinite(fe) and fe > 0:
-                                                    opt_mags_arr.append(-2.5 * np.log10(fe))
-                                            except Exception:
-                                                pass
-                                        if opt_mags_arr and ref_mags:
-                                            dm = np.array(opt_mags_arr) - np.array(ref_mags[:len(opt_mags_arr)])
-                                            dm = dm[np.isfinite(dm)]
-                                            if len(dm) >= 3:
-                                                sc_clip = SigmaClip(sigma=3.0, maxiters=3)
-                                                dm_clip = sc_clip(dm)
-                                                dm_clip = dm_clip.compressed() if np.ma.isMaskedArray(dm_clip) else dm_clip
-                                                if len(dm_clip):
-                                                    apcorr = float(np.median(dm_clip))
-
-                                    apply_reasons = []
-                                    if n_used < apcorr_use_min_n:
-                                        apply_reasons.append(f"n_used<{apcorr_use_min_n}")
-                                    if not np.isfinite(err_optimal):
-                                        apply_reasons.append("err_optimal_nan")
-                                    elif err_optimal > apcorr_scatter_max:
-                                        apply_reasons.append(f"err_optimal>{apcorr_scatter_max:.3f}")
-                                    if not np.isfinite(apcorr):
-                                        apply_reasons.append("apcorr_nan")
-                                    apply_flag = len(apply_reasons) == 0
-                                    apply_reason = "ok" if apply_flag else "|".join(apply_reasons)
-                                    apc_row.update(
-                                        optimal_scale=sc_optimal, r_optimal=r_optimal,
-                                        n_used=n_used, apcorr=apcorr,
-                                        mag_err_optimal=err_optimal, snr_optimal=snr_optimal,
-                                        apply=apply_flag, apply_reason=apply_reason,
-                                    )
-                                    self.log.emit(
-                                        f"[APCORR] {fname} apply={apply_flag} reason={apply_reason} | "
-                                        f"n_used={n_used} err_opt={err_optimal:.4f} apcorr={apcorr if np.isfinite(apcorr) else float('nan'):.4f}"
-                                    )
-                                    # Record growth curve rows
-                                    for k, (r_px, scale, med_mag, med_err, med_snr, n_s) in enumerate(
-                                        zip(radii_px, scales_used, gc_mags, gc_errs, gc_snrs, gc_n)
-                                    ):
-                                        rows_gc.append(dict(
-                                            file=fname, r_px=r_px, scale=scale,
-                                            median_mag=med_mag, median_mag_err=med_err,
-                                            median_snr=med_snr, n_stars=n_s,
-                                            selected=(k == opt_pos),
-                                        ))
-                        except Exception as exc:
-                            self.log.emit(f"[Apcorr] {fname}: {exc}")
-
-                r_ap_out = float(apc_row.get("r_optimal", r_ap_default))
-                r_in_out = max(ann_in_scale * fwhm_used, r_ap_out + ann_gap)
-                r_out_out = r_in_out + ann_out_scale * fwhm_used
-                rows_ap.append(dict(file=fname, fwhm_px=fwhm_used, r_ap=r_ap_out,
-                                    r_in=r_in_out, r_out=r_out_out))
-                rows_apcorr.append(apc_row)
-                self.progress.emit(i, total, fname)
-
-            pd.DataFrame(rows_ap).to_csv(output_dir / "aperture_by_frame.csv", index=False)
-            pd.DataFrame(rows_apcorr).to_csv(output_dir / "apcorr_summary.csv", index=False)
-            if rows_gc:
-                pd.DataFrame(rows_gc).to_csv(output_dir / "growth_curve.csv", index=False)
-            self.finished.emit({"frames": len(self.file_list), "rows_ap": len(rows_ap)})
-        except Exception as e:
-            self.error.emit("APCORR", f"{type(e).__name__}: {e}\n{traceback.format_exc()}")
-            self.finished.emit({})
+_APCORR_CLASS_REMOVED = True  # body removed — class now imported from shared
 
 
 # ── Step5PhotWorker – actual aperture photometry ──────────────────────────────
@@ -778,10 +394,12 @@ class Step5PhotWorker(QThread):
                         mag_ap_err = np.nan
                         flags |= self.FLAG_LOW_SNR
 
-                    # Apply aperture correction (mag_ap + apcorr, apcorr is negative → brighter)
+                    # Apply aperture correction (flux ratio: flux_corrected = flux * apcorr)
                     apcorr_val = frame_apcorr
-                    if np.isfinite(mag_ap) and np.isfinite(apcorr_val):
-                        mag_ap_corr = mag_ap + apcorr_val
+                    if (np.isfinite(flux_e) and flux_e > 0
+                            and np.isfinite(apcorr_val) and apcorr_val > 0):
+                        flux_corr = flux_e * apcorr_val
+                        mag_ap_corr = ZP - 2.5 * np.log10(flux_corr / exptime)
                     else:
                         mag_ap_corr = np.nan
 
