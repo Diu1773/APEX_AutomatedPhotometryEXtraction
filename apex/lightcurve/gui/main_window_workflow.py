@@ -178,18 +178,8 @@ class MainWindowWorkflow(QMainWindow):
 
         # Load parameters
         try:
-            if param_file:
-                self.params = Parameters(param_file)
-            else:
-                default_param = Path("parameters.toml")
-                if not default_param.exists():
-                    param_file, _ = QFileDialog.getOpenFileName(
-                        self, "Select Parameter File", str(Path.cwd()),
-                        "TOML Files (*.toml);;All Files (*.*)"
-                    )
-                    if not param_file:
-                        raise RuntimeError("No parameter file selected")
-                self.params = Parameters(param_file or default_param)
+            from apex.common.utils.param_loader import resolve_param_file
+            self.params = Parameters(resolve_param_file(self, param_file))
 
             # Initialize components
             self.instrument = InstrumentConfig(self.params)
