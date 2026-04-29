@@ -3,7 +3,8 @@ from __future__ import annotations
 from pathlib import Path
 from PyQt5.QtWidgets import QFileDialog, QWidget
 
-_CACHE_FILE = Path(__file__).parent.parent.parent / ".apex_last_param.txt"
+_CACHE_DIR  = Path.home() / ".apex"
+_CACHE_FILE = _CACHE_DIR / "last_param.txt"
 
 
 def _load_cached() -> Path | None:
@@ -16,6 +17,7 @@ def _load_cached() -> Path | None:
 
 def _save_cached(path: Path) -> None:
     try:
+        _CACHE_DIR.mkdir(parents=True, exist_ok=True)
         _CACHE_FILE.write_text(str(path), encoding="utf-8")
     except Exception:
         pass
@@ -30,18 +32,19 @@ def resolve_param_file(parent: QWidget | None = None, param_file: str | None = N
             _save_cached(p)
             return p
 
-    # 2. parameters.toml next to cwd
+    # 2. parameters.toml in cwd
     local = Path("parameters.toml")
     if local.exists():
-        _save_cached(local.resolve())
-        return local.resolve()
+        p = local.resolve()
+        _save_cached(p)
+        return p
 
-    # 3. last used
+    # 3. last used (persisted across launches)
     cached = _load_cached()
     if cached:
         return cached
 
-    # 4. file dialog
+    # 4. first-time file dialog
     chosen, _ = QFileDialog.getOpenFileName(
         parent, "APEX — parameters.toml 선택",
         str(Path.home()),
