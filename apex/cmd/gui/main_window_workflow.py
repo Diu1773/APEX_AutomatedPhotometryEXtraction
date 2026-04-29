@@ -229,6 +229,7 @@ class MainWindowWorkflow(QMainWindow):
             "CMD Plot",                 # 11
             "Isochrone Model",          # 12
         ]
+        self.project_state.assign_steps(self.step_names)
 
         # Step buttons
         self.step_buttons: List[StepButton] = []

@@ -225,6 +225,7 @@ class MainWindowWorkflow(QMainWindow):
             "Detrend & Night Merge",
             "Period Analysis",
         ]
+        self.project_state.assign_steps(self.step_names)
 
         # Step buttons
         self.step_buttons: List[StepButton] = []
