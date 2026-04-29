@@ -3,7 +3,7 @@ from __future__ import annotations
 from pathlib import Path
 from PyQt5.QtWidgets import QFileDialog, QWidget
 
-_CACHE_FILE = Path(__file__).parent.parent.parent.parent / ".apex_last_param.txt"
+_CACHE_FILE = Path(__file__).parent.parent.parent / ".apex_last_param.txt"
 
 
 def _load_cached() -> Path | None:
