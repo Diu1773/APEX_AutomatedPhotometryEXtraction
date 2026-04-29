@@ -15,7 +15,6 @@ except ImportError:
     pass
 warnings.filterwarnings("ignore", message=".*tight_layout.*", category=UserWarning)
 
-# Ensure project root is on sys.path so `import apex` works
 _HERE = Path(__file__).resolve().parent          # apex/lightcurve/
 _ROOT = _HERE.parent.parent                       # Automated_Photometry_EXtraction/
 if str(_ROOT) not in sys.path:
@@ -83,8 +82,8 @@ def main() -> int:
     os.chdir(_HERE)
 
     try:
-        from apex.lightcurve.gui.main_window_workflow import MainWindowWorkflow
-        window = MainWindowWorkflow()
+        from apex.gui.main_window import MainWindowWorkflow
+        window = MainWindowWorkflow(mode="lc")
         window.show()
     except Exception as e:
         import traceback
