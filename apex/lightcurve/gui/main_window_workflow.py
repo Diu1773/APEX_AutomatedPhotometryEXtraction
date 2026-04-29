@@ -537,8 +537,8 @@ class MainWindowWorkflow(QMainWindow):
                 self.params, self.file_manager, self.project_state, self
             )
         elif step_index == 4:
-            from .workflow.step9_forced_photometry import ForcedPhotometryWindow
-            self.current_step_window = ForcedPhotometryWindow(
+            from .workflow.step5_aperture_photometry import AperturePhotometryWindow
+            self.current_step_window = AperturePhotometryWindow(
                 self.params, self.file_manager, self.project_state, self
             )
         elif step_index == 5:

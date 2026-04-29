@@ -317,8 +317,13 @@ def _compute_star_median_mags(
     frame_info = []
     for _, idx_row in idx_df.iterrows():
         fname = str(idx_row["file"])
-        phot_path = step5_photometry_dir(result_dir) / f"{fname}_photometry.tsv"
-        if not phot_path.exists():
+        phot_dir = step5_photometry_dir(result_dir)
+        phot_path = next(
+            (phot_dir / n for n in (f"{fname}_photometry.tsv", f"photometry_{fname}.tsv")
+             if (phot_dir / n).exists()),
+            None,
+        )
+        if phot_path is None:
             continue
 
         filt = ""

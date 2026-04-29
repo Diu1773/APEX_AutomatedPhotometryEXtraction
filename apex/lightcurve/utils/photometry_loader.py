@@ -50,8 +50,12 @@ def _read_table(path: Path) -> pd.DataFrame | None:
 
 
 def _resolve_photometry_path(result_dir: Path, fname: str) -> Path | None:
-    phot_path = step5_photometry_dir(result_dir) / f"{fname}_photometry.tsv"
-    return phot_path if phot_path.exists() else None
+    phot_dir = step5_photometry_dir(result_dir)
+    for name in (f"{fname}_photometry.tsv", f"photometry_{fname}.tsv"):
+        p = phot_dir / name
+        if p.exists():
+            return p
+    return None
 
 
 def _resolve_idmatch_path(result_dir: Path, fname: str) -> Path | None:
