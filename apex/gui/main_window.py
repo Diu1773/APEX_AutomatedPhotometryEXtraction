@@ -138,12 +138,12 @@ class MainWindowWorkflow(QMainWindow):
         self.mode = mode
 
         try:
-            from apex.utils.param_loader import resolve_param_file
             if mode == "cmd":
                 from apex.config.parameters_cmd import Parameters
             else:
                 from apex.config.parameters_lc import Parameters
-            self.params = Parameters(resolve_param_file(self, param_file))
+            param_path = Path(param_file) if param_file else Path("parameters.toml")
+            self.params = Parameters(param_path)
 
             from apex.core import InstrumentConfig, FileManager, ProjectState
             self.instrument = InstrumentConfig(self.params)

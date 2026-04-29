@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""APEX LC — Light Curve Analysis entry point."""
+"""APEX LC entry point."""
 import sys, os, warnings
 from pathlib import Path
 
@@ -12,10 +12,12 @@ except ImportError:
     pass
 warnings.filterwarnings("ignore", message=".*tight_layout.*", category=UserWarning)
 
-_HERE = Path(__file__).resolve().parent
-_ROOT = _HERE.parent.parent
+_HERE = Path(__file__).resolve().parent   # apex/lightcurve/
+_ROOT = _HERE.parent.parent               # Automated_Photometry_EXtraction/
 if str(_ROOT) not in sys.path:
     sys.path.insert(0, str(_ROOT))
+
+os.chdir(_ROOT)  # parameters.toml lives at project root
 
 from PyQt5.QtWidgets import QApplication, QMessageBox
 from apex.utils.app_setup import configure_fonts
@@ -26,7 +28,6 @@ def main() -> int:
     app.setApplicationName("APEX LC")
     app.setOrganizationName("APEX Project")
     configure_fonts(app)
-    os.chdir(_HERE)
     try:
         from apex.gui.main_window import MainWindowWorkflow
         window = MainWindowWorkflow(mode="lc")
@@ -34,8 +35,7 @@ def main() -> int:
     except Exception as e:
         import traceback
         tb = traceback.format_exc()
-        print(f"Failed to start APEX LC: {{e}}")
-        print(tb)
+        print(f"Failed to start APEX LC: {e}\n{tb}")
         msg = QMessageBox()
         msg.setIcon(QMessageBox.Critical)
         msg.setWindowTitle("APEX LC — Startup Error")
@@ -44,7 +44,6 @@ def main() -> int:
         msg.exec_()
         return 1
     return app.exec_()
-
 
 if __name__ == "__main__":
     sys.exit(main())
