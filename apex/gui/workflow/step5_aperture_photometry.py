@@ -45,7 +45,7 @@ from matplotlib.figure import Figure
 
 from apex.gui.workflow.step_window_base import StepWindowBase
 from apex.gui.workflow.step5_aperture_worker import ApertureWorker as Step5ApertureWorker  # noqa: F401
-from apex.utils.step_paths_cmd import (
+from apex.utils.step_paths import (
     step2_cropped_dir, step4_dir, step5_aperture_dir, crop_is_active,
 )
 from apex.utils.constants import get_parallel_workers
@@ -180,11 +180,6 @@ def _load_fwhm_from_meta(fname: str, cache_dir: Path, result_dir: Path,
                     continue
     return float(params_fwhm_guess)
 
-
-# Step5ApertureWorker is imported from apex.gui.workflow.step5_aperture_worker
-# (see import at top of file — aliased as Step5ApertureWorker for backwards compatibility)
-
-_APCORR_CLASS_REMOVED = True  # body removed — class now imported from shared
 
 
 # ── Step5PhotWorker – actual aperture photometry ──────────────────────────────
