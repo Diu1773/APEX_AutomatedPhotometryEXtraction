@@ -297,7 +297,7 @@ def get_parallel_workers(params=None) -> int:
         Number of workers to use
 
     Usage:
-        from aperture_photometry.utils.constants import get_parallel_workers
+        from apex.utils.constants import get_parallel_workers
         max_workers = get_parallel_workers(self.params)
     """
     import os

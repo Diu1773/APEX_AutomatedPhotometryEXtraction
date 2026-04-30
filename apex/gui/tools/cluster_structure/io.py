@@ -10,16 +10,17 @@ import pandas as pd
 from astropy.io import fits
 from astropy.wcs import WCS
 
-from aperture_photometry.utils.io_utils import parse_int64_series
-from aperture_photometry.utils.step_paths import (
+from apex.utils.io_utils import parse_int64_series
+from apex.utils.step_paths import (
     crop_is_active,
     crop_rect_path,
-    legacy_step5_refbuild_dir,
-    legacy_step7_refbuild_dir,
     step2_cropped_dir,
-    step5_dir,
-    step6_dir,
 )
+from apex.utils.step_paths_cmd import (
+    legacy_step8_refbuild_dir as legacy_step5_refbuild_dir,
+    legacy_step8_refbuild_dir as legacy_step7_refbuild_dir,
+)
+from apex.utils.step_paths import step6_wcs_dir as step5_dir, step7_refbuild_dir as step6_dir
 
 
 @dataclass

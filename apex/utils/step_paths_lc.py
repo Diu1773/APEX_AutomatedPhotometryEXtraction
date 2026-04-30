@@ -115,3 +115,58 @@ def step11_dir(result_dir: PathLike) -> Path:
 def step11_current_meta_path(result_dir: PathLike, target_id: int) -> Path:
     """Path to the current detrend result metadata JSON for a target star."""
     return step11_dir(result_dir) / f"result_ID{int(target_id)}_current.json"
+
+
+def _step11_current_lc_path(result_dir: PathLike, target_id: int) -> Path:
+    return step11_dir(result_dir) / f"lightcurve_ID{int(target_id)}_current.csv"
+
+
+def load_detrend_preference(result_dir: PathLike, target_id: int | None = None) -> str | None:
+    """Read the adopted correction mode from step11 meta JSON."""
+    import json as _json
+    d = _as_path(result_dir)
+    if target_id is not None:
+        meta = step11_current_meta_path(d, target_id)
+        if meta.exists():
+            try:
+                data = _json.loads(meta.read_text(encoding="utf-8"))
+                return data.get("mode", "").lower() or None
+            except Exception:
+                pass
+    s11 = step11_dir(d)
+    if s11.exists():
+        for mp in sorted(s11.glob("result_ID*_current.json")):
+            try:
+                data = _json.loads(mp.read_text(encoding="utf-8"))
+                return data.get("mode", "").lower() or None
+            except Exception:
+                continue
+    return None
+
+
+def list_lightcurve_csvs(result_dir: PathLike, target_id: int | None = None) -> list[Path]:
+    """Return candidate light curve CSVs ordered by preferred analysis priority."""
+    d = _as_path(result_dir)
+    step10_out = step10_dir(d)
+    step11_out = step11_dir(d)
+    candidates: list[Path] = []
+    if target_id is not None:
+        candidates.append(_step11_current_lc_path(d, target_id))
+        for mode in ("global", "color", "offset"):
+            candidates.append(step11_out / f"lightcurve_ID{int(target_id)}_{mode}.csv")
+        candidates.append(step10_out / f"lightcurve_combined_ID{int(target_id)}_raw.csv")
+        candidates.append(step10_out / f"lightcurve_ID{int(target_id)}_raw.csv")
+    else:
+        if step11_out.exists():
+            candidates.extend(sorted(step11_out.glob("lightcurve_ID*_current.csv"), reverse=True))
+            for mode in ("global", "color", "offset"):
+                candidates.extend(sorted(step11_out.glob(f"lightcurve_ID*_{mode}.csv"), reverse=True))
+        if step10_out.exists():
+            candidates.extend(sorted(step10_out.glob("lightcurve_combined_ID*_raw.csv"), reverse=True))
+            candidates.extend(sorted(step10_out.glob("lightcurve_ID*_raw.csv"), reverse=True))
+    for base_dir in (step11_out, step10_out):
+        if base_dir.exists():
+            for f in sorted(base_dir.glob("lightcurve_*.csv"), reverse=True):
+                if f not in candidates:
+                    candidates.append(f)
+    return candidates
