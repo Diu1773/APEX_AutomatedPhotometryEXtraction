@@ -6,6 +6,7 @@ WCS solving window and workers.
 from __future__ import annotations
 
 import json
+import sys
 import time
 import subprocess
 import threading
@@ -183,7 +184,7 @@ def _preferred_astnet_solution_path(new_path: Path, wcs_path: Path) -> Path | No
 
 
 def _astnet_solution_artifacts_ready(new_path: Path, solved_path: Path, wcs_path: Path) -> bool:
-    # A header-only .wcs sidecar is sufficient; otherwise require the legacy .new + .solved pair.
+    # A header-only .wcs sidecar is sufficient; otherwise require the .new + .solved pair.
     if wcs_path.exists():
         return True
     return new_path.exists() and solved_path.exists()
@@ -374,7 +375,7 @@ class WcsWorker(QThread):
                 try:
                     stage_root = (
                         Path(tempfile.gettempdir())
-                        / "aapki_astnet_wsl"
+                        / "apex_astnet_wsl"
                         / f"{stem}_{int(time.time() * 1000)}_{threading.get_ident()}"
                     )
                     stage_root.mkdir(parents=True, exist_ok=True)
@@ -590,7 +591,7 @@ class WcsWorker(QThread):
             return False
         return True
 
-    def _legacy_detect_cache_allowed(self, marker_path: Path) -> bool:
+    def _schema1_detect_cache_allowed(self, marker_path: Path) -> bool:
         try:
             marker_mtime = int(marker_path.stat().st_mtime_ns)
         except Exception:
@@ -629,7 +630,7 @@ class WcsWorker(QThread):
                 return fpx, farc
             except Exception:
                 continue
-        # Backward compatibility: legacy detect cache (schema<2) can be used
+        # Backward compatibility: schema<2 detect cache can be used
         # when it is newer than the current crop selection marker.
         for meta_json in candidates:
             try:
@@ -642,7 +643,7 @@ class WcsWorker(QThread):
                 schema = 0
             if schema >= 2:
                 continue
-            if not self._legacy_detect_cache_allowed(meta_json):
+            if not self._schema1_detect_cache_allowed(meta_json):
                 continue
             try:
                 fpx = float(meta.get("fwhm_med_rad_px", meta.get("fwhm_med_px", np.nan)))
@@ -681,7 +682,7 @@ class WcsWorker(QThread):
             xy = df[["x", "y"]].to_numpy(float)
             xy = xy[np.isfinite(xy).all(axis=1)]
             return xy
-        # Backward compatibility for legacy detect cache.
+        # Backward compatibility for schema<2 detect cache.
         for csv_path in candidates:
             if not csv_path.exists():
                 continue
@@ -696,7 +697,7 @@ class WcsWorker(QThread):
             if schema >= 2:
                 continue
             marker_path = meta_path if meta_path.exists() else csv_path
-            if not self._legacy_detect_cache_allowed(marker_path):
+            if not self._schema1_detect_cache_allowed(marker_path):
                 continue
             try:
                 df = pd.read_csv(csv_path)
@@ -984,7 +985,7 @@ class WcsWorker(QThread):
             if df is not None and "phot_variable_flag" not in df.columns:
                 df["phot_variable_flag"] = ""
             if df is not None:
-                df.attrs["legacy_missing_phot_variable_flag"] = bool(missing_var_flag)
+                df.attrs["missing_phot_variable_flag"] = bool(missing_var_flag)
             return df
         except Exception:
             return None
@@ -1169,7 +1170,7 @@ WHERE 1=CONTAINS(
         for cpath, mpath in [(cache_path, meta_path)]:
             df_cache = self._load_gaia_cache_if_ok(cpath)
             if df_cache is not None:
-                if bool(getattr(df_cache, "attrs", {}).get("legacy_missing_phot_variable_flag", False)) and _HAS_GAIA:
+                if bool(getattr(df_cache, "attrs", {}).get("missing_phot_variable_flag", False)) and _HAS_GAIA:
                     df_cache = None
                     continue
                 meta_probe = mpath
@@ -2091,7 +2092,7 @@ class AstrometryNetWorker(QThread):
             if df is not None and "phot_variable_flag" not in df.columns:
                 df["phot_variable_flag"] = ""
             if df is not None:
-                df.attrs["legacy_missing_phot_variable_flag"] = bool(missing_var_flag)
+                df.attrs["missing_phot_variable_flag"] = bool(missing_var_flag)
             return df
         except Exception:
             return None
@@ -2217,7 +2218,7 @@ WHERE 1=CONTAINS(
         for cpath, mpath in [(cache_path, meta_path)]:
             df_cache = self._load_gaia_cache_if_ok(cpath)
             if df_cache is not None:
-                if bool(getattr(df_cache, "attrs", {}).get("legacy_missing_phot_variable_flag", False)) and _HAS_GAIA:
+                if bool(getattr(df_cache, "attrs", {}).get("missing_phot_variable_flag", False)) and _HAS_GAIA:
                     df_cache = None
                     continue
                 meta_probe = mpath
@@ -2730,7 +2731,7 @@ WHERE 1=CONTAINS(
                 try:
                     stage_root = (
                         Path(tempfile.gettempdir())
-                        / "aapki_astnet_wsl"
+                        / "apex_astnet_wsl"
                         / f"{stem}_{int(time.time() * 1000)}_{threading.get_ident()}"
                     )
                     stage_root.mkdir(parents=True, exist_ok=True)

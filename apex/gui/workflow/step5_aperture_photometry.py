@@ -229,9 +229,6 @@ class Step5PhotWorker(QThread):
             cpath = cdir / fname
             if cpath.exists():
                 return cpath
-            legacy = self.result_dir / "cropped" / fname
-            if legacy.exists():
-                return legacy
         fpath = self.data_dir / fname
         return fpath if fpath.exists() else None
 
@@ -716,12 +713,8 @@ class AperturePhotometryWindow(StepWindowBase):
     def populate_file_list(self):
         crop_active = crop_is_active(self.params.P.result_dir)
         cropped_dir = step2_cropped_dir(self.params.P.result_dir)
-        legacy_cropped = self.params.P.result_dir / "cropped"
         if crop_active and cropped_dir.exists() and list(cropped_dir.glob("*.fit*")):
             files = sorted([f.name for f in cropped_dir.glob("*.fit*")])
-            self.use_cropped = True
-        elif crop_active and legacy_cropped.exists() and list(legacy_cropped.glob("*.fit*")):
-            files = sorted([f.name for f in legacy_cropped.glob("*.fit*")])
             self.use_cropped = True
         else:
             if not self.file_manager.filenames:
@@ -791,10 +784,6 @@ class AperturePhotometryWindow(StepWindowBase):
 
         files_to_run = list(self.file_list)
         apcorr_sum_path = step5_aperture_dir(self.params.P.result_dir) / "apcorr_summary.csv"
-        if not apcorr_sum_path.exists():
-            legacy_sum = self.params.P.result_dir / "apcorr_summary.csv"
-            if legacy_sum.exists():
-                apcorr_sum_path = legacy_sum
         if apcorr_sum_path.exists():
             try:
                 df_apc = pd.read_csv(apcorr_sum_path)

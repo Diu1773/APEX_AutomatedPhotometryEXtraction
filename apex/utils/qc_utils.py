@@ -17,7 +17,7 @@ def resolve_frame_quality_path(result_dir: Path) -> Optional[Path]:
     """Resolve the best available frame_quality.csv path."""
     candidates = [
         step4_dir(result_dir) / "frame_quality.csv",        # APEX: step4 owns its QC
-        step5_aperture_dir(result_dir) / "frame_quality.csv",  # legacy AAPKL location
+        step5_aperture_dir(result_dir) / "frame_quality.csv",
         Path(result_dir) / "frame_quality.csv",
     ]
     for path in candidates:

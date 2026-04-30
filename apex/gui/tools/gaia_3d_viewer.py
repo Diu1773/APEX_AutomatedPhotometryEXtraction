@@ -25,7 +25,8 @@ from PyQt5.QtWidgets import (
     QApplication,
 )
 
-from apex.utils.step_paths_cmd import step5_dir, step6_dir
+from apex.utils.step_paths import step6_wcs_dir, step7_refbuild_dir
+from apex.utils.step_paths_cmd import step10_selection_dir, step11_zp_dir
 from apex.utils.io_utils import parse_int64_series, read_ecsv_int64_source_id
 
 
@@ -477,12 +478,13 @@ class Gaia3DViewerWindow(QWidget):
     def _load_membership_aux(self):
         result_dir = self.result_dir
         cands = [
-            step5_dir(result_dir) / "gaia_derived.csv",
+            step6_wcs_dir(result_dir) / "gaia_derived.csv",
             result_dir / "gaia_derived.csv",
             result_dir / "cmd_with_gaia_membership.csv",
-            result_dir / "step11" / "cmd_with_gaia_membership.csv",
+            step10_selection_dir(result_dir) / "cmd_with_gaia_membership.csv",
+            step11_zp_dir(result_dir) / "cmd_with_gaia_membership.csv",
             result_dir / "median_by_ID_filter_wide_cmd.csv",
-            result_dir / "step11" / "median_by_ID_filter_wide_cmd.csv",
+            step11_zp_dir(result_dir) / "median_by_ID_filter_wide_cmd.csv",
         ]
         for p in cands:
             if not p.exists():
@@ -508,9 +510,9 @@ class Gaia3DViewerWindow(QWidget):
         result_dir = self.result_dir
         cands = [
             result_dir / "median_by_ID_filter_wide_cmd.csv",
-            result_dir / "step11" / "median_by_ID_filter_wide_cmd.csv",
+            step11_zp_dir(result_dir) / "median_by_ID_filter_wide_cmd.csv",
             result_dir / "median_by_ID_filter_wide.csv",
-            result_dir / "step11" / "median_by_ID_filter_wide.csv",
+            step11_zp_dir(result_dir) / "median_by_ID_filter_wide.csv",
         ]
         value_cols = ("mag_std_g", "mag_std_r", "mag_inst_g", "mag_inst_r", "color_gr", "color_ri")
         for p in cands:
@@ -537,7 +539,7 @@ class Gaia3DViewerWindow(QWidget):
 
     def _load_base_df(self):
         result_dir = self.result_dir
-        for p in [step6_dir(result_dir) / "master_catalog.tsv",
+        for p in [step7_refbuild_dir(result_dir) / "master_catalog.tsv",
                   result_dir / "master_catalog.tsv"]:
             if not p.exists():
                 continue
@@ -548,9 +550,9 @@ class Gaia3DViewerWindow(QWidget):
             if len(m) > 0:
                 return m, p.name
 
-        for p in [step5_dir(result_dir) / "gaia_derived.csv",
+        for p in [step6_wcs_dir(result_dir) / "gaia_derived.csv",
                   result_dir / "gaia_derived.csv",
-                  step5_dir(result_dir) / "gaia_fov.ecsv",
+                  step6_wcs_dir(result_dir) / "gaia_fov.ecsv",
                   result_dir / "gaia_fov.ecsv"]:
             if not p.exists():
                 continue
@@ -573,7 +575,7 @@ class Gaia3DViewerWindow(QWidget):
             QMessageBox.warning(
                 self, "No Gaia Data",
                 "Could not find Gaia-enabled catalogs.\n"
-                "Expected: step6_refbuild/master_catalog.tsv or step5_wcs/gaia_derived.csv"
+                "Expected: step7_refbuild/master_catalog.tsv or step6_wcs/gaia_derived.csv"
             )
             self.df = pd.DataFrame()
             self.loaded_from = ""

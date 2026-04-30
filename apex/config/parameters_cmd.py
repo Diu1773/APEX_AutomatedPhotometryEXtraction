@@ -1,6 +1,6 @@
 """
 Parameter management for aperture photometry pipeline
-Extracted from AAPKI_GUI.ipynb Cell 0
+APEX CMD parameter handling.
 """
 
 from __future__ import annotations
@@ -333,7 +333,7 @@ TOML_KEY_MAP: list[tuple[Iterable[str], str]] = [
 
 
 def _read_toml(path: Path) -> Dict[str, Any]:
-    """Read TOML config into a flat key dict compatible with legacy Parameters."""
+    """Read TOML config into a flat key dict."""
     if not path.exists():
         return {}
 
@@ -398,9 +398,9 @@ def _read_toml(path: Path) -> Dict[str, Any]:
         set_if("site_alt_m", site.get("alt_m"))
         set_if("site_tz_offset_hours", site.get("tz_offset_hours"))
 
-    legacy = _get_path(data, ("legacy",)) or {}
-    if isinstance(legacy, dict):
-        for key, value in legacy.items():
+    extra = _get_path(data, ("parameters",)) or {}
+    if isinstance(extra, dict):
+        for key, value in extra.items():
             raw.setdefault(key, value)
 
     return raw
@@ -787,10 +787,9 @@ class Parameters:
         P.cache_dir = (P.result_dir / str(P.cache_dir))
         P.cache_dir.mkdir(parents=True, exist_ok=True)
 
-        # FWHM seed (pixel-based legacy)
-        pix_legacy = P.fwhm_pix_guess
-        P.fwhm_seed_px = float(pix_legacy if pix_legacy is not None else 6.0)
-        P._fwhm_seed_from = "pixel-legacy"
+        pix_guess = P.fwhm_pix_guess
+        P.fwhm_seed_px = float(pix_guess if pix_guess is not None else 6.0)
+        P._fwhm_seed_from = "pixel"
 
         return P
 
@@ -815,14 +814,14 @@ class Parameters:
     def save(self, path: Path):
         """Save current parameters to file"""
         path = Path(path)
-        data = {"legacy": {}}
+        data = {"parameters": {}}
 
         for key, value in vars(self.P).items():
             if key.startswith("_"):
                 continue
             if isinstance(value, Path):
                 value = str(value)
-            data["legacy"][key] = value
+            data["parameters"][key] = value
 
         if tomli_w is None:
             raise RuntimeError("tomli_w is required to write parameters.toml")
@@ -895,7 +894,7 @@ class Parameters:
                 continue
             _set_path(data, path_keys, to_toml_value(attr, val, path_keys))
 
-        # Keep wcs_refine.enable in sync with legacy flag if present.
+        # Keep wcs_refine.enable in sync with the flat runtime flag if present.
         if hasattr(self.P, "wcs_refine_enable"):
             _set_path(data, ("wcs_refine", "enable"), bool(getattr(self.P, "wcs_refine_enable")))
 

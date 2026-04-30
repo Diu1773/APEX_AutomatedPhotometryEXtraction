@@ -1,6 +1,5 @@
 """
 Step 10: Master Star IDs Editor
-Ported from AAPKI_GUI.ipynb Cell 10 (GUI adaptation).
 """
 
 from __future__ import annotations
@@ -34,7 +33,15 @@ from PyQt5.QtGui import QColor
 from PyQt5.QtCore import Qt, QPoint
 
 from apex.gui.workflow.step_window_base import StepWindowBase
-from apex.utils.step_paths_cmd import step2_cropped_dir, step5_dir, step6_dir, step7_dir, step8_dir, step9_dir, step6_psf_dir, crop_is_active
+from apex.utils.step_paths import (
+    crop_is_active,
+    step2_cropped_dir,
+    step5_aperture_dir,
+    step6_wcs_dir,
+    step7_refbuild_dir,
+    step8_idmatch_dir,
+)
+from apex.utils.step_paths_cmd import step6_psf_dir, step10_selection_dir
 from apex.utils.io_utils import (
     parse_int64_scalar,
     parse_int64_series,
@@ -77,7 +84,6 @@ class MasterIdEditorWindow(StepWindowBase):
         self.canvas = None
         self.ax = None
         self._imshow_obj = None
-        self._normalized_cache = None   # single-slot legacy (unused now)
         self._norm_cache: dict = {}     # (filename, stretch_idx) -> normalized_array (LRU 5)
         self.xlim_original = None
         self.ylim_original = None
@@ -328,15 +334,10 @@ class MasterIdEditorWindow(StepWindowBase):
     def populate_file_list(self):
         self._file_filter_map = {}
         cropped_dir = step2_cropped_dir(self.params.P.result_dir)
-        legacy_cropped = self.params.P.result_dir / "cropped"
         crop_active = crop_is_active(self.params.P.result_dir)
         if crop_active and cropped_dir.exists() and list(cropped_dir.glob("*.fit*")):
             files = sorted([f.name for f in cropped_dir.glob("*.fit*")])
             self.use_cropped = True
-        elif crop_active and legacy_cropped.exists() and list(legacy_cropped.glob("*.fit*")):
-            files = sorted([f.name for f in legacy_cropped.glob("*.fit*")])
-            self.use_cropped = True
-            cropped_dir = legacy_cropped
         else:
             if not self.file_manager.filenames:
                 try:
@@ -347,8 +348,8 @@ class MasterIdEditorWindow(StepWindowBase):
             self.use_cropped = False
 
         base_count = len(files)
-        # Hide unsolved frames: keep only Step7 rows with wcs_ok=True when available.
-        stats_path = step7_dir(self.params.P.result_dir) / "step7_frame_stats.csv"
+        # Hide unsolved frames: keep only Step8 rows with wcs_ok=True when available.
+        stats_path = step8_idmatch_dir(self.params.P.result_dir) / "step8_frame_stats.csv"
         if stats_path.exists():
             try:
                 s7 = pd.read_csv(stats_path)
@@ -366,12 +367,12 @@ class MasterIdEditorWindow(StepWindowBase):
                 files = [f for f in files if f in keep]
                 self.log(f"Step10 frame filter (wcs_ok): {len(files)}/{base_count} kept")
 
-        # Also hide frames without Step9 ID-match output.
-        idmatch_dir = self.params.P.cache_dir / "idmatch"
+        # Also hide frames without Step8 ID-match output.
+        idmatch_dir = step8_idmatch_dir(self.params.P.result_dir)
         if idmatch_dir.exists():
             before_idm = len(files)
-            files = [f for f in files if (idmatch_dir / f"idmatch_{f}.csv").exists()]
-            self.log(f"Step10 frame filter (Step9 idmatch csv): {len(files)}/{before_idm} kept")
+            files = [f for f in files if self._idmatch_output_exists(idmatch_dir, f)]
+            self.log(f"Step10 frame filter (Step8 idmatch csv): {len(files)}/{before_idm} kept")
 
         self.file_list = list(files)
         self.file_combo.clear()
@@ -415,10 +416,18 @@ class MasterIdEditorWindow(StepWindowBase):
         return ""
 
     def _load_filter_map_from_index(self):
-        idx_path = step9_dir(self.params.P.result_dir) / "photometry_index.csv"
-        if not idx_path.exists():
-            idx_path = self.params.P.result_dir / "photometry_index.csv"
-        if not idx_path.exists():
+        idx_path = next(
+            (
+                p for p in (
+                    step6_psf_dir(self.params.P.result_dir) / "photometry_index.csv",
+                    step5_aperture_dir(self.params.P.result_dir) / "photometry_index.csv",
+                    self.params.P.result_dir / "photometry_index.csv",
+                )
+                if p.exists()
+            ),
+            None,
+        )
+        if idx_path is None:
             return
         try:
             df = pd.read_csv(idx_path)
@@ -447,12 +456,14 @@ class MasterIdEditorWindow(StepWindowBase):
         self._file_filter_map[fname] = fkey
         return fkey
 
+    @staticmethod
+    def _idmatch_output_exists(idmatch_dir: Path, fname: str) -> bool:
+        if (idmatch_dir / f"idmatch_{fname}.csv").exists():
+            return True
+        return any(idmatch_dir.glob(f"*/idmatch_{fname}.csv"))
+
     def load_master_ids(self):
-        master_path = step8_dir(self.params.P.result_dir) / "master_star_ids.csv"
-        if not master_path.exists():
-            master_path = step6_dir(self.params.P.result_dir) / "master_star_ids.csv"
-        if not master_path.exists():
-            master_path = self.params.P.result_dir / "master_star_ids.csv"
+        master_path = step10_selection_dir(self.params.P.result_dir) / "master_star_ids.csv"
         self.internal_id_map = {}
         self.source_id_from_internal = {}
         self._load_global_id_map()
@@ -469,21 +480,16 @@ class MasterIdEditorWindow(StepWindowBase):
                         sid_clean = sid_series.loc[valid_sid].astype("int64")
                         gmag_clean = gmag_series.loc[valid_sid]
                         self.master_gmag_map = dict(zip(sid_clean.tolist(), gmag_clean.tolist()))
-                    # Repair legacy float-rounded Gaia IDs from old Step8 save files.
-                    sid_repair_map = self._repair_legacy_step8_source_ids()
                     # Prefer saved fixed ID mapping when available.
                     if "ID" in df.columns:
                         id_vals = pd.to_numeric(df["ID"], errors="coerce")
-                    elif "internal_id" in df.columns:
-                        # Legacy compatibility.
-                        id_vals = pd.to_numeric(df["internal_id"], errors="coerce")
                     else:
                         id_vals = pd.Series([np.nan] * len(df))
                     sid_series = parse_int64_series(df["source_id"])
                     for sid_v, id_v in zip(sid_series.tolist(), id_vals):
                         if not (pd.notna(sid_v) and np.isfinite(id_v)):
                             continue
-                        sid_i = int(sid_repair_map.get(int(sid_v), int(sid_v)))
+                        sid_i = int(sid_v)
                         id_i = int(id_v)
                         if sid_i in self.internal_id_map:
                             continue
@@ -493,8 +499,7 @@ class MasterIdEditorWindow(StepWindowBase):
                         self.source_id_from_internal[id_i] = sid_i
                     for sid_i in sorted(self.master_ids):
                         self._ensure_stable_id(sid_i)
-                    # Fallback: preload Gaia G magnitudes from Step8 RefBuild catalog (legacy path).
-                    self._load_step6_gmag_map()
+                    self._load_refbuild_gmag_map()
                     self.log(f"Loaded {len(self.master_ids)} master IDs from {master_path.name}")
                     self.update_master_table()
             except Exception as e:
@@ -551,74 +556,10 @@ class MasterIdEditorWindow(StepWindowBase):
             self.log(f"PSF new sources: {added} iter2 소스 master_id 부여 완료 (det_uid<0)")
             self.update_master_table()
 
-    def _repair_legacy_step8_source_ids(self) -> dict[int, int]:
-        """Repair legacy Step8 source_ids affected by float rounding of Gaia IDs.
-
-        Old runs could save Gaia source_id via float path, producing offsets that are
-        typically multiples of 128. This remaps positive IDs to Step8 canonical IDs
-        when a unique nearby candidate exists.
-        """
-        sid_map: dict[int, int] = {}
-        step6_master = step6_dir(self.params.P.result_dir) / "master_star_ids.csv"
-        if not step6_master.exists():
-            return sid_map
-        try:
-            df6 = pd.read_csv(step6_master)
-            s6 = parse_int64_series(df6.get("source_id", pd.Series(dtype="Int64"))).dropna().astype("int64")
-            canon_pos = {int(v) for v in s6.tolist() if int(v) > 0}
-        except Exception:
-            return sid_map
-        if not canon_pos:
-            return sid_map
-
-        repaired_ids: set[int] = set()
-        repaired_count = 0
-        ambiguous = 0
-        unresolved = 0
-        for sid in sorted(int(v) for v in self.master_ids):
-            if sid <= 0:
-                repaired_ids.add(sid)
-                continue
-            if sid in canon_pos:
-                repaired_ids.add(sid)
-                continue
-            cands: list[tuple[int, int]] = []
-            for delta in (-128, 128, -256, 256, -384, 384, -512, 512):
-                cand = sid + delta
-                if cand in canon_pos:
-                    cands.append((abs(delta), cand))
-            if not cands:
-                unresolved += 1
-                repaired_ids.add(sid)
-                continue
-            cands.sort(key=lambda x: x[0])
-            best_abs = cands[0][0]
-            best = sorted({cand for ad, cand in cands if ad == best_abs})
-            if len(best) != 1:
-                ambiguous += 1
-                repaired_ids.add(sid)
-                continue
-            new_sid = int(best[0])
-            repaired_ids.add(new_sid)
-            sid_map[sid] = new_sid
-            repaired_count += 1
-
-        if sid_map:
-            # Move any saved g_mag entries to repaired keys.
-            for old_sid, new_sid in sid_map.items():
-                if old_sid in self.master_gmag_map and new_sid not in self.master_gmag_map:
-                    self.master_gmag_map[new_sid] = self.master_gmag_map[old_sid]
-            self.master_ids = repaired_ids
-            self.log(
-                "[Step10] Repaired legacy source_id precision drift: "
-                f"mapped={repaired_count}, ambiguous={ambiguous}, unresolved={unresolved}"
-            )
-        return sid_map
-
-    def _load_step6_gmag_map(self):
-        """Fallback G-mag map from Step8 RefBuild catalog (legacy step6_refbuild path)."""
+    def _load_refbuild_gmag_map(self):
+        """Load G magnitudes from the APEX RefBuild catalog."""
         candidates = [
-            step6_dir(self.params.P.result_dir) / "ref_catalog.tsv",
+            step7_refbuild_dir(self.params.P.result_dir) / "ref_catalog.tsv",
             self.params.P.result_dir / "ref_catalog.tsv",
         ]
         for path in candidates:
@@ -655,11 +596,11 @@ class MasterIdEditorWindow(StepWindowBase):
                 break
 
     def _load_global_id_map(self):
-        """Load source_id -> ID map generated by Step 8/9 (legacy path compatible)."""
+        """Load source_id -> ID map generated by RefBuild or this editor."""
         self._global_id_map = {}
         candidates = [
-            step6_dir(self.params.P.result_dir) / "sourceid_to_ID.csv",
-            step7_dir(self.params.P.result_dir) / "sourceid_to_ID.csv",
+            step10_selection_dir(self.params.P.result_dir) / "sourceid_to_ID.csv",
+            step7_refbuild_dir(self.params.P.result_dir) / "sourceid_to_ID.csv",
             self.params.P.result_dir / "sourceid_to_ID.csv",
         ]
         for path in candidates:
@@ -712,9 +653,9 @@ class MasterIdEditorWindow(StepWindowBase):
     def load_gaia_catalog(self):
         """Load Gaia catalog for source info lookup"""
         candidates = [
-            step5_dir(self.params.P.result_dir) / "gaia_derived.csv",
+            step6_wcs_dir(self.params.P.result_dir) / "gaia_derived.csv",
             self.params.P.result_dir / "gaia_derived.csv",
-            step5_dir(self.params.P.result_dir) / "gaia_fov.ecsv",
+            step6_wcs_dir(self.params.P.result_dir) / "gaia_fov.ecsv",
             self.params.P.result_dir / "gaia_fov.ecsv",
         ]
         for gaia_path in candidates:
@@ -863,7 +804,7 @@ class MasterIdEditorWindow(StepWindowBase):
 
     def _compute_membership_from_master(self) -> bool:
         master_candidates = [
-            step6_dir(self.params.P.result_dir) / "master_catalog.tsv",
+            step7_refbuild_dir(self.params.P.result_dir) / "master_catalog.tsv",
             self.params.P.result_dir / "master_catalog.tsv",
         ]
         master_path = next((p for p in master_candidates if p.exists()), None)
@@ -956,15 +897,15 @@ class MasterIdEditorWindow(StepWindowBase):
 
         result_dir = self.params.P.result_dir
         candidates = [
-            step5_dir(result_dir) / "gaia_derived.csv",
+            step6_wcs_dir(result_dir) / "gaia_derived.csv",
             result_dir / "gaia_derived.csv",
             result_dir / "cmd_with_gaia_membership.csv",
-            result_dir / "step11" / "cmd_with_gaia_membership.csv",
+            step10_selection_dir(result_dir) / "cmd_with_gaia_membership.csv",
             result_dir / "cmd_with_membership.csv",
-            result_dir / "step12" / "cmd_with_membership.csv",
+            step10_selection_dir(result_dir) / "cmd_with_membership.csv",
             result_dir / "median_by_ID_filter_wide_cmd.csv",
-            result_dir / "step11" / "median_by_ID_filter_wide_cmd.csv",
-            step6_dir(result_dir) / "master_catalog.tsv",
+            step10_selection_dir(result_dir) / "median_by_ID_filter_wide_cmd.csv",
+            step7_refbuild_dir(result_dir) / "master_catalog.tsv",
             result_dir / "master_catalog.tsv",
         ]
 
@@ -1020,7 +961,7 @@ class MasterIdEditorWindow(StepWindowBase):
                 )
                 return
 
-        # Fallback: compute membership from RefBuild astrometric columns (Step8; legacy path compatible).
+        # Compute membership from RefBuild astrometric columns when no saved map exists.
         if self._compute_membership_from_master():
             return
 
@@ -1166,10 +1107,7 @@ class MasterIdEditorWindow(StepWindowBase):
 
     def _get_fits_path(self, filename):
         if self.use_cropped:
-            cropped_dir = step2_cropped_dir(self.params.P.result_dir)
-            if not cropped_dir.exists():
-                cropped_dir = self.params.P.result_dir / "cropped"
-            return cropped_dir / filename
+            return step2_cropped_dir(self.params.P.result_dir) / filename
         return self.params.P.data_dir / filename
 
     def _load_fits_cached(self, filename):
@@ -1265,7 +1203,6 @@ class MasterIdEditorWindow(StepWindowBase):
             self.image_data = new_data
             self.header = new_header
             self.current_filename = filename
-            self._normalized_cache = None  # Always invalidate (new image data)
             if not quick_switch or shape_changed:
                 self.xlim_original = None
                 self.ylim_original = None
@@ -1301,7 +1238,12 @@ class MasterIdEditorWindow(StepWindowBase):
             else:
                 self._auto_add_detections_to_master(self.idmatch_df)
             return
-        idmatch_path = self.params.P.cache_dir / "idmatch" / f"idmatch_{filename}.csv"
+        idmatch_dir = step8_idmatch_dir(self.params.P.result_dir)
+        idmatch_path = idmatch_dir / f"idmatch_{filename}.csv"
+        if not idmatch_path.exists():
+            matches = sorted(idmatch_dir.glob(f"*/idmatch_{filename}.csv"))
+            if matches:
+                idmatch_path = matches[0]
         if idmatch_path.exists():
             try:
                 df = read_csv_int64_source_id(idmatch_path)
@@ -1667,7 +1609,7 @@ class MasterIdEditorWindow(StepWindowBase):
         self.save_master_ids(log_action=f"box_removed_{len(to_remove)}")
 
     def save_master_ids(self, log_action: str = None):
-        output_dir = step8_dir(self.params.P.result_dir)
+        output_dir = step10_selection_dir(self.params.P.result_dir)
         output_dir.mkdir(parents=True, exist_ok=True)
         master_path = output_dir / "master_star_ids.csv"
         sid2id_path = output_dir / "sourceid_to_ID.csv"
@@ -1717,7 +1659,7 @@ class MasterIdEditorWindow(StepWindowBase):
         """
         Refine centroid near (x, y) to verify there's a real star.
         Returns (xc, yc, med) if star found, None otherwise.
-        Ported from AAPKI_GUI.ipynb _refine_centroid function.
+        Refine a centroid around the current click position.
         """
         if self.image_data is None:
             return None
@@ -1768,10 +1710,7 @@ class MasterIdEditorWindow(StepWindowBase):
         # Try .wcs file
         if self.current_filename:
             if self.use_cropped:
-                cropped_dir = step2_cropped_dir(self.params.P.result_dir)
-                if not cropped_dir.exists():
-                    cropped_dir = self.params.P.result_dir / "cropped"
-                fits_path = cropped_dir / self.current_filename
+                fits_path = step2_cropped_dir(self.params.P.result_dir) / self.current_filename
             else:
                 fits_path = self.params.P.data_dir / self.current_filename
             wcs_path = fits_path.with_suffix(".wcs")
@@ -1942,12 +1881,7 @@ class MasterIdEditorWindow(StepWindowBase):
         dialog.accept()
 
     def validate_step(self) -> bool:
-        master_path = step8_dir(self.params.P.result_dir) / "master_star_ids.csv"
-        if not master_path.exists():
-            master_path = step6_dir(self.params.P.result_dir) / "master_star_ids.csv"
-        if not master_path.exists():
-            master_path = self.params.P.result_dir / "master_star_ids.csv"
-        return master_path.exists()
+        return (step10_selection_dir(self.params.P.result_dir) / "master_star_ids.csv").exists()
 
     # ── Color legend floating window ─────────────────────────────────────────
 
@@ -2066,7 +2000,7 @@ class MasterIdEditorWindow(StepWindowBase):
 
     @staticmethod
     def _apply_color_btn_style(btn: QPushButton, color: str):
-        """Legacy helper kept for compat — use _refresh_color_btn instead."""
+        """Apply the current swatch color to a button."""
         btn.setStyleSheet(
             f"QPushButton {{ background-color: {color}; border: 2px solid #aaa; border-radius: 3px; }}"
             f"QPushButton:hover {{ border: 2px solid #fff; }}"
@@ -2095,7 +2029,7 @@ class MasterIdEditorWindow(StepWindowBase):
     # CMD ROI helpers
     # ------------------------------------------------------------------
     def _roi_path(self) -> Path:
-        return step8_dir(self.params.P.result_dir) / "cmd_roi.json"
+        return step10_selection_dir(self.params.P.result_dir) / "cmd_roi.json"
 
     def _load_roi(self):
         p = self._roi_path()

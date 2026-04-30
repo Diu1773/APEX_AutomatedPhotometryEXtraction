@@ -284,7 +284,7 @@ def _load_fwhm_from_meta(fname: str, cache_dir: Path, result_dir: Path,
             meta = json.loads(p.read_text(encoding="utf-8"))
         except Exception:
             continue
-        # Prefer explicit FWHM(px); keep *_rad* as fallback for legacy metadata.
+        # Prefer explicit FWHM(px); keep radius-derived values as fallback metadata.
         for k in ("fwhm_med_px", "fwhm_px", "fwhm_med", "fwhm_med_rad_px"):
             v = meta.get(k, None)
             if v is not None:
@@ -350,9 +350,6 @@ class Step6PSFWorker(QThread):
             cpath = cdir / fname
             if cpath.exists():
                 return cpath
-            legacy = self.result_dir / "cropped" / fname
-            if legacy.exists():
-                return legacy
         fpath = self.data_dir / fname
         return fpath if fpath.exists() else None
 
@@ -435,7 +432,7 @@ class Step6PSFWorker(QThread):
                 (np.isfinite(duplicate_radius_px_cfg) and duplicate_radius_px_cfg > 0.0)
                 or (duplicate_radius_mult > 0.0)
             )
-            # Legacy sentinel values (-999/999) effectively disable morphology cuts and
+            # Outdated sentinel values (-999/999) effectively disable morphology cuts and
             # can explode residual re-detections in crowded fields.
             if redetect_sharp_lo <= -900.0 and redetect_sharp_hi >= 900.0:
                 redetect_sharp_lo, redetect_sharp_hi = 0.15, 0.95
@@ -461,7 +458,7 @@ class Step6PSFWorker(QThread):
             if np.isfinite(duplicate_radius_px_cfg):
                 self._log(f"PSF dedup radius: {duplicate_radius_px_cfg:.2f}px (absolute)")
             else:
-                self._log(f"PSF dedup radius: {duplicate_radius_mult:.2f}xFWHM (legacy)")
+                self._log(f"PSF dedup radius: {duplicate_radius_mult:.2f}xFWHM")
             if not use_grouper:
                 self._log("PSF fit mode: iterative 'new' (grouper off; photutils 2.3 requires grouper for mode='all')")
             self._log(
@@ -2306,12 +2303,8 @@ class PSFPhotometryWindow(StepWindowBase):
     def populate_file_list(self):
         crop_active = crop_is_active(self.params.P.result_dir)
         cropped_dir = step2_cropped_dir(self.params.P.result_dir)
-        legacy_cropped = self.params.P.result_dir / "cropped"
         if crop_active and cropped_dir.exists() and list(cropped_dir.glob("*.fit*")):
             files = sorted([f.name for f in cropped_dir.glob("*.fit*")])
-            self.use_cropped = True
-        elif crop_active and legacy_cropped.exists() and list(legacy_cropped.glob("*.fit*")):
-            files = sorted([f.name for f in legacy_cropped.glob("*.fit*")])
             self.use_cropped = True
         else:
             if not self.file_manager.filenames:
@@ -2325,10 +2318,6 @@ class PSFPhotometryWindow(StepWindowBase):
 
         # Hard gate: downstream should skip frames where apcorr was not applied.
         apcorr_sum = step5_aperture_dir(self.params.P.result_dir) / "apcorr_summary.csv"
-        if not apcorr_sum.exists():
-            legacy_sum = self.params.P.result_dir / "apcorr_summary.csv"
-            if legacy_sum.exists():
-                apcorr_sum = legacy_sum
         if apcorr_sum.exists():
             try:
                 df_apc = pd.read_csv(apcorr_sum)
@@ -2723,7 +2712,7 @@ class PSFPhotometryWindow(StepWindowBase):
         elif len(arr_detected):
             arr = arr_detected
         else:
-            # Fallback 2 (legacy): all fitted stars in iter.
+            # Fallback 2: all fitted stars in this iteration.
             arr = self._load_xy_npy_for_iter(rec, "fitxy_path", max_points=0)
         if int(max_boxes) > 0:
             return arr[:max(0, int(max_boxes))]
@@ -2748,9 +2737,6 @@ class PSFPhotometryWindow(StepWindowBase):
             cpath = cdir / fname
             if cpath.exists():
                 return cpath
-            legacy = self.params.P.result_dir / "cropped" / fname
-            if legacy.exists():
-                return legacy
         fpath = Path(self.params.P.data_dir) / fname
         return fpath if fpath.exists() else None
 
@@ -3434,7 +3420,7 @@ class PSFPhotometryWindow(StepWindowBase):
         self._residual_meta.clear()
 
         def _epsf_display_key_from_path(epsf_path: Path) -> str:
-            stem = epsf_path.stem  # epsf_model_{filter}_{frame_stem} or legacy epsf_model_{filter}
+            stem = epsf_path.stem  # epsf_model_{filter}_{frame_stem} or epsf_model_{filter}
             body = stem.replace("epsf_model_", "", 1)
             if "_" not in body:
                 return ""
@@ -3853,7 +3839,7 @@ class PSFPhotometryWindow(StepWindowBase):
         _fmult = _to_float(getattr(self.params.P, "psf_fit_shape_fwhm_mult", 1.5), 1.5)
         if _fmult < 1.0:
             self.params.P.psf_fit_shape_fwhm_mult = 1.5
-        # Migrate legacy defaults to tuned defaults unless user explicitly changed them.
+        # Migrate broad defaults to tuned defaults unless user explicitly changed them.
         _rsig = _to_float(getattr(self.params.P, "psf_redetect_sigma", 4.0), 4.0)
         if abs(_rsig - 6.0) < 1e-6 or abs(_rsig - 7.5) < 1e-6:
             # 6.0 and 7.5 were old defaults; migrate to current default.
@@ -3872,7 +3858,7 @@ class PSFPhotometryWindow(StepWindowBase):
             self.params.P.psf_redetect_sharp_hi = 0.95
         if _rnd >= 9.0:
             self.params.P.psf_redetect_round_abs_max = 0.8
-        # Migrate overly-loose legacy UI values.
+        # Migrate overly-loose UI values.
         if _slo <= 0.01 and _shi >= 0.99 and _rnd >= 1.5:
             self.params.P.psf_redetect_sharp_lo = 0.15
             self.params.P.psf_redetect_sharp_hi = 0.95

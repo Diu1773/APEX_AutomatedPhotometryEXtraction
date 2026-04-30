@@ -70,6 +70,7 @@ STEP5_APERTURE_DIRNAME = "step5_aperture"
 STEP6_WCS_DIRNAME      = "step6_wcs"
 STEP7_REFBUILD_DIRNAME = "step7_refbuild"
 STEP8_IDMATCH_DIRNAME  = "step8_idmatch"
+TOOL_EXTINCTION_DIRNAME = "tool_extinction"
 
 
 def step5_aperture_dir(result_dir: PathLike) -> Path:
@@ -86,3 +87,7 @@ def step7_refbuild_dir(result_dir: PathLike) -> Path:
 
 def step8_idmatch_dir(result_dir: PathLike) -> Path:
     return step_dir(result_dir, STEP8_IDMATCH_DIRNAME)
+
+
+def tool_extinction_dir(result_dir: PathLike) -> Path:
+    return step_dir(result_dir, TOOL_EXTINCTION_DIRNAME)

@@ -1,7 +1,7 @@
 """
 Step 4: Source Detection Window
 Parallel source detection with segmentation and peak finding
-Based on AAPKI Cell 6
+APEX source detection workflow.
 """
 
 from PyQt5.QtWidgets import (
@@ -332,17 +332,23 @@ class DetectionWorker(QThread):
                         sharp = (s33 / max(s55, 1e-9)) if s55 > 0 else 0.0
                         return elong, sharp
 
-                    def circle_mask(shape, xc, yc, r):
-                        h, w = shape
-                        yy, xx = np.ogrid[:h, :w]
-                        return (xx - xc) ** 2 + (yy - yc) ** 2 <= r ** 2
-
                     def radial_fwhm(img, xc, yc, seed_fwhm_px, ann_in_scale, ann_out_scale,
                                     ann_min_gap_px, ann_min_width_px, sigma=3.0, maxiters=5, dr=0.5):
                         r_in = max(ann_in_scale * seed_fwhm_px, ann_min_gap_px, 12.0)
                         r_out = max(r_in + ann_out_scale * seed_fwhm_px, r_in + ann_min_width_px, 20.0)
-                        ann_mask = circle_mask(img.shape, xc, yc, r_out) & (~circle_mask(img.shape, xc, yc, r_in))
-                        vals = img[ann_mask]
+                        h, w = img.shape
+                        rmax = int(max(6.0 * seed_fwhm_px, r_out + 6.0))
+                        xi, yi = int(round(xc)), int(round(yc))
+                        x0, x1 = max(0, xi - rmax), min(w, xi + rmax + 1)
+                        y0, y1 = max(0, yi - rmax), min(h, yi + rmax + 1)
+                        if (x1 - x0) < 5 or (y1 - y0) < 5:
+                            return np.nan, 0.0, 0.0
+                        cut = img[y0:y1, x0:x1].astype(float, copy=False)
+                        yy, xx = np.mgrid[y0:y1, x0:x1]
+                        rr = np.hypot(xx - xc, yy - yc)
+
+                        ann_mask = (rr <= r_out) & (rr > r_in)
+                        vals = cut[ann_mask]
                         vals = vals[np.isfinite(vals)]
                         if vals.size:
                             sc = SigmaClip(sigma=sigma, maxiters=maxiters)
@@ -355,27 +361,19 @@ class DetectionWorker(QThread):
                             sky_med = 0.0
                             sky_std = 0.0
 
-                        h, w = img.shape
-                        rmax = int(max(6.0 * seed_fwhm_px, r_out + 6.0))
-                        xi, yi = int(round(xc)), int(round(yc))
-                        x0, x1 = max(0, xi - rmax), min(w, xi + rmax + 1)
-                        y0, y1 = max(0, yi - rmax), min(h, yi + rmax + 1)
-                        cut = img[y0:y1, x0:x1].astype(float)
-                        yy, xx = np.mgrid[y0:y1, x0:x1]
-                        rr = np.hypot(xx - xc, yy - yc)
                         val = cut - sky_med
                         edges = np.arange(0.0, rmax + dr, dr)
                         centers = 0.5 * (edges[:-1] + edges[1:])
                         prof = np.full_like(centers, np.nan, dtype=float)
-                        for i in range(len(centers)):
-                            if self._stop_requested:
-                                return np.nan, sky_med, sky_std
-                            a = (rr >= edges[i]) & (rr < edges[i + 1])
-                            if np.any(a):
-                                vv = val[a]
-                                vv = vv[np.isfinite(vv)]
-                                if vv.size:
-                                    prof[i] = float(np.mean(vv))
+                        _n_bins = len(centers)
+                        _bi = np.digitize(rr.ravel(), edges) - 1
+                        _vf = val.ravel()
+                        _mask = np.isfinite(_vf) & (_bi >= 0) & (_bi < _n_bins)
+                        if _mask.any():
+                            _cnt = np.bincount(_bi[_mask], minlength=_n_bins)
+                            _sm = np.bincount(_bi[_mask], weights=_vf[_mask], minlength=_n_bins)
+                            _ok = _cnt > 0
+                            prof[_ok] = _sm[_ok] / _cnt[_ok]
                         if not np.isfinite(prof).any():
                             return np.nan, sky_med, sky_std
                         k_peak = int(max(2, np.round(1.5 * seed_fwhm_px / max(dr, 1e-9))))
@@ -394,6 +392,15 @@ class DetectionWorker(QThread):
                             return np.nan, sky_med, sky_std
                         r_half = x1_ + (half - y1_) * (x2_ - x1_) / (y2_ - y1_)
                         return 2.0 * float(r_half), sky_med, sky_std
+
+                    def copy_if_different(src: Path, dst: Path) -> None:
+                        try:
+                            if Path(src).resolve() == Path(dst).resolve():
+                                return
+                        except Exception:
+                            if str(src) == str(dst):
+                                return
+                        shutil.copy2(src, dst)
 
                     def peak_pass_candidates(data_det, med, seed_fwhm_px):
                         h, w = data_det.shape
@@ -467,7 +474,8 @@ class DetectionWorker(QThread):
                         data_sub = data.copy()
 
                     work = np.where(np.isfinite(data_sub), data_sub, 0.0)
-                    _, bkg_median, _ = sigma_clipped_stats(work, sigma=3.0, maxiters=5)
+                    _ds = max(1, int(round(work.shape[0] ** 0.5)) // 8)
+                    _, bkg_median, _ = sigma_clipped_stats(work[::_ds, ::_ds], sigma=3.0, maxiters=3)
                     if self._stop_requested:
                         return filename, None
 
@@ -479,7 +487,7 @@ class DetectionWorker(QThread):
                         return filename, None
 
                     # Threshold (median + nsig * std)
-                    _, mF, stdF = sigma_clipped_stats(fim, sigma=3.0, maxiters=5)
+                    _, mF, stdF = sigma_clipped_stats(fim[::_ds, ::_ds], sigma=3.0, maxiters=3)
                     bkg_rms = float(stdF)
                     threshold = mF + nsig * max(stdF, 1e-9)
 
@@ -502,11 +510,13 @@ class DetectionWorker(QThread):
                     n_sources = 0
                     positions = []
                     fwhm_values = []
+                    fwhm_prelim = fwhm_seed
                     detect_method = "segm" if detect_engine == "segm" else detect_engine
                     median_elongation = np.nan
                     median_roundness = np.nan
                     sat_star_count = 0
                     elong_map = {}
+                    fwhm_by_xy = {}
 
                     if segm is not None and segm.nlabels > 0:
                         # Stage 4: Deblending
@@ -576,6 +586,38 @@ class DetectionWorker(QThread):
                         keep = np.isfinite(x0) & np.isfinite(y0) & (e0 <= elong_max)
                         x0, y0, e0 = x0[keep], y0[keep], e0[keep]
 
+                        # Estimate frame FWHM from bright sources before DAO refinement.
+                        try:
+                            _n_prelim = min(10, len(x0))
+                            _fwhm_prelim_vals = []
+                            for _xi, _yi in zip(x0[:_n_prelim], y0[:_n_prelim]):
+                                _rc = refine_centroid(data, _xi, _yi, fwhm_seed)
+                                if _rc is None:
+                                    continue
+                                _xc, _yc, _, _ = _rc
+                                _fpx, _, _ = radial_fwhm(
+                                    data, _xc, _yc, fwhm_seed,
+                                    float(getattr(P, 'fitsky_annulus_scale', 4.0)),
+                                    float(getattr(P, 'fitsky_dannulus_scale', 2.0)),
+                                    float(getattr(P, 'annulus_min_gap_px', 6.0)),
+                                    float(getattr(P, 'annulus_min_width_px', 12.0)),
+                                    sigma=float(getattr(P, 'annulus_sigma_clip', 3.0)),
+                                    maxiters=int(getattr(P, 'fitsky_max_iter', 5)),
+                                    dr=float(getattr(P, 'fwhm_dr', 0.5)),
+                                )
+                                if np.isfinite(_fpx) and _fpx > 0:
+                                    _fpx = float(_fpx)
+                                    _fwhm_prelim_vals.append(_fpx)
+                                    fwhm_by_xy[(float(_xi), float(_yi))] = _fpx
+                            if len(_fwhm_prelim_vals) >= 3:
+                                fwhm_prelim = float(np.nanmedian(_fwhm_prelim_vals))
+                                self.worker_status.emit(
+                                    worker_id, short_name,
+                                    f"FWHM={fwhm_prelim:.1f}px", 77
+                                )
+                        except Exception:
+                            pass
+
                         cand = np.vstack([x0, y0]).T
                         e_cand = e0.copy()
                         detect_keep_max = int(getattr(P, 'detect_keep_max', 6000))
@@ -631,7 +673,7 @@ class DetectionWorker(QThread):
                             # DAO as primary detector: full image scan
                             try:
                                 daofind = DAOStarFinder(
-                                    fwhm=dao_fwhm_px,
+                                    fwhm=fwhm_prelim,
                                     threshold=threshold,
                                     sharplo=dao_sharp_lo,
                                     sharphi=dao_sharp_hi,
@@ -676,55 +718,49 @@ class DetectionWorker(QThread):
                             except Exception:
                                 detect_method = "none"
                         elif positions:
-                            # DAO refine: cutout-based validation (fast)
-                            cutout_half = int(dao_fwhm_px * 3)  # 3x FWHM radius
-                            ny, nx = data_sub.shape
+                            # DAO refine: single full-image pass + batched KDTree match.
                             filtered = []
 
                             daofind = DAOStarFinder(
-                                fwhm=dao_fwhm_px,
-                                threshold=threshold * 0.8,  # slightly lower for cutout
+                                fwhm=fwhm_prelim,
+                                threshold=threshold * 0.8,
                                 sharplo=dao_sharp_lo,
                                 sharphi=dao_sharp_hi,
                                 roundlo=dao_round_lo,
                                 roundhi=dao_round_hi
                             )
 
-                            for x, y in positions:
-                                if self._stop_requested:
-                                    return filename, None
-                                ix, iy = int(round(x)), int(round(y))
-                                x0 = max(0, ix - cutout_half)
-                                x1 = min(nx, ix + cutout_half + 1)
-                                y0 = max(0, iy - cutout_half)
-                                y1 = min(ny, iy + cutout_half + 1)
+                            if self._stop_requested:
+                                return filename, None
+                            try:
+                                dao_full = daofind(data_sub)
+                            except Exception:
+                                dao_full = None
 
-                                if x1 - x0 < 5 or y1 - y0 < 5:
-                                    continue
-
-                                cutout = data_sub[y0:y1, x0:x1]
-                                try:
-                                    dao_cat = daofind(cutout)
-                                    if dao_cat is not None and len(dao_cat) > 0:
-                                        # Check if any detection is near the center
-                                        cx, cy = x - x0, y - y0
-                                    for i, (dx, dy) in enumerate(zip(dao_cat['xcentroid'], dao_cat['ycentroid'])):
-                                        if (dx - cx)**2 + (dy - cy)**2 <= dao_match_tol**2:
-                                            xf, yf = float(x), float(y)
-                                            filtered.append((xf, yf))
-                                            try:
-                                                source_dao_info[(xf, yf)] = {
-                                                    'sharpness': float(dao_cat['sharpness'][i]),
-                                                    'roundness1': float(dao_cat['roundness1'][i]),
-                                                    'roundness2': float(dao_cat['roundness2'][i]),
-                                                    'peak': float(dao_cat['peak'][i]),
-                                                    'flux': float(dao_cat['flux'][i]),
-                                                }
-                                            except Exception:
-                                                pass
-                                            break
-                                except Exception:
-                                    pass
+                            if dao_full is not None and len(dao_full) > 0:
+                                dao_xy = np.c_[
+                                    np.asarray(dao_full['xcentroid'], float),
+                                    np.asarray(dao_full['ycentroid'], float)
+                                ]
+                                src_xy = np.array(positions, float)
+                                dists, _idxs = KDTree(dao_xy).query(src_xy, k=1)
+                                keep_dao = dists <= dao_match_tol
+                                for _si in range(len(positions)):
+                                    if not keep_dao[_si]:
+                                        continue
+                                    xf, yf = float(positions[_si][0]), float(positions[_si][1])
+                                    filtered.append((xf, yf))
+                                    _di = int(_idxs[_si])
+                                    try:
+                                        source_dao_info[(xf, yf)] = {
+                                            'sharpness': float(dao_full['sharpness'][_di]),
+                                            'roundness1': float(dao_full['roundness1'][_di]),
+                                            'roundness2': float(dao_full['roundness2'][_di]),
+                                            'peak': float(dao_full['peak'][_di]),
+                                            'flux': float(dao_full['flux'][_di]),
+                                        }
+                                    except Exception:
+                                        pass
 
                             positions = filtered
                             n_sources = len(positions)
@@ -790,6 +826,11 @@ class DetectionWorker(QThread):
                             for (x, y) in pts[:n_use]:
                                 if self._stop_requested:
                                     return filename, None
+                                xy_key = (float(x), float(y))
+                                cached_fwhm = fwhm_by_xy.get(xy_key)
+                                if cached_fwhm is not None and np.isfinite(cached_fwhm):
+                                    fwhm_values.append(float(cached_fwhm))
+                                    continue
                                 rc = refine_centroid(data, x, y, fwhm_seed)
                                 if rc is None:
                                     continue
@@ -801,7 +842,9 @@ class DetectionWorker(QThread):
                                     sigma=ann_sigma, maxiters=ann_maxiter, dr=fwhm_dr
                                 )
                                 if np.isfinite(fpx):
-                                    fwhm_values.append(float(fpx))
+                                    fpx = float(fpx)
+                                    fwhm_values.append(fpx)
+                                    fwhm_by_xy[xy_key] = fpx
                             if fwhm_values:
                                 fwhm_median = float(np.nanmedian(fwhm_values))
                     except Exception:
@@ -853,8 +896,7 @@ class DetectionWorker(QThread):
                     }
                     with open(cache_file, 'w') as f:
                         json.dump(payload, f)
-                    with open(step4_file, 'w') as f:
-                        json.dump(payload, f)
+                    copy_if_different(cache_file, step4_file)
 
                     # Save positions with extended info (DAO stats, FWHM, peak value)
                     pos_file = self.cache_dir / f"detect_{filename}.csv"
@@ -891,36 +933,60 @@ class DetectionWorker(QThread):
 
                             try:
                                 ix, iy = int(round(x)), int(round(y))
-                                record['peak_adu'] = float(data[iy, ix]) if 0 <= iy < data.shape[0] and 0 <= ix < data.shape[1] else np.nan
-                                rc = refine_centroid(data, x, y, fwhm_seed)
-                                if rc is not None:
-                                    xc, yc, _, _ = rc
-                                    fwhm_src, _, _ = radial_fwhm(
-                                        data, xc, yc, fwhm_seed,
-                                        ann_in_scale, ann_out_scale,
-                                        ann_min_gap_px, ann_min_width_px,
-                                        sigma=ann_sigma, maxiters=ann_maxiter, dr=fwhm_dr
-                                    )
-                                    record['fwhm_px'] = float(fwhm_src) if fwhm_src is not None and np.isfinite(fwhm_src) else np.nan
+                                h_img, w_img = data.shape
+                                in_bounds = 0 <= iy < h_img and 0 <= ix < w_img
+                                record['peak_adu'] = float(data[iy, ix]) if in_bounds else np.nan
+
+                                r_in_flag = max(ann_in_scale * fwhm_seed, ann_min_gap_px, 12.0)
+                                r_out_flag = max(r_in_flag + ann_out_scale * fwhm_seed, r_in_flag + ann_min_width_px, 20.0)
+                                near_edge = (
+                                    (float(x) - r_out_flag) < 0
+                                    or (float(y) - r_out_flag) < 0
+                                    or (float(x) + r_out_flag) >= w_img
+                                    or (float(y) + r_out_flag) >= h_img
+                                )
+                                saturated = np.isfinite(record['peak_adu']) and record['peak_adu'] >= float(getattr(P, 'saturation_adu', 60000.0))
+
+                                xy_key = (float(x), float(y))
+                                fwhm_src = fwhm_by_xy.get(xy_key, np.nan)
+                                if not np.isfinite(fwhm_src):
+                                    rc = refine_centroid(data, x, y, fwhm_seed)
+                                    if rc is not None:
+                                        xc, yc, _, _ = rc
+                                        fwhm_src, _, _ = radial_fwhm(
+                                            data, xc, yc, fwhm_seed,
+                                            ann_in_scale, ann_out_scale,
+                                            ann_min_gap_px, ann_min_width_px,
+                                            sigma=ann_sigma, maxiters=ann_maxiter, dr=fwhm_dr
+                                        )
+                                        if fwhm_src is not None and np.isfinite(fwhm_src):
+                                            fwhm_by_xy[xy_key] = float(fwhm_src)
+                                record['fwhm_px'] = float(fwhm_src) if np.isfinite(fwhm_src) else np.nan
+                                if not np.isfinite(record['fwhm_px']):
+                                    record['fwhm_status'] = "failed"
+                                elif saturated:
+                                    record['fwhm_status'] = "saturated"
+                                elif near_edge:
+                                    record['fwhm_status'] = "edge"
                                 else:
-                                    record['fwhm_px'] = np.nan
+                                    record['fwhm_status'] = "ok"
                             except Exception:
                                 record['peak_adu'] = np.nan
                                 record['fwhm_px'] = np.nan
+                                record['fwhm_status'] = "failed"
 
                             record['source_type'] = 'peak' if (x, y) in peak_set else 'segm'
                             source_records.append(record)
 
                         df_sources = pd.DataFrame(source_records)
                         df_sources.to_csv(pos_file, index=False)
-                        df_sources.to_csv(step4_pos, index=False)
+                        copy_if_different(pos_file, step4_pos)
                     if peak_positions:
                         peak_file = self.cache_dir / f"detect_peak_{filename}.csv"
                         step4_peak = step4_out / f"detect_peak_{filename}.csv"
                         np.savetxt(peak_file, peak_positions, delimiter=',',
                                   header='x,y', comments='')
-                        np.savetxt(step4_peak, peak_positions, delimiter=',',
-                                  header='x,y', comments='')
+                        copy_if_different(peak_file, step4_peak)
 
                     self.worker_status.emit(worker_id, short_name, "Done", 100)
 
@@ -1483,8 +1549,6 @@ class QCInspectionPanel(QWidget):
     def _apply_exclusions_from_file(self):
         _rd = self.params.P.result_dir
         fq_path = step4_dir(_rd) / "frame_quality.csv"
-        if not fq_path.exists():  # legacy: AAPKL wrote to step5
-            fq_path = _rd / "step5_photometry" / "frame_quality.csv"
         if not fq_path.exists():
             return
         try:
@@ -1904,7 +1968,7 @@ class SourceDetectionWindow(StepWindowBase):
                 except Exception:
                     pass
 
-        # Also check legacy uppercase patterns
+        # Also check uppercase parameter names.
         if hasattr(P, 'detect_sigma_g') and P.detect_sigma_g:
             self.filter_sigma_map['g'] = float(P.detect_sigma_g)
         if hasattr(P, 'detect_sigma_r') and P.detect_sigma_r:
@@ -2385,7 +2449,7 @@ class SourceDetectionWindow(StepWindowBase):
         for filename in self.file_list:
             data, pos_file, peak_file, cache_file = self._pick_detection_cache(filename, previous=False)
             if data is None:
-                # meta exists but all incompatible/legacy -> count for log
+                # meta exists but all incompatible -> count for log
                 maybe_meta = [
                     cache_dir / f"detect_{filename}.json",
                     step4_out / f"detect_{filename}.json",
@@ -2445,7 +2509,7 @@ class SourceDetectionWindow(StepWindowBase):
             self.update_navigation_buttons()
             self._refresh_qc_panel()
         elif skipped_incompatible > 0:
-            self.log(f"Ignored legacy/incompatible detection cache: {skipped_incompatible} files")
+            self.log(f"Ignored incompatible detection cache: {skipped_incompatible} files")
 
     def load_previous_cached_results(self):
         """Load previous detection results for undo"""
@@ -2591,6 +2655,7 @@ class SourceDetectionWindow(StepWindowBase):
 
         # Right: Worker status panel
         worker_group = QGroupBox("Workers")
+        worker_group.setMinimumWidth(430)
         worker_layout = QVBoxLayout(worker_group)
         worker_layout.setSpacing(2)
         worker_layout.setContentsMargins(5, 5, 5, 5)
@@ -2625,6 +2690,22 @@ class SourceDetectionWindow(StepWindowBase):
                 widget = item.widget()
                 if widget is not None:
                     widget.setParent(None)
+
+    @staticmethod
+    def _fit_status_text(value, width: int) -> str:
+        text = str(value or "")
+        width = max(4, int(width))
+        if len(text) <= width:
+            return text.ljust(width)
+        keep = max(1, width - 3)
+        head = max(1, keep // 2)
+        tail = max(1, keep - head)
+        return f"{text[:head]}...{text[-tail:]}"
+
+    def _format_worker_status_text(self, worker_id: int, filename: str, status: str) -> str:
+        fname = self._fit_status_text(Path(str(filename)).name, 28)
+        state = self._fit_status_text(status, 18)
+        return f"W{int(worker_id):02d}  {fname}  {state}"
 
     def on_file_changed(self, index):
         """Handle file selection change"""
@@ -3358,24 +3439,30 @@ class SourceDetectionWindow(StepWindowBase):
             row_widget = QWidget()
             row_layout = QHBoxLayout(row_widget)
             row_layout.setContentsMargins(0, 0, 0, 0)
+            row_layout.setSpacing(6)
             label = QLabel()
+            label.setFixedWidth(310)
+            label.setStyleSheet("QLabel { font-family: Consolas, 'Courier New', monospace; }")
             bar = QProgressBar()
             bar.setRange(0, 100)
             bar.setValue(0)
             bar.setTextVisible(True)
+            bar.setMinimumWidth(140)
             row_layout.addWidget(label)
-            row_layout.addWidget(bar)
+            row_layout.addWidget(bar, stretch=1)
             self.worker_status_layout.addWidget(row_widget)
             self.worker_progress_bars[worker_id] = (label, bar)
 
         label, bar = self.worker_progress_bars[worker_id]
-        label.setText(f"W{worker_id}: {filename} | {status}")
+        status_text = self._format_worker_status_text(worker_id, filename, status)
+        label.setText(status_text)
+        label.setToolTip(f"W{worker_id}: {filename} | {status}")
         bar.setValue(progress)
 
         last = self.worker_last_status.get(worker_id)
         current = (filename, status)
         if last != current:
-            self.log(f"W{worker_id}: {filename} | {status}")
+            self.log(status_text.rstrip())
             self.worker_last_status[worker_id] = current
 
     def on_file_done(self, filename, result):

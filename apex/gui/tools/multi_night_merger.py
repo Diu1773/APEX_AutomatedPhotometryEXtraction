@@ -448,7 +448,7 @@ class MultiNightMergerWindow(QMainWindow):
             return self.step9_embedded_window
         if self.merged_result_dir is None:
             return None
-        from ..workflow.step9_target_comparison_selection import TargetComparisonSelectionWindow
+        from apex.gui.workflow.lc.step9_target_selection import TargetComparisonSelectionWindow
 
         window = TargetComparisonSelectionWindow(
             self.merged_runtime_params,
@@ -466,7 +466,7 @@ class MultiNightMergerWindow(QMainWindow):
             return self.step10_embedded_window
         if self.merged_result_dir is None:
             return None
-        from ..workflow.step10_light_curve_builder import LightCurveBuilderWindow
+        from apex.gui.workflow.lc.step10_lightcurve_builder import LightCurveBuilderWindow
 
         window = LightCurveBuilderWindow(
             self.merged_runtime_params,
@@ -484,7 +484,7 @@ class MultiNightMergerWindow(QMainWindow):
             return self.step11_embedded_window
         if self.merged_result_dir is None:
             return None
-        from ..workflow.step11_detrend_merge import DetrendNightMergeWindow
+        from apex.gui.workflow.lc.step11_detrend_merge import DetrendNightMergeWindow
 
         window = DetrendNightMergeWindow(
             self.merged_runtime_params,

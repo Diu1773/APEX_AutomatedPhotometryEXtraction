@@ -1,7 +1,7 @@
 """
 Step 3: Sky Preview & QC Window
 Interactive image viewer with click-to-measure stats
-Based on AAPKI Cell 6 with imexamine-like keyboard shortcuts
+Sky preview workflow with imexamine-like keyboard shortcuts.
 """
 
 from PyQt5.QtWidgets import (

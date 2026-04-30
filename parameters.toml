@@ -1,7 +1,7 @@
 [io]
-data_dir = "C:\\Users\\bmffr\\Desktop\\Result\\Aperture_Photometry_KNUEMAO\\data\\NGC2158\\light"
+data_dir = "E:\\observed_Analysis\\M13\\light"
 filename_prefix = "pp"
-result_dir = "C:\\Users\\bmffr\\Desktop\\Result\\Aperture_Photometry_KNUEMAO\\data\\NGC2420\\light\\result"
+result_dir = "E:\\observed_Analysis\\M13\\light\\result"
 cache_dir = "cache"
 
 [target]
@@ -468,7 +468,7 @@ lon_deg = 127.360176
 alt_m = 81.0
 tz_offset_hours = 9.0
 
-[legacy]
+[parameters]
 max_recenter_shift = 2.0
 centroid_outlier_px = 1.0
 sky_sigma_mode = "local"

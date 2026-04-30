@@ -820,7 +820,7 @@ def _read_iraf_coo(path: Path) -> pd.DataFrame:
     return df
 
 
-def _read_aapki_tsv(path: Path) -> pd.DataFrame:
+def _read_apex_tsv(path: Path) -> pd.DataFrame:
     try:
         return pd.read_csv(path, sep="\t")
     except:
@@ -888,7 +888,7 @@ class IRAFPhotometryWindow(QMainWindow):
         self.overlay_current_index = 0
         self.overlay_image_data = None
         self.overlay_header = None
-        self.overlay_aapki_map = {}
+        self.overlay_apex_map = {}
         self.overlay_iraf_map = {}
         self.overlay_filter_cache = {}
         self._overlay_normalized_cache = None
@@ -1919,17 +1919,17 @@ class IRAFPhotometryWindow(QMainWindow):
         settings_group = QGroupBox("Comparison Settings")
         settings_layout = QFormLayout()
 
-        # AAPKI dir
-        aapki_row = QHBoxLayout()
-        self.cmp_aapki_edit = QLineEdit(str(self.result_dir))
-        aapki_btn = QPushButton("Browse")
-        aapki_btn.clicked.connect(lambda: self._browse_dir(self.cmp_aapki_edit))
-        aapki_row.addWidget(self.cmp_aapki_edit)
-        aapki_row.addWidget(aapki_btn)
-        aapki_w = QWidget()
-        aapki_w.setLayout(aapki_row)
-        settings_layout.addRow("AAPKI Result Dir:", aapki_w)
-        self.cmp_aapki_edit.editingFinished.connect(self._overlay_refresh_maps)
+        # APEX dir
+        apex_row = QHBoxLayout()
+        self.cmp_apex_edit = QLineEdit(str(self.result_dir))
+        apex_btn = QPushButton("Browse")
+        apex_btn.clicked.connect(lambda: self._browse_dir(self.cmp_apex_edit))
+        apex_row.addWidget(self.cmp_apex_edit)
+        apex_row.addWidget(apex_btn)
+        apex_w = QWidget()
+        apex_w.setLayout(apex_row)
+        settings_layout.addRow("APEX Result Dir:", apex_w)
+        self.cmp_apex_edit.editingFinished.connect(self._overlay_refresh_maps)
 
         # IRAF dir
         iraf_row = QHBoxLayout()
@@ -2001,7 +2001,7 @@ class IRAFPhotometryWindow(QMainWindow):
         self.cmp_table.setHorizontalHeaderLabels([
             "Frame", "Matched", "dmag_med", "dmag_std", "dx_med", "dy_med",
             "dist_med", "dist_p95", "frac<=tol", "shift_x", "shift_y",
-            "N_iraf", "N_aapki"
+            "N_iraf", "N_apex"
         ])
         self.cmp_table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeToContents)
         self.cmp_table.horizontalHeader().setStretchLastSection(True)
@@ -2053,7 +2053,7 @@ class IRAFPhotometryWindow(QMainWindow):
         layout = QVBoxLayout(widget)
 
         info = QLabel(
-            "Overlay AAPKI TSV positions with IRAF daofind positions on FITS frames."
+            "Overlay APEX TSV positions with IRAF daofind positions on FITS frames."
         )
         info.setStyleSheet("QLabel { background-color: #FFF3CD; padding: 6px; border-radius: 4px; }")
         layout.addWidget(info)
@@ -2134,10 +2134,10 @@ class IRAFPhotometryWindow(QMainWindow):
         btn_2d_plot.clicked.connect(self._overlay_open_stretch_plot)
         control_layout.addWidget(btn_2d_plot)
 
-        self.overlay_show_aapki = QCheckBox("AAPKI TSV")
-        self.overlay_show_aapki.setChecked(True)
-        self.overlay_show_aapki.stateChanged.connect(self._overlay_redisplay)
-        control_layout.addWidget(self.overlay_show_aapki)
+        self.overlay_show_apex = QCheckBox("APEX TSV")
+        self.overlay_show_apex.setChecked(True)
+        self.overlay_show_apex.stateChanged.connect(self._overlay_redisplay)
+        control_layout.addWidget(self.overlay_show_apex)
 
         self.overlay_show_iraf = QCheckBox("IRAF daofind")
         self.overlay_show_iraf.setChecked(True)
@@ -2390,16 +2390,16 @@ class IRAFPhotometryWindow(QMainWindow):
         )
 
     def _overlay_refresh_maps(self):
-        aapki_dir = Path(self.cmp_aapki_edit.text())
+        apex_dir = Path(self.cmp_apex_edit.text())
         iraf_dir = Path(self.cmp_iraf_edit.text())
 
-        self.overlay_aapki_map = {}
+        self.overlay_apex_map = {}
         self.overlay_iraf_map = {}
 
-        if aapki_dir.exists():
-            for p in aapki_dir.rglob("*_photometry.tsv"):
+        if apex_dir.exists():
+            for p in apex_dir.rglob("*_photometry.tsv"):
                 key = _normalize_frame_key(p.stem)
-                self.overlay_aapki_map.setdefault(key, p)
+                self.overlay_apex_map.setdefault(key, p)
 
         if iraf_dir.exists():
             for p in iraf_dir.rglob("*.coo"):
@@ -2411,7 +2411,7 @@ class IRAFPhotometryWindow(QMainWindow):
                     self.overlay_iraf_map.setdefault(key, p)
 
         self._cmp_log(
-            f"Overlay: aapki={len(self.overlay_aapki_map)} | iraf={len(self.overlay_iraf_map)}"
+            f"Overlay: apex={len(self.overlay_apex_map)} | iraf={len(self.overlay_iraf_map)}"
         )
 
     def _overlay_on_file_changed(self, index):
@@ -2497,22 +2497,22 @@ class IRAFPhotometryWindow(QMainWindow):
         fname = self.overlay_file_list[self.overlay_current_index]
         key = _normalize_frame_key(Path(fname).stem)
 
-        aapki_xy = self._overlay_get_aapki_xy(key)
+        apex_xy = self._overlay_get_apex_xy(key)
         iraf_xy = self._overlay_get_iraf_xy(key)
 
-        aapki_n = 0
+        apex_n = 0
         iraf_n = 0
 
-        if self.overlay_show_aapki.isChecked() and aapki_xy.size:
-            aapki_n = aapki_xy.shape[0]
+        if self.overlay_show_apex.isChecked() and apex_xy.size:
+            apex_n = apex_xy.shape[0]
             self.overlay_ax.scatter(
-                aapki_xy[:, 0],
-                aapki_xy[:, 1],
+                apex_xy[:, 0],
+                apex_xy[:, 1],
                 s=18,
                 facecolors="none",
                 edgecolors="#00C853",
                 linewidths=0.8,
-                label="AAPKI TSV",
+                label="APEX TSV",
             )
 
         if self.overlay_show_iraf.isChecked() and iraf_xy.size:
@@ -2527,7 +2527,7 @@ class IRAFPhotometryWindow(QMainWindow):
                 label="IRAF daofind",
             )
 
-        if self.overlay_show_aapki.isChecked() or self.overlay_show_iraf.isChecked():
+        if self.overlay_show_apex.isChecked() or self.overlay_show_iraf.isChecked():
             self.overlay_ax.legend(loc="upper right", fontsize=8, framealpha=0.7)
 
         self.overlay_ax.set_xlabel("X (pixels)")
@@ -2546,11 +2546,11 @@ class IRAFPhotometryWindow(QMainWindow):
 
         filt = self._overlay_get_filter(fname)
         self.overlay_status.setText(
-            f"Frame: {fname} | Filter: {filt} | AAPKI: {aapki_n} | IRAF: {iraf_n}"
+            f"Frame: {fname} | Filter: {filt} | APEX: {apex_n} | IRAF: {iraf_n}"
         )
 
         self._cmp_log(
-            f"Overlay: {fname} | filter={filt} | aapki={aapki_n} | iraf={iraf_n}"
+            f"Overlay: {fname} | filter={filt} | apex={apex_n} | iraf={iraf_n}"
         )
 
     def _overlay_render_empty(self, message: str):
@@ -2562,12 +2562,12 @@ class IRAFPhotometryWindow(QMainWindow):
         self.overlay_xlim_original = None
         self.overlay_ylim_original = None
 
-    def _overlay_get_aapki_xy(self, key: str) -> np.ndarray:
-        path = self.overlay_aapki_map.get(key)
+    def _overlay_get_apex_xy(self, key: str) -> np.ndarray:
+        path = self.overlay_apex_map.get(key)
         if path is None:
             return np.zeros((0, 2), dtype=float)
         try:
-            df = _read_aapki_tsv(path)
+            df = _read_apex_tsv(path)
         except Exception:
             return np.zeros((0, 2), dtype=float)
         x_col = _pick_first(df.columns, ["xcenter", "x", "x_init"])
@@ -3126,20 +3126,20 @@ class IRAFPhotometryWindow(QMainWindow):
     # Comparison
     # ========================================================================
     def run_comparison(self):
-        aapki_dir = Path(self.cmp_aapki_edit.text())
+        apex_dir = Path(self.cmp_apex_edit.text())
         iraf_dir = Path(self.cmp_iraf_edit.text())
         tol = self.cmp_tol.value()
 
         if hasattr(self, "cmp_log_text") and self.cmp_log_text is not None:
             self.cmp_log_text.clear()
         self._cmp_log("Starting comparison")
-        self._cmp_log(f"AAPKI dir: {aapki_dir}")
+        self._cmp_log(f"APEX dir: {apex_dir}")
         self._cmp_log(f"IRAF dir: {iraf_dir}")
         self._cmp_log(f"Tolerance: {tol:.2f} px")
 
-        if not aapki_dir.exists():
-            self._cmp_log(f"ERROR: AAPKI dir not found: {aapki_dir}")
-            QMessageBox.warning(self, "Error", f"AAPKI dir not found: {aapki_dir}")
+        if not apex_dir.exists():
+            self._cmp_log(f"ERROR: APEX dir not found: {apex_dir}")
+            QMessageBox.warning(self, "Error", f"APEX dir not found: {apex_dir}")
             return
         if not iraf_dir.exists():
             self._cmp_log(f"ERROR: IRAF dir not found: {iraf_dir}")
@@ -3149,20 +3149,20 @@ class IRAFPhotometryWindow(QMainWindow):
         self._overlay_refresh_maps()
 
         # Collect files
-        aapki_map = {}
-        for p in aapki_dir.rglob("*_photometry.tsv"):
+        apex_map = {}
+        for p in apex_dir.rglob("*_photometry.tsv"):
             key = _normalize_frame_key(p.stem)
-            aapki_map.setdefault(key, p)
+            apex_map.setdefault(key, p)
 
         iraf_map = {}
         for p in iraf_dir.rglob("*.txt"):
             key = _normalize_frame_key(p.stem)
             iraf_map.setdefault(key, p)
 
-        self._cmp_log(f"AAPKI files: {len(aapki_map)}")
+        self._cmp_log(f"APEX files: {len(apex_map)}")
         self._cmp_log(f"IRAF files: {len(iraf_map)}")
 
-        frames = sorted(set(aapki_map) & set(iraf_map))
+        frames = sorted(set(apex_map) & set(iraf_map))
         if not frames:
             self._cmp_log("ERROR: No matching frames found.")
             QMessageBox.warning(self, "Error", "No matching frames found.")
@@ -3173,8 +3173,8 @@ class IRAFPhotometryWindow(QMainWindow):
         self.frame_matches = {}
         all_matches = []
 
-        def _match_with_iraf(iraf_df, aapki_df, x_col, y_col, mag_col):
-            axy = aapki_df[[x_col, y_col]].to_numpy(float)
+        def _match_with_iraf(iraf_df, apex_df, x_col, y_col, mag_col):
+            axy = apex_df[[x_col, y_col]].to_numpy(float)
             ixy = iraf_df[["x", "y"]].to_numpy(float)
 
             if axy.size == 0 or ixy.size == 0:
@@ -3191,25 +3191,25 @@ class IRAFPhotometryWindow(QMainWindow):
                 "iraf_x": iraf_df.loc[mask, "x"].to_numpy(),
                 "iraf_y": iraf_df.loc[mask, "y"].to_numpy(),
                 "iraf_mag": iraf_df.loc[mask, "mag"].to_numpy(),
-                "aapki_x": aapki_df.loc[idx[mask], x_col].to_numpy(),
-                "aapki_y": aapki_df.loc[idx[mask], y_col].to_numpy(),
-                "aapki_mag": aapki_df.loc[idx[mask], mag_col].to_numpy(),
+                "apex_x": apex_df.loc[idx[mask], x_col].to_numpy(),
+                "apex_y": apex_df.loc[idx[mask], y_col].to_numpy(),
+                "apex_mag": apex_df.loc[idx[mask], mag_col].to_numpy(),
                 "dist_px": dist[mask],
             })
-            match["dx"] = match["aapki_x"] - match["iraf_x"]
-            match["dy"] = match["aapki_y"] - match["iraf_y"]
-            match["dmag"] = match["aapki_mag"] - match["iraf_mag"]
+            match["dx"] = match["apex_x"] - match["iraf_x"]
+            match["dy"] = match["apex_y"] - match["iraf_y"]
+            match["dmag"] = match["apex_mag"] - match["iraf_mag"]
             return match
 
         for frame in frames:
-            aapki_df = _read_aapki_tsv(aapki_map[frame])
+            apex_df = _read_apex_tsv(apex_map[frame])
             iraf_df = _read_iraf_txt(iraf_map[frame])
 
-            mag_col = _pick_first(aapki_df.columns, ["mag_inst", "mag", "mag_raw"])
-            x_col = _pick_first(aapki_df.columns, ["xcenter", "x", "x_init"])
-            y_col = _pick_first(aapki_df.columns, ["ycenter", "y", "y_init"])
+            mag_col = _pick_first(apex_df.columns, ["mag_inst", "mag", "mag_raw"])
+            x_col = _pick_first(apex_df.columns, ["xcenter", "x", "x_init"])
+            y_col = _pick_first(apex_df.columns, ["ycenter", "y", "y_init"])
 
-            n_aapki_total = len(aapki_df)
+            n_apex_total = len(apex_df)
             n_iraf_total = len(iraf_df)
 
             if not all([mag_col, x_col, y_col]):
@@ -3218,7 +3218,7 @@ class IRAFPhotometryWindow(QMainWindow):
                 )
                 continue
 
-            match = _match_with_iraf(iraf_df, aapki_df, x_col, y_col, mag_col)
+            match = _match_with_iraf(iraf_df, apex_df, x_col, y_col, mag_col)
             if not match.empty:
                 dx_med = float(np.nanmedian(match["dx"]))
                 dy_med = float(np.nanmedian(match["dy"]))
@@ -3232,7 +3232,7 @@ class IRAFPhotometryWindow(QMainWindow):
                 iraf_adj = iraf_df.copy()
                 iraf_adj["x"] = iraf_adj["x"] + shift_x
                 iraf_adj["y"] = iraf_adj["y"] + shift_y
-                match = _match_with_iraf(iraf_adj, aapki_df, x_col, y_col, mag_col)
+                match = _match_with_iraf(iraf_adj, apex_df, x_col, y_col, mag_col)
 
             if match.empty:
                 self._cmp_log(f"{frame}: matched 0 (no pairs within {tol:.2f}px)")
@@ -3249,7 +3249,7 @@ class IRAFPhotometryWindow(QMainWindow):
                     "best_shift_x": np.nan,
                     "best_shift_y": np.nan,
                     "n_iraf_total": n_iraf_total,
-                    "n_aapki_total": n_aapki_total,
+                    "n_apex_total": n_apex_total,
                 })
                 self.frame_matches[frame] = pd.DataFrame()
                 continue
@@ -3272,7 +3272,7 @@ class IRAFPhotometryWindow(QMainWindow):
                 f"dx={dx_med:.3f} dy={dy_med:.3f} "
                 f"dist_med={dist_med:.3f} p95={dist_p95:.3f} "
                 f"shift=({best_shift_x:.1f},{best_shift_y:.1f}) "
-                f"n_iraf={n_iraf_total} n_aapki={n_aapki_total}"
+                f"n_iraf={n_iraf_total} n_apex={n_apex_total}"
             )
 
             self.frame_rows.append({
@@ -3288,7 +3288,7 @@ class IRAFPhotometryWindow(QMainWindow):
                 "best_shift_x": best_shift_x,
                 "best_shift_y": best_shift_y,
                 "n_iraf_total": n_iraf_total,
-                "n_aapki_total": n_aapki_total,
+                "n_apex_total": n_apex_total,
             })
             self.frame_matches[frame] = match
             all_matches.append(match.assign(frame=frame))
@@ -3311,7 +3311,7 @@ class IRAFPhotometryWindow(QMainWindow):
                 f"{row['best_shift_x']:.1f}" if np.isfinite(row["best_shift_x"]) else "nan",
                 f"{row['best_shift_y']:.1f}" if np.isfinite(row["best_shift_y"]) else "nan",
                 str(int(row["n_iraf_total"])),
-                str(int(row["n_aapki_total"])),
+                str(int(row["n_apex_total"])),
             ]
             for col, text in enumerate(items):
                 self.cmp_table.setItem(i, col, QTableWidgetItem(text))
@@ -3383,12 +3383,12 @@ class IRAFPhotometryWindow(QMainWindow):
         ax4 = self.cmp_fig.add_subplot(224)
 
         # dmag vs mag
-        ax1.scatter(match["aapki_mag"], match["dmag"], s=10, alpha=0.6)
+        ax1.scatter(match["apex_mag"], match["dmag"], s=10, alpha=0.6)
         ax1.axhline(0, color="red", ls="--")
         med = np.nanmedian(match["dmag"])
         ax1.axhline(med, color="blue", ls=":")
-        ax1.set_xlabel("AAPKI mag")
-        ax1.set_ylabel("dmag (AAPKI - IRAF)")
+        ax1.set_xlabel("APEX mag")
+        ax1.set_ylabel("dmag (APEX - IRAF)")
         ax1.set_title(f"dmag vs mag (med={med:.4f})")
 
         # dmag hist
@@ -3408,12 +3408,12 @@ class IRAFPhotometryWindow(QMainWindow):
         ax3.set_aspect("equal")
 
         # 1:1
-        ax4.scatter(match["iraf_mag"], match["aapki_mag"], s=10, alpha=0.6)
-        lims = [min(match["iraf_mag"].min(), match["aapki_mag"].min()),
-                max(match["iraf_mag"].max(), match["aapki_mag"].max())]
+        ax4.scatter(match["iraf_mag"], match["apex_mag"], s=10, alpha=0.6)
+        lims = [min(match["iraf_mag"].min(), match["apex_mag"].min()),
+                max(match["iraf_mag"].max(), match["apex_mag"].max())]
         ax4.plot(lims, lims, "r--")
         ax4.set_xlabel("IRAF mag")
-        ax4.set_ylabel("AAPKI mag")
+        ax4.set_ylabel("APEX mag")
         ax4.set_title("1:1 comparison")
 
         self.cmp_fig.suptitle(f"{frame} (N={len(match)})")
@@ -3444,7 +3444,7 @@ class IRAFPhotometryWindow(QMainWindow):
             QMessageBox.information(self, "Export", "No data to export.")
             return
 
-        out_dir = Path(self.cmp_aapki_edit.text()) / "iraf_comparison"
+        out_dir = Path(self.cmp_apex_edit.text()) / "iraf_comparison"
         out_dir.mkdir(parents=True, exist_ok=True)
 
         self.matched_all.to_csv(out_dir / "iraf_compare_all.csv", index=False)

@@ -662,6 +662,22 @@ class MainWindowWorkflow(QMainWindow):
         timestamp = datetime.now().strftime("%H:%M:%S")
         self.log_text.append(f"[{timestamp}] {message}")
 
+    def _write_tool_error_log(self, tool_name: str, traceback_text: str) -> Path | None:
+        """Persist tool-launch tracebacks for GUI sessions without a console."""
+        try:
+            from datetime import datetime
+            log_dir = Path(getattr(self.params.P, "result_dir", Path.cwd())) / "logs"
+            log_dir.mkdir(parents=True, exist_ok=True)
+            log_path = log_dir / "apex_tool_errors.log"
+            stamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+            with log_path.open("a", encoding="utf-8") as fh:
+                fh.write(f"\n[{stamp}] {tool_name}\n")
+                fh.write(traceback_text.rstrip())
+                fh.write("\n")
+            return log_path
+        except Exception:
+            return None
+
     def show_about(self):
         mode_label = "CMD Cluster Photometry" if self.mode == "cmd" else "LC Light Curve Analysis"
         QMessageBox.about(
@@ -798,15 +814,34 @@ class MainWindowWorkflow(QMainWindow):
         self.append_log(f"Opened CMD + Isochrone tool: {selected}")
 
     def open_gaia_3d_viewer(self):
-        from apex.gui.tools.gaia_3d_viewer import Gaia3DViewerWindow
-        self.gaia_3d_window = Gaia3DViewerWindow(
-            self.params, self.params.P.result_dir, parent=None
-        )
-        self.gaia_3d_window.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose, False)
-        self.gaia_3d_window.show()
-        self.gaia_3d_window.raise_()
-        self.gaia_3d_window.activateWindow()
-        self.append_log(f"Opened Gaia 3D Viewer: {self.params.P.result_dir}")
+        try:
+            from apex.gui.tools.gaia_3d_viewer import Gaia3DViewerWindow
+            self.gaia_3d_window = Gaia3DViewerWindow(
+                self.params, self.params.P.result_dir, parent=None
+            )
+            self.gaia_3d_window.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose, False)
+            self.gaia_3d_window.show()
+            self.gaia_3d_window.raise_()
+            self.gaia_3d_window.activateWindow()
+            self.append_log(f"Opened Gaia 3D Viewer: {self.params.P.result_dir}")
+        except Exception as e:
+            import traceback
+            tb = traceback.format_exc()
+            log_path = self._write_tool_error_log("Gaia 3D Cluster Viewer", tb)
+            short = f"{type(e).__name__}: {e}"
+            self.append_log(f"Failed to open Gaia 3D Viewer: {short}")
+            if log_path is not None:
+                self.append_log(f"Tool error log: {log_path}")
+            msg = QMessageBox(self)
+            msg.setIcon(QMessageBox.Critical)
+            msg.setWindowTitle("Gaia 3D Viewer Error")
+            msg.setText("Failed to open Gaia 3D Cluster Viewer.")
+            detail = f"{short}\n\n"
+            if log_path is not None:
+                detail += f"Log written to:\n{log_path}"
+            msg.setInformativeText(detail)
+            msg.setDetailedText(tb)
+            msg.exec_()
 
     def open_cluster_structure_tool(self):
         from apex.gui.tools.cluster_structure import ClusterStructureWindow

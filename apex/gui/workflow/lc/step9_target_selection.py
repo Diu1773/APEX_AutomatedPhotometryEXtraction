@@ -1133,7 +1133,7 @@ class TargetComparisonSelectionWindow(StepWindowBase):
         return known
 
     def _sanitize_master_catalog_source_ids(self, flt: str, df: pd.DataFrame) -> Set[int]:
-        """Repair legacy/corrupted source_id values in saved Step8 catalogs."""
+        """Repair stale/corrupted source_id values in saved Step8 catalogs."""
         sid_series = coerce_int64_source_id(df.get("source_id")).dropna().astype("int64")
         raw_ids = [int(v) for v in sid_series.tolist()]
         if not raw_ids:
@@ -1167,8 +1167,8 @@ class TargetComparisonSelectionWindow(StepWindowBase):
                 sid_remap[sid] = int(mapped_sid)
                 idmap_fixed += 1
 
-        # Legacy corruption pattern: same stable ID repeated with both real Gaia ID
-        # and small mirrored ID (1,2,3...).
+        # Repeated-ID corruption pattern: same stable ID paired with both a real
+        # Gaia ID and a small mirrored ID (1,2,3...).
         if "ID" in df.columns:
             pair = pd.DataFrame({
                 "source_id": coerce_int64_source_id(df["source_id"]),
@@ -1276,7 +1276,7 @@ class TargetComparisonSelectionWindow(StepWindowBase):
             self.log(f"Failed to load global ID map: {e}")
 
     def _load_id_registry(self, flt: str) -> None:
-        """Load persistent ID registry for a filter, or migrate from legacy format."""
+        """Load persistent ID registry for a filter, or migrate from an existing catalog."""
         if flt in self._id_registry:
             return  # Already loaded
 
@@ -1296,11 +1296,11 @@ class TargetComparisonSelectionWindow(StepWindowBase):
             except Exception:
                 pass
 
-        # Migration: try to load from existing master_catalog
-        legacy_path = step9_out / f"master_catalog_{flt}.tsv"
-        if legacy_path.exists():
+        # Migration: try to load from an existing master_catalog.
+        catalog_path = step9_out / f"master_catalog_{flt}.tsv"
+        if catalog_path.exists():
             try:
-                df = read_csv_int64_source_id(legacy_path, sep="\t")
+                df = read_csv_int64_source_id(catalog_path, sep="\t")
                 if {"source_id", "ID"} <= set(df.columns):
                     sid_col = coerce_int64_source_id(df["source_id"]).dropna().astype("int64")
                     id_col = pd.to_numeric(df["ID"], errors="coerce").dropna().astype("int64")
@@ -1311,7 +1311,7 @@ class TargetComparisonSelectionWindow(StepWindowBase):
                         self._retired_ids[flt] = set()
                         # Save migrated registry
                         self._save_id_registry(flt)
-                        self.log(f"ID registry migrated from legacy: {flt} ({len(self._id_registry[flt])} IDs)")
+                        self.log(f"ID registry migrated from catalog: {flt} ({len(self._id_registry[flt])} IDs)")
                         return
             except Exception:
                 pass

@@ -1,6 +1,6 @@
 """
 I/O utility functions
-Extracted from AAPKI_GUI.ipynb Cell 0
+APEX I/O helpers.
 """
 
 from __future__ import annotations
@@ -50,13 +50,20 @@ def coerce_int64_source_id(series: pd.Series) -> pd.Series:
     return pd.Series(parsed, index=series.index, dtype="Int64")
 
 
-# Alias for compatibility with AAPKC code that uses parse_int64_series
+# Alias used by workflow code that expects parse_int64_series.
 def parse_int64_series(series: pd.Series) -> pd.Series:
     """Convert a series to pandas nullable Int64 without float precision loss.
 
     Alias for coerce_int64_source_id for cross-project compatibility.
     """
     return coerce_int64_source_id(series)
+
+
+def parse_int64_scalar(value):
+    """Convert one Gaia source_id-like value to int, or pd.NA when invalid."""
+    parsed = coerce_int64_source_id(pd.Series([value]))
+    out = parsed.iloc[0] if len(parsed) else pd.NA
+    return pd.NA if pd.isna(out) else int(out)
 
 
 def read_csv_int64_source_id(path: Union[str, Path], sep: str = ",", **kwargs) -> pd.DataFrame:
@@ -69,6 +76,18 @@ def read_csv_int64_source_id(path: Union[str, Path], sep: str = ",", **kwargs) -
     df = pd.read_csv(path, sep=sep, dtype={"source_id": str}, **kwargs)
     if "source_id" in df.columns:
         df["source_id"] = coerce_int64_source_id(df["source_id"])
+    return df
+
+
+def read_ecsv_int64_source_id(path: Union[str, Path], **kwargs) -> pd.DataFrame:
+    """Read an Astropy ECSV table preserving Gaia source_id precision."""
+    from astropy.table import Table
+
+    table = Table.read(str(path), format="ascii.ecsv", **kwargs)
+    df = table.to_pandas()
+    for col in ("source_id", "gaia_source_id"):
+        if col in df.columns:
+            df[col] = coerce_int64_source_id(df[col])
     return df
 
 

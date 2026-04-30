@@ -175,7 +175,7 @@ from apex.gui.workflow.lc.step12_period_analysis import PeriodAnalysisWorker
 def _load_check_star_for_plot(result_dir: Path, filt: str | None = None):
     """Load check star CSV from step10 output for plotting. Returns (check_id, df_or_None)."""
     try:
-        from ..workflow.step10_light_curve_builder import _load_check_star_csv
+        from apex.gui.workflow.lc.step10_lightcurve_builder import _load_check_star_csv
         check_id, df = _load_check_star_csv(result_dir, filt=filt)
         return check_id, (df if not df.empty else None)
     except Exception:

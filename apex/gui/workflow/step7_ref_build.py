@@ -195,7 +195,7 @@ class RefBuildWorker(QThread):
             if cand.exists():
                 return cand
         # Prefer original/source path first. Step5 summary signatures are based on
-        # the true source frame, and stale copies can remain under step5_wcs/.
+        # the true source frame, and stale copies can remain in older cache folders.
         try:
             orig = Path(self.params.get_file_path(fname))
             if orig.exists():
@@ -225,7 +225,7 @@ class RefBuildWorker(QThread):
         except Exception:
             schema = 0
         if schema < 2:
-            return self._legacy_detect_cache_allowed(meta_path)
+            return self._schema1_detect_cache_allowed(meta_path)
         sig_now = self._current_file_signature(fname)
         if sig_now is None:
             return False
@@ -239,7 +239,7 @@ class RefBuildWorker(QThread):
         payload["__compat_relaxed_size"] = True
         return True
 
-    def _legacy_detect_cache_allowed(self, marker_path: Path) -> bool:
+    def _schema1_detect_cache_allowed(self, marker_path: Path) -> bool:
         try:
             marker_mtime = int(marker_path.stat().st_mtime_ns)
         except Exception:
@@ -274,7 +274,7 @@ class RefBuildWorker(QThread):
             row["__compat_relaxed_size"] = True
             return True
 
-        # Legacy path: accept by path match only (no signature fields available).
+        # Schema-1 rows did not record full signatures; accept by path match only.
         fits_path = norm_path_key(row.get("fits_path", ""))
         if not fits_path:
             return False

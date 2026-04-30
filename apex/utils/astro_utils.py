@@ -1,6 +1,6 @@
 """
 Astronomical utility functions
-Extracted from AAPKI_GUI.ipynb Cell 0 and Cell 1
+APEX astronomy utility functions.
 """
 
 from __future__ import annotations
@@ -17,6 +17,13 @@ import pandas as pd
 
 # Global variable for header fallback (will be set by file_manager)
 df_headers = None
+
+
+def normalize_filter_name(value: str | None) -> str:
+    """Normalize a FITS filter value to the lowercase APEX filter key."""
+    if value is None:
+        return ""
+    return str(value).strip().lower()
 
 
 def _to_plain(a):

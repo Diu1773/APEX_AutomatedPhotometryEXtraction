@@ -58,20 +58,6 @@ def _make_app_icon() -> QIcon:
 _CMD_MAIN = _HERE / "apex" / "cmd" / "main.py"
 _LC_MAIN  = _HERE / "apex" / "lightcurve" / "main.py"
 
-# Legacy fallbacks (used when APEX mode entry point is missing)
-_LEGACY_CMD = (
-    _HERE.parent
-    / "Aperture_Photometry_KNUEMAO"
-    / "AAPKC_GUI_project"
-    / "main.py"
-)
-_LEGACY_LC = (
-    _HERE.parent
-    / "Aperture_Photometry_KNUEMAO"
-    / "AAPKL_GUI_project"
-    / "main.py"
-)
-
 _SUBPROC_KWARGS: dict = {}
 if sys.platform == "win32":
     _SUBPROC_KWARGS["creationflags"] = subprocess.CREATE_NO_WINDOW
@@ -131,18 +117,17 @@ def _configure_app_fonts(app: QApplication) -> None:
         pass
 
 
-def _launch(apex_script: Path, legacy_script: Path) -> None:
-    script = apex_script if apex_script.exists() else legacy_script
-    if not script.exists():
+def _launch(apex_script: Path) -> None:
+    if not apex_script.exists():
         QMessageBox.critical(
             None, "실행 오류",
-            f"프로젝트를 찾을 수 없습니다:\n{script}\n\n"
+            f"APEX 실행 파일을 찾을 수 없습니다:\n{apex_script}\n\n"
             "경로가 변경된 경우 main.py의 경로 설정을 확인하세요."
         )
         return
     subprocess.Popen(
-        [sys.executable, str(script)],
-        cwd=str(script.parent),
+        [sys.executable, str(apex_script)],
+        cwd=str(apex_script.parent),
         **_SUBPROC_KWARGS,
     )
 
@@ -207,13 +192,13 @@ class LauncherWindow(QWidget):
             "성단측광", "Cluster CMD Photometry",
             "#1565C0", "#1976D2", "#0D47A1",
         )
-        btn_cmd.clicked.connect(lambda: _launch(_CMD_MAIN, _LEGACY_CMD))
+        btn_cmd.clicked.connect(lambda: _launch(_CMD_MAIN))
 
         btn_lc = ModeButton(
             "시계열분석", "Light Curve Analysis",
             "#2E7D32", "#388E3C", "#1B5E20",
         )
-        btn_lc.clicked.connect(lambda: _launch(_LC_MAIN, _LEGACY_LC))
+        btn_lc.clicked.connect(lambda: _launch(_LC_MAIN))
 
         btn_row = QHBoxLayout()
         btn_row.setSpacing(20)

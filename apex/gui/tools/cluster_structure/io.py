@@ -15,12 +15,10 @@ from apex.utils.step_paths import (
     crop_is_active,
     crop_rect_path,
     step2_cropped_dir,
+    step6_wcs_dir,
+    step7_refbuild_dir,
 )
-from apex.utils.step_paths_cmd import (
-    legacy_step8_refbuild_dir as legacy_step5_refbuild_dir,
-    legacy_step8_refbuild_dir as legacy_step7_refbuild_dir,
-)
-from apex.utils.step_paths import step6_wcs_dir as step5_dir, step7_refbuild_dir as step6_dir
+from apex.utils.step_paths_cmd import step10_selection_dir, step11_zp_dir
 
 
 @dataclass
@@ -49,15 +47,15 @@ def ensure_output_dirs(result_dir: Path) -> tuple[Path, Path, Path]:
 def resolve_star_table_path(result_dir: Path) -> Optional[Path]:
     root = Path(result_dir)
     candidates = [
-        root / "step10" / "cmd_with_gaia_membership.csv",
+        step10_selection_dir(root) / "cmd_with_gaia_membership.csv",
         root / "cmd_with_gaia_membership.csv",
-        root / "step11" / "cmd_with_gaia_membership.csv",
-        root / "step10" / "median_by_ID_filter_wide_cmd.csv",
+        step11_zp_dir(root) / "cmd_with_gaia_membership.csv",
+        step10_selection_dir(root) / "median_by_ID_filter_wide_cmd.csv",
         root / "median_by_ID_filter_wide_cmd.csv",
-        root / "step11" / "median_by_ID_filter_wide_cmd.csv",
-        root / "step10" / "median_by_ID_filter_wide.csv",
+        step11_zp_dir(root) / "median_by_ID_filter_wide_cmd.csv",
+        step10_selection_dir(root) / "median_by_ID_filter_wide.csv",
         root / "median_by_ID_filter_wide.csv",
-        root / "step11" / "median_by_ID_filter_wide.csv",
+        step11_zp_dir(root) / "median_by_ID_filter_wide.csv",
     ]
     for p in candidates:
         if p.exists():
@@ -68,9 +66,7 @@ def resolve_star_table_path(result_dir: Path) -> Optional[Path]:
 def resolve_ref_meta_path(result_dir: Path) -> Optional[Path]:
     root = Path(result_dir)
     candidates = [
-        step6_dir(root) / "ref_build_meta.json",
-        legacy_step5_refbuild_dir(root) / "ref_build_meta.json",
-        legacy_step7_refbuild_dir(root) / "ref_build_meta.json",
+        step7_refbuild_dir(root) / "ref_build_meta.json",
         root / "ref_build_meta.json",
     ]
     for p in candidates:
@@ -131,9 +127,6 @@ def _resolve_ref_fits_path(params, result_dir: Path, ref_frame: str) -> Optional
         cand = step2_cropped_dir(result_dir) / ref_frame
         if cand.exists():
             return cand
-        legacy = result_dir / "cropped" / ref_frame
-        if legacy.exists():
-            return legacy
 
     candidates: list[Path] = []
     try:
@@ -147,7 +140,7 @@ def _resolve_ref_fits_path(params, result_dir: Path, ref_frame: str) -> Optional
         pass
     candidates.extend(
         [
-            step5_dir(result_dir) / ref_frame,
+            step6_wcs_dir(result_dir) / ref_frame,
             result_dir / ref_frame,
         ]
     )
@@ -238,7 +231,7 @@ def _pick_first_existing(columns: list[str], candidates: tuple[str, ...]) -> Opt
 
 def _load_master_catalog(result_dir: Path) -> Optional[pd.DataFrame]:
     candidates = [
-        step6_dir(result_dir) / "master_catalog.tsv",
+        step7_refbuild_dir(result_dir) / "master_catalog.tsv",
         result_dir / "master_catalog.tsv",
     ]
     for p in candidates:
@@ -298,12 +291,12 @@ def _ensure_join_keys_from_master(result_dir: Path, df: pd.DataFrame) -> pd.Data
 def _external_membership_tables(result_dir: Path) -> list[tuple[Path, str]]:
     root = Path(result_dir)
     return [
-        (root / "step10" / "cmd_with_gaia_membership.csv", ","),
+        (step10_selection_dir(root) / "cmd_with_gaia_membership.csv", ","),
         (root / "cmd_with_gaia_membership.csv", ","),
-        (root / "step11" / "cmd_with_gaia_membership.csv", ","),
-        (step5_dir(root) / "gaia_derived.csv", ","),
+        (step11_zp_dir(root) / "cmd_with_gaia_membership.csv", ","),
+        (step6_wcs_dir(root) / "gaia_derived.csv", ","),
         (root / "gaia_derived.csv", ","),
-        (step6_dir(root) / "master_catalog.tsv", "\t"),
+        (step7_refbuild_dir(root) / "master_catalog.tsv", "\t"),
         (root / "master_catalog.tsv", "\t"),
     ]
 

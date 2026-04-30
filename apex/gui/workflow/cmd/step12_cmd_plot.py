@@ -15,7 +15,8 @@ from PyQt5.QtWidgets import QVBoxLayout, QLabel, QGroupBox, QTextEdit, QMessageB
 
 from apex.gui.workflow.step_window_base import StepWindowBase
 from .step11_zeropoint_calibration import CmdViewerWindow
-from apex.utils.step_paths_cmd import step11_dir, step12_dir, step5_aperture_dir, step9_dir
+from apex.utils.step_paths import step5_aperture_dir
+from apex.utils.step_paths_cmd import step11_zp_dir, step12_cmd_dir
 
 
 class CmdPlotWindow(StepWindowBase):
@@ -60,10 +61,10 @@ class CmdPlotWindow(StepWindowBase):
         self.log_text.append(f"[{timestamp}] {message}")
 
     def open_cmd_viewer(self):
-        input_dir = step11_dir(self.params.P.result_dir)
+        input_dir = step11_zp_dir(self.params.P.result_dir)
         if not input_dir.exists():
             input_dir = self.params.P.result_dir
-        output_dir = step12_dir(self.params.P.result_dir)
+        output_dir = step12_cmd_dir(self.params.P.result_dir)
         output_dir.mkdir(parents=True, exist_ok=True)
         wide_path = input_dir / "median_by_ID_filter_wide_cmd.csv"
         if not wide_path.exists():
@@ -75,8 +76,6 @@ class CmdPlotWindow(StepWindowBase):
 
         idx_candidates = [
             step5_aperture_dir(self.params.P.result_dir) / "photometry_index.csv",
-            step9_dir(self.params.P.result_dir) / "photometry_index.csv",   # legacy
-            step9_dir(self.params.P.result_dir) / "phot_index.csv",         # legacy
             self.params.P.result_dir / "photometry_index.csv",
             self.params.P.result_dir / "phot_index.csv",
             self.params.P.result_dir / "phot" / "photometry_index.csv",
@@ -103,7 +102,7 @@ class CmdPlotWindow(StepWindowBase):
         self.viewer_placeholder.setVisible(self.viewer is None)
 
     def validate_step(self) -> bool:
-        input_dir = step11_dir(self.params.P.result_dir)
+        input_dir = step11_zp_dir(self.params.P.result_dir)
         if not input_dir.exists():
             input_dir = self.params.P.result_dir
         return (input_dir / "median_by_ID_filter_wide_cmd.csv").exists() or (input_dir / "median_by_ID_filter_wide.csv").exists()

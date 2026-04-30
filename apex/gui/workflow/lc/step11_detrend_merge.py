@@ -73,7 +73,6 @@ from apex.utils.step_paths_lc import (
     step11_current_global_mean_path,
     step11_current_global_diag_path,
     step11_history_dir,
-    legacy_step11_zeropoint_dir,
     load_detrend_preference,
 )
 from apex.utils.common_helpers import safe_float as _safe_float, normalize_filter_key as _normalize_filter_key, parse_jd as _parse_jd
@@ -131,7 +130,7 @@ def _load_headers_table(result_dir: Path) -> pd.DataFrame:
 def _load_check_star_for_plot(result_dir: Path, filt: str | None = None):
     """Load check star CSV from step10 output for plotting. Returns (check_id, df_or_None)."""
     try:
-        from .step10_light_curve_builder import _load_check_star_csv
+        from .step10_lightcurve_builder import _load_check_star_csv
         check_id, df = _load_check_star_csv(result_dir, filt=filt)
         return check_id, (df if not df.empty else None)
     except Exception:
@@ -1269,7 +1268,7 @@ Step 11은 여러 밤의 관측을 합칠 때 기준선을 맞추는 단계입�
 
         self.log(f"[LOAD] Step 10 raw CSV missing. Rebuilding for target ID {target_id}...")
         try:
-            from .step10_light_curve_builder import LightCurveBuilderWindow
+            from .step10_lightcurve_builder import LightCurveBuilderWindow
 
             builder = LightCurveBuilderWindow(
                 self.params,
@@ -2011,8 +2010,6 @@ Step 11은 여러 밤의 관측을 합칠 때 기준선을 맞추는 단계입�
 
     def _load_color_median_table(self, result_dir: Path) -> pd.DataFrame:
         candidates = [
-            legacy_step11_zeropoint_dir(result_dir) / "median_by_ID_filter_wide_cmd.csv",
-            legacy_step11_zeropoint_dir(result_dir) / "median_by_ID_filter_wide.csv",
             result_dir / "median_by_ID_filter_wide_cmd.csv",
             result_dir / "median_by_ID_filter_wide.csv",
         ]

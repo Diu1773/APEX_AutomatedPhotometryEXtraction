@@ -127,8 +127,8 @@ def save_dataset_raw_outputs(
         part = check_df[pd.to_numeric(check_df["check_id"], errors="coerce") == int(check_id)].copy()
         if part.empty:
             continue
-        legacy_path = out_dir / f"lightcurve_check_ID{int(check_id)}_raw.csv"
-        part.to_csv(legacy_path, index=False)
+        check_path = out_dir / f"lightcurve_check_ID{int(check_id)}_raw.csv"
+        part.to_csv(check_path, index=False)
 
 
 def save_combined_raw_outputs(

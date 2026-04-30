@@ -122,8 +122,6 @@ from apex.utils.step_paths_lc import (
     step7_refbuild_dir,
     step9_selection_dir,
     step10_dir,
-    legacy_step11_extinction_dir,
-    legacy_step11_zeropoint_dir,
     tool_extinction_dir,
 )
 from apex.utils.qc_utils import load_frame_excludes, save_frame_excludes as save_frame_excludes_file
@@ -421,10 +419,7 @@ def _normalize_color_term_by_filter(mapping) -> dict[str, float]:
 
 
 def _load_frame_airmass_map(result_dir: Path) -> tuple[dict[str, float], dict[str, str]]:
-    # Check tool_extinction_dir first, then legacy_step11_zeropoint_dir
     path = tool_extinction_dir(result_dir) / "frame_airmass.csv"
-    if not path.exists():
-        path = legacy_step11_zeropoint_dir(result_dir) / "frame_airmass.csv"
     if not path.exists():
         path = result_dir / "frame_airmass.csv"
     if not path.exists():
@@ -444,13 +439,9 @@ def _load_frame_airmass_map(result_dir: Path) -> tuple[dict[str, float], dict[st
 
 
 def _load_extfit_map(result_dir: Path) -> dict[str, dict[str, float]]:
-    """필터별 소광계수 로드 (tool_extinction 우선, 레거시 호환)"""
-    # Priority: tool_extinction_dir > legacy_step11_extinction_dir > legacy paths
+    """필터별 소광계수 로드."""
     candidates = [
         tool_extinction_dir(result_dir) / "extinction_fit_by_filter.csv",
-        legacy_step11_extinction_dir(result_dir) / "step11_extinction_fit_by_filter.csv",
-        legacy_step11_zeropoint_dir(result_dir) / "step11_extinction" / "step11_extinction_fit_by_filter.csv",
-        result_dir / "step11_extinction" / "step11_extinction_fit_by_filter.csv",
         result_dir / "extinction" / "extinction_fit_by_filter.csv",
     ]
     path = None
@@ -489,12 +480,8 @@ def _load_extfit_map(result_dir: Path) -> dict[str, dict[str, float]]:
 
 def _load_extfit_map_by_date(result_dir: Path) -> dict[tuple[str, str], dict[str, float]]:
     """(date, filter)별 소광계수 + m0 로드 (밤별 영점 보정용)"""
-    # Priority: tool_extinction_dir > legacy_step11_extinction_dir > legacy paths
     candidates = [
         tool_extinction_dir(result_dir) / "extinction_fit_by_filter.csv",
-        legacy_step11_extinction_dir(result_dir) / "step11_extinction_fit_by_filter.csv",
-        legacy_step11_zeropoint_dir(result_dir) / "step11_extinction" / "step11_extinction_fit_by_filter.csv",
-        result_dir / "step11_extinction" / "step11_extinction_fit_by_filter.csv",
         result_dir / "extinction" / "extinction_fit_by_filter.csv",
     ]
     path = None
@@ -563,7 +550,7 @@ def _extract_date_from_path(path: Path | str | None = None, fname: str = "") -> 
                 d = m.group(1)
                 return f"{d[:4]}-{d[4:6]}-{d[6:8]}"
 
-    # 2. 파일명에서 날짜 추출 (레거시: 날짜__파일명 형식)
+    # 2. 파일명에서 날짜 추출 (날짜__파일명 형식)
     if fname and "__" in fname:
         folder_part = fname.split("__")[0]
         m = re.match(r"(\d{4}-\d{2}-\d{2})", folder_part)
@@ -578,7 +565,7 @@ def _extract_date_from_path(path: Path | str | None = None, fname: str = "") -> 
 
 
 def _extract_date_from_filename(fname: str) -> str:
-    """파일명에서 날짜 추출 (레거시 호환)"""
+    """파일명에서 날짜 추출."""
     return _extract_date_from_path(fname=fname)
 
 
@@ -606,10 +593,7 @@ def _resolve_fits_path(
 def _get_color_index_map(result_dir: Path, color_index_by_filter: dict[str, str]) -> dict[str, dict[int, float]]:
     if not color_index_by_filter:
         return {}
-    # Check legacy_step11_zeropoint_dir for median data
     candidates = [
-        legacy_step11_zeropoint_dir(result_dir) / "median_by_ID_filter_wide.csv",
-        legacy_step11_zeropoint_dir(result_dir) / "median_by_ID_filter_wide_cmd.csv",
         result_dir / "median_by_ID_filter_wide.csv",
         result_dir / "median_by_ID_filter_wide_cmd.csv",
     ]
@@ -679,7 +663,7 @@ def _load_selection_ids(result_dir: Path) -> tuple[int | None, list[int]]:
             return next(iter(target_ids)), union_comp_ids
         return None, []
 
-    # fallback: legacy target_selection.json + source_id mapping
+    # Compatibility fallback: target_selection.json + source_id mapping.
     selection_path = step9_selection_dir(result_dir) / "target_selection.json"
     if not selection_path.exists():
         selection_path = result_dir / "target_selection.json"
@@ -2697,8 +2681,6 @@ class LightCurveBuilderWindow(StepWindowBase):
 
         # 필터별 selection 로드 (source_id 사용)
         filter_selections = _load_selection_ids_by_filter(result_dir)
-        legacy_target_id, legacy_comp_ids = _load_selection_ids(result_dir)
-
         if verbose and filter_selections:
             self.log(f"[DEBUG] Filter-specific selections loaded: {list(filter_selections.keys())}")
 
@@ -2797,7 +2779,7 @@ class LightCurveBuilderWindow(StepWindowBase):
                 n_phot_missing += 1
                 continue
 
-            # 필터별 selection 또는 legacy selection 사용
+            # 필터별 selection 또는 기본 ID selection 사용
             use_source_id = False
             target_source_id = None
             comp_source_id = None

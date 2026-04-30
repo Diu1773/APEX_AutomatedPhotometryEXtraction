@@ -1,6 +1,5 @@
 """
 Step 13: Isochrone Model
-Ported from AAPKI_GUI.ipynb Cell 16 (isochrone fitting).
 
 Extended with automatic isochrone fitting:
 - AutoFit mode: Global search + local refinement for initial parameter estimation
@@ -33,7 +32,7 @@ from PyQt5.QtWidgets import (
 from PyQt5.QtCore import Qt, QThread, pyqtSignal
 
 from apex.gui.workflow.step_window_base import StepWindowBase
-from apex.utils.step_paths_cmd import step8_dir, step11_dir, step13_dir
+from apex.utils.step_paths_cmd import step10_selection_dir, step11_zp_dir, step13_iso_dir
 from apex.analysis.cmd.isochrone_fitter_v2 import IsochroneFitterV2, FitMode, FitResult, FitBounds, GridScanResult
 
 # SDSS extinction coefficients: R = A / E(B-V)
@@ -867,7 +866,7 @@ class IsochroneModelWindow(StepWindowBase):
     def _load_roi_data(self):
         """Try to load ROI circle from step10's saved JSON."""
         try:
-            roi_path = step8_dir(self.params.P.result_dir) / "cmd_roi.json"
+            roi_path = step10_selection_dir(self.params.P.result_dir) / "cmd_roi.json"
             if roi_path.exists():
                 self._roi_data = json.loads(roi_path.read_text())
                 ra  = self._roi_data.get("ra_deg", 0.0)
@@ -972,7 +971,7 @@ class IsochroneModelWindow(StepWindowBase):
             p for p in iso_dir.iterdir()
             if p.is_file()
             and p.suffix.lower() in {".dat", ".txt"}
-            and not p.name.startswith(".aapkc_")
+            and not p.name.startswith(".apex_")
         )
         chunk_files = [p for p in files if "_chunk_" in p.stem]
         if chunk_files:
@@ -980,7 +979,7 @@ class IsochroneModelWindow(StepWindowBase):
         return files
 
     def _folder_cache_paths(self, iso_dir: Path) -> tuple[Path, Path]:
-        cache_dir = iso_dir / ".aapkc_cache"
+        cache_dir = iso_dir / ".apex_cache"
         return cache_dir / "combined_isochrones.dat", cache_dir / "combined_isochrones_meta.json"
 
     def _compute_iso_signature(self, paths: list[Path]) -> str:
@@ -1016,7 +1015,7 @@ class IsochroneModelWindow(StepWindowBase):
         tmp_path = merged_path.with_suffix(".tmp")
         try:
             with tmp_path.open("w", encoding="utf-8", newline="\n") as out_handle:
-                out_handle.write(f"# AAPKC merged {len(files)} isochrone files from {iso_dir}\n")
+                out_handle.write(f"# APEX merged {len(files)} isochrone files from {iso_dir}\n")
                 for idx, src_path in enumerate(files, start=1):
                     self.log(f"[iso merge] {idx}/{len(files)} {src_path.name}")
                     with src_path.open("r", encoding="utf-8", errors="replace") as in_handle:
@@ -1089,7 +1088,7 @@ class IsochroneModelWindow(StepWindowBase):
         if iso_file is None or source_path is None or iso_cache_token is None:
             return None, None, None
 
-        input_dir = step11_dir(self.params.P.result_dir)
+        input_dir = step11_zp_dir(self.params.P.result_dir)
         if not input_dir.exists():
             input_dir = self.params.P.result_dir
         wide_path = input_dir / "median_by_ID_filter_wide_cmd.csv"
@@ -1800,7 +1799,7 @@ class IsochroneModelWindow(StepWindowBase):
         if self.fit_result is None:
             return
 
-        result_dir = step13_dir(self.params.P.result_dir)
+        result_dir = step13_iso_dir(self.params.P.result_dir)
         result_dir.mkdir(parents=True, exist_ok=True)
 
         # Export summary text
@@ -1882,7 +1881,7 @@ class IsochroneModelWindow(StepWindowBase):
         n_likely = (prob > 0.8).sum()
 
         # Save
-        result_dir = step13_dir(self.params.P.result_dir)
+        result_dir = step13_iso_dir(self.params.P.result_dir)
         result_dir.mkdir(parents=True, exist_ok=True)
         output_path = result_dir / "cmd_with_membership.csv"
         self.cmd_df.to_csv(output_path, index=False)
@@ -1950,7 +1949,7 @@ class IsochroneModelWindow(StepWindowBase):
             return False
         if not Path(iso_path).exists():
             return False
-        input_dir = step11_dir(self.params.P.result_dir)
+        input_dir = step11_zp_dir(self.params.P.result_dir)
         if not input_dir.exists():
             input_dir = self.params.P.result_dir
         return (input_dir / "median_by_ID_filter_wide_cmd.csv").exists() or (input_dir / "median_by_ID_filter_wide.csv").exists()

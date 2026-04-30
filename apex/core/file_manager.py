@@ -1,6 +1,6 @@
 """
 File management for FITS image processing
-Extracted from AAPKI_GUI.ipynb Cell 2-3
+APEX file manager.
 """
 
 from __future__ import annotations
@@ -334,7 +334,7 @@ class FileManager:
                         stats["skipped_missing_alt"] += 1
                         continue
 
-                    comment = f"{formula_label} AAPKI_lightcurve"
+                    comment = f"{formula_label} APEX_lightcurve"
                     hdr["AIRMASS"] = (float(airmass), comment)
                     stats["updated"] += 1
             except Exception:

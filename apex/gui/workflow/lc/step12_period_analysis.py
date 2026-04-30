@@ -58,7 +58,7 @@ from apex.utils.step_paths_lc import (
 def _load_check_star_for_plot(result_dir: Path, filt: str | None = None):
     """Load check star CSV from step10 output for plotting. Returns (check_id, df_or_None)."""
     try:
-        from .step10_light_curve_builder import _load_check_star_csv
+        from .step10_lightcurve_builder import _load_check_star_csv
         check_id, df = _load_check_star_csv(result_dir, filt=filt)
         return check_id, (df if not df.empty else None)
     except Exception:

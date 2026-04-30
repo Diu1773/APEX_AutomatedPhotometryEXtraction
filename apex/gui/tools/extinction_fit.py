@@ -45,7 +45,6 @@ from apex.utils.step_paths_lc import (
     step7_refbuild_dir,
     step8_idmatch_dir,
     step9_selection_dir,
-    legacy_step11_extinction_dir,
     tool_extinction_dir,
 )
 
@@ -975,13 +974,13 @@ class ExtinctionFitWorker(QThread):
         self._log(f"Saved {fit_path.name} ({len(fit_df)} rows)")
         self._log(f"Saved {pts_path.name} ({len(points_df)} rows)")
 
-        # Backward-compatible filename for downstream loaders
-        legacy_fit = out_dir / "extinction_fit_by_filter.csv"
+        # Shared filename for downstream loaders
+        compat_fit = out_dir / "extinction_fit_by_filter.csv"
         try:
-            fit_df.to_csv(legacy_fit, index=False)
-            self._log(f"Saved {legacy_fit.name} ({len(fit_df)} rows)")
+            fit_df.to_csv(compat_fit, index=False)
+            self._log(f"Saved {compat_fit.name} ({len(fit_df)} rows)")
         except Exception:
-            self._log("Warning: failed to write legacy extinction_fit_by_filter.csv")
+            self._log("Warning: failed to write extinction_fit_by_filter.csv")
 
         # Also refresh the cached Step 5 extinction input table
         self._save_photometry(phot_df)
@@ -1279,13 +1278,12 @@ class ExtinctionFitWorker(QThread):
         if not frame_df.empty:
             self._log(f"Saved {frame_path.name} ({len(frame_df)} rows)")
 
-        # Backward-compatible filename
-        legacy_fit = out_dir / "extinction_fit_by_filter.csv"
+        compat_fit = out_dir / "extinction_fit_by_filter.csv"
         try:
-            fit_df.to_csv(legacy_fit, index=False)
-            self._log(f"Saved {legacy_fit.name} ({len(fit_df)} rows)")
+            fit_df.to_csv(compat_fit, index=False)
+            self._log(f"Saved {compat_fit.name} ({len(fit_df)} rows)")
         except Exception:
-            self._log("Warning: failed to write legacy extinction_fit_by_filter.csv")
+            self._log("Warning: failed to write extinction_fit_by_filter.csv")
 
         self.finished.emit({
             "fit": fit_df, "points": points_df,
@@ -1293,7 +1291,7 @@ class ExtinctionFitWorker(QThread):
         })
 
     def _run_median_fit(self, phot_df: pd.DataFrame):
-        """Median-subtract Δm vs X fit (legacy)."""
+        """Median-subtract Δm vs X fit."""
         P = self.params.P
         clip_sigma = self._fit_clip_sigma()
         fit_iters = self._fit_iters()
@@ -1450,12 +1448,12 @@ class ExtinctionFitWorker(QThread):
         self._log(f"Saved {fit_path.name} ({len(fit_df)} rows)")
         self._log(f"Saved {pts_path.name} ({len(points_df)} rows)")
 
-        legacy_fit = out_dir / "extinction_fit_by_filter.csv"
+        compat_fit = out_dir / "extinction_fit_by_filter.csv"
         try:
-            fit_df.to_csv(legacy_fit, index=False)
-            self._log(f"Saved {legacy_fit.name} ({len(fit_df)} rows)")
+            fit_df.to_csv(compat_fit, index=False)
+            self._log(f"Saved {compat_fit.name} ({len(fit_df)} rows)")
         except Exception:
-            self._log("Warning: failed to write legacy extinction_fit_by_filter.csv")
+            self._log("Warning: failed to write extinction_fit_by_filter.csv")
 
         self.finished.emit({
             "fit": fit_df, "points": points_df,
@@ -1463,19 +1461,19 @@ class ExtinctionFitWorker(QThread):
         })
 
     def _save_photometry(self, phot_df: pd.DataFrame):
-        primary_path, legacy_path = self._extinction_input_paths()
+        primary_path, alternate_path = self._extinction_input_paths()
         phot_df.to_csv(primary_path, index=False)
         self._log(f"Saved {primary_path.name} ({len(phot_df)} rows)")
-        if legacy_path != primary_path:
+        if alternate_path != primary_path:
             try:
-                phot_df.to_csv(legacy_path, index=False)
-                self._log(f"Saved {legacy_path.name} ({len(phot_df)} rows)")
+                phot_df.to_csv(alternate_path, index=False)
+                self._log(f"Saved {alternate_path.name} ({len(phot_df)} rows)")
             except Exception:
-                self._log("Warning: failed to write legacy ensemble_allstar_phot.csv")
+                self._log("Warning: failed to write ensemble_allstar_phot.csv")
 
     def _load_photometry(self, expected_source_dir: Path | None = None) -> pd.DataFrame:
-        primary_path, legacy_path = self._extinction_input_paths()
-        for path in (primary_path, legacy_path):
+        primary_path, alternate_path = self._extinction_input_paths()
+        for path in (primary_path, alternate_path):
             if path.exists():
                 phot_df = pd.read_csv(path)
                 if expected_source_dir is not None:
@@ -1562,9 +1560,8 @@ class ExtinctionFitWorker(QThread):
         df.to_csv(out_path, index=False)
         self._log(f"Saved {out_path.name} | rows={len(df)}")
 
-        legacy_out = self.result_dir / "frame_airmass.csv"
         try:
-            df.to_csv(legacy_out, index=False)
+            df.to_csv(self.result_dir / "frame_airmass.csv", index=False)
         except Exception:
             pass
         return df
@@ -1917,8 +1914,7 @@ class ExtinctionFitWorker(QThread):
             filters_seen = sorted(set(all_df["FILTER"].dropna().astype(str)))
             out_dir = tool_extinction_dir(result_dir)
             out_dir.mkdir(parents=True, exist_ok=True)
-            step11_out = legacy_step11_extinction_dir(result_dir)
-            step11_out.mkdir(parents=True, exist_ok=True)
+            step11_out = out_dir
             stats_rows = []
             for filt in filters_seen:
                 fmask = obs["FILTER"] == filt
@@ -2658,10 +2654,10 @@ class ExtinctionFitWindow(QWidget):
 
     def _load_step9_target_hints(self, source_dir: Path):
         self._step9_target_by_filter = {}
-        step9_dir = step9_selection_dir(source_dir)
-        if not step9_dir.exists():
+        selection_dir = step9_selection_dir(source_dir)
+        if not selection_dir.exists():
             return
-        for sel_path in sorted(step9_dir.glob("selection_*.json")):
+        for sel_path in sorted(selection_dir.glob("selection_*.json")):
             filt = sel_path.stem.replace("selection_", "").strip().lower()
             if not filt:
                 continue
@@ -3975,10 +3971,5 @@ class ExtinctionFitWindow(QWidget):
             self.figure.savefig(out, dpi=150, bbox_inches="tight")
             self.log(f"Saved {out}")
 
-            legacy_dir = legacy_step11_extinction_dir(self.result_dir)
-            legacy_dir.mkdir(parents=True, exist_ok=True)
-            out2 = legacy_dir / "step11_extinction_fit_plot.png"
-            self.figure.savefig(out2, dpi=150, bbox_inches="tight")
-            self.log(f"Saved {out2}")
         except Exception as e:
             QMessageBox.warning(self, "Error", f"Failed to save plot:\n{e}")

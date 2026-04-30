@@ -186,9 +186,6 @@ class ApertureWorker(QThread):
             p = cdir / fname
             if p.exists():
                 return p
-            legacy = self.result_dir / "cropped" / fname
-            if legacy.exists():
-                return legacy
         try:
             p = Path(self.params.get_file_path(fname))
         except Exception:

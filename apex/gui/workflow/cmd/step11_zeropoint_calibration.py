@@ -1,6 +1,5 @@
 """
 Step 11: Zeropoint & Standardization
-Ported from AAPKI_GUI.ipynb Cell 14/15 (calibration prep).
 """
 
 from __future__ import annotations
@@ -34,16 +33,16 @@ from PyQt5.QtWidgets import (
 
 from apex.gui.workflow.step_window_base import StepWindowBase
 from apex.utils.astro_utils import normalize_filter_name
-from apex.utils.step_paths_cmd import (
+from apex.utils.step_paths import (
     step2_cropped_dir,
     crop_is_active,
-    step11_dir,
-    step11_extinction_dir,
-    # New pipeline paths
-    step5_aperture_dir, step6_psf_dir, step7_dir, step7_wcs_dir,
-    # Legacy paths (old pipeline)
-    step5_dir, step6_dir, step8_dir, step9_dir,
+    step5_aperture_dir,
+    step6_wcs_dir,
+    step7_refbuild_dir,
+    step8_idmatch_dir,
+    tool_extinction_dir,
 )
+from apex.utils.step_paths_cmd import step6_psf_dir, step10_selection_dir, step11_zp_dir
 from apex.utils.io_utils import parse_int64_series, read_ecsv_int64_source_id
 
 
@@ -88,7 +87,7 @@ def _normalize_master_columns(df: pd.DataFrame) -> pd.DataFrame:
 
 def _load_master_table(result_dir: Path) -> tuple[pd.DataFrame, str, Path]:
     candidates = [
-        ("master_catalog", step6_dir(result_dir) / "master_catalog.tsv", "\t"),
+        ("master_catalog", step7_refbuild_dir(result_dir) / "master_catalog.tsv", "\t"),
         ("master_catalog", result_dir / "master_catalog.tsv", "\t"),
         ("master_gaia_map", result_dir / "master_gaia_map.csv", ","),
     ]
@@ -153,8 +152,7 @@ class ZeropointCalibrationWorker(QThread):
         for base in (
             step6_psf_dir(self.result_dir),
             step5_aperture_dir(self.result_dir),
-            step8_dir(self.result_dir),
-            step9_dir(self.result_dir),
+            step10_selection_dir(self.result_dir),
             self.result_dir,
             self.result_dir / "phot",
             self.result_dir / "photometry",
@@ -268,15 +266,11 @@ class ZeropointCalibrationWorker(QThread):
         cropped_dir = step2_cropped_dir(self.result_dir)
         if crop_active and cropped_dir.exists() and list(cropped_dir.glob("*.fit*")):
             return sorted(cropped_dir.glob("*.fit*"))
-        if crop_active:
-            legacy = self.result_dir / "cropped"
-            if legacy.exists() and list(legacy.glob("*.fit*")):
-                return sorted(legacy.glob("*.fit*"))
         return sorted(self.data_dir.glob("*.fit*"))
 
     def _find_idmatch_csv(self, fname: str, result_dir: Path):
-        """Find idmatch_{fname}.csv in step7_idmatch/ or its date-keyed subdirs."""
-        idm_dir = step7_dir(result_dir)
+        """Find idmatch_{fname}.csv in step8_idmatch/ or its date-keyed subdirs."""
+        idm_dir = step8_idmatch_dir(result_dir)
         direct = idm_dir / f"idmatch_{fname}.csv"
         if direct.exists():
             return direct
@@ -309,9 +303,8 @@ class ZeropointCalibrationWorker(QThread):
                     cropped_dir = step2_cropped_dir(self.result_dir)
                     search_dirs = [self.result_dir, self.data_dir]
                     if crop_is_active(self.result_dir):
-                        if not cropped_dir.exists():
-                            cropped_dir = self.result_dir / "cropped"
-                        search_dirs.append(cropped_dir)
+                        if cropped_dir.exists():
+                            search_dirs.append(cropped_dir)
                     for base in search_dirs:
                         cand = base / fp
                         if cand.exists():
@@ -328,9 +321,8 @@ class ZeropointCalibrationWorker(QThread):
         cropped_dir = step2_cropped_dir(self.result_dir)
         search_dirs = [self.result_dir, self.data_dir]
         if crop_is_active(self.result_dir):
-            if not cropped_dir.exists():
-                cropped_dir = self.result_dir / "cropped"
-            search_dirs.insert(0, cropped_dir)
+            if cropped_dir.exists():
+                search_dirs.insert(0, cropped_dir)
         for base in search_dirs:
             if not base.exists():
                 continue
@@ -362,8 +354,6 @@ class ZeropointCalibrationWorker(QThread):
             if not fpath.exists():
                 if crop_is_active(self.result_dir):
                     cand = step2_cropped_dir(self.result_dir) / fname
-                    if not cand.exists():
-                        cand = (self.result_dir / "cropped") / fname
                     if cand.exists():
                         fpath = cand
             if not fpath.exists():
@@ -383,7 +373,7 @@ class ZeropointCalibrationWorker(QThread):
         if df.empty:
             df = pd.DataFrame(columns=["file", "filter", "airmass", "airmass_source", "alt_deg", "zenith_deg", "datetime_utc", "datetime_local", "ra_deg", "dec_deg"])
         if len(df):
-            output_dir = step11_dir(self.result_dir)
+            output_dir = step11_zp_dir(self.result_dir)
             output_dir.mkdir(parents=True, exist_ok=True)
             out_path = output_dir / "frame_airmass.csv"
             df.to_csv(out_path, index=False)
@@ -448,24 +438,21 @@ class ZeropointCalibrationWorker(QThread):
         try:
             P = self.params.P
             result_dir = self.result_dir
-            output_dir = step11_dir(result_dir)
+            output_dir = step11_zp_dir(result_dir)
             output_dir.mkdir(parents=True, exist_ok=True)
-            # PSF photometry (step6_psf/) preferred; fallback to aperture, legacy
+            # PSF photometry is preferred; aperture photometry is the fallback.
             phot_dir_psf = step6_psf_dir(result_dir)
             phot_dir_ap  = step5_aperture_dir(result_dir)
-            phot_dir     = step9_dir(result_dir)  # legacy fallback
 
             idx_candidates = [
                 phot_dir_psf / "photometry_index.csv",
                 phot_dir_ap  / "photometry_index.csv",
-                phot_dir     / "photometry_index.csv",
-                phot_dir     / "phot_index.csv",
                 result_dir   / "photometry_index.csv",
                 result_dir   / "phot_index.csv",
                 result_dir   / "phot" / "phot_index.csv",
                 result_dir   / "phot" / "photometry_index.csv",
             ]
-            for _pd in (phot_dir_psf, phot_dir_ap, phot_dir):
+            for _pd in (phot_dir_psf, phot_dir_ap):
                 if _pd.exists():
                     idx_candidates += sorted(_pd.glob("*phot*index*.csv"))
             idx_candidates += sorted(result_dir.glob("*phot*index*.csv"))
@@ -508,9 +495,7 @@ class ZeropointCalibrationWorker(QThread):
             else:
                 idx["filter"] = "unknown"
 
-            fq_path = step7_wcs_dir(result_dir) / "frame_quality.csv"
-            if not fq_path.exists():
-                fq_path = step5_dir(result_dir) / "frame_quality.csv"  # legacy fallback
+            fq_path = step5_aperture_dir(result_dir) / "frame_quality.csv"
             if not fq_path.exists():
                 fq_path = result_dir / "frame_quality.csv"
             if fq_path.exists() and ("file" in idx.columns):
@@ -525,7 +510,7 @@ class ZeropointCalibrationWorker(QThread):
 
             # Pre-load sourceid_to_ID for fallback ID injection (det_uid → source_id → ID)
             _sid_map = None
-            for _cand_dir in (step8_dir(result_dir),):
+            for _cand_dir in (step10_selection_dir(result_dir),):
                 _sid_csv = _cand_dir / "sourceid_to_ID.csv"
                 if _sid_csv.exists():
                     try:
@@ -746,12 +731,8 @@ class ZeropointCalibrationWorker(QThread):
                 if "source_id" not in df.columns:
                     raise RuntimeError("master_catalog missing Gaia mags and source_id for Gaia join")
                 gaia_candidates = [
-                    step7_wcs_dir(result_dir) / "gaia_fov.ecsv",
-                    step7_wcs_dir(result_dir) / "gaia_derived.csv",
-                    step7_wcs_dir(result_dir) / "gaia_fov.ecsv",
-                    step7_wcs_dir(result_dir) / "gaia_derived.csv",
-                    step5_dir(result_dir) / "gaia_derived.csv",          # legacy step5_wcs
-                    step5_dir(result_dir) / "gaia_fov.ecsv",             # legacy step5_wcs
+                    step6_wcs_dir(result_dir) / "gaia_fov.ecsv",
+                    step6_wcs_dir(result_dir) / "gaia_derived.csv",
                     result_dir / "gaia_derived.csv",
                     result_dir / "gaia_fov.ecsv",
                 ]
@@ -774,7 +755,7 @@ class ZeropointCalibrationWorker(QThread):
                     gaia_path = cand
                     break
                 if gaia_df is None or gaia_path is None:
-                    raise RuntimeError("master_catalog missing Gaia mags and step7_wcs/gaia_derived.csv not found")
+                    raise RuntimeError("master_catalog missing Gaia mags and step6_wcs/gaia_derived.csv not found")
                 gaia_join_name = gaia_path.name
                 if "source_id" in gaia_df.columns:
                     gaia_df["source_id"] = parse_int64_series(gaia_df["source_id"]).astype("Int64")
@@ -906,7 +887,7 @@ class ZeropointCalibrationWorker(QThread):
             ext_df = None
             ext_map = {}
             if apply_ext:
-                ext_dir = step11_extinction_dir(result_dir)
+                ext_dir = tool_extinction_dir(result_dir)
                 ext_path = ext_dir / "extinction_fit_by_filter.csv"
                 if not ext_path.exists():
                     ext_path = result_dir / "extinction_fit_by_filter.csv"
@@ -1426,7 +1407,7 @@ class CmdViewerWindow(QWidget):
 
     def _load_roi(self):
         """Load cmd_roi.json from step8 output directory and update UI."""
-        roi_path = step8_dir(self.result_dir) / "cmd_roi.json"
+        roi_path = step10_selection_dir(self.result_dir) / "cmd_roi.json"
         try:
             if roi_path.exists():
                 self._roi_data = json.loads(roi_path.read_text())
@@ -1557,9 +1538,8 @@ class CmdViewerWindow(QWidget):
 
     def _merge_columns_from_gaia_derived(self, needed_cols):
         candidates = [
-            step7_wcs_dir(self.result_dir) / "gaia_derived.csv",
-            step7_wcs_dir(self.result_dir) / "gaia_fov.ecsv",
-            step5_dir(self.result_dir) / "gaia_derived.csv",  # legacy
+            step6_wcs_dir(self.result_dir) / "gaia_derived.csv",
+            step6_wcs_dir(self.result_dir) / "gaia_fov.ecsv",
             self.result_dir / "gaia_derived.csv",
         ]
         gdf = None
@@ -2417,7 +2397,7 @@ class ZPFitPlotWidget(QWidget):
     def reload(self, result_dir: Path = None):
         if result_dir is not None:
             self.result_dir = Path(result_dir)
-        out_dir = step11_dir(self.result_dir)
+        out_dir = step11_zp_dir(self.result_dir)
         self._cal_df = None
         self._frame_df = None
         self._coeff_df = None
@@ -2985,8 +2965,8 @@ class ZeropointCalibrationWindow(StepWindowBase):
 
     def validate_step(self) -> bool:
         result_dir = self.params.P.result_dir
-        wide_cmd = step11_dir(result_dir) / "median_by_ID_filter_wide_cmd.csv"
-        wide = step11_dir(result_dir) / "median_by_ID_filter_wide.csv"
+        wide_cmd = step11_zp_dir(result_dir) / "median_by_ID_filter_wide_cmd.csv"
+        wide = step11_zp_dir(result_dir) / "median_by_ID_filter_wide.csv"
         if not wide_cmd.exists() and not wide.exists():
             wide_cmd = result_dir / "median_by_ID_filter_wide_cmd.csv"
             wide = result_dir / "median_by_ID_filter_wide.csv"

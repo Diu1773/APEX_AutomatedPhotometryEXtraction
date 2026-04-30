@@ -51,36 +51,6 @@ def step12_period_dir(result_dir: PathLike) -> Path:
     return step_dir(result_dir, LC_PERIOD_DIRNAME)
 
 
-# ── Legacy AAPKL compatibility aliases ───────────────────────────────────────
-
-def legacy_step5_photometry_dir(result_dir: PathLike) -> Path:
-    """AAPKL legacy: step5_photometry/ was aperture photometry output."""
-    d = _as_path(result_dir)
-    for name in ("step5_photometry", "step5_aperture"):
-        c = d / name
-        if c.exists():
-            return c
-    return d / "step5_aperture"
-
-
-def legacy_step9_selection_dir(result_dir: PathLike) -> Path:
-    d = _as_path(result_dir)
-    for name in ("step9_selection", "step8_selection", "lc_selection"):
-        c = d / name
-        if c.exists():
-            return c
-    return d / "lc_selection"
-
-
-def legacy_step10_lc_dir(result_dir: PathLike) -> Path:
-    d = _as_path(result_dir)
-    for name in ("step10_lightcurve", "lc_lightcurve"):
-        c = d / name
-        if c.exists():
-            return c
-    return d / "lc_lightcurve"
-
-
 def find_best_lightcurve_csv(result_dir: PathLike, star_id: int) -> Path | None:
     """Find the best detrended lightcurve CSV for a given star ID."""
     lc_dir = step10_lc_dir(result_dir)
@@ -93,14 +63,12 @@ def find_best_lightcurve_csv(result_dir: PathLike, star_id: int) -> Path | None:
     return None
 
 
-# step5_photometry_dir: AAPKL canonical name alias
 def step5_photometry_dir(result_dir: PathLike) -> Path:
-    """AAPKL canonical aperture photometry directory alias."""
+    """LC aperture photometry directory alias."""
     return step5_aperture_dir(result_dir)
 
 
-# ── AAPKL short-name aliases (used by analysis/ modules) ─────────────────────
-# These map the AAPKL step_paths naming convention to APEX canonical dirs.
+# ── LC short-name aliases used by analysis modules ───────────────────────────
 
 def step10_dir(result_dir: PathLike) -> Path:
     """Alias for step10_lc_dir (lc_lightcurve/)."""
@@ -117,8 +85,40 @@ def step11_current_meta_path(result_dir: PathLike, target_id: int) -> Path:
     return step11_dir(result_dir) / f"result_ID{int(target_id)}_current.json"
 
 
-def _step11_current_lc_path(result_dir: PathLike, target_id: int) -> Path:
+def step11_current_lc_path(result_dir: PathLike, target_id: int) -> Path:
     return step11_dir(result_dir) / f"lightcurve_ID{int(target_id)}_current.csv"
+
+
+def _step11_current_lc_path(result_dir: PathLike, target_id: int) -> Path:
+    return step11_current_lc_path(result_dir, target_id)
+
+
+def step11_current_params_path(result_dir: PathLike, target_id: int) -> Path:
+    return step11_dir(result_dir) / f"params_ID{int(target_id)}_current.csv"
+
+
+def step11_current_summary_path(result_dir: PathLike, target_id: int) -> Path:
+    return step11_dir(result_dir) / f"summary_ID{int(target_id)}_current.txt"
+
+
+def step11_current_plot_path(result_dir: PathLike, target_id: int) -> Path:
+    return step11_dir(result_dir) / f"plot_ID{int(target_id)}_current.png"
+
+
+def step11_current_global_zp_path(result_dir: PathLike, target_id: int) -> Path:
+    return step11_dir(result_dir) / f"global_zp_ID{int(target_id)}_current.csv"
+
+
+def step11_current_global_mean_path(result_dir: PathLike, target_id: int) -> Path:
+    return step11_dir(result_dir) / f"global_mean_ID{int(target_id)}_current.csv"
+
+
+def step11_current_global_diag_path(result_dir: PathLike, target_id: int) -> Path:
+    return step11_dir(result_dir) / f"global_diagnostics_ID{int(target_id)}_current.json"
+
+
+def step11_history_dir(result_dir: PathLike) -> Path:
+    return step11_dir(result_dir) / "_history"
 
 
 def load_detrend_preference(result_dir: PathLike, target_id: int | None = None) -> str | None:

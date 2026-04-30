@@ -323,7 +323,7 @@ class IdMatchWorker(QThread):
         except Exception:
             schema = 0
         if schema < 2:
-            return self._legacy_detect_cache_allowed(meta_path)
+            return self._schema1_detect_cache_allowed(meta_path)
         sig_now = self._current_file_signature(fname)
         if sig_now is None:
             return False
@@ -337,7 +337,7 @@ class IdMatchWorker(QThread):
         payload["__compat_relaxed_size"] = True
         return True
 
-    def _legacy_detect_cache_allowed(self, marker_path: Path) -> bool:
+    def _schema1_detect_cache_allowed(self, marker_path: Path) -> bool:
         try:
             marker_mtime = int(marker_path.stat().st_mtime_ns)
         except Exception:
@@ -925,10 +925,6 @@ class IdMatchWorker(QThread):
             out_sub = out_dir / date_key if date_key else out_dir
             out_sub.mkdir(parents=True, exist_ok=True)
             df_out.to_csv(out_sub / f"idmatch_{fname}.csv", index=False)
-            # AAPKC compat: also write to cache/idmatch/ for downstream steps
-            cache_idmatch = self.cache_dir / "idmatch"
-            cache_idmatch.mkdir(parents=True, exist_ok=True)
-            df_out.to_csv(cache_idmatch / f"idmatch_{fname}.csv", index=False)
 
             n_match = int(np.isfinite(df_out["source_id"]).sum())
             match_rate = float(n_match / n_det) if n_det > 0 else 0.0
@@ -1025,7 +1021,7 @@ class IdMatchWorker(QThread):
         except Exception:
             pass
 
-        # AAPKC compat: frame_sourceid_to_ID.tsv for step9/step10
+        # Frame-level source-to-display-ID map for downstream CMD steps.
         try:
             sid2id = master_df[["source_id", "ID"]].copy()
             sid2id["source_id"] = coerce_int64_source_id(sid2id["source_id"])
@@ -1033,9 +1029,11 @@ class IdMatchWorker(QThread):
             sid2id = sid2id.dropna().drop_duplicates("source_id")
             sid2id_map = sid2id.set_index("source_id")["ID"]
             frame_map_rows = []
-            cache_idmatch = self.cache_dir / "idmatch"
             for fname in self.file_list:
-                csv_path = cache_idmatch / f"idmatch_{fname}.csv"
+                csv_path = out_dir / f"idmatch_{fname}.csv"
+                if not csv_path.exists():
+                    matches = sorted(out_dir.glob(f"*/idmatch_{fname}.csv"))
+                    csv_path = matches[0] if matches else csv_path
                 if not csv_path.exists():
                     continue
                 try:
