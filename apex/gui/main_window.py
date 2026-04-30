@@ -13,9 +13,33 @@ from PyQt5.QtWidgets import (
     QPlainTextEdit, QComboBox, QSpinBox, QDoubleSpinBox
 )
 from PyQt5.QtCore import Qt, pyqtSignal, QObject, QEvent
-from PyQt5.QtGui import QFont
+from PyQt5.QtGui import QFont, QIcon, QPixmap
+from PyQt5.QtSvg import QSvgRenderer
+from PyQt5.QtCore import QByteArray
 from pathlib import Path
 from typing import Optional, List
+
+_RESOURCES = Path(__file__).resolve().parent.parent / "resources"
+
+
+def _load_icon(mode: str) -> QIcon:
+    svg_name = f"logo_{mode}.svg"
+    svg_path = _RESOURCES / svg_name
+    if not svg_path.exists():
+        svg_path = _RESOURCES / "logo_base.svg"
+    if not svg_path.exists():
+        return QIcon()
+    try:
+        renderer = QSvgRenderer(str(svg_path))
+        pixmap = QPixmap(256, 256)
+        pixmap.fill(Qt.transparent)
+        from PyQt5.QtGui import QPainter
+        painter = QPainter(pixmap)
+        renderer.render(painter)
+        painter.end()
+        return QIcon(pixmap)
+    except Exception:
+        return QIcon()
 
 
 class StepButton(QPushButton):
@@ -259,6 +283,7 @@ class MainWindowWorkflow(QMainWindow):
     def setup_ui(self):
         mode_title = "CMD Cluster Photometry" if self.mode == "cmd" else "Light Curve Analysis"
         self.setWindowTitle(f"APEX — {mode_title}")
+        self.setWindowIcon(_load_icon(self.mode))
         self.setMinimumSize(800, 700)
 
         central = QWidget()
