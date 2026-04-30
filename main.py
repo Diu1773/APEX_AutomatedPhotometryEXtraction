@@ -24,9 +24,35 @@ from PyQt5.QtWidgets import (
     QPushButton, QLabel, QFrame, QMessageBox
 )
 from PyQt5.QtCore import Qt
-from PyQt5.QtGui import QFont, QFontDatabase
+from PyQt5.QtGui import QFont, QFontDatabase, QIcon, QPixmap, QPainter
 
 _HERE = Path(__file__).parent
+_RESOURCES = _HERE / "apex" / "resources"
+
+
+def _svg_to_pixmap(svg_path: Path, size: int) -> QPixmap:
+    px = QPixmap(size, size)
+    px.fill(Qt.transparent)
+    try:
+        from PyQt5.QtSvg import QSvgRenderer
+        r = QSvgRenderer(str(svg_path))
+        p = QPainter(px)
+        r.render(p)
+        p.end()
+    except Exception:
+        pass
+    return px
+
+
+def _make_app_icon() -> QIcon:
+    svg = _RESOURCES / "logo_base.svg"
+    if not svg.exists():
+        return QIcon()
+    px = _svg_to_pixmap(svg, 256)
+    icon = QIcon()
+    for s in (16, 24, 32, 48, 64, 128, 256):
+        icon.addPixmap(px.scaled(s, s, Qt.KeepAspectRatio, Qt.SmoothTransformation))
+    return icon
 
 # APEX mode entry points
 _CMD_MAIN = _HERE / "apex" / "cmd" / "main.py"
@@ -151,23 +177,23 @@ class LauncherWindow(QWidget):
 
     def _setup_ui(self):
         root = QVBoxLayout(self)
-        root.setSpacing(18)
-        root.setContentsMargins(48, 36, 48, 32)
+        root.setSpacing(14)
+        root.setContentsMargins(48, 28, 48, 28)
 
-        # ── Header ──────────────────────────────────────────────────────────
-        title = QLabel("APEX")
-        title.setAlignment(Qt.AlignCenter)
-        title.setFont(QFont("", 38, QFont.Bold))
-
-        subtitle = QLabel("Automated Photometry EXtraction")
-        subtitle.setAlignment(Qt.AlignCenter)
-        f = QFont("", 11)
-        f.setItalic(True)
-        subtitle.setFont(f)
-        subtitle.setStyleSheet("color: #555555;")
-
-        root.addWidget(title)
-        root.addWidget(subtitle)
+        # ── Header: logo image ───────────────────────────────────────────────
+        svg = _RESOURCES / "logo_base.svg"
+        if svg.exists():
+            logo_px = _svg_to_pixmap(svg, 160)
+            logo_lbl = QLabel()
+            logo_lbl.setPixmap(logo_px)
+            logo_lbl.setAlignment(Qt.AlignCenter)
+            logo_lbl.setStyleSheet("background: transparent;")
+            root.addWidget(logo_lbl)
+        else:
+            title = QLabel("APEX")
+            title.setAlignment(Qt.AlignCenter)
+            title.setFont(QFont("", 38, QFont.Bold))
+            root.addWidget(title)
 
         sep = QFrame()
         sep.setFrameShape(QFrame.HLine)
@@ -208,6 +234,7 @@ def main() -> int:
     app.setApplicationName("APEX")
     app.setOrganizationName("APEX Project")
     _configure_app_fonts(app)
+    app.setWindowIcon(_make_app_icon())
     os.chdir(_HERE)
 
     try:
