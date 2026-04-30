@@ -352,10 +352,6 @@ class MainWindowWorkflow(QMainWindow):
         file_menu.addAction(action_exit)
 
         tools_menu = menubar.addMenu("&Tools")
-        action_params = QAction("View &Parameters", self)
-        action_params.triggered.connect(self.show_parameters)
-        tools_menu.addAction(action_params)
-        tools_menu.addSeparator()
 
         action_qa = QAction("QA Reports", self)
         action_qa.setShortcut("Ctrl+R")
@@ -602,11 +598,6 @@ class MainWindowWorkflow(QMainWindow):
         if file_path:
             Path(file_path).write_text(summary, encoding="utf-8")
             self.append_log(f"Summary exported to {file_path}")
-
-    def show_parameters(self):
-        self.params.print_summary()
-        QMessageBox.information(self, "Parameters",
-                                "Parameter summary printed to console.")
 
     def append_log(self, message: str):
         from datetime import datetime
