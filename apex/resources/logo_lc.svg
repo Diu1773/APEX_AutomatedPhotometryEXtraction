@@ -25,11 +25,11 @@
       <stop offset="50%"  stop-color="#7c4dff" stop-opacity="0.5"/>
       <stop offset="100%" stop-color="#4dd0e1" stop-opacity="0.7"/>
     </linearGradient>
-    <!-- Badge gradient: purple for LC -->
-    <radialGradient id="badgeGrad" cx="40%" cy="35%" r="65%">
-      <stop offset="0%"   stop-color="#9c6dff"/>
-      <stop offset="100%" stop-color="#5e35b1"/>
-    </radialGradient>
+    <!-- LC badge: purple gradient -->
+    <linearGradient id="badgeGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#9c6dff"/>
+      <stop offset="100%" stop-color="#4527a0"/>
+    </linearGradient>
     <filter id="starFilter" x="-80%" y="-80%" width="260%" height="260%">
       <feGaussianBlur in="SourceGraphic" stdDeviation="3.5" result="blur"/>
       <feMerge>
@@ -45,9 +45,6 @@
         <feMergeNode in="SourceGraphic"/>
       </feMerge>
     </filter>
-    <filter id="badgeShadow" x="-20%" y="-20%" width="140%" height="140%">
-      <feDropShadow dx="0" dy="1" stdDeviation="2" flood-color="#000000" flood-opacity="0.5"/>
-    </filter>
     <clipPath id="clip">
       <circle cx="128" cy="128" r="122"/>
     </clipPath>
@@ -59,7 +56,7 @@
           stroke="url(#ringGrad)" stroke-width="1.5" opacity="0.55"/>
 
   <g clip-path="url(#clip)">
-    <ellipse cx="128" cy="175" rx="80" ry="18"
+    <ellipse cx="128" cy="178" rx="80" ry="16"
              fill="#1a3a8a" opacity="0.18" filter="url(#edgeGlow)"/>
     <polygon points="128,52  55,182  128,182" fill="url(#mtnGrad)" opacity="0.82"/>
     <polygon points="128,52  128,182  201,182" fill="url(#mtnRight)" opacity="0.72"/>
@@ -84,20 +81,22 @@
     </g>
   </g>
 
-  <text x="128" y="216"
+  <text x="128" y="210"
         font-family="'Segoe UI', 'Helvetica Neue', Arial, sans-serif"
         font-size="30" font-weight="200" letter-spacing="10"
         fill="#d6eeff" text-anchor="middle" opacity="0.92">APEX</text>
-  <text x="128" y="232"
+  <text x="128" y="226"
         font-family="'Segoe UI', 'Helvetica Neue', Arial, sans-serif"
-        font-size="7.5" font-weight="300" letter-spacing="2.5"
+        font-size="7" font-weight="300" letter-spacing="1.8"
         fill="#4dd0e1" text-anchor="middle" opacity="0.6">AUTOMATED PHOTOMETRY</text>
 
-  <!-- LC badge — bottom right, purple -->
-  <circle cx="200" cy="200" r="22" fill="url(#badgeGrad)" filter="url(#badgeShadow)"/>
-  <circle cx="200" cy="200" r="21" fill="none" stroke="#e8d5ff" stroke-width="1" opacity="0.4"/>
-  <text x="200" y="206"
+  <!-- LC badge: pill shape bottom-right -->
+  <rect x="183" y="188" width="24" height="20" rx="10" ry="10"
+        fill="url(#badgeGrad)" opacity="0.95"/>
+  <rect x="183" y="188" width="24" height="20" rx="10" ry="10"
+        fill="none" stroke="#e8d5ff" stroke-width="0.8" opacity="0.4"/>
+  <text x="195" y="202"
         font-family="'Segoe UI', 'Helvetica Neue', Arial, sans-serif"
-        font-size="18" font-weight="600"
-        fill="#ffffff" text-anchor="middle" opacity="0.95">L</text>
+        font-size="11" font-weight="700"
+        fill="#ffffff" text-anchor="middle" opacity="1">LC</text>
 </svg>

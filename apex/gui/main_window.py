@@ -13,33 +13,48 @@ from PyQt5.QtWidgets import (
     QPlainTextEdit, QComboBox, QSpinBox, QDoubleSpinBox
 )
 from PyQt5.QtCore import Qt, pyqtSignal, QObject, QEvent
-from PyQt5.QtGui import QFont, QIcon, QPixmap
-from PyQt5.QtSvg import QSvgRenderer
-from PyQt5.QtCore import QByteArray
+from PyQt5.QtGui import QFont, QIcon, QPixmap, QPainter
 from pathlib import Path
 from typing import Optional, List
 
 _RESOURCES = Path(__file__).resolve().parent.parent / "resources"
 
 
+def _svg_to_pixmap(svg_path: Path, size: int = 256) -> QPixmap:
+    pixmap = QPixmap(size, size)
+    pixmap.fill(Qt.transparent)
+    try:
+        from PyQt5.QtSvg import QSvgRenderer
+        renderer = QSvgRenderer(str(svg_path))
+        painter = QPainter(pixmap)
+        renderer.render(painter)
+        painter.end()
+    except Exception:
+        pass
+    return pixmap
+
+
+def _apply_opacity(pixmap: QPixmap, opacity: float) -> QPixmap:
+    result = QPixmap(pixmap.size())
+    result.fill(Qt.transparent)
+    painter = QPainter(result)
+    painter.setOpacity(opacity)
+    painter.drawPixmap(0, 0, pixmap)
+    painter.end()
+    return result
+
+
 def _load_icon(mode: str) -> QIcon:
-    svg_name = f"logo_{mode}.svg"
-    svg_path = _RESOURCES / svg_name
+    svg_path = _RESOURCES / f"logo_{mode}.svg"
     if not svg_path.exists():
         svg_path = _RESOURCES / "logo_base.svg"
     if not svg_path.exists():
         return QIcon()
-    try:
-        renderer = QSvgRenderer(str(svg_path))
-        pixmap = QPixmap(256, 256)
-        pixmap.fill(Qt.transparent)
-        from PyQt5.QtGui import QPainter
-        painter = QPainter(pixmap)
-        renderer.render(painter)
-        painter.end()
-        return QIcon(pixmap)
-    except Exception:
-        return QIcon()
+    px = _svg_to_pixmap(svg_path, 256)
+    icon = QIcon()
+    for size in (16, 24, 32, 48, 64, 128, 256):
+        icon.addPixmap(px.scaled(size, size, Qt.KeepAspectRatio, Qt.SmoothTransformation))
+    return icon
 
 
 class StepButton(QPushButton):
@@ -283,12 +298,30 @@ class MainWindowWorkflow(QMainWindow):
     def setup_ui(self):
         mode_title = "CMD Cluster Photometry" if self.mode == "cmd" else "Light Curve Analysis"
         self.setWindowTitle(f"APEX — {mode_title}")
-        self.setWindowIcon(_load_icon(self.mode))
+        icon = _load_icon(self.mode)
+        self.setWindowIcon(icon)
+        QApplication.instance().setWindowIcon(icon)
         self.setMinimumSize(800, 700)
 
         central = QWidget()
         self.setCentralWidget(central)
         layout = QVBoxLayout(central)
+
+        # Watermark logo — bottom-right corner of the central widget
+        wm_svg = _RESOURCES / f"logo_{self.mode}.svg"
+        if not wm_svg.exists():
+            wm_svg = _RESOURCES / "logo_base.svg"
+        if wm_svg.exists():
+            wm_px = _svg_to_pixmap(wm_svg, 180)
+            wm_px = _apply_opacity(wm_px, 0.07)
+            wm_label = QLabel(central)
+            wm_label.setPixmap(wm_px)
+            wm_label.setAttribute(Qt.WA_TransparentForMouseEvents)
+            wm_label.setStyleSheet("background: transparent;")
+            wm_label.resize(180, 180)
+            central.resizeEvent = lambda e, lbl=wm_label: (
+                lbl.move(e.size().width() - 190, e.size().height() - 190)
+            )
 
         title = QLabel("Aperture Photometry Toolkit")
         title.setFont(QFont("Arial", 18, QFont.Bold))

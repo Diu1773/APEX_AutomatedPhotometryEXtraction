@@ -29,6 +29,11 @@ def main() -> int:
     app.setOrganizationName("APEX Project")
     configure_fonts(app)
     try:
+        from apex.gui.main_window import _load_icon
+        app.setWindowIcon(_load_icon("lc"))
+    except Exception:
+        pass
+    try:
         from apex.gui.main_window import MainWindowWorkflow
         window = MainWindowWorkflow(mode="lc")
         window.show()
