@@ -64,8 +64,9 @@ def find_best_lightcurve_csv(result_dir: PathLike, star_id: int) -> Path | None:
 
 
 def step5_photometry_dir(result_dir: PathLike) -> Path:
-    """LC aperture photometry directory alias."""
-    return step5_aperture_dir(result_dir)
+    """LC photometry directory — now points to forced aperture photometry output."""
+    from apex.utils.step_paths import step_forced_phot_dir
+    return step_forced_phot_dir(result_dir)
 
 
 # ── LC short-name aliases used by analysis modules ───────────────────────────

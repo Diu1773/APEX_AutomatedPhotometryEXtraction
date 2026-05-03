@@ -36,10 +36,9 @@ from apex.utils.astro_utils import normalize_filter_name
 from apex.utils.step_paths import (
     step2_cropped_dir,
     crop_is_active,
-    step5_aperture_dir,
+    step_forced_phot_dir,
     step6_wcs_dir,
     step7_refbuild_dir,
-    step8_idmatch_dir,
     tool_extinction_dir,
 )
 from apex.utils.step_paths_cmd import step6_psf_dir, step10_selection_dir, step11_zp_dir
@@ -150,8 +149,8 @@ class ZeropointCalibrationWorker(QThread):
             if p_win.exists():
                 return p_win
         for base in (
+            step_forced_phot_dir(self.result_dir),
             step6_psf_dir(self.result_dir),
-            step5_aperture_dir(self.result_dir),
             step10_selection_dir(self.result_dir),
             self.result_dir,
             self.result_dir / "phot",
@@ -269,13 +268,13 @@ class ZeropointCalibrationWorker(QThread):
         return sorted(self.data_dir.glob("*.fit*"))
 
     def _find_idmatch_csv(self, fname: str, result_dir: Path):
-        """Find idmatch_{fname}.csv in step8_idmatch/ or its date-keyed subdirs."""
-        idm_dir = step8_idmatch_dir(result_dir)
-        direct = idm_dir / f"idmatch_{fname}.csv"
+        """Find per-frame photometry TSV from forced phot (replaces old idmatch CSV)."""
+        forced_dir = step_forced_phot_dir(result_dir)
+        direct = forced_dir / f"photometry_{fname}.tsv"
         if direct.exists():
             return direct
-        if idm_dir.exists():
-            for sub in sorted(idm_dir.iterdir()):
+        if forced_dir.exists():
+            for sub in sorted(forced_dir.iterdir()):
                 if sub.is_dir():
                     cand = sub / f"idmatch_{fname}.csv"
                     if cand.exists():
@@ -440,13 +439,13 @@ class ZeropointCalibrationWorker(QThread):
             result_dir = self.result_dir
             output_dir = step11_zp_dir(result_dir)
             output_dir.mkdir(parents=True, exist_ok=True)
-            # PSF photometry is preferred; aperture photometry is the fallback.
-            phot_dir_psf = step6_psf_dir(result_dir)
-            phot_dir_ap  = step5_aperture_dir(result_dir)
+            # Forced phot is preferred; PSF photometry is optional refinement.
+            phot_dir_forced = step_forced_phot_dir(result_dir)
+            phot_dir_psf    = step6_psf_dir(result_dir)
 
             idx_candidates = [
-                phot_dir_psf / "photometry_index.csv",
-                phot_dir_ap  / "photometry_index.csv",
+                phot_dir_forced / "photometry_index.csv",
+                phot_dir_psf    / "photometry_index.csv",
                 result_dir   / "photometry_index.csv",
                 result_dir   / "phot_index.csv",
                 result_dir   / "phot" / "phot_index.csv",
@@ -495,7 +494,7 @@ class ZeropointCalibrationWorker(QThread):
             else:
                 idx["filter"] = "unknown"
 
-            fq_path = step5_aperture_dir(result_dir) / "frame_quality.csv"
+            fq_path = step_forced_phot_dir(result_dir) / "frame_quality.csv"
             if not fq_path.exists():
                 fq_path = result_dir / "frame_quality.csv"
             if fq_path.exists() and ("file" in idx.columns):
@@ -2686,7 +2685,7 @@ class ZeropointCalibrationWindow(StepWindowBase):
         self.viewer = None
 
         super().__init__(
-            step_index=10,
+            step_index=9,
             step_name="Zeropoint Calibration",
             params=params,
             project_state=project_state,

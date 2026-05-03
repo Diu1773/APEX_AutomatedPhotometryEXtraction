@@ -10,14 +10,14 @@ from typing import Iterable, Optional, Tuple, Dict, List
 import numpy as np
 import pandas as pd
 
-from .step_paths import step4_dir, step5_aperture_dir, step6_wcs_dir
+from .step_paths import step4_dir, step_forced_phot_dir, step6_wcs_dir
 
 
 def resolve_frame_quality_path(result_dir: Path) -> Optional[Path]:
     """Resolve the best available frame_quality.csv path."""
     candidates = [
-        step4_dir(result_dir) / "frame_quality.csv",        # APEX: step4 owns its QC
-        step5_aperture_dir(result_dir) / "frame_quality.csv",
+        step4_dir(result_dir) / "frame_quality.csv",          # APEX: step4 owns its QC
+        step_forced_phot_dir(result_dir) / "frame_quality.csv",
         Path(result_dir) / "frame_quality.csv",
     ]
     for path in candidates:

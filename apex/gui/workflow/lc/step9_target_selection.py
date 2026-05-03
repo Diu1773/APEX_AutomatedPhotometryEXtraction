@@ -49,7 +49,7 @@ from apex.utils.step_paths_lc import (
     step2_cropped_dir,
     step6_wcs_dir,
     step7_refbuild_dir,
-    step8_idmatch_dir,
+    step_forced_phot_dir,
     step9_selection_dir,
 )
 from apex.utils.io_utils import read_csv_int64_source_id, coerce_int64_source_id
@@ -203,7 +203,7 @@ class TargetComparisonSelectionWindow(StepWindowBase):
         self._stretch_marker_max_line = None
 
         super().__init__(
-            step_index=8,
+            step_index=7,
             step_name="Target/Comparison Selection",
             params=params,
             project_state=project_state,
@@ -712,7 +712,7 @@ class TargetComparisonSelectionWindow(StepWindowBase):
 
     def check_step7_status(self):
         """Step 8 ID-match 출력물 확인 및 필터 로드 (Reference Build 없이도 동작)"""
-        step8_out = step8_idmatch_dir(self.params.P.result_dir)
+        step8_out = step_forced_phot_dir(self.params.P.result_dir)
         step7_out = step7_refbuild_dir(self.params.P.result_dir)
 
         # Step 8 필터 정보 로드 (필수)
@@ -887,7 +887,7 @@ class TargetComparisonSelectionWindow(StepWindowBase):
 
     def load_step6_master_sources(self):
         """Step 8 master source list (ra/dec, Gaia mags)"""
-        step8_path = step8_idmatch_dir(self.params.P.result_dir) / "step8_master_sources.csv"
+        step8_path = step_forced_phot_dir(self.params.P.result_dir) / "step8_master_sources.csv"
         if not step8_path.exists():
             return
         try:
@@ -1433,7 +1433,7 @@ class TargetComparisonSelectionWindow(StepWindowBase):
         if flt in self._filter_all_source_ids:
             return set(self._filter_all_source_ids[flt])
 
-        step8_out = step8_idmatch_dir(self.params.P.result_dir)
+        step8_out = step_forced_phot_dir(self.params.P.result_dir)
         frames = self.filter_frames.get(flt, [])
         sids: Set[int] = set()
 
@@ -1467,7 +1467,7 @@ class TargetComparisonSelectionWindow(StepWindowBase):
         if cached is not None:
             return set(cached)
 
-        step8_out = step8_idmatch_dir(self.params.P.result_dir)
+        step8_out = step_forced_phot_dir(self.params.P.result_dir)
         frames = self.filter_frames.get(flt, [])
         if not frames:
             return set()
@@ -2124,7 +2124,7 @@ class TargetComparisonSelectionWindow(StepWindowBase):
             self.idmatch_df = self._idmatch_cache[filename]
             return
 
-        step8_out = step8_idmatch_dir(self.params.P.result_dir)
+        step8_out = step_forced_phot_dir(self.params.P.result_dir)
         idmatch_path = _resolve_idmatch_path(step8_out, filename)
 
         if idmatch_path.exists():
