@@ -3899,17 +3899,14 @@ class WcsPlateSolvingWindow(StepWindowBase):
     def populate_file_list(self):
         crop_active = crop_is_active(self.params.P.result_dir)
         cropped_dir = step2_cropped_dir(self.params.P.result_dir)
+        excluded = getattr(self.file_manager, "excluded_files", set()) if self.file_manager else set()
 
         if crop_active and cropped_dir.exists() and list(cropped_dir.glob("*.fit*")):
-            files = sorted([f.name for f in cropped_dir.glob("*.fit*")])
+            files = sorted([f.name for f in cropped_dir.glob("*.fit*")
+                            if f.name not in excluded])
             self.use_cropped = True
         else:
-            if self.file_manager and not self.file_manager.filenames:
-                try:
-                    self.file_manager.scan_files()
-                except Exception:
-                    pass
-            files = list(self.file_manager.filenames) if self.file_manager else []
+            files = self.file_manager.get_file_list() if self.file_manager else []
             self.use_cropped = False
 
         self.file_list = list(files)

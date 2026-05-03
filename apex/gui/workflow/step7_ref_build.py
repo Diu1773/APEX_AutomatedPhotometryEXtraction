@@ -1636,13 +1636,10 @@ class RefBuildWindow(StepWindowBase):
     def run_ref_build(self):
         if self.worker and self.worker.isRunning():
             return
-        files = list(self.file_manager.filenames) if self.file_manager else []
-        if not files and self.file_manager:
-            try:
-                files = list(self.file_manager.scan_files())
-            except Exception as e:
-                QMessageBox.warning(self, "Warning", f"No frames found: {e}")
-                return
+        files = self.file_manager.get_file_list() if self.file_manager else []
+        if not files:
+            QMessageBox.warning(self, "Warning", "No frames found")
+            return
         if not files:
             QMessageBox.warning(self, "Warning", "No frames found")
             return

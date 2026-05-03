@@ -471,6 +471,26 @@ class FileManager:
             return self.path_map[filename]
         return Path(self.params.P.data_dir) / filename
 
+    def get_file_list(self) -> List[str]:
+        """Return filenames respecting excluded_files and excluded_nights.
+
+        If filenames is empty, calls scan_files() first.
+        Always excludes files in self.excluded_files and files belonging
+        to nights in self.excluded_nights.
+        """
+        if not self.filenames:
+            self.scan_files()
+        excluded = getattr(self, "excluded_files", set())
+        exc_nights = getattr(self, "excluded_nights", set())
+        if not excluded and not exc_nights:
+            return list(self.filenames)
+        night_map = getattr(self, "night_assignments", {})
+        return [
+            f for f in self.filenames
+            if f not in excluded
+            and night_map.get(f) not in exc_nights
+        ]
+
     def get_all_file_paths(self) -> List[Path]:
         """
         Get full paths to all scanned files
