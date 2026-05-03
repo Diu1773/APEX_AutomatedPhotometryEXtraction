@@ -75,6 +75,28 @@ def _mag_from_flux(flux: float, zp: float = 0.0) -> float:
     return zp - 2.5 * np.log10(flux)
 
 
+def _catalog_series(df: pd.DataFrame, col: str, fallback) -> pd.Series:
+    if col in df.columns:
+        return df[col].reset_index(drop=True)
+    return pd.Series(fallback)
+
+
+def _normalize_filter_value(value) -> str:
+    raw = str(value or "").strip().lower()
+    if not raw:
+        return ""
+    import re
+    tokens = [t for t in re.split(r"[^a-z0-9]+", raw) if t]
+    for token in reversed(tokens or [raw]):
+        if token in {"ha", "halpha", "h-alpha"}:
+            return "ha"
+        if token in {"u", "g", "r", "i", "z", "b", "v"}:
+            return token
+    if raw in {"u", "g", "r", "i", "z", "b", "v"}:
+        return raw
+    return raw
+
+
 # ── ForcedPhotWorker ───────────────────────────────────────────────────────────
 
 class ForcedPhotWorker(QThread):
@@ -268,7 +290,16 @@ class ForcedPhotWorker(QThread):
                 if not has_radec and not has_xy:
                     continue
                 if "master_id" not in df.columns:
-                    df.insert(0, "master_id", range(len(df)))
+                    if "ID" in df.columns:
+                        df.insert(0, "master_id", df["ID"])
+                    elif "source_id" in df.columns:
+                        df.insert(0, "master_id", df["source_id"])
+                    else:
+                        df.insert(0, "master_id", range(1, len(df) + 1))
+                if "source_id" not in df.columns:
+                    df["source_id"] = df["master_id"]
+                if "ID" not in df.columns:
+                    df["ID"] = df["master_id"]
                 for col in ("crowding_flag", "neighbor_dist_px"):
                     if col not in df.columns:
                         df[col] = False if col == "crowding_flag" else np.nan
@@ -488,13 +519,19 @@ class ForcedPhotWorker(QThread):
         # Bad phot flag: saturated, nonlinear, or no valid flux
         bad_phot = is_sat_arr | is_nl_arr | ~np.isfinite(flux_corr)
 
-        master_id = master_df["master_id"].to_numpy(
-            dtype=object if master_df["master_id"].dtype == object else int
-        )
+        # source_id is the stable master/Gaia identifier used downstream.
+        # det_uid is only the frame-local detection id used for recentering.
+        master_id = _catalog_series(master_df, "master_id", np.arange(1, n + 1))
+        source_id = _catalog_series(master_df, "source_id", master_id)
+        display_id = _catalog_series(master_df, "ID", master_id)
 
         out = pd.DataFrame({
             "master_id":       master_id,
-            "source_id":       det_uid_arr,
+            "source_id":       source_id,
+            "ID":              display_id,
+            "det_uid":         det_uid_arr,
+            "x":               x_fit,
+            "y":               y_fit,
             "x_pred":          x_pred,
             "y_pred":          y_pred,
             "x_fit":           x_fit,
@@ -503,14 +540,21 @@ class ForcedPhotWorker(QThread):
             "forced_flag":     ~detected_flag,
             "centroid_shift_px": centroid_shift,
             "flux":            flux_corr,
+            "flux_e":          flux_corr,
+            "flux_net_adu":    flux_corr / max(gain, 1e-12),
             "flux_err":        flux_err_corr,
             "mag_inst":        mag_inst,
             "mag_err":         mag_err,
             "snr":             snr_arr,
             "sky":             sky_arr,
             "apcorr":          apcorr,
+            "is_saturated":    is_sat_arr,
+            "is_nonlinear":    is_nl_arr,
             "bad_phot_flag":   bad_phot,
         })
+        for col in ("ra_deg", "dec_deg", "gaia_source_id"):
+            if col in master_df.columns and col not in out.columns:
+                out[col] = master_df[col].reset_index(drop=True)
         return out, apcorr
 
     # ── Main run ──────────────────────────────────────────────────────────────
@@ -530,18 +574,34 @@ class ForcedPhotWorker(QThread):
 
         fwhm_guess = _to_float(getattr(P, "fwhm_pix_guess", 6.0), 6.0)
 
-        # Group file list by filter
-        import re
-        _FILTER_RE = re.compile(r"[-_]([ugrizbvUGRIZBV])[-_.]", re.IGNORECASE)
-
         def _get_filter(fname: str) -> str:
-            m = _FILTER_RE.search(str(fname))
+            fits_path = self._resolve_fits_path(fname)
+            if fits_path is not None and fits_path.exists():
+                try:
+                    hdr = fits.getheader(fits_path)
+                    for key in ("FILTER", "FILTER1", "FILTER2", "FILTNAM", "FILTERID"):
+                        filt = _normalize_filter_value(hdr.get(key))
+                        if filt:
+                            return filt
+                except Exception:
+                    pass
+            import re
+            m = re.search(r"[-_]([ugrizbvUGRIZBV])[-_.]", str(fname), re.IGNORECASE)
             return m.group(1).lower() if m else "unknown"
 
         filter_map: Dict[str, List[str]] = {}
         for fname in self.file_list:
             filt = _get_filter(fname)
             filter_map.setdefault(filt, []).append(fname)
+        try:
+            # Compatibility artifact: LC/CMD readers still use the old Step 8
+            # frame map name even though forced phot now replaces IDMatch.
+            (out_dir / "step8_filter_frames.json").write_text(
+                json.dumps(filter_map, indent=2, ensure_ascii=False),
+                encoding="utf-8",
+            )
+        except Exception as exc:
+            self._log(f"[FORCED] step8_filter_frames write failed: {exc}")
 
         # Load master catalogs
         master_catalogs: Dict[str, Optional[pd.DataFrame]] = {}
@@ -555,6 +615,20 @@ class ForcedPhotWorker(QThread):
                 self._log(f"[FORCED] Loaded master catalog for filter '{filt}': {len(cat)} sources")
             else:
                 self._log(f"[FORCED] WARNING: No master catalog found for filter '{filt}'")
+        try:
+            master_rows = []
+            for filt, cat in master_catalogs.items():
+                if cat is None or cat.empty:
+                    continue
+                tmp = cat.copy()
+                tmp.insert(0, "filter", filt)
+                master_rows.append(tmp)
+            if master_rows:
+                pd.concat(master_rows, ignore_index=True).drop_duplicates(
+                    subset=[c for c in ("filter", "source_id") if c in master_rows[0].columns]
+                ).to_csv(out_dir / "step8_master_sources.csv", index=False)
+        except Exception as exc:
+            self._log(f"[FORCED] step8_master_sources write failed: {exc}")
 
         total = len(self.file_list)
         index_rows: List[dict] = []
@@ -600,12 +674,15 @@ class ForcedPhotWorker(QThread):
                     self._log(f"[FORCED] [{fname}] phot_frame failed: {exc}\n{traceback.format_exc()}")
                     index_rows.append({"file": fname, "filter": filt, "status": "error",
                                        "n_master": len(master_df), "n_detected": 0, "n_forced": 0,
-                                       "apcorr": np.nan})
+                                       "wcs_ok": bool(wcs is not None), "apcorr": np.nan})
                     continue
 
                 # Write per-frame TSV
                 out_path = out_dir / f"photometry_{fname}.tsv"
                 try:
+                    phot_df.insert(0, "file", fname)
+                    phot_df.insert(1, "filter", filt)
+                    phot_df.insert(2, "FILTER", filt)
                     phot_df.to_csv(out_path, sep="\t", index=False, float_format="%.6f")
                 except Exception as exc:
                     self._log(f"[FORCED] [{fname}] write failed: {exc}")
@@ -629,7 +706,9 @@ class ForcedPhotWorker(QThread):
                     "n_forced":   n_forced,
                     "n_valid_phot": n_valid,
                     "fwhm_px":    fwhm_px,
+                    "wcs_ok":     bool(wcs is not None),
                     "apcorr":     apcorr_val,
+                    "path":       str(out_path),
                 })
                 apcorr_rows.append({"file": fname, "filter": filt, "apcorr": apcorr_val,
                                     "n_apcorr_stars": n_det})
@@ -639,6 +718,7 @@ class ForcedPhotWorker(QThread):
             idx_df = pd.DataFrame(index_rows)
             try:
                 idx_df.to_csv(out_dir / "photometry_index.csv", index=False, float_format="%.6f")
+                idx_df.to_csv(out_dir / "step8_frame_stats.csv", index=False, float_format="%.6f")
             except Exception as exc:
                 self._log(f"[FORCED] photometry_index write failed: {exc}")
 
