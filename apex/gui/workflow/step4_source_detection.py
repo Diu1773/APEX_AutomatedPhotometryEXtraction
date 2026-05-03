@@ -33,6 +33,7 @@ from scipy.spatial import cKDTree as KDTree
 
 from .step_window_base import StepWindowBase
 from apex.utils.constants import get_parallel_workers
+from apex.utils.fast_stats import finite_nanmedian, finite_nanstd, robust_median_mad
 from apex.utils.step_paths import (
     step2_cropped_dir,
     crop_is_active,
@@ -355,8 +356,8 @@ class DetectionWorker(QThread):
                             vv = sc(vals)
                             vv = vv.compressed() if np.ma.isMaskedArray(vv) else np.asarray(vv)
                             vv = vv[np.isfinite(vv)]
-                            sky_med = float(np.nanmedian(vv)) if vv.size else float(np.nanmedian(vals))
-                            sky_std = float(np.nanstd(vv, ddof=1)) if vv.size > 1 else float(np.nanstd(vals, ddof=1)) if vals.size > 1 else 0.0
+                            sky_med = finite_nanmedian(vv, default=finite_nanmedian(vals, default=0.0))
+                            sky_std = finite_nanstd(vv, ddof=1, default=0.0) if vv.size > 1 else finite_nanstd(vals, ddof=1, default=0.0) if vals.size > 1 else 0.0
                         else:
                             sky_med = 0.0
                             sky_std = 0.0
@@ -404,7 +405,7 @@ class DetectionWorker(QThread):
 
                     def peak_pass_candidates(data_det, med, seed_fwhm_px):
                         h, w = data_det.shape
-                        fill = float(np.nanmedian(data_det))
+                        fill = finite_nanmedian(data_det, default=0.0)
                         det_safe = np.where(np.isfinite(data_det), data_det, fill)
                         out = []
 
@@ -610,7 +611,7 @@ class DetectionWorker(QThread):
                                     _fwhm_prelim_vals.append(_fpx)
                                     fwhm_by_xy[(float(_xi), float(_yi))] = _fpx
                             if len(_fwhm_prelim_vals) >= 3:
-                                fwhm_prelim = float(np.nanmedian(_fwhm_prelim_vals))
+                                fwhm_prelim = finite_nanmedian(_fwhm_prelim_vals, default=0.0)
                                 self.worker_status.emit(
                                     worker_id, short_name,
                                     f"FWHM={fwhm_prelim:.1f}px", 77
@@ -801,7 +802,7 @@ class DetectionWorker(QThread):
                         n_sources = len(positions)
 
                     # Calculate median FWHM (radial)
-                    fwhm_median = float(np.nanmedian(fwhm_values)) if fwhm_values else 0.0
+                    fwhm_median = finite_nanmedian(fwhm_values, default=0.0) if fwhm_values else 0.0
                     fwhm_qc_max = int(getattr(P, 'fwhm_qc_max_sources', 40))
                     fwhm_measure_max = int(getattr(P, 'fwhm_measure_max', 25))
                     fwhm_dr = float(getattr(P, 'fwhm_dr', 0.5))
@@ -846,9 +847,9 @@ class DetectionWorker(QThread):
                                     fwhm_values.append(fpx)
                                     fwhm_by_xy[xy_key] = fpx
                             if fwhm_values:
-                                fwhm_median = float(np.nanmedian(fwhm_values))
+                                fwhm_median = finite_nanmedian(fwhm_values, default=0.0)
                     except Exception:
-                        fwhm_median = float(np.nanmedian(fwhm_values)) if fwhm_values else 0.0
+                        fwhm_median = finite_nanmedian(fwhm_values, default=0.0) if fwhm_values else 0.0
                     pixscale = getattr(P, 'pixel_scale_arcsec', 0.4)
                     fwhm_arcsec = fwhm_median * pixscale
 
@@ -1435,8 +1436,7 @@ class QCInspectionPanel(QWidget):
             self.parent_window.show_frame_in_detection_tab(fname)
 
     def _robust_z(self, values: np.ndarray) -> np.ndarray:
-        med = np.nanmedian(values)
-        mad = np.nanmedian(np.abs(values - med))
+        med, mad = robust_median_mad(values)
         if not np.isfinite(mad) or mad == 0:
             return np.zeros_like(values, dtype=float)
         return 0.6745 * (values - med) / mad
@@ -3435,34 +3435,51 @@ class SourceDetectionWindow(StepWindowBase):
 
     def on_worker_status(self, worker_id, filename, status, progress):
         """Update worker status panel"""
+        mono = "QLabel { font-family: Consolas, 'Courier New', monospace; font-size: 9pt; }"
         if worker_id not in self.worker_progress_bars:
             row_widget = QWidget()
             row_layout = QHBoxLayout(row_widget)
             row_layout.setContentsMargins(0, 0, 0, 0)
-            row_layout.setSpacing(6)
-            label = QLabel()
-            label.setFixedWidth(310)
-            label.setStyleSheet("QLabel { font-family: Consolas, 'Courier New', monospace; }")
+            row_layout.setSpacing(4)
+
+            id_lbl = QLabel()
+            id_lbl.setFixedWidth(32)
+            id_lbl.setStyleSheet(mono)
+
+            fname_lbl = QLabel()
+            fname_lbl.setStyleSheet(mono)
+            fname_lbl.setMinimumWidth(160)
+
+            status_lbl = QLabel()
+            status_lbl.setFixedWidth(110)
+            status_lbl.setStyleSheet(mono)
+
             bar = QProgressBar()
             bar.setRange(0, 100)
             bar.setValue(0)
             bar.setTextVisible(True)
-            bar.setMinimumWidth(140)
-            row_layout.addWidget(label)
-            row_layout.addWidget(bar, stretch=1)
-            self.worker_status_layout.addWidget(row_widget)
-            self.worker_progress_bars[worker_id] = (label, bar)
+            bar.setFixedWidth(80)
 
-        label, bar = self.worker_progress_bars[worker_id]
-        status_text = self._format_worker_status_text(worker_id, filename, status)
-        label.setText(status_text)
-        label.setToolTip(f"W{worker_id}: {filename} | {status}")
+            row_layout.addWidget(id_lbl)
+            row_layout.addWidget(fname_lbl, stretch=1)
+            row_layout.addWidget(status_lbl)
+            row_layout.addWidget(bar)
+            self.worker_status_layout.addWidget(row_widget)
+            self.worker_progress_bars[worker_id] = (id_lbl, fname_lbl, status_lbl, bar)
+
+        id_lbl, fname_lbl, status_lbl, bar = self.worker_progress_bars[worker_id]
+        short_fname = Path(str(filename)).name
+        id_lbl.setText(f"W{int(worker_id):02d}")
+        fname_lbl.setText(short_fname)
+        fname_lbl.setToolTip(filename)
+        status_lbl.setText(status)
         bar.setValue(progress)
 
         last = self.worker_last_status.get(worker_id)
         current = (filename, status)
         if last != current:
-            self.log(status_text.rstrip())
+            log_text = f"W{int(worker_id):02d} {short_fname}  {status}"
+            self.log(log_text)
             self.worker_last_status[worker_id] = current
 
     def on_file_done(self, filename, result):
