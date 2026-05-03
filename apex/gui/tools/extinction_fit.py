@@ -1765,12 +1765,18 @@ class ExtinctionFitWorker(QThread):
             wide_snr.columns = [f"snr_{c}" for c in wide_snr.columns]
             wide = pd.concat([wide_mag, wide_snr], axis=1).reset_index()
 
-            master_path = step7_refbuild_dir(result_dir) / "ref_catalog.tsv"
-            if not master_path.exists():
-                raise FileNotFoundError("master_catalog.tsv missing")
+            refbuild = step7_refbuild_dir(result_dir)
+            per_filter = sorted(refbuild.glob("ref_catalog_*.tsv")) if refbuild.exists() else []
+            master_path = next(
+                (p for p in [refbuild / "ref_catalog.tsv"] + per_filter
+                 + [refbuild / "master_catalog.tsv"] if p.exists()),
+                None,
+            )
+            if master_path is None:
+                raise FileNotFoundError("ref_catalog.tsv not found in step7_refbuild/")
             master = pd.read_csv(master_path, sep="\t")
             if "ID" not in master.columns:
-                raise RuntimeError("master_catalog.tsv missing ID column")
+                raise RuntimeError("ref_catalog.tsv missing ID column")
 
             merge_cols = ["ID"]
             if "source_id" in master.columns:

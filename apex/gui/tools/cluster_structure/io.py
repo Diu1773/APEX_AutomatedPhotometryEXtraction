@@ -230,10 +230,15 @@ def _pick_first_existing(columns: list[str], candidates: tuple[str, ...]) -> Opt
 
 
 def _load_master_catalog(result_dir: Path) -> Optional[pd.DataFrame]:
-    candidates = [
-        step7_refbuild_dir(result_dir) / "master_catalog.tsv",
-        result_dir / "master_catalog.tsv",
-    ]
+    refbuild = step7_refbuild_dir(result_dir)
+    per_filter = sorted(refbuild.glob("ref_catalog_*.tsv")) if refbuild.exists() else []
+    candidates = (
+        [refbuild / "ref_catalog.tsv"]
+        + per_filter
+        + [result_dir / "ref_catalog.tsv",
+           refbuild / "master_catalog.tsv",   # legacy fallback
+           result_dir / "master_catalog.tsv"]
+    )
     for p in candidates:
         if not p.exists():
             continue
@@ -296,7 +301,9 @@ def _external_membership_tables(result_dir: Path) -> list[tuple[Path, str]]:
         (step11_zp_dir(root) / "cmd_with_gaia_membership.csv", ","),
         (step6_wcs_dir(root) / "gaia_derived.csv", ","),
         (root / "gaia_derived.csv", ","),
-        (step7_refbuild_dir(root) / "master_catalog.tsv", "\t"),
+        (step7_refbuild_dir(root) / "ref_catalog.tsv", "\t"),
+        (step7_refbuild_dir(root) / "master_catalog.tsv", "\t"),   # legacy
+        (root / "ref_catalog.tsv", "\t"),
         (root / "master_catalog.tsv", "\t"),
     ]
 

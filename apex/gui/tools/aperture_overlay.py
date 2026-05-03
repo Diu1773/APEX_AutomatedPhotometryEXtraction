@@ -463,7 +463,7 @@ class ApertureOverlayWindow(StepWindowBase):
         if self.ap_df is None:
             self.load_aperture_by_frame()
         if self.master_df is None or self.ap_df is None:
-            QMessageBox.warning(self, "Missing Data", "master_catalog.tsv or aperture_by_frame.csv not found")
+            QMessageBox.warning(self, "Missing Data", "ref_catalog.tsv or aperture_by_frame.csv not found in result directory")
             return
 
         fname = self.file_combo.currentText()

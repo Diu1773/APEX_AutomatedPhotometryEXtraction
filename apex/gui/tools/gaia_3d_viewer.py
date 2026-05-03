@@ -539,8 +539,16 @@ class Gaia3DViewerWindow(QWidget):
 
     def _load_base_df(self):
         result_dir = self.result_dir
-        for p in [step7_refbuild_dir(result_dir) / "master_catalog.tsv",
-                  result_dir / "master_catalog.tsv"]:
+        refbuild = step7_refbuild_dir(result_dir)
+        per_filter = sorted(refbuild.glob("ref_catalog_*.tsv")) if refbuild.exists() else []
+        ref_candidates = (
+            [refbuild / "ref_catalog.tsv"]
+            + per_filter
+            + [result_dir / "ref_catalog.tsv",
+               refbuild / "master_catalog.tsv",   # legacy
+               result_dir / "master_catalog.tsv"]
+        )
+        for p in ref_candidates:
             if not p.exists():
                 continue
             try:
