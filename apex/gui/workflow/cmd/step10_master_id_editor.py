@@ -1241,7 +1241,10 @@ class MasterIdEditorWindow(StepWindowBase):
         idmatch_path = idmatch_dir / f"photometry_{filename}.tsv"
         if idmatch_path.exists():
             try:
-                df = read_csv_int64_source_id(idmatch_path)
+                sep = "\t" if idmatch_path.suffix.lower() == ".tsv" else ","
+                df = read_csv_int64_source_id(idmatch_path, sep=sep)
+                if {"x_fit", "y_fit"} <= set(df.columns) and not {"x", "y"} <= set(df.columns):
+                    df = df.rename(columns={"x_fit": "x", "y_fit": "y"})
                 if {"x", "y", "source_id"} <= set(df.columns):
                     clean = df[["x", "y", "source_id"]].copy()
                     clean["x"] = pd.to_numeric(clean["x"], errors="coerce")

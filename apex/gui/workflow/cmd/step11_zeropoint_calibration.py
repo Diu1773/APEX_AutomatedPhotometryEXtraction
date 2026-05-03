@@ -85,9 +85,18 @@ def _normalize_master_columns(df: pd.DataFrame) -> pd.DataFrame:
 
 
 def _load_master_table(result_dir: Path) -> tuple[pd.DataFrame, str, Path]:
+    refbuild = step7_refbuild_dir(result_dir)
+    # Collect per-filter catalogs written by step7_ref_build
+    per_filter = sorted(refbuild.glob("ref_catalog_*.tsv")) if refbuild.exists() else []
     candidates = [
-        ("master_catalog", step7_refbuild_dir(result_dir) / "master_catalog.tsv", "\t"),
-        ("master_catalog", result_dir / "master_catalog.tsv", "\t"),
+        # step7 writes ref_catalog.tsv (no-filter copy) and ref_catalog_{filter}.tsv
+        ("ref_catalog",    refbuild / "ref_catalog.tsv",      "\t"),
+    ] + [
+        ("ref_catalog",    p,                                   "\t") for p in per_filter
+    ] + [
+        # legacy / fallback names
+        ("master_catalog", refbuild / "master_catalog.tsv",    "\t"),
+        ("master_catalog", result_dir / "master_catalog.tsv",  "\t"),
         ("master_gaia_map", result_dir / "master_gaia_map.csv", ","),
     ]
     tried = []
@@ -273,12 +282,6 @@ class ZeropointCalibrationWorker(QThread):
         direct = forced_dir / f"photometry_{fname}.tsv"
         if direct.exists():
             return direct
-        if forced_dir.exists():
-            for sub in sorted(forced_dir.iterdir()):
-                if sub.is_dir():
-                    cand = sub / f"idmatch_{fname}.csv"
-                    if cand.exists():
-                        return cand
         return None
 
     def _load_ref_wcs(self):
@@ -451,7 +454,7 @@ class ZeropointCalibrationWorker(QThread):
                 result_dir   / "phot" / "phot_index.csv",
                 result_dir   / "phot" / "photometry_index.csv",
             ]
-            for _pd in (phot_dir_psf, phot_dir_ap):
+            for _pd in (phot_dir_forced, phot_dir_psf):
                 if _pd.exists():
                     idx_candidates += sorted(_pd.glob("*phot*index*.csv"))
             idx_candidates += sorted(result_dir.glob("*phot*index*.csv"))
@@ -560,7 +563,8 @@ class ZeropointCalibrationWorker(QThread):
                         _idmatch_csv = self._find_idmatch_csv(_fname, result_dir)
                         if _idmatch_csv is not None:
                             try:
-                                _im = pd.read_csv(_idmatch_csv)
+                                sep = "\t" if _idmatch_csv.suffix.lower() == ".tsv" else ","
+                                _im = pd.read_csv(_idmatch_csv, sep=sep)
                                 if "det_idx" in _im.columns:
                                     _im = _im.rename(columns={"det_idx": "det_uid"})
                                 if "det_uid" in _im.columns and "source_id" in _im.columns:

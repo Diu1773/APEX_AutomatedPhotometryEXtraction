@@ -64,16 +64,27 @@ def _extract_date_key(filename: str) -> str:
 
 
 def _resolve_idmatch_path(step7_dir: Path, filename: str) -> Path:
-    date_key = _extract_date_key(filename)
+    fname = Path(str(filename)).name
+    # Forced phot TSV is now the per-frame identity table; keep legacy
+    # idmatch fallbacks so older result folders still open.
+    for forced_name in (f"photometry_{fname}.tsv", f"{fname}_photometry.tsv"):
+        forced = step7_dir / forced_name
+        if forced.exists():
+            return forced
+    date_key = _extract_date_key(fname)
     if date_key:
-        dated = step7_dir / date_key / f"idmatch_{filename}.csv"
+        dated = step7_dir / date_key / f"idmatch_{fname}.csv"
         if dated.exists():
             return dated
-    direct = step7_dir / f"idmatch_{filename}.csv"
+    direct = step7_dir / f"idmatch_{fname}.csv"
     if direct.exists():
         return direct
-    matches = list(step7_dir.glob(f"*/idmatch_{filename}.csv"))
+    matches = list(step7_dir.glob(f"*/idmatch_{fname}.csv"))
     return matches[0] if matches else direct
+
+
+def _table_sep(path: Path) -> str:
+    return "\t" if path.suffix.lower() == ".tsv" else ","
 
 
 class TargetComparisonSelectionWindow(StepWindowBase):
@@ -717,21 +728,33 @@ class TargetComparisonSelectionWindow(StepWindowBase):
 
         # Step 8 필터 정보 로드 (필수)
         filter_frames_path = step8_out / "step8_filter_frames.json"
-        if not filter_frames_path.exists():
-            self.step7_status_label.setText("Step 8 not complete. Run ID Match first.")
-            self.step7_status_label.setStyleSheet("color: red;")
-            return
 
         try:
             self.filter_frames.clear()
             self.filter_catalogs.clear()
 
-            with open(filter_frames_path, "r", encoding="utf-8") as f:
-                self.filter_frames = json.load(f)
+            if filter_frames_path.exists():
+                with open(filter_frames_path, "r", encoding="utf-8") as f:
+                    self.filter_frames = json.load(f)
+            else:
+                idx_path = step8_out / "photometry_index.csv"
+                if not idx_path.exists():
+                    self.step7_status_label.setText("Forced photometry not complete. Run Forced Aperture Phot first.")
+                    self.step7_status_label.setStyleSheet("color: red;")
+                    return
+                idx_df = pd.read_csv(idx_path)
+                if "file" not in idx_df.columns:
+                    self.step7_status_label.setText("Forced photometry index is missing file column.")
+                    self.step7_status_label.setStyleSheet("color: red;")
+                    return
+                filt_col = "filter" if "filter" in idx_df.columns else None
+                for _, row in idx_df.iterrows():
+                    flt = str(row.get(filt_col, "unknown") if filt_col else "unknown").strip().lower() or "unknown"
+                    self.filter_frames.setdefault(flt, []).append(str(row["file"]))
 
             filters = list(self.filter_frames.keys())
             if not filters:
-                self.step7_status_label.setText("No filters found in Step 8")
+                self.step7_status_label.setText("No filters found in forced photometry output")
                 self.step7_status_label.setStyleSheet("color: red;")
                 return
         except Exception as e:
@@ -758,6 +781,10 @@ class TargetComparisonSelectionWindow(StepWindowBase):
                     matches = sorted(step7_out.glob(f"ref_catalog_{flt}_*.tsv"))
                     if matches:
                         catalog_path = matches[0]
+                if not catalog_path.exists():
+                    generic_path = step7_out / "ref_catalog.tsv"
+                    if generic_path.exists():
+                        catalog_path = generic_path
                 if catalog_path.exists():
                     try:
                         self.filter_catalogs[flt] = read_csv_int64_source_id(catalog_path, sep="\t")
@@ -1442,7 +1469,7 @@ class TargetComparisonSelectionWindow(StepWindowBase):
             if not p.exists():
                 continue
             try:
-                df = read_csv_int64_source_id(p, usecols=["source_id"])
+                df = read_csv_int64_source_id(p, sep=_table_sep(p), usecols=["source_id"])
                 if "source_id" not in df.columns:
                     continue
                 vals = coerce_int64_source_id(df["source_id"]).dropna().astype("int64")
@@ -1481,7 +1508,7 @@ class TargetComparisonSelectionWindow(StepWindowBase):
             if not p.exists():
                 continue
             try:
-                df = read_csv_int64_source_id(p, usecols=["source_id"])
+                df = read_csv_int64_source_id(p, sep=_table_sep(p), usecols=["source_id"])
                 vals = coerce_int64_source_id(df["source_id"]).dropna().astype("int64")
                 sid_counts.update(vals.tolist())
                 n_frames += 1
@@ -2129,7 +2156,9 @@ class TargetComparisonSelectionWindow(StepWindowBase):
 
         if idmatch_path.exists():
             try:
-                df = read_csv_int64_source_id(idmatch_path)
+                df = read_csv_int64_source_id(idmatch_path, sep=_table_sep(idmatch_path))
+                if {"x_fit", "y_fit"} <= set(df.columns) and not {"x", "y"} <= set(df.columns):
+                    df = df.rename(columns={"x_fit": "x", "y_fit": "y"})
                 if {"x", "y", "source_id"} <= set(df.columns):
                     df["source_id"] = coerce_int64_source_id(df["source_id"])
                     self.idmatch_df = df
