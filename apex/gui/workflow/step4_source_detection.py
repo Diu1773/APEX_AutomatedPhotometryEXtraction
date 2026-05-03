@@ -3470,8 +3470,11 @@ class SourceDetectionWindow(StepWindowBase):
         id_lbl, fname_lbl, status_lbl, bar = self.worker_progress_bars[worker_id]
         short_fname = Path(str(filename)).name
         id_lbl.setText(f"W{int(worker_id):02d}")
-        fname_lbl.setText(short_fname)
-        fname_lbl.setToolTip(filename)
+        # Elide filename to fit available label width
+        fm = fname_lbl.fontMetrics()
+        elided = fm.elidedText(short_fname, Qt.ElideMiddle, fname_lbl.width() or 160)
+        fname_lbl.setText(elided)
+        fname_lbl.setToolTip(short_fname)
         status_lbl.setText(status)
         bar.setValue(progress)
 
