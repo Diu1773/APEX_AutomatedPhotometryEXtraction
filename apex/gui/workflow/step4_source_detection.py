@@ -122,6 +122,23 @@ def _get_detect_mode_from_params(params_obj) -> str:
     return _normalize_detect_mode(getattr(params_obj, "detect_mode", "normal"))
 
 
+def _normalize_detect_engine(value) -> str:
+    s = str(value or "segm").strip().lower()
+    aliases = {
+        "sourceextractor": "sep",
+        "source_extractor": "sep",
+        "sextractor": "sep",
+        "sex": "sep",
+        "segmentation": "segm",
+        "photutils": "segm",
+        "daofind": "dao",
+    }
+    s = aliases.get(s, s)
+    if s in ("sep", "segm", "peak", "dao"):
+        return s
+    return "segm"
+
+
 class DetectionWorker(QThread):
     """Worker thread for parallel source detection"""
     progress = pyqtSignal(int, int, str, int)  # current, total, message, active_workers
@@ -235,11 +252,12 @@ class DetectionWorker(QThread):
                     else:
                         file_path = self.params.get_file_path(filename)
                     source_sig = {
-                        "cache_schema": 3,  # v3: added det_uid column
-                        "source_path": str(Path(file_path)).replace("\\", "/").lower(),
+                        "cache_schema": 4,  # v4: detection engine is part of cache compatibility
+                        "source_path": norm_path_key(file_path),
                         "source_use_cropped": bool(self.use_cropped),
                         "source_size": None,
                         "source_mtime_ns": None,
+                        "detect_engine": _normalize_detect_engine(getattr(P, 'detect_engine', 'segm')),
                     }
                     try:
                         st = Path(file_path).stat()
@@ -454,70 +472,212 @@ class DetectionWorker(QThread):
                             pts = pts[order]
                         return [tuple(xy) for xy in pts]
 
-                    # Background estimation (Jupyter-style downsample median)
-                    if self._stop_requested:
-                        return filename, None
-                    data_filled = np.where(np.isfinite(data), data, 0.0)
-                    if bkg2d_enable:
-                        if self._stop_requested:
-                            return filename, None
-                        ds = max(1, int(getattr(P, 'bkg2d_downsample', 4)))
-                        k = max(3, int(round(bkg2d_box / ds)))
-                        small = data_filled[::ds, ::ds]
-                        bkg_small = median_filter(small, size=k, mode="nearest")
-                        if self._stop_requested:
-                            return filename, None
-                        bkg = np.repeat(np.repeat(bkg_small, ds, axis=0), ds, axis=1)[:data.shape[0], :data.shape[1]]
-                        if self._stop_requested:
-                            return filename, None
-                        data_sub = data - bkg
-                    else:
-                        data_sub = data.copy()
-
-                    work = np.where(np.isfinite(data_sub), data_sub, 0.0)
-                    _ds = max(1, int(round(work.shape[0] ** 0.5)) // 8)
-                    _, bkg_median, _ = sigma_clipped_stats(work[::_ds, ::_ds], sigma=3.0, maxiters=3)
-                    if self._stop_requested:
-                        return filename, None
-
-                    # Smoothing (Jupyter-style)
-                    fwhm_seed = float(getattr(P, 'fwhm_seed_px', getattr(P, 'fwhm_pix_guess', 6.0) or 6.0))
-                    sig = max(0.8, fwhm_seed / 2.355)
-                    fim = gaussian_filter(work - bkg_median, sig, mode="nearest")
-                    if self._stop_requested:
-                        return filename, None
-
-                    # Threshold (median + nsig * std)
-                    _, mF, stdF = sigma_clipped_stats(fim[::_ds, ::_ds], sigma=3.0, maxiters=3)
-                    bkg_rms = float(stdF)
-                    threshold = mF + nsig * max(stdF, 1e-9)
-
-                    # Stage 3: Detection
-                    self.worker_status.emit(worker_id, short_name, "Detecting", 40)
-
-                    # Segmentation detection
-                    detect_engine = str(getattr(P, 'detect_engine', 'segm')).strip().lower()
-                    if detect_engine not in ("segm", "peak", "dao"):
-                        detect_engine = "segm"
-                    segm = None
-                    if detect_engine == "segm":
-                        segm = detect_sources(
-                            fim, threshold=threshold,
-                            npixels=max(3, minarea_pix), connectivity=8
-                        )
-                    if self._stop_requested:
-                        return filename, None
-
                     n_sources = 0
                     positions = []
                     fwhm_values = []
+                    fwhm_seed = float(getattr(P, 'fwhm_seed_px', getattr(P, 'fwhm_pix_guess', 6.0) or 6.0))
                     fwhm_prelim = fwhm_seed
+                    detect_engine = _normalize_detect_engine(getattr(P, 'detect_engine', 'segm'))
                     detect_method = "segm" if detect_engine == "segm" else detect_engine
                     median_elongation = np.nan
                     median_roundness = np.nan
                     sat_star_count = 0
                     elong_map = {}
                     fwhm_by_xy = {}
+                    source_dao_info = {}
+                    segm = None
+
+                    # Background estimation and primary detection.
+                    if self._stop_requested:
+                        return filename, None
+
+                    if detect_engine == "sep":
+                        try:
+                            import sep
+                        except Exception as exc:
+                            raise RuntimeError(
+                                "SEP engine selected but the 'sep' package is not installed"
+                            ) from exc
+
+                        self.worker_status.emit(worker_id, short_name, "SEP Background", 25)
+                        data_sep = np.ascontiguousarray(data.astype(np.float32, copy=False))
+                        sep_mask = ~np.isfinite(data_sep)
+                        mask_arg = sep_mask if bool(sep_mask.any()) else None
+                        data_sep = np.where(np.isfinite(data_sep), data_sep, 0.0).astype(np.float32, copy=False)
+
+                        if bkg2d_enable:
+                            fw = max(1, int(getattr(P, 'bkg2d_filter_size', 3)))
+                            sep_bkg = sep.Background(
+                                data_sep,
+                                mask=mask_arg,
+                                bw=max(4, int(bkg2d_box)),
+                                bh=max(4, int(bkg2d_box)),
+                                fw=fw,
+                                fh=fw,
+                            )
+                            bkg_median = float(sep_bkg.globalback)
+                            bkg_rms = float(sep_bkg.globalrms)
+                            data_sub = np.asarray(data_sep - sep_bkg.back(), dtype=float)
+                        else:
+                            data_filled = np.where(np.isfinite(data), data, 0.0)
+                            _ds = max(1, int(round(data_filled.shape[0] ** 0.5)) // 8)
+                            _, bkg_median, bkg_rms = sigma_clipped_stats(
+                                data_filled[::_ds, ::_ds], sigma=3.0, maxiters=3
+                            )
+                            bkg_median = float(bkg_median)
+                            bkg_rms = float(bkg_rms)
+                            data_sub = data - bkg_median
+
+                        work = np.where(np.isfinite(data_sub), data_sub, 0.0)
+                        threshold = nsig * max(bkg_rms, 1e-9)
+
+                        self.worker_status.emit(worker_id, short_name, "SEP Detecting", 40)
+                        sep_nlevels = int(deblend_nthresh) if deblend_enable else 1
+                        sep_cont = float(deblend_cont) if deblend_enable else 1.0
+                        objects = sep.extract(
+                            np.ascontiguousarray(work.astype(np.float32, copy=False)),
+                            nsig,
+                            err=max(bkg_rms, 1e-9),
+                            mask=mask_arg,
+                            minarea=max(1, int(minarea_pix)),
+                            deblend_nthresh=max(1, sep_nlevels),
+                            deblend_cont=sep_cont,
+                            clean=True,
+                            segmentation_map=False,
+                        )
+
+                        if objects is not None and len(objects) > 0:
+                            x_arr = np.asarray(objects["x"], float)
+                            y_arr = np.asarray(objects["y"], float)
+                            flux_arr = np.asarray(objects["flux"], float)
+                            peak_arr = np.asarray(objects["peak"], float)
+                            a_arr = np.asarray(objects["a"], float)
+                            b_arr = np.asarray(objects["b"], float)
+                            flag_arr = np.asarray(objects["flag"], int)
+                            elong_arr = np.divide(
+                                a_arr, b_arr,
+                                out=np.full_like(a_arr, np.inf, dtype=float),
+                                where=b_arr > 0,
+                            )
+                            round_arr = np.divide(
+                                a_arr - b_arr, a_arr + b_arr,
+                                out=np.full_like(a_arr, np.nan, dtype=float),
+                                where=(a_arr + b_arr) > 0,
+                            )
+                            median_elongation = finite_nanmedian(elong_arr, default=np.nan)
+                            median_roundness = finite_nanmedian(np.abs(round_arr), default=np.nan)
+
+                            order = np.argsort(flux_arr)[::-1]
+                            x_arr, y_arr = x_arr[order], y_arr[order]
+                            flux_arr, peak_arr = flux_arr[order], peak_arr[order]
+                            elong_arr, round_arr = elong_arr[order], round_arr[order]
+                            flag_arr = flag_arr[order]
+
+                            elong_max = max(
+                                float(getattr(P, 'fwhm_elong_max', 1.3)),
+                                float(getattr(P, 'peak_max_elong', 1.6)),
+                            )
+                            keep = np.isfinite(x_arr) & np.isfinite(y_arr) & (elong_arr <= elong_max)
+                            x_arr, y_arr = x_arr[keep], y_arr[keep]
+                            flux_arr, peak_arr = flux_arr[keep], peak_arr[keep]
+                            elong_arr, round_arr = elong_arr[keep], round_arr[keep]
+                            flag_arr = flag_arr[keep]
+
+                            detect_keep_max = int(getattr(P, 'detect_keep_max', 6000))
+                            if len(x_arr) > detect_keep_max:
+                                sl = slice(0, detect_keep_max)
+                                x_arr, y_arr = x_arr[sl], y_arr[sl]
+                                flux_arr, peak_arr = flux_arr[sl], peak_arr[sl]
+                                elong_arr, round_arr = elong_arr[sl], round_arr[sl]
+                                flag_arr = flag_arr[sl]
+
+                            cand = np.vstack([x_arr, y_arr]).T if len(x_arr) else np.zeros((0, 2), float)
+                            iso_min_sep = float(getattr(P, 'iso_min_sep_pix', 18.0))
+                            if len(cand) > 1:
+                                tree = KDTree(cand)
+                                d, _ = tree.query(cand, k=2)
+                                keep_iso = d[:, 1] >= iso_min_sep
+                                cand = cand[keep_iso]
+                                flux_arr, peak_arr = flux_arr[keep_iso], peak_arr[keep_iso]
+                                elong_arr, round_arr = elong_arr[keep_iso], round_arr[keep_iso]
+                                flag_arr = flag_arr[keep_iso]
+
+                            if len(cand) > 0:
+                                H, W = data.shape
+                                ix = np.clip(np.round(cand[:, 0]).astype(int), 0, W - 1)
+                                iy = np.clip(np.round(cand[:, 1]).astype(int), 0, H - 1)
+                                sat_adu = float(getattr(P, 'saturation_adu', 60000.0))
+                                ok = data[iy, ix] < sat_adu
+                                sat_star_count = int((~ok).sum())
+                                cand = cand[ok]
+                                flux_arr, peak_arr = flux_arr[ok], peak_arr[ok]
+                                elong_arr, round_arr = elong_arr[ok], round_arr[ok]
+                                flag_arr = flag_arr[ok]
+
+                            positions = [tuple(map(float, p)) for p in cand]
+                            n_sources = len(positions)
+                            for (x, y), e, r, peak, flux, flag in zip(
+                                positions, elong_arr, round_arr, peak_arr, flux_arr, flag_arr
+                            ):
+                                xf, yf = float(x), float(y)
+                                elong_val = float(e) if np.isfinite(e) else np.nan
+                                elong_map[(xf, yf)] = elong_val
+                                sharp_proxy = 1.0 / max(elong_val, 1e-6) if np.isfinite(elong_val) else np.nan
+                                source_dao_info[(xf, yf)] = {
+                                    'sharpness': float(np.clip(sharp_proxy, 0.0, 1.0)) if np.isfinite(sharp_proxy) else np.nan,
+                                    'roundness1': float(r) if np.isfinite(r) else np.nan,
+                                    'roundness2': float(r) if np.isfinite(r) else np.nan,
+                                    'peak': float(peak) if np.isfinite(peak) else np.nan,
+                                    'flux': float(flux) if np.isfinite(flux) else np.nan,
+                                    'sep_flag': int(flag),
+                                }
+                    else:
+                        # Background estimation (Jupyter-style downsample median)
+                        data_filled = np.where(np.isfinite(data), data, 0.0)
+                        if bkg2d_enable:
+                            if self._stop_requested:
+                                return filename, None
+                            ds = max(1, int(getattr(P, 'bkg2d_downsample', 4)))
+                            k = max(3, int(round(bkg2d_box / ds)))
+                            small = data_filled[::ds, ::ds]
+                            bkg_small = median_filter(small, size=k, mode="nearest")
+                            if self._stop_requested:
+                                return filename, None
+                            bkg = np.repeat(np.repeat(bkg_small, ds, axis=0), ds, axis=1)[:data.shape[0], :data.shape[1]]
+                            if self._stop_requested:
+                                return filename, None
+                            data_sub = data - bkg
+                        else:
+                            data_sub = data.copy()
+
+                        work = np.where(np.isfinite(data_sub), data_sub, 0.0)
+                        _ds = max(1, int(round(work.shape[0] ** 0.5)) // 8)
+                        _, bkg_median, _ = sigma_clipped_stats(work[::_ds, ::_ds], sigma=3.0, maxiters=3)
+                        if self._stop_requested:
+                            return filename, None
+
+                        # Smoothing (Jupyter-style)
+                        sig = max(0.8, fwhm_seed / 2.355)
+                        fim = gaussian_filter(work - bkg_median, sig, mode="nearest")
+                        if self._stop_requested:
+                            return filename, None
+
+                        # Threshold (median + nsig * std)
+                        _, mF, stdF = sigma_clipped_stats(fim[::_ds, ::_ds], sigma=3.0, maxiters=3)
+                        bkg_rms = float(stdF)
+                        threshold = mF + nsig * max(stdF, 1e-9)
+
+                        # Stage 3: Detection
+                        self.worker_status.emit(worker_id, short_name, "Detecting", 40)
+
+                        # Segmentation detection
+                        if detect_engine == "segm":
+                            segm = detect_sources(
+                                fim, threshold=threshold,
+                                npixels=max(3, minarea_pix), connectivity=8
+                            )
+                        if self._stop_requested:
+                            return filename, None
 
                     if segm is not None and segm.nlabels > 0:
                         # Stage 4: Deblending
@@ -663,9 +823,9 @@ class DetectionWorker(QThread):
 
                     # Optional DAO refine to reject hot pixels (cutout-based for speed)
                     # Also collect DAO statistics for each source
-                    source_dao_info = {}
                     dao_primary = detect_engine == "dao"
-                    if dao_refine_enable or dao_primary:
+                    dao_refine_active = bool(dao_refine_enable) and detect_engine != "sep"
+                    if dao_refine_active or dao_primary:
                         if self._stop_requested:
                             return filename, None
                         self.worker_status.emit(worker_id, short_name, "DAO refine", 65)
@@ -770,7 +930,7 @@ class DetectionWorker(QThread):
                     # Peak assist (Jupyter-style)
                     added_peak = 0
                     peak_positions = []
-                    if peak_enable:
+                    if peak_enable and detect_engine != "sep":
                         if len(positions) < peak_skip_if_nsrc_ge:
                             if self._stop_requested:
                                 return filename, None
@@ -850,7 +1010,12 @@ class DetectionWorker(QThread):
                                 fwhm_median = finite_nanmedian(fwhm_values, default=0.0)
                     except Exception:
                         fwhm_median = finite_nanmedian(fwhm_values, default=0.0) if fwhm_values else 0.0
-                    pixscale = getattr(P, 'pixel_scale_arcsec', 0.4)
+                    try:
+                        pixscale = float(getattr(P, 'pixel_scale_arcsec', 0.4))
+                    except Exception:
+                        pixscale = 0.4
+                    if not np.isfinite(pixscale) or pixscale <= 0:
+                        pixscale = 0.4
                     fwhm_arcsec = fwhm_median * pixscale
 
                     result = {
@@ -905,6 +1070,7 @@ class DetectionWorker(QThread):
                     if positions:
                         source_records = []
                         peak_set = {(float(px), float(py)) for px, py in peak_positions}
+                        measure_all_source_fwhm = bool(getattr(P, 'fwhm_measure_all_sources', False))
                         for idx, (x, y) in enumerate(positions):
                             if self._stop_requested:
                                 return filename, None
@@ -931,6 +1097,8 @@ class DetectionWorker(QThread):
                                 pass
                             record['dao_peak'] = dao_info.get('peak', np.nan)
                             record['dao_flux'] = dao_info.get('flux', np.nan)
+                            if 'sep_flag' in dao_info:
+                                record['sep_flag'] = dao_info.get('sep_flag', 0)
 
                             try:
                                 ix, iy = int(round(x)), int(round(y))
@@ -950,7 +1118,7 @@ class DetectionWorker(QThread):
 
                                 xy_key = (float(x), float(y))
                                 fwhm_src = fwhm_by_xy.get(xy_key, np.nan)
-                                if not np.isfinite(fwhm_src):
+                                if not np.isfinite(fwhm_src) and measure_all_source_fwhm:
                                     rc = refine_centroid(data, x, y, fwhm_seed)
                                     if rc is not None:
                                         xc, yc, _, _ = rc
@@ -964,7 +1132,7 @@ class DetectionWorker(QThread):
                                             fwhm_by_xy[xy_key] = float(fwhm_src)
                                 record['fwhm_px'] = float(fwhm_src) if np.isfinite(fwhm_src) else np.nan
                                 if not np.isfinite(record['fwhm_px']):
-                                    record['fwhm_status'] = "failed"
+                                    record['fwhm_status'] = "not_measured"
                                 elif saturated:
                                     record['fwhm_status'] = "saturated"
                                 elif near_edge:
@@ -976,7 +1144,8 @@ class DetectionWorker(QThread):
                                 record['fwhm_px'] = np.nan
                                 record['fwhm_status'] = "failed"
 
-                            record['source_type'] = 'peak' if (x, y) in peak_set else 'segm'
+                            base_source_type = 'sep' if detect_engine == 'sep' else 'segm'
+                            record['source_type'] = 'peak' if (x, y) in peak_set else base_source_type
                             source_records.append(record)
 
                         df_sources = pd.DataFrame(source_records)
@@ -1986,6 +2155,41 @@ class SourceDetectionWindow(StepWindowBase):
         data = combo.itemData(idx)
         return _normalize_detect_mode(data if data not in (None, "") else combo.currentText())
 
+    def _selected_detect_engine(self) -> str:
+        combo = getattr(self, "param_engine", None)
+        if combo is None:
+            return _normalize_detect_engine(getattr(self.params.P, "detect_engine", "segm"))
+        idx = combo.currentIndex()
+        data = combo.itemData(idx)
+        return _normalize_detect_engine(data if data not in (None, "") else combo.currentText())
+
+    def _sync_engine_dependent_dialog_state(self):
+        engine = self._selected_detect_engine()
+        is_sep = engine == "sep"
+
+        # SEP already performs fast C-level background, extraction, deblending,
+        # and cheap morphology measurements. Full-frame DAO/peak passes would
+        # defeat the point of selecting the fast engine.
+        if hasattr(self, "param_dao_enable"):
+            if is_sep:
+                self.param_dao_enable.setChecked(False)
+            self.param_dao_enable.setEnabled(not is_sep)
+        for name in (
+            "param_dao_fwhm",
+            "param_dao_sharp_lo",
+            "param_dao_sharp_hi",
+            "param_dao_round_lo",
+            "param_dao_round_hi",
+            "param_dao_match_tol",
+        ):
+            widget = getattr(self, name, None)
+            if widget is not None:
+                widget.setEnabled(not is_sep)
+        if hasattr(self, "param_peak_enable"):
+            if is_sep:
+                self.param_peak_enable.setChecked(False)
+            self.param_peak_enable.setEnabled(not is_sep)
+
     def _apply_detect_mode_preset_to_dialog(self, mode: str) -> bool:
         mode_key = _normalize_detect_mode(mode)
         if mode_key == "custom":
@@ -2013,6 +2217,7 @@ class SourceDetectionWindow(StepWindowBase):
             self.param_peak_nsigma.setValue(float(preset["peak_nsigma"]))
         if hasattr(self, "param_peak_max_add"):
             self.param_peak_max_add.setValue(int(preset["peak_max_add"]))
+        self._sync_engine_dependent_dialog_state()
         return True
 
     def _update_detect_mode_ui_state(self):
@@ -2066,10 +2271,12 @@ class SourceDetectionWindow(StepWindowBase):
             schema = int(payload.get("cache_schema", 0) or 0)
         except Exception:
             schema = 0
-        if schema < 2:
-            # v2: minimum supported schema (no det_uid — fallback allowed)
+        if schema < 4:
             return False
-        # v3 adds det_uid column; v2 caches are still read but det_uid derived from row index
+        current_engine = _normalize_detect_engine(getattr(self.params.P, "detect_engine", "segm"))
+        cached_engine = _normalize_detect_engine(payload.get("detect_engine", "segm"))
+        if cached_engine != current_engine:
+            return False
         if bool(payload.get("source_use_cropped", None)) != bool(sig["source_use_cropped"]):
             return False
         if norm_path_key(payload.get("source_path")) != sig["source_path"]:
@@ -2406,8 +2613,10 @@ class SourceDetectionWindow(StepWindowBase):
         crop_active = crop_is_active(self.params.P.result_dir)
         cropped_dir = step2_cropped_dir(self.params.P.result_dir)
 
+        excluded = getattr(self.file_manager, "excluded_files", set())
         if crop_active and cropped_dir.exists() and list(cropped_dir.glob("*.fit*")):
-            files = sorted([f.name for f in cropped_dir.glob("*.fit*")])
+            files = sorted([f.name for f in cropped_dir.glob("*.fit*")
+                            if f.name not in excluded])
             self.use_cropped = True
         else:
             if not self.file_manager.filenames:
@@ -2415,7 +2624,7 @@ class SourceDetectionWindow(StepWindowBase):
                     self.file_manager.scan_files()
                 except Exception:
                     pass
-            files = self.file_manager.filenames
+            files = [f for f in self.file_manager.filenames if f not in excluded]
             self.use_cropped = False
 
         self.file_list = list(files)
@@ -3735,9 +3944,12 @@ class SourceDetectionWindow(StepWindowBase):
 
         # Detection engine
         self.param_engine = QComboBox()
-        self.param_engine.addItems(["dao", "segm", "peak"])
-        current_engine = str(getattr(self.params.P, "detect_engine", "dao")).strip().lower()
-        idx = self.param_engine.findText(current_engine)
+        self.param_engine.addItem("SEP (fast catalog)", "sep")
+        self.param_engine.addItem("Photutils segmentation", "segm")
+        self.param_engine.addItem("DAOStarFinder", "dao")
+        self.param_engine.addItem("Peak finder", "peak")
+        current_engine = _normalize_detect_engine(getattr(self.params.P, "detect_engine", "segm"))
+        idx = self.param_engine.findData(current_engine)
         if idx >= 0:
             self.param_engine.setCurrentIndex(idx)
         form.addRow("Detection Engine:", self.param_engine)
@@ -3813,6 +4025,12 @@ class SourceDetectionWindow(StepWindowBase):
         self.param_minarea.setRange(1, 50)
         self.param_minarea.setValue(int(getattr(self.params.P, 'minarea_pix', 3)))
         form2.addRow("Min Area (pixels):", self.param_minarea)
+
+        self.param_fwhm_all_sources = QCheckBox("Enable")
+        self.param_fwhm_all_sources.setChecked(
+            bool(getattr(self.params.P, 'fwhm_measure_all_sources', False))
+        )
+        form2.addRow("All-source radial FWHM:", self.param_fwhm_all_sources)
 
         # Deblend
         self.param_deblend = QCheckBox("Enable")
@@ -3979,7 +4197,9 @@ class SourceDetectionWindow(StepWindowBase):
         # Connect detect mode signals
         self.param_detect_mode.currentIndexChanged.connect(self._update_detect_mode_ui_state)
         self.param_detect_mode_apply.clicked.connect(self._on_apply_detect_mode_clicked)
+        self.param_engine.currentIndexChanged.connect(self._sync_engine_dependent_dialog_state)
         self._update_detect_mode_ui_state()
+        self._sync_engine_dependent_dialog_state()
 
         # Buttons
         buttons = QDialogButtonBox(QDialogButtonBox.Save | QDialogButtonBox.Cancel)
@@ -4015,10 +4235,12 @@ class SourceDetectionWindow(StepWindowBase):
         selected_mode = self._selected_detect_mode()
         if selected_mode != "custom":
             self._apply_detect_mode_preset_to_dialog(selected_mode)
+        self._sync_engine_dependent_dialog_state()
         self.params.P.detect_mode = selected_mode
-        self.params.P.detect_engine = self.param_engine.currentText().strip().lower()
+        self.params.P.detect_engine = self._selected_detect_engine()
         self.params.P.detect_sigma = self.param_detect_sigma.value()
         self.params.P.minarea_pix = self.param_minarea.value()
+        self.params.P.fwhm_measure_all_sources = self.param_fwhm_all_sources.isChecked()
         self.params.P.deblend_enable = self.param_deblend.isChecked()
         self.params.P.deblend_nthresh = self.param_deblend_nthresh.value()
         self.params.P.deblend_cont = self.param_deblend_cont.value()
@@ -4066,9 +4288,10 @@ class SourceDetectionWindow(StepWindowBase):
             "use_cropped": self.use_cropped,
             "filter_sigma_map": self.filter_sigma_map,
             "detect_mode": _get_detect_mode_from_params(self.params.P),
-            "detect_engine": getattr(self.params.P, "detect_engine", "dao"),
+            "detect_engine": _normalize_detect_engine(getattr(self.params.P, "detect_engine", "segm")),
             "detect_sigma": self.params.P.detect_sigma,
             "minarea_pix": self.params.P.minarea_pix,
+            "fwhm_measure_all_sources": getattr(self.params.P, "fwhm_measure_all_sources", False),
             "deblend_enable": self.params.P.deblend_enable,
             "deblend_nthresh": self.params.P.deblend_nthresh,
             "deblend_cont": self.params.P.deblend_cont,
@@ -4108,6 +4331,7 @@ class SourceDetectionWindow(StepWindowBase):
                 "detect_engine",
                 "detect_sigma",
                 "minarea_pix",
+                "fwhm_measure_all_sources",
                 "deblend_enable",
                 "deblend_nthresh",
                 "deblend_cont",

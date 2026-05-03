@@ -299,10 +299,12 @@ class FileSelectionWindow(StepWindowBase):
 
     def save_state(self):
         """Save step state to project"""
+        self._sync_excluded_files()
         state_data = {
             "data_dir": str(self.params.P.data_dir),
             "filename_prefix": self.params.P.filename_prefix,
             "file_count": len(self.file_manager.filenames),
+            "excluded_files": sorted(self.file_manager.excluded_files),
         }
 
         self.project_state.store_step_data("file_selection", state_data)
@@ -312,7 +314,6 @@ class FileSelectionWindow(StepWindowBase):
         state_data = self.project_state.get_step_data("file_selection")
 
         if state_data:
-            # Restore directory and prefix
             if "data_dir" in state_data:
                 self.params.P.data_dir = Path(state_data["data_dir"])
                 self.dir_edit.setText(str(state_data["data_dir"]))
@@ -321,10 +322,12 @@ class FileSelectionWindow(StepWindowBase):
                 self.params.P.filename_prefix = state_data["filename_prefix"]
                 self.prefix_edit.setText(state_data["filename_prefix"])
 
-            # Reload files
+            # Restore exclusions before loading so checkboxes reflect saved state
+            if "excluded_files" in state_data:
+                self.file_manager.excluded_files = set(state_data["excluded_files"])
+
             try:
                 self.load_files()
-
             except:
                 pass
 
