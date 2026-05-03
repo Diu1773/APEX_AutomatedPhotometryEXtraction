@@ -36,10 +36,9 @@ from apex.utils.astro_utils import normalize_filter_name
 from apex.utils.step_paths import (
     step2_cropped_dir,
     crop_is_active,
-    step5_aperture_dir,
+    step_forced_phot_dir,
     step6_wcs_dir,
     step7_refbuild_dir,
-    step8_idmatch_dir,
     tool_extinction_dir,
 )
 from apex.utils.step_paths_cmd import step6_psf_dir, step10_selection_dir, step11_zp_dir
@@ -86,9 +85,18 @@ def _normalize_master_columns(df: pd.DataFrame) -> pd.DataFrame:
 
 
 def _load_master_table(result_dir: Path) -> tuple[pd.DataFrame, str, Path]:
+    refbuild = step7_refbuild_dir(result_dir)
+    # Collect per-filter catalogs written by step7_ref_build
+    per_filter = sorted(refbuild.glob("ref_catalog_*.tsv")) if refbuild.exists() else []
     candidates = [
-        ("master_catalog", step7_refbuild_dir(result_dir) / "master_catalog.tsv", "\t"),
-        ("master_catalog", result_dir / "master_catalog.tsv", "\t"),
+        # step7 writes ref_catalog.tsv (no-filter copy) and ref_catalog_{filter}.tsv
+        ("ref_catalog",    refbuild / "ref_catalog.tsv",      "\t"),
+    ] + [
+        ("ref_catalog",    p,                                   "\t") for p in per_filter
+    ] + [
+        # legacy / fallback names
+        ("master_catalog", refbuild / "master_catalog.tsv",    "\t"),
+        ("master_catalog", result_dir / "master_catalog.tsv",  "\t"),
         ("master_gaia_map", result_dir / "master_gaia_map.csv", ","),
     ]
     tried = []
@@ -150,8 +158,8 @@ class ZeropointCalibrationWorker(QThread):
             if p_win.exists():
                 return p_win
         for base in (
+            step_forced_phot_dir(self.result_dir),
             step6_psf_dir(self.result_dir),
-            step5_aperture_dir(self.result_dir),
             step10_selection_dir(self.result_dir),
             self.result_dir,
             self.result_dir / "phot",
@@ -269,17 +277,11 @@ class ZeropointCalibrationWorker(QThread):
         return sorted(self.data_dir.glob("*.fit*"))
 
     def _find_idmatch_csv(self, fname: str, result_dir: Path):
-        """Find idmatch_{fname}.csv in step8_idmatch/ or its date-keyed subdirs."""
-        idm_dir = step8_idmatch_dir(result_dir)
-        direct = idm_dir / f"idmatch_{fname}.csv"
+        """Find per-frame photometry TSV from forced phot (replaces old idmatch CSV)."""
+        forced_dir = step_forced_phot_dir(result_dir)
+        direct = forced_dir / f"photometry_{fname}.tsv"
         if direct.exists():
             return direct
-        if idm_dir.exists():
-            for sub in sorted(idm_dir.iterdir()):
-                if sub.is_dir():
-                    cand = sub / f"idmatch_{fname}.csv"
-                    if cand.exists():
-                        return cand
         return None
 
     def _load_ref_wcs(self):
@@ -440,19 +442,19 @@ class ZeropointCalibrationWorker(QThread):
             result_dir = self.result_dir
             output_dir = step11_zp_dir(result_dir)
             output_dir.mkdir(parents=True, exist_ok=True)
-            # PSF photometry is preferred; aperture photometry is the fallback.
-            phot_dir_psf = step6_psf_dir(result_dir)
-            phot_dir_ap  = step5_aperture_dir(result_dir)
+            # Forced phot is preferred; PSF photometry is optional refinement.
+            phot_dir_forced = step_forced_phot_dir(result_dir)
+            phot_dir_psf    = step6_psf_dir(result_dir)
 
             idx_candidates = [
-                phot_dir_psf / "photometry_index.csv",
-                phot_dir_ap  / "photometry_index.csv",
+                phot_dir_forced / "photometry_index.csv",
+                phot_dir_psf    / "photometry_index.csv",
                 result_dir   / "photometry_index.csv",
                 result_dir   / "phot_index.csv",
                 result_dir   / "phot" / "phot_index.csv",
                 result_dir   / "phot" / "photometry_index.csv",
             ]
-            for _pd in (phot_dir_psf, phot_dir_ap):
+            for _pd in (phot_dir_forced, phot_dir_psf):
                 if _pd.exists():
                     idx_candidates += sorted(_pd.glob("*phot*index*.csv"))
             idx_candidates += sorted(result_dir.glob("*phot*index*.csv"))
@@ -495,7 +497,7 @@ class ZeropointCalibrationWorker(QThread):
             else:
                 idx["filter"] = "unknown"
 
-            fq_path = step5_aperture_dir(result_dir) / "frame_quality.csv"
+            fq_path = step_forced_phot_dir(result_dir) / "frame_quality.csv"
             if not fq_path.exists():
                 fq_path = result_dir / "frame_quality.csv"
             if fq_path.exists() and ("file" in idx.columns):
@@ -561,7 +563,8 @@ class ZeropointCalibrationWorker(QThread):
                         _idmatch_csv = self._find_idmatch_csv(_fname, result_dir)
                         if _idmatch_csv is not None:
                             try:
-                                _im = pd.read_csv(_idmatch_csv)
+                                sep = "\t" if _idmatch_csv.suffix.lower() == ".tsv" else ","
+                                _im = pd.read_csv(_idmatch_csv, sep=sep)
                                 if "det_idx" in _im.columns:
                                     _im = _im.rename(columns={"det_idx": "det_uid"})
                                 if "det_uid" in _im.columns and "source_id" in _im.columns:
@@ -2686,7 +2689,7 @@ class ZeropointCalibrationWindow(StepWindowBase):
         self.viewer = None
 
         super().__init__(
-            step_index=10,
+            step_index=9,
             step_name="Zeropoint Calibration",
             params=params,
             project_state=project_state,

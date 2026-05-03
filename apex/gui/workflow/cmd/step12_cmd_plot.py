@@ -15,7 +15,7 @@ from PyQt5.QtWidgets import QVBoxLayout, QLabel, QGroupBox, QTextEdit, QMessageB
 
 from apex.gui.workflow.step_window_base import StepWindowBase
 from .step11_zeropoint_calibration import CmdViewerWindow
-from apex.utils.step_paths import step5_aperture_dir
+from apex.utils.step_paths import step_forced_phot_dir
 from apex.utils.step_paths_cmd import step11_zp_dir, step12_cmd_dir
 
 
@@ -26,7 +26,7 @@ class CmdPlotWindow(StepWindowBase):
         self.file_manager = file_manager
         self.viewer = None
         super().__init__(
-            step_index=11,
+            step_index=10,
             step_name="CMD Plot",
             params=params,
             project_state=project_state,
@@ -75,7 +75,7 @@ class CmdPlotWindow(StepWindowBase):
             return
 
         idx_candidates = [
-            step5_aperture_dir(self.params.P.result_dir) / "photometry_index.csv",
+            step_forced_phot_dir(self.params.P.result_dir) / "photometry_index.csv",
             self.params.P.result_dir / "photometry_index.csv",
             self.params.P.result_dir / "phot_index.csv",
             self.params.P.result_dir / "phot" / "photometry_index.csv",

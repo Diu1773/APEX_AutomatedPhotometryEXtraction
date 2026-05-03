@@ -270,7 +270,7 @@ class DetrendNightMergeWindow(StepWindowBase):
         self.global_rescale_errors = True
 
         super().__init__(
-            step_index=10,
+            step_index=9,
             step_name="Detrend & Night Merge",
             params=params,
             project_state=project_state,

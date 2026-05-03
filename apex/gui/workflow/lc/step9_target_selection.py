@@ -49,7 +49,7 @@ from apex.utils.step_paths_lc import (
     step2_cropped_dir,
     step6_wcs_dir,
     step7_refbuild_dir,
-    step8_idmatch_dir,
+    step_forced_phot_dir,
     step9_selection_dir,
 )
 from apex.utils.io_utils import read_csv_int64_source_id, coerce_int64_source_id
@@ -64,16 +64,27 @@ def _extract_date_key(filename: str) -> str:
 
 
 def _resolve_idmatch_path(step7_dir: Path, filename: str) -> Path:
-    date_key = _extract_date_key(filename)
+    fname = Path(str(filename)).name
+    # Forced phot TSV is now the per-frame identity table; keep legacy
+    # idmatch fallbacks so older result folders still open.
+    for forced_name in (f"photometry_{fname}.tsv", f"{fname}_photometry.tsv"):
+        forced = step7_dir / forced_name
+        if forced.exists():
+            return forced
+    date_key = _extract_date_key(fname)
     if date_key:
-        dated = step7_dir / date_key / f"idmatch_{filename}.csv"
+        dated = step7_dir / date_key / f"idmatch_{fname}.csv"
         if dated.exists():
             return dated
-    direct = step7_dir / f"idmatch_{filename}.csv"
+    direct = step7_dir / f"idmatch_{fname}.csv"
     if direct.exists():
         return direct
-    matches = list(step7_dir.glob(f"*/idmatch_{filename}.csv"))
+    matches = list(step7_dir.glob(f"*/idmatch_{fname}.csv"))
     return matches[0] if matches else direct
+
+
+def _table_sep(path: Path) -> str:
+    return "\t" if path.suffix.lower() == ".tsv" else ","
 
 
 class TargetComparisonSelectionWindow(StepWindowBase):
@@ -203,7 +214,7 @@ class TargetComparisonSelectionWindow(StepWindowBase):
         self._stretch_marker_max_line = None
 
         super().__init__(
-            step_index=8,
+            step_index=7,
             step_name="Target/Comparison Selection",
             params=params,
             project_state=project_state,
@@ -712,26 +723,38 @@ class TargetComparisonSelectionWindow(StepWindowBase):
 
     def check_step7_status(self):
         """Step 8 ID-match 출력물 확인 및 필터 로드 (Reference Build 없이도 동작)"""
-        step8_out = step8_idmatch_dir(self.params.P.result_dir)
+        step8_out = step_forced_phot_dir(self.params.P.result_dir)
         step7_out = step7_refbuild_dir(self.params.P.result_dir)
 
         # Step 8 필터 정보 로드 (필수)
         filter_frames_path = step8_out / "step8_filter_frames.json"
-        if not filter_frames_path.exists():
-            self.step7_status_label.setText("Step 8 not complete. Run ID Match first.")
-            self.step7_status_label.setStyleSheet("color: red;")
-            return
 
         try:
             self.filter_frames.clear()
             self.filter_catalogs.clear()
 
-            with open(filter_frames_path, "r", encoding="utf-8") as f:
-                self.filter_frames = json.load(f)
+            if filter_frames_path.exists():
+                with open(filter_frames_path, "r", encoding="utf-8") as f:
+                    self.filter_frames = json.load(f)
+            else:
+                idx_path = step8_out / "photometry_index.csv"
+                if not idx_path.exists():
+                    self.step7_status_label.setText("Forced photometry not complete. Run Forced Aperture Phot first.")
+                    self.step7_status_label.setStyleSheet("color: red;")
+                    return
+                idx_df = pd.read_csv(idx_path)
+                if "file" not in idx_df.columns:
+                    self.step7_status_label.setText("Forced photometry index is missing file column.")
+                    self.step7_status_label.setStyleSheet("color: red;")
+                    return
+                filt_col = "filter" if "filter" in idx_df.columns else None
+                for _, row in idx_df.iterrows():
+                    flt = str(row.get(filt_col, "unknown") if filt_col else "unknown").strip().lower() or "unknown"
+                    self.filter_frames.setdefault(flt, []).append(str(row["file"]))
 
             filters = list(self.filter_frames.keys())
             if not filters:
-                self.step7_status_label.setText("No filters found in Step 8")
+                self.step7_status_label.setText("No filters found in forced photometry output")
                 self.step7_status_label.setStyleSheet("color: red;")
                 return
         except Exception as e:
@@ -758,6 +781,10 @@ class TargetComparisonSelectionWindow(StepWindowBase):
                     matches = sorted(step7_out.glob(f"ref_catalog_{flt}_*.tsv"))
                     if matches:
                         catalog_path = matches[0]
+                if not catalog_path.exists():
+                    generic_path = step7_out / "ref_catalog.tsv"
+                    if generic_path.exists():
+                        catalog_path = generic_path
                 if catalog_path.exists():
                     try:
                         self.filter_catalogs[flt] = read_csv_int64_source_id(catalog_path, sep="\t")
@@ -887,7 +914,7 @@ class TargetComparisonSelectionWindow(StepWindowBase):
 
     def load_step6_master_sources(self):
         """Step 8 master source list (ra/dec, Gaia mags)"""
-        step8_path = step8_idmatch_dir(self.params.P.result_dir) / "step8_master_sources.csv"
+        step8_path = step_forced_phot_dir(self.params.P.result_dir) / "step8_master_sources.csv"
         if not step8_path.exists():
             return
         try:
@@ -1433,7 +1460,7 @@ class TargetComparisonSelectionWindow(StepWindowBase):
         if flt in self._filter_all_source_ids:
             return set(self._filter_all_source_ids[flt])
 
-        step8_out = step8_idmatch_dir(self.params.P.result_dir)
+        step8_out = step_forced_phot_dir(self.params.P.result_dir)
         frames = self.filter_frames.get(flt, [])
         sids: Set[int] = set()
 
@@ -1442,7 +1469,7 @@ class TargetComparisonSelectionWindow(StepWindowBase):
             if not p.exists():
                 continue
             try:
-                df = read_csv_int64_source_id(p, usecols=["source_id"])
+                df = read_csv_int64_source_id(p, sep=_table_sep(p), usecols=["source_id"])
                 if "source_id" not in df.columns:
                     continue
                 vals = coerce_int64_source_id(df["source_id"]).dropna().astype("int64")
@@ -1467,7 +1494,7 @@ class TargetComparisonSelectionWindow(StepWindowBase):
         if cached is not None:
             return set(cached)
 
-        step8_out = step8_idmatch_dir(self.params.P.result_dir)
+        step8_out = step_forced_phot_dir(self.params.P.result_dir)
         frames = self.filter_frames.get(flt, [])
         if not frames:
             return set()
@@ -1481,7 +1508,7 @@ class TargetComparisonSelectionWindow(StepWindowBase):
             if not p.exists():
                 continue
             try:
-                df = read_csv_int64_source_id(p, usecols=["source_id"])
+                df = read_csv_int64_source_id(p, sep=_table_sep(p), usecols=["source_id"])
                 vals = coerce_int64_source_id(df["source_id"]).dropna().astype("int64")
                 sid_counts.update(vals.tolist())
                 n_frames += 1
@@ -2124,12 +2151,14 @@ class TargetComparisonSelectionWindow(StepWindowBase):
             self.idmatch_df = self._idmatch_cache[filename]
             return
 
-        step8_out = step8_idmatch_dir(self.params.P.result_dir)
+        step8_out = step_forced_phot_dir(self.params.P.result_dir)
         idmatch_path = _resolve_idmatch_path(step8_out, filename)
 
         if idmatch_path.exists():
             try:
-                df = read_csv_int64_source_id(idmatch_path)
+                df = read_csv_int64_source_id(idmatch_path, sep=_table_sep(idmatch_path))
+                if {"x_fit", "y_fit"} <= set(df.columns) and not {"x", "y"} <= set(df.columns):
+                    df = df.rename(columns={"x_fit": "x", "y_fit": "y"})
                 if {"x", "y", "source_id"} <= set(df.columns):
                     df["source_id"] = coerce_int64_source_id(df["source_id"])
                     self.idmatch_df = df

@@ -20,7 +20,6 @@ from apex.utils.run_workspace import infer_result_workspace_label, write_run_man
 from apex.utils.step_paths_lc import (
     step1_dir,
     step5_photometry_dir,
-    step8_idmatch_dir,
     step9_selection_dir,
     step10_dir,
     step11_dir,
@@ -147,11 +146,9 @@ def materialize_merged_workspace(
 ) -> dict:
     s1 = step1_dir(out_dir)
     s5 = step5_photometry_dir(out_dir)
-    s8 = step8_idmatch_dir(out_dir)
     s9 = step9_selection_dir(out_dir)
     s1.mkdir(parents=True, exist_ok=True)
     s5.mkdir(parents=True, exist_ok=True)
-    s8.mkdir(parents=True, exist_ok=True)
     s9.mkdir(parents=True, exist_ok=True)
     step10_dir(out_dir).mkdir(parents=True, exist_ok=True)
     step11_dir(out_dir).mkdir(parents=True, exist_ok=True)

@@ -43,7 +43,7 @@ from apex.utils.step_paths_lc import (
     step5_photometry_dir,
     step6_wcs_dir,
     step7_refbuild_dir,
-    step8_idmatch_dir,
+    step_forced_phot_dir,
     step9_selection_dir,
     tool_extinction_dir,
 )
@@ -3214,12 +3214,10 @@ class ExtinctionFitWindow(QWidget):
         return match.group(1) if match else ""
 
     def _resolve_idmatch_path(self, source_dir: Path, fname: str) -> Path | None:
-        step8_dir = step8_idmatch_dir(source_dir)
-        date_key = self._extract_date_key(fname)
-        candidates = []
-        if date_key:
-            candidates.append(step8_dir / date_key / f"idmatch_{fname}.csv")
-        candidates.append(step8_dir / f"idmatch_{fname}.csv")
+        # New pipeline: master_id is a column in forced phot TSV; no separate idmatch file.
+        # Check forced_phot dir for per-frame photometry TSV.
+        forced_dir = step_forced_phot_dir(source_dir)
+        candidates = [forced_dir / f"photometry_{fname}.tsv"]
         for path in candidates:
             if path.exists():
                 return path

@@ -50,7 +50,7 @@ from apex.utils.step_paths import (
     crop_is_active,
     crop_rect_path,
     step4_dir,
-    step5_aperture_dir,
+    step_forced_phot_dir,
     step6_wcs_dir,
 )
 from apex.utils.constants import get_parallel_workers
@@ -1419,7 +1419,7 @@ WHERE 1=CONTAINS(
             # Optional QC filtering
             require_qc = bool(getattr(self.params.P, "wcs_require_qc_pass", True))
             if require_qc:
-                qpath = step5_aperture_dir(self.result_dir) / "frame_quality.csv"
+                qpath = step_forced_phot_dir(self.result_dir) / "frame_quality.csv"
                 if qpath.exists():
                     try:
                         dfq = pd.read_csv(qpath)
@@ -3543,7 +3543,7 @@ class WcsPlateSolvingWindow(StepWindowBase):
         self.use_cropped = False
 
         super().__init__(
-            step_index=5,
+            step_index=4,
             step_name="WCS Plate Solving",
             params=params,
             project_state=project_state,

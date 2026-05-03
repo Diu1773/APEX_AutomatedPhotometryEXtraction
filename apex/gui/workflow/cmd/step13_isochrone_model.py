@@ -421,7 +421,7 @@ class IsochroneModelWindow(StepWindowBase):
         self._cc_perp_norm = np.array([0.0, 0.0])
 
         super().__init__(
-            step_index=12,
+            step_index=11,
             step_name="Isochrone Model",
             params=params,
             project_state=project_state,

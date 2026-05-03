@@ -33,7 +33,7 @@ from apex.utils.step_paths_lc import (
     step2_cropped_dir,
     step5_photometry_dir,
     step7_refbuild_dir,
-    step8_idmatch_dir,
+    step_forced_phot_dir,
 )
 from apex.utils.qc_utils import filter_files_by_qc
 
@@ -396,7 +396,7 @@ class ApertureOverlayWindow(StepWindowBase):
             })
             return lab
 
-        fm_path = step8_idmatch_dir(result_dir) / "frame_sourceid_to_ID.tsv"
+        fm_path = step_forced_phot_dir(result_dir) / "frame_sourceid_to_ID.tsv"
         if fm_path.exists():
             try:
                 fm = pd.read_csv(fm_path, sep="\t")

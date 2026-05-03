@@ -1083,7 +1083,7 @@ class LightCurveBuilderWindow(StepWindowBase):
         self._filter_keys: list[str] = []
 
         super().__init__(
-            step_index=9,
+            step_index=8,
             step_name="Light Curve Builder",
             params=params,
             project_state=project_state,

@@ -36,10 +36,9 @@ from apex.gui.workflow.step_window_base import StepWindowBase
 from apex.utils.step_paths import (
     crop_is_active,
     step2_cropped_dir,
-    step5_aperture_dir,
+    step_forced_phot_dir,
     step6_wcs_dir,
     step7_refbuild_dir,
-    step8_idmatch_dir,
 )
 from apex.utils.step_paths_cmd import step6_psf_dir, step10_selection_dir
 from apex.utils.io_utils import (
@@ -140,7 +139,7 @@ class MasterIdEditorWindow(StepWindowBase):
         self._display_cache_order: list = []
 
         super().__init__(
-            step_index=9,
+            step_index=8,
             step_name="Master ID Editor",
             params=params,
             project_state=project_state,
@@ -348,8 +347,8 @@ class MasterIdEditorWindow(StepWindowBase):
             self.use_cropped = False
 
         base_count = len(files)
-        # Hide unsolved frames: keep only Step8 rows with wcs_ok=True when available.
-        stats_path = step8_idmatch_dir(self.params.P.result_dir) / "step8_frame_stats.csv"
+        # Hide unsolved frames: keep only rows with wcs_ok=True when available.
+        stats_path = step_forced_phot_dir(self.params.P.result_dir) / "step8_frame_stats.csv"
         if stats_path.exists():
             try:
                 s7 = pd.read_csv(stats_path)
@@ -367,12 +366,12 @@ class MasterIdEditorWindow(StepWindowBase):
                 files = [f for f in files if f in keep]
                 self.log(f"Step10 frame filter (wcs_ok): {len(files)}/{base_count} kept")
 
-        # Also hide frames without Step8 ID-match output.
-        idmatch_dir = step8_idmatch_dir(self.params.P.result_dir)
-        if idmatch_dir.exists():
+        # Filter: keep frames that have forced phot output.
+        forced_dir = step_forced_phot_dir(self.params.P.result_dir)
+        if forced_dir.exists():
             before_idm = len(files)
-            files = [f for f in files if self._idmatch_output_exists(idmatch_dir, f)]
-            self.log(f"Step10 frame filter (Step8 idmatch csv): {len(files)}/{before_idm} kept")
+            files = [f for f in files if (forced_dir / f"photometry_{f}.tsv").exists()]
+            self.log(f"Step10 frame filter (forced phot tsv): {len(files)}/{before_idm} kept")
 
         self.file_list = list(files)
         self.file_combo.clear()
@@ -419,8 +418,8 @@ class MasterIdEditorWindow(StepWindowBase):
         idx_path = next(
             (
                 p for p in (
+                    step_forced_phot_dir(self.params.P.result_dir) / "photometry_index.csv",
                     step6_psf_dir(self.params.P.result_dir) / "photometry_index.csv",
-                    step5_aperture_dir(self.params.P.result_dir) / "photometry_index.csv",
                     self.params.P.result_dir / "photometry_index.csv",
                 )
                 if p.exists()
@@ -1238,15 +1237,14 @@ class MasterIdEditorWindow(StepWindowBase):
             else:
                 self._auto_add_detections_to_master(self.idmatch_df)
             return
-        idmatch_dir = step8_idmatch_dir(self.params.P.result_dir)
-        idmatch_path = idmatch_dir / f"idmatch_{filename}.csv"
-        if not idmatch_path.exists():
-            matches = sorted(idmatch_dir.glob(f"*/idmatch_{filename}.csv"))
-            if matches:
-                idmatch_path = matches[0]
+        idmatch_dir = step_forced_phot_dir(self.params.P.result_dir)
+        idmatch_path = idmatch_dir / f"photometry_{filename}.tsv"
         if idmatch_path.exists():
             try:
-                df = read_csv_int64_source_id(idmatch_path)
+                sep = "\t" if idmatch_path.suffix.lower() == ".tsv" else ","
+                df = read_csv_int64_source_id(idmatch_path, sep=sep)
+                if {"x_fit", "y_fit"} <= set(df.columns) and not {"x", "y"} <= set(df.columns):
+                    df = df.rename(columns={"x_fit": "x", "y_fit": "y"})
                 if {"x", "y", "source_id"} <= set(df.columns):
                     clean = df[["x", "y", "source_id"]].copy()
                     clean["x"] = pd.to_numeric(clean["x"], errors="coerce")

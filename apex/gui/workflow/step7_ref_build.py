@@ -1217,6 +1217,36 @@ class RefBuildWorker(QThread):
             except Exception:
                 pass
 
+        # ── Neighbor distance + crowding_flag ────────────────────────────────
+        if {"x_ref", "y_ref"} <= set(master_df.columns) and len(master_df) > 1:
+            try:
+                from scipy.spatial import KDTree
+                xy = master_df[["x_ref", "y_ref"]].to_numpy(float)
+                tree = KDTree(xy)
+                dists, _ = tree.query(xy, k=2)  # k=2: self + nearest neighbour
+                master_df["neighbor_dist_px"] = dists[:, 1]
+                ref_fwhm_row = (
+                    metrics.loc[metrics["file"] == ref_fname, "fwhm_px"]
+                    if "fwhm_px" in metrics.columns else None
+                )
+                ref_fwhm = (
+                    float(ref_fwhm_row.iloc[0])
+                    if ref_fwhm_row is not None and ref_fwhm_row.notna().any()
+                    else float(getattr(self.params, "fwhm_guess_arcsec", 6.0))
+                )
+                crowding_mult = float(getattr(self.params, "crowding_fwhm_mult", 2.5))
+                crowding_thresh_px = ref_fwhm * crowding_mult
+                master_df["crowding_flag"] = master_df["neighbor_dist_px"] < crowding_thresh_px
+                n_crowded = int(master_df["crowding_flag"].sum())
+                self._log(
+                    f"[REF] crowding_flag: {n_crowded}/{len(master_df)} crowded "
+                    f"(fwhm={ref_fwhm:.2f}px, thresh={crowding_thresh_px:.2f}px)"
+                )
+            except Exception as exc:
+                self._log(f"[REF] crowding_flag skipped: {exc}")
+                master_df["neighbor_dist_px"] = np.nan
+                master_df["crowding_flag"] = False
+
         out_dir = step7_refbuild_dir(self.result_dir)
         out_dir.mkdir(parents=True, exist_ok=True)
 
@@ -1329,7 +1359,7 @@ class RefBuildWindow(StepWindowBase):
         self.results = {}
 
         super().__init__(
-            step_index=6,
+            step_index=5,
             step_name="Reference Build",
             params=params,
             project_state=project_state,

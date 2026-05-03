@@ -203,34 +203,32 @@ class MainWindowWorkflow(QMainWindow):
 
         if mode == "cmd":
             self.step_names = [
-                "File Selection",
-                "Image Crop",
-                "Sky Preview & QC",
-                "Source Detection",
-                "Aperture Photometry",
-                "PSF Photometry",
-                "WCS Plate Solving",
-                "Reference Catalog Build",
-                "Star ID Matching",
-                "Master ID Editor",
-                "Zeropoint Calibration",
-                "CMD Plot",
-                "Isochrone Model",
+                "File Selection",           # 0
+                "Image Crop",               # 1
+                "Sky Preview & QC",         # 2
+                "Source Detection",         # 3
+                "WCS Plate Solving",        # 4
+                "Master Catalog Build",     # 5
+                "Forced Aperture Phot",     # 6
+                "PSF Photometry",           # 7  (skippable)
+                "Master ID Editor",         # 8
+                "Zeropoint Calibration",    # 9
+                "CMD Plot",                 # 10
+                "Isochrone Model",          # 11
             ]
         else:
             self.step_names = [
-                "File Selection",
-                "Image Crop",
-                "Sky Preview & QC",
-                "Source Detection",
-                "Aperture Photometry",
-                "WCS Plate Solving",
-                "Reference Build",
-                "Star ID Matching",
-                "Target/Comparison Selection",
-                "Light Curve Builder",
-                "Detrend & Night Merge",
-                "Period Analysis",
+                "File Selection",           # 0
+                "Image Crop",               # 1
+                "Sky Preview & QC",         # 2
+                "Source Detection",         # 3
+                "WCS Plate Solving",        # 4
+                "Master Catalog Build",     # 5
+                "Forced Aperture Phot",     # 6
+                "Target/Comparison Selection",  # 7
+                "Light Curve Builder",      # 8
+                "Detrend & Night Merge",    # 9
+                "Period Analysis",          # 10
             ]
 
         self.project_state.assign_steps(self.step_names)
@@ -520,65 +518,71 @@ class MainWindowWorkflow(QMainWindow):
     def _open_step_window(self, step_index: int):  # noqa: C901 (complexity ok)
         p, fm, ps = self.params, self.file_manager, self.project_state
 
+        # ── Step index constants (0-based) ───────────────────────────────────
+        # Shared steps (identical index in both modes)
+        _FILE_SEL   = 0
+        _CROP       = 1
+        _SKY        = 2
+        _DETECT     = 3
+        _WCS        = 4
+        _MASTER     = 5
+        _FORCED     = 6
+        # CMD-only
+        _CMD_PSF    = 7
+        _CMD_EDITOR = 8
+        _CMD_ZP     = 9
+        _CMD_PLOT   = 10
+        _CMD_ISO    = 11
+        # LC-only (after shared steps)
+        _LC_TARGET  = 7
+        _LC_BUILDER = 8
+        _LC_DETREND = 9
+        _LC_PERIOD  = 10
+
         # ── Step 0: File selection (mode-specific) ──
-        if step_index == 0:
+        if step_index == _FILE_SEL:
             if self.mode == "cmd":
                 from apex.gui.workflow.cmd.step1_file_selection import FileSelectionWindow
             else:
                 from apex.gui.workflow.lc.step1_file_selection import FileSelectionWindow
             return FileSelectionWindow(p, fm, ps, self)
 
-        # ── Steps 1-4: shared ──
-        elif step_index == 1:
+        # ── Steps 1-3: shared ──
+        elif step_index == _CROP:
             from apex.gui.workflow.step2_crop_selector import CropSelectorWindow
             return CropSelectorWindow(p, fm, ps, self)
-        elif step_index == 2:
+        elif step_index == _SKY:
             from apex.gui.workflow.step3_sky_preview import SkyPreviewWindow
             return SkyPreviewWindow(p, fm, ps, self)
-        elif step_index == 3:
+        elif step_index == _DETECT:
             from apex.gui.workflow.step4_source_detection import SourceDetectionWindow
             return SourceDetectionWindow(p, fm, ps, self)
-        elif step_index == 4:
-            from apex.gui.workflow.step5_aperture_photometry import AperturePhotometryWindow
-            return AperturePhotometryWindow(p, fm, ps, self)
 
-        # ── Step 5: PSF (CMD only) / WCS (LC) ──
-        elif step_index == 5:
+        # ── Step 4: WCS (shared) ──
+        elif step_index == _WCS:
+            from apex.gui.workflow.step6_wcs_plate_solving import WcsPlateSolvingWindow
+            return WcsPlateSolvingWindow(p, fm, ps, self)
+
+        # ── Step 5: MasterBuild (shared) ──
+        elif step_index == _MASTER:
+            from apex.gui.workflow.step7_ref_build import RefBuildWindow
+            return RefBuildWindow(p, fm, ps, self)
+
+        # ── Step 6: Forced Aperture Phot (shared) ──
+        elif step_index == _FORCED:
+            from apex.gui.workflow.step_forced_aperture_phot import ForcedPhotWindow
+            return ForcedPhotWindow(p, fm, ps, self)
+
+        # ── Step 7+: mode-specific ──
+        elif step_index == 7:
             if self.mode == "cmd":
                 from apex.gui.workflow.cmd.step6_psf_photometry import PSFPhotometryWindow
                 return PSFPhotometryWindow(p, fm, ps, self)
             else:
-                from apex.gui.workflow.step6_wcs_plate_solving import WcsPlateSolvingWindow
-                return WcsPlateSolvingWindow(p, fm, ps, self)
-
-        # ── Steps 6-7: WCS/Ref in CMD mode; Ref/IDMatch in LC ──
-        elif step_index == 6:
-            if self.mode == "cmd":
-                from apex.gui.workflow.step6_wcs_plate_solving import WcsPlateSolvingWindow
-                return WcsPlateSolvingWindow(p, fm, ps, self)
-            else:
-                from apex.gui.workflow.step7_ref_build import RefBuildWindow
-                return RefBuildWindow(p, fm, ps, self)
-
-        elif step_index == 7:
-            if self.mode == "cmd":
-                from apex.gui.workflow.step7_ref_build import RefBuildWindow
-                return RefBuildWindow(p, fm, ps, self)
-            else:
-                from apex.gui.workflow.step8_star_id_matching import StarIdMatchingWindow
-                return StarIdMatchingWindow(p, fm, ps, self)
-
-        # ── Step 8: IDMatch (CMD) / Target selection (LC) ──
-        elif step_index == 8:
-            if self.mode == "cmd":
-                from apex.gui.workflow.step8_star_id_matching import StarIdMatchingWindow
-                return StarIdMatchingWindow(p, fm, ps, self)
-            else:
                 from apex.gui.workflow.lc.step9_target_selection import TargetComparisonSelectionWindow
                 return TargetComparisonSelectionWindow(p, fm, ps, self)
 
-        # ── CMD steps 9-12 ──
-        elif step_index == 9:
+        elif step_index == 8:
             if self.mode == "cmd":
                 from apex.gui.workflow.cmd.step10_master_id_editor import MasterIdEditorWindow
                 return MasterIdEditorWindow(p, fm, ps, self)
@@ -586,7 +590,7 @@ class MainWindowWorkflow(QMainWindow):
                 from apex.gui.workflow.lc.step10_lightcurve_builder import LightCurveBuilderWindow
                 return LightCurveBuilderWindow(p, fm, ps, self)
 
-        elif step_index == 10:
+        elif step_index == 9:
             if self.mode == "cmd":
                 from apex.gui.workflow.cmd.step11_zeropoint_calibration import ZeropointCalibrationWindow
                 return ZeropointCalibrationWindow(p, fm, ps, self)
@@ -594,7 +598,7 @@ class MainWindowWorkflow(QMainWindow):
                 from apex.gui.workflow.lc.step11_detrend_merge import DetrendNightMergeWindow
                 return DetrendNightMergeWindow(p, fm, ps, self)
 
-        elif step_index == 11:
+        elif step_index == 10:
             if self.mode == "cmd":
                 from apex.gui.workflow.cmd.step12_cmd_plot import CmdPlotWindow
                 return CmdPlotWindow(p, fm, ps, self)
@@ -602,7 +606,7 @@ class MainWindowWorkflow(QMainWindow):
                 from apex.gui.workflow.lc.step12_period_analysis import PeriodAnalysisWindow
                 return PeriodAnalysisWindow(p, fm, ps, self)
 
-        elif step_index == 12 and self.mode == "cmd":
+        elif step_index == 11 and self.mode == "cmd":
             from apex.gui.workflow.cmd.step13_isochrone_model import IsochroneModelWindow
             return IsochroneModelWindow(p, fm, ps, self)
 

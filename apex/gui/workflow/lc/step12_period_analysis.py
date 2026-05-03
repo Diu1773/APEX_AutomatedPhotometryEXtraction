@@ -218,7 +218,7 @@ class PeriodAnalysisWindow(StepWindowBase):
         self._ui_ready = False
 
         super().__init__(
-            step_index=11,
+            step_index=10,
             step_name="Period Analysis",
             params=params,
             project_state=project_state,

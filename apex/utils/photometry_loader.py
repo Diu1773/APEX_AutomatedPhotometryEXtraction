@@ -7,7 +7,7 @@ import pandas as pd
 
 from .io_utils import read_csv_int64_source_id, coerce_int64_source_id
 from .step_paths import (
-    step8_idmatch_dir,
+    step_forced_phot_dir,
 )
 from .step_paths_lc import (
     step5_photometry_dir,
@@ -52,26 +52,21 @@ def _read_table(path: Path) -> pd.DataFrame | None:
 
 
 def _resolve_photometry_path(result_dir: Path, fname: str) -> Path | None:
-    phot_dir = step5_photometry_dir(result_dir)
-    for name in (f"{fname}_photometry.tsv", f"photometry_{fname}.tsv"):
-        p = phot_dir / name
-        if p.exists():
-            return p
+    # Forced phot output takes priority; fall back to legacy step5 location
+    forced_dir = step_forced_phot_dir(result_dir)
+    legacy_dir = step5_photometry_dir(result_dir)
+    for phot_dir in (forced_dir, legacy_dir):
+        for name in (f"photometry_{fname}.tsv", f"{fname}_photometry.tsv"):
+            p = phot_dir / name
+            if p.exists():
+                return p
     return None
 
 
 def _resolve_idmatch_path(result_dir: Path, fname: str) -> Path | None:
-    step8_out = step8_idmatch_dir(result_dir)
-    date_key = _extract_date_key(fname)
-
-    candidates: list[Path] = []
-    if date_key:
-        candidates.append(step8_out / date_key / f"idmatch_{fname}.csv")
-    candidates.append(step8_out / f"idmatch_{fname}.csv")
-
-    for path in candidates:
-        if path.exists():
-            return path
+    # In the new pipeline, master_id is a column in the forced phot TSV —
+    # no separate idmatch file exists. Return None so callers fall back
+    # to using master_id directly from the photometry TSV.
     return None
 
 
