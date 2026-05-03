@@ -44,7 +44,8 @@ class FileManager:
         self.root_dir: Optional[Path] = None
         # Night classification (populated by Step 1 after JD-gap classification)
         self.night_assignments: Dict[str, int] = {}  # filename -> night_id (1-based)
-        self.excluded_nights: set = set()  # set of night_ids to exclude
+        self.excluded_nights: set = set()   # set of night_ids to exclude (LC)
+        self.excluded_files: set = set()    # set of filenames to exclude (CMD)
 
     def set_multi_night_dirs(self, root_dir: Path, night_dirs: List[Path]) -> None:
         """Configure multi-night scanning with selected subdirectories."""
@@ -132,6 +133,22 @@ class FileManager:
 
         if not self.filenames:
             raise RuntimeError(f"No input files found with prefix '{prefix}' in {data_dir}")
+
+        # Apply per-file exclusions (CMD step1 Use checkboxes)
+        if self.excluded_files:
+            self.filenames = [f for f in self.filenames if f not in self.excluded_files]
+            self.path_map = {k: v for k, v in self.path_map.items() if k not in self.excluded_files}
+
+        # Apply per-night exclusions (LC step1 Use checkboxes)
+        if self.excluded_nights and self.night_assignments:
+            self.filenames = [
+                f for f in self.filenames
+                if self.night_assignments.get(f) not in self.excluded_nights
+            ]
+            self.path_map = {k: v for k, v in self.path_map.items() if k in self.filenames}
+
+        if not self.filenames:
+            raise RuntimeError("All files excluded. Uncheck some files in Step 1 to proceed.")
 
         if hasattr(self.params, "P"):
             self.params.P.file_path_map = {k: str(v) for k, v in self.path_map.items()}

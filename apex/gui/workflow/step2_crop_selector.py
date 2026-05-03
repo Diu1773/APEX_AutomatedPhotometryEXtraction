@@ -80,9 +80,8 @@ class CropSelectorWindow(StepWindowBase):
 
         # === Info Label ===
         info_label = QLabel(
-            "1. Load reference image\n"
-            "2. Draw rectangle by clicking and dragging\n"
-            "3. Click 'Apply Crop' to save cropped images to 'result/step2_crop/cropped/' folder"
+            "1. Draw rectangle by clicking and dragging\n"
+            "2. Click 'Apply Crop' to save cropped images to 'result/step2_crop/cropped/' folder"
         )
         info_label.setStyleSheet("QLabel { background-color: #E3F2FD; padding: 10px; border-radius: 5px; }")
         self.content_layout.addWidget(info_label)
@@ -152,19 +151,6 @@ class CropSelectorWindow(StepWindowBase):
 
         viewer_layout.addLayout(image_controls_layout)
         self.content_layout.addWidget(viewer_group)
-
-        # === Controls ===
-        controls_group = QGroupBox("Controls")
-        controls_layout = QHBoxLayout(controls_group)
-
-        # Load Image button
-        btn_load = QPushButton("Load Reference Image")
-        btn_load.clicked.connect(self.load_reference_image)
-        controls_layout.addWidget(btn_load)
-
-        controls_layout.addStretch()
-
-        self.content_layout.addWidget(controls_group)
 
         # === Crop Info ===
         crop_info_group = QGroupBox("Status")
@@ -772,3 +758,9 @@ class CropSelectorWindow(StepWindowBase):
                 pass
 
             self.update_navigation_buttons()
+        else:
+            # No saved state — auto-load first frame
+            try:
+                self.load_reference_image()
+            except Exception:
+                pass
