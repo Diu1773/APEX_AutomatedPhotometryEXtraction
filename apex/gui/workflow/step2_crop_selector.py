@@ -191,15 +191,10 @@ class CropSelectorWindow(StepWindowBase):
                     )
                     return
 
-            # Use reference from Step 1 if available, otherwise use first file
-            if self.file_manager.ref_filename and self.file_manager.ref_filename in self.file_manager.filenames:
-                # Use reference selected in Step 1
-                self.ref_filename = self.file_manager.ref_filename
-            elif self.ref_filename and self.ref_filename in self.file_manager.filenames:
-                # Use previously selected reference from this step
-                pass
+            # Use first available file
+            if self.ref_filename and self.ref_filename in self.file_manager.filenames:
+                pass  # keep previously used file for this step
             else:
-                # Fallback to first file
                 self.ref_filename = self.file_manager.filenames[0]
 
             file_path = self.params.get_file_path(self.ref_filename)
@@ -726,13 +721,6 @@ class CropSelectorWindow(StepWindowBase):
 
     def restore_state(self):
         """Restore step state from project"""
-        # First, check if there's a reference from Step 1
-        step1_data = self.project_state.get_step_data("file_selection")
-        if step1_data and step1_data.get("reference_frame"):
-            # Use reference from Step 1
-            if not self.ref_filename:  # Only if not already set
-                self.ref_filename = step1_data.get("reference_frame")
-
         # Try to restore crop state
         state_data = self.project_state.get_step_data("crop")
 

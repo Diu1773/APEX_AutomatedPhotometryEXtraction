@@ -336,28 +336,6 @@ class FileSelectionWindow(StepWindowBase):
         table_layout.addWidget(self.header_table)
         self.content_layout.addWidget(table_group)
 
-        # === Reference Frame Selection ===
-        ref_group = QGroupBox("Reference Frame")
-        ref_layout = QHBoxLayout(ref_group)
-
-        ref_layout.addWidget(QLabel("Selected Reference:"))
-
-        self.ref_label = QLabel("(not selected)")
-        self.ref_label.setStyleSheet("QLabel { font-weight: bold; color: blue; }")
-        ref_layout.addWidget(self.ref_label)
-
-        ref_layout.addStretch()
-
-        btn_auto_ref = QPushButton("Auto-Select Reference")
-        btn_auto_ref.clicked.connect(self.auto_select_reference)
-        ref_layout.addWidget(btn_auto_ref)
-
-        btn_use_selected = QPushButton("Use Selected Row")
-        btn_use_selected.clicked.connect(self.use_selected_as_reference)
-        ref_layout.addWidget(btn_use_selected)
-
-        self.content_layout.addWidget(ref_group)
-
     # -------------------------------------------------------------------------
     # Validation
     # -------------------------------------------------------------------------
@@ -474,7 +452,6 @@ class FileSelectionWindow(StepWindowBase):
         self.file_count_label.setText("Files: 0")
         self.night_table.setRowCount(0)
         self.header_table.setRowCount(0)
-        self.ref_label.setText("(not selected)")
 
         self._apply_manual_input_dirs()
         self.rescan_files()
@@ -831,48 +808,6 @@ class FileSelectionWindow(StepWindowBase):
             QMessageBox.warning(self, "SIMBAD Error", str(e))
 
     # -------------------------------------------------------------------------
-    # Reference frame selection
-    # -------------------------------------------------------------------------
-
-    def auto_select_reference(self):
-        """Automatically select reference frame"""
-        try:
-            ref_filename = self.file_manager.select_reference_frame()
-            self.ref_label.setText(ref_filename)
-
-            for i in range(self.header_table.rowCount()):
-                item = self.header_table.item(i, 0)
-                if item and item.text() == ref_filename:
-                    self.header_table.selectRow(i)
-                    break
-
-            self.save_state()
-            self.update_navigation_buttons()
-
-        except Exception as e:
-            QMessageBox.warning(
-                self, "Reference Selection Error",
-                f"Failed to select reference frame:\n{str(e)}"
-            )
-
-    def use_selected_as_reference(self):
-        """Use currently selected row as reference frame"""
-        current_row = self.header_table.currentRow()
-        if current_row >= 0:
-            item = self.header_table.item(current_row, 0)
-            if item:
-                ref_filename = item.text()
-                self.file_manager.ref_filename = ref_filename
-                self.ref_label.setText(ref_filename)
-                self.save_state()
-                self.update_navigation_buttons()
-        else:
-            QMessageBox.information(
-                self, "No Selection",
-                "Please select a row in the table first."
-            )
-
-    # -------------------------------------------------------------------------
     # State persistence
     # -------------------------------------------------------------------------
 
@@ -888,7 +823,6 @@ class FileSelectionWindow(StepWindowBase):
             "manual_input_dirs": [str(p) for p in self._manual_input_dirs],
             "filename_prefix": self.params.P.filename_prefix,
             "file_count": len(self.file_manager.filenames),
-            "reference_frame": self.file_manager.ref_filename,
             "file_path_map": {k: str(v) for k, v in getattr(self.file_manager, "path_map", {}).items()},
             "night_gap_hours": self.night_gap_spinbox.value(),
             "excluded_nights": sorted(self._excluded_nights),
@@ -917,9 +851,6 @@ class FileSelectionWindow(StepWindowBase):
             self._write_run_manifest()
         except Exception:
             pass
-
-        if self.file_manager.ref_filename:
-            self.ref_label.setText(self.file_manager.ref_filename)
 
     def restore_state(self):
         """Restore step state from project"""
@@ -963,10 +894,6 @@ class FileSelectionWindow(StepWindowBase):
                     k: int(v) for k, v in state_data["night_assignments"].items()
                 }
 
-            if "reference_frame" in state_data and state_data["reference_frame"]:
-                self.file_manager.ref_filename = state_data["reference_frame"]
-                self.ref_label.setText(state_data["reference_frame"])
-
             file_path_map = state_data.get("file_path_map")
             if isinstance(file_path_map, dict) and file_path_map:
                 self.params.P.file_path_map = {str(k): str(v) for k, v in file_path_map.items() if v}
@@ -992,13 +919,6 @@ class FileSelectionWindow(StepWindowBase):
             # Reload files to repopulate tables
             try:
                 self.load_files()
-
-                if self.file_manager.ref_filename:
-                    for i in range(self.header_table.rowCount()):
-                        item = self.header_table.item(i, 0)
-                        if item and item.text() == self.file_manager.ref_filename:
-                            self.header_table.selectRow(i)
-                            break
             except Exception:
                 pass
 

@@ -109,40 +109,31 @@ class FileSelectionWindow(StepWindowBase):
         table_group = QGroupBox("FITS Headers")
         table_layout = QVBoxLayout(table_group)
 
+        # Select / deselect buttons
+        btn_row = QHBoxLayout()
+        btn_select_all = QPushButton("전체 선택")
+        btn_select_all.clicked.connect(self._select_all_files)
+        btn_row.addWidget(btn_select_all)
+        btn_deselect_all = QPushButton("선택 해제")
+        btn_deselect_all.clicked.connect(self._deselect_all_files)
+        btn_row.addWidget(btn_deselect_all)
+        btn_row.addStretch()
+        table_layout.addLayout(btn_row)
+
         self.header_table = QTableWidget()
-        self.header_table.setColumnCount(6)
+        self.header_table.setColumnCount(7)
         self.header_table.setHorizontalHeaderLabels([
-            "Filename", "DATE-OBS", "FILTER", "EXPTIME", "AIRMASS", "IMAGETYP"
+            "Use", "Filename", "DATE-OBS", "FILTER", "EXPTIME", "AIRMASS", "IMAGETYP"
         ])
-        self.header_table.horizontalHeader().setSectionResizeMode(0, QHeaderView.Stretch)
+        self.header_table.horizontalHeader().setSectionResizeMode(1, QHeaderView.Stretch)
         self.header_table.setSelectionBehavior(QTableWidget.SelectRows)
         self.header_table.setEditTriggers(QTableWidget.NoEditTriggers)
+        self.header_table.itemChanged.connect(self._on_file_use_changed)
+        self._file_table_loading = False
 
         table_layout.addWidget(self.header_table)
 
         self.content_layout.addWidget(table_group)
-
-        # === Reference Frame Selection ===
-        ref_group = QGroupBox("Reference Frame")
-        ref_layout = QHBoxLayout(ref_group)
-
-        ref_layout.addWidget(QLabel("Selected Reference:"))
-
-        self.ref_label = QLabel("(not selected)")
-        self.ref_label.setStyleSheet("QLabel { font-weight: bold; color: blue; }")
-        ref_layout.addWidget(self.ref_label)
-
-        ref_layout.addStretch()
-
-        btn_auto_ref = QPushButton("Auto-Select Reference")
-        btn_auto_ref.clicked.connect(self.auto_select_reference)
-        ref_layout.addWidget(btn_auto_ref)
-
-        btn_use_selected = QPushButton("Use Selected Row")
-        btn_use_selected.clicked.connect(self.use_selected_as_reference)
-        ref_layout.addWidget(btn_use_selected)
-
-        self.content_layout.addWidget(ref_group)
 
         # Don't auto-load files - user must click "Rescan Files" button
         # (Files will be loaded from restore_state() if previously scanned)
@@ -232,79 +223,79 @@ class FileSelectionWindow(StepWindowBase):
     def load_files(self):
         """Load files and headers"""
         try:
-            # Scan for files
             filenames = self.file_manager.scan_files()
             self.file_count_label.setText(f"Files: {len(filenames)}")
 
-            # Read headers
             df_headers = self.file_manager.read_headers()
 
-            # Populate table
+            excluded = getattr(self.file_manager, "excluded_files", set())
+
+            self._file_table_loading = True
+            self.header_table.blockSignals(True)
             self.header_table.setRowCount(len(df_headers))
 
             for i, row in df_headers.iterrows():
-                self.header_table.setItem(i, 0, QTableWidgetItem(str(row["Filename"])))
-                self.header_table.setItem(i, 1, QTableWidgetItem(str(row["DATE-OBS"])))
-                self.header_table.setItem(i, 2, QTableWidgetItem(str(row["FILTER"])))
-                self.header_table.setItem(i, 3, QTableWidgetItem(str(row["EXPTIME"])))
-                self.header_table.setItem(i, 4, QTableWidgetItem(str(row["AIRMASS"])))
-                self.header_table.setItem(i, 5, QTableWidgetItem(str(row["IMAGETYP"])))
+                fname = str(row["Filename"])
 
-            # Don't auto-select reference - this should be done after detection/ID matching
-            # User can manually select if needed using "Auto-Select Reference" or "Use Selected Row"
+                use_item = QTableWidgetItem()
+                use_item.setFlags(use_item.flags() | Qt.ItemIsUserCheckable)
+                use_item.setCheckState(Qt.Unchecked if fname in excluded else Qt.Checked)
+                use_item.setData(Qt.UserRole, fname)
+                self.header_table.setItem(i, 0, use_item)
 
-            # Update navigation buttons
-            self.update_navigation_buttons()
+                self.header_table.setItem(i, 1, QTableWidgetItem(fname))
+                self.header_table.setItem(i, 2, QTableWidgetItem(str(row["DATE-OBS"])))
+                self.header_table.setItem(i, 3, QTableWidgetItem(str(row["FILTER"])))
+                self.header_table.setItem(i, 4, QTableWidgetItem(str(row["EXPTIME"])))
+                self.header_table.setItem(i, 5, QTableWidgetItem(str(row["AIRMASS"])))
+                self.header_table.setItem(i, 6, QTableWidgetItem(str(row["IMAGETYP"])))
 
-        except Exception as e:
-            QMessageBox.critical(
-                self, "Error",
-                f"Failed to load files:\n{str(e)}"
-            )
-
-    def auto_select_reference(self):
-        """Automatically select reference frame"""
-        try:
-            ref_filename = self.file_manager.select_reference_frame()
-            self.ref_label.setText(ref_filename)
-
-            # Highlight reference row in table
-            for i in range(self.header_table.rowCount()):
-                item = self.header_table.item(i, 0)
-                if item and item.text() == ref_filename:
-                    self.header_table.selectRow(i)
-                    break
-
-            # Save state to persist reference selection
-            self.save_state()
+            self.header_table.blockSignals(False)
+            self._file_table_loading = False
 
             self.update_navigation_buttons()
 
         except Exception as e:
-            QMessageBox.warning(
-                self, "Reference Selection Error",
-                f"Failed to select reference frame:\n{str(e)}"
-            )
+            self._file_table_loading = False
+            self.header_table.blockSignals(False)
+            QMessageBox.critical(self, "Error", f"Failed to load files:\n{str(e)}")
 
-    def use_selected_as_reference(self):
-        """Use currently selected row as reference frame"""
-        current_row = self.header_table.currentRow()
-        if current_row >= 0:
-            item = self.header_table.item(current_row, 0)
+    def _on_file_use_changed(self, item: QTableWidgetItem):
+        if self._file_table_loading or item.column() != 0:
+            return
+        self._sync_excluded_files()
+
+    def _sync_excluded_files(self):
+        excluded = set()
+        for row in range(self.header_table.rowCount()):
+            use_item = self.header_table.item(row, 0)
+            if use_item and use_item.checkState() == Qt.Unchecked:
+                fname = use_item.data(Qt.UserRole)
+                if fname:
+                    excluded.add(fname)
+        self.file_manager.excluded_files = excluded
+
+    def _select_all_files(self):
+        self._file_table_loading = True
+        self.header_table.blockSignals(True)
+        for row in range(self.header_table.rowCount()):
+            item = self.header_table.item(row, 0)
             if item:
-                ref_filename = item.text()
-                self.file_manager.ref_filename = ref_filename
-                self.ref_label.setText(ref_filename)
+                item.setCheckState(Qt.Checked)
+        self.header_table.blockSignals(False)
+        self._file_table_loading = False
+        self._sync_excluded_files()
 
-                # Save state to persist reference selection
-                self.save_state()
-
-                self.update_navigation_buttons()
-        else:
-            QMessageBox.information(
-                self, "No Selection",
-                "Please select a row in the table first."
-            )
+    def _deselect_all_files(self):
+        self._file_table_loading = True
+        self.header_table.blockSignals(True)
+        for row in range(self.header_table.rowCount()):
+            item = self.header_table.item(row, 0)
+            if item:
+                item.setCheckState(Qt.Unchecked)
+        self.header_table.blockSignals(False)
+        self._file_table_loading = False
+        self._sync_excluded_files()
 
     def save_state(self):
         """Save step state to project"""
@@ -312,14 +303,9 @@ class FileSelectionWindow(StepWindowBase):
             "data_dir": str(self.params.P.data_dir),
             "filename_prefix": self.params.P.filename_prefix,
             "file_count": len(self.file_manager.filenames),
-            "reference_frame": self.file_manager.ref_filename,
         }
 
         self.project_state.store_step_data("file_selection", state_data)
-
-        # Also update ref label if reference is set
-        if self.file_manager.ref_filename:
-            self.ref_label.setText(self.file_manager.ref_filename)
 
     def restore_state(self):
         """Restore step state from project"""
@@ -335,22 +321,10 @@ class FileSelectionWindow(StepWindowBase):
                 self.params.P.filename_prefix = state_data["filename_prefix"]
                 self.prefix_edit.setText(state_data["filename_prefix"])
 
-            # Restore reference frame
-            if "reference_frame" in state_data and state_data["reference_frame"]:
-                self.file_manager.ref_filename = state_data["reference_frame"]
-                self.ref_label.setText(state_data["reference_frame"])
-
             # Reload files
             try:
                 self.load_files()
 
-                # Re-highlight reference in table if it exists
-                if self.file_manager.ref_filename:
-                    for i in range(self.header_table.rowCount()):
-                        item = self.header_table.item(i, 0)
-                        if item and item.text() == self.file_manager.ref_filename:
-                            self.header_table.selectRow(i)
-                            break
             except:
                 pass
 
