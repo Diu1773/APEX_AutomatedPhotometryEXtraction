@@ -17,6 +17,14 @@ try:
 except Exception:
     tomli_w = None
 
+from apex.config.parameter_map import (
+    CANONICAL_SCHEMA_VERSION,
+    LC_TOML_KEY_MAP,
+    ensure_schema_version,
+    read_schema_version,
+    toml_value_for_runtime_attr,
+)
+
 
 def _as_bool(v, default=False):
     """Convert value to boolean"""
@@ -310,6 +318,8 @@ TOML_KEY_MAP: list[tuple[Iterable[str], str]] = [
         (("extinction_fit", "color_c2_by_filter"), "extfit_color_c2_by_filter"),
     ]
 
+TOML_KEY_MAP = LC_TOML_KEY_MAP
+
 
 def _read_toml(path: Path) -> Dict[str, Any]:
     """Read TOML config into a flat key dict."""
@@ -320,6 +330,7 @@ def _read_toml(path: Path) -> Dict[str, Any]:
         data = tomllib.load(f)
 
     raw: Dict[str, Any] = {}
+    raw["schema_version"] = read_schema_version(data)
 
     def set_if(key: str, value: Any):
         if value is not None:
@@ -436,6 +447,8 @@ class Parameters:
             )
 
         P = types.SimpleNamespace(
+            schema_version=_geti(raw, "schema_version", CANONICAL_SCHEMA_VERSION),
+
             # I/O
             data_dir=raw.get("data_dir", "."),
             filename_prefix=raw.get("filename_prefix", "pp_"),
@@ -481,6 +494,9 @@ class Parameters:
             fwhm_qc_max_sources=_geti(raw, "fwhm_qc_max_sources", 40),
             fwhm_elong_max=_getf(raw, "fwhm_elong_max", 1.3),
             iso_min_sep_pix=_getf(raw, "iso_min_sep_pix", 18.0),
+            fwhm_min_sources=_geti(raw, "fwhm_min_sources", 15),
+            fwhm_candidate_max=_geti(raw, "fwhm_candidate_max", 200),
+            fwhm_measure_all_sources=_as_bool(raw.get("fwhm_measure_all_sources", "false"), False),
 
             # Detection parameters
             detect_engine=raw.get("detect_engine", "dao"),
@@ -488,6 +504,7 @@ class Parameters:
             detect_sigma_g=_as_float_or_none(raw.get("detect_sigma_g", "")),
             detect_sigma_r=_as_float_or_none(raw.get("detect_sigma_r", "")),
             detect_sigma_i=_as_float_or_none(raw.get("detect_sigma_i", "")),
+            detect_sigma_by_filter=raw.get("detect_sigma_by_filter", {}) or {},
             minarea_pix=_geti(raw, "minarea_pix", 3),
             deblend_enable=_as_bool(raw.get("deblend_enable", "true"), True),
             deblend_nthresh=_geti(raw, "deblend_nthresh", 64),
@@ -619,6 +636,7 @@ class Parameters:
             apcorr_apply=_as_bool(raw.get("apcorr_apply", "true"), True),
             apcorr_small_scale=_getf(raw, "apcorr_small_scale", 1.0),
             apcorr_large_scale=_getf(raw, "apcorr_large_scale", 3.0),
+            apcorr_large_ref_scale=_getf(raw, "apcorr_large_scale", _getf(raw, "apcorr_large_ref_scale", 3.0)),
             apcorr_use_min_n=_geti(raw, "apcorr_use_min_n", 20),
             apcorr_scatter_max=_getf(raw, "apcorr_scatter_max", 0.05),
             apcorr_optimize_scales=_as_bool(raw.get("apcorr_optimize_scales", "true"), True),
@@ -826,25 +844,7 @@ class Parameters:
                 data = tomllib.load(f)
         except Exception:
             data = {}
-
-        def to_toml_value(attr: str, value: Any, path_keys: Iterable[str]) -> Any:
-            if isinstance(value, Path):
-                if tuple(path_keys) == ("io", "cache_dir"):
-                    return value.name
-                return str(value)
-            if attr == "peak_kernel_scales":
-                if isinstance(value, str):
-                    items = [v.strip() for v in value.split(",") if v.strip()]
-                    out: list[Any] = []
-                    for v in items:
-                        try:
-                            out.append(float(v))
-                        except Exception:
-                            out.append(v)
-                    return out
-                if isinstance(value, (list, tuple)):
-                    return list(value)
-            return value
+        ensure_schema_version(data)
 
         for path_keys, attr in TOML_KEY_MAP:
             if not hasattr(self.P, attr):
@@ -852,7 +852,7 @@ class Parameters:
             val = getattr(self.P, attr)
             if val is None:
                 continue
-            _set_path(data, path_keys, to_toml_value(attr, val, path_keys))
+            _set_path(data, path_keys, toml_value_for_runtime_attr(attr, val, path_keys))
 
         # Keep wcs_refine.enable in sync with the flat runtime flag if present.
         if hasattr(self.P, "wcs_refine_enable"):
@@ -863,6 +863,7 @@ class Parameters:
                 tomli_w.dump(data, f)
         except Exception:
             return False
+        self.param_hash = self._compute_hash(param_path)
         return True
 
     def print_summary(self):

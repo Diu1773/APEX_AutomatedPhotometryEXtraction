@@ -17,6 +17,14 @@ try:
 except Exception:
     tomli_w = None
 
+from apex.config.parameter_map import (
+    CANONICAL_SCHEMA_VERSION,
+    CMD_TOML_KEY_MAP,
+    ensure_schema_version,
+    read_schema_version,
+    toml_value_for_runtime_attr,
+)
+
 
 def _as_bool(v, default=False):
     """Convert value to boolean"""
@@ -331,6 +339,8 @@ TOML_KEY_MAP: list[tuple[Iterable[str], str]] = [
     (("cross_frame", "match_tol_px"), "cross_frame_match_tol_px"),
 ]
 
+TOML_KEY_MAP = CMD_TOML_KEY_MAP
+
 
 def _read_toml(path: Path) -> Dict[str, Any]:
     """Read TOML config into a flat key dict."""
@@ -341,6 +351,7 @@ def _read_toml(path: Path) -> Dict[str, Any]:
         data = tomllib.load(f)
 
     raw: Dict[str, Any] = {}
+    raw["schema_version"] = read_schema_version(data)
 
     def set_if(key: str, value: Any):
         if value is not None:
@@ -458,6 +469,8 @@ class Parameters:
             )
 
         P = types.SimpleNamespace(
+            schema_version=_geti(raw, "schema_version", CANONICAL_SCHEMA_VERSION),
+
             # I/O
             data_dir=raw.get("data_dir", "."),
             filename_prefix=raw.get("filename_prefix", "pp_"),
@@ -493,6 +506,9 @@ class Parameters:
             fwhm_qc_max_sources=_geti(raw, "fwhm_qc_max_sources", 40),
             fwhm_elong_max=_getf(raw, "fwhm_elong_max", 1.3),
             iso_min_sep_pix=_getf(raw, "iso_min_sep_pix", 18.0),
+            fwhm_min_sources=_geti(raw, "fwhm_min_sources", 15),
+            fwhm_candidate_max=_geti(raw, "fwhm_candidate_max", 200),
+            fwhm_measure_all_sources=_as_bool(raw.get("fwhm_measure_all_sources", "false"), False),
 
             # Detection parameters
             detect_engine=raw.get("detect_engine", "segm"),
@@ -501,6 +517,7 @@ class Parameters:
             detect_sigma_g=_as_float_or_none(raw.get("detect_sigma_g", "")),
             detect_sigma_r=_as_float_or_none(raw.get("detect_sigma_r", "")),
             detect_sigma_i=_as_float_or_none(raw.get("detect_sigma_i", "")),
+            detect_sigma_by_filter=raw.get("detect_sigma_by_filter", {}) or {},
             minarea_pix=_geti(raw, "minarea_pix", 3),
             detect_keep_max=_geti(raw, "detect_keep_max", 6000),
             deblend_enable=_as_bool(raw.get("deblend_enable", "true"), True),
@@ -611,7 +628,8 @@ class Parameters:
             apcorr_scale_min=_getf(raw, "apcorr_scale_min", 0.5),
             apcorr_scale_max=_getf(raw, "apcorr_scale_max", 5.0),
             apcorr_scale_step=_getf(raw, "apcorr_scale_step", 0.25),
-            apcorr_large_ref_scale=_getf(raw, "apcorr_large_ref_scale", 5.0),
+            apcorr_large_scale=_getf(raw, "apcorr_large_scale", _getf(raw, "apcorr_large_ref_scale", 5.0)),
+            apcorr_large_ref_scale=_getf(raw, "apcorr_large_scale", _getf(raw, "apcorr_large_ref_scale", 5.0)),
             apcorr_isolation_factor=_getf(raw, "apcorr_isolation_factor", 2.0),
             phot_use_qc_pass_only=_as_bool(raw.get("phot_use_qc_pass_only", "false"), False),
 
@@ -742,6 +760,7 @@ class Parameters:
             iso_dm_init=_getf(raw, "iso_dm_init", 9.46),
 
             # PSF photometry (Step 6)
+            psf_mode=str(raw.get("psf_mode", "normal")).strip().lower() or "normal",
             psf_model_mode="per_frame",
             psf_parallel_workers=_geti(raw, "psf_parallel_workers", 0),
             psf_epsf_oversampling=_geti(raw, "psf_epsf_oversampling", 2),
@@ -759,9 +778,14 @@ class Parameters:
             psf_redetect_sigma_r=_getf(raw, "psf_redetect_sigma_r", float("nan")),
             psf_redetect_sigma_i=_getf(raw, "psf_redetect_sigma_i", float("nan")),
             psf_duplicate_radius_fwhm_mult=_getf(raw, "psf_duplicate_radius_fwhm_mult", 0.8),
+            psf_duplicate_radius_px=_getf(raw, "psf_duplicate_radius_px", float("nan")),
             psf_new_sources_cap_per_iter=_geti(raw, "psf_new_sources_cap_per_iter", 70),
             psf_new_sources_cap_frac=_getf(raw, "psf_new_sources_cap_frac", 0.02),
+            psf_fit_init_max_sources=_geti(raw, "psf_fit_init_max_sources", 0),
+            psf_substar_neighbor_r_fwhm_mult=_getf(raw, "psf_substar_neighbor_r_fwhm_mult", 8.0),
+            psf_substar_max_sources=_geti(raw, "psf_substar_max_sources", 1500),
             psf_conv_new_frac=_getf(raw, "psf_conv_new_frac", 0.02),
+            psf_use_grouper=_as_bool(raw.get("psf_use_grouper", "true"), True),
             psf_redetect_sharp_lo=_getf(raw, "psf_redetect_sharp_lo", 0.15),
             psf_redetect_sharp_hi=_getf(raw, "psf_redetect_sharp_hi", 0.95),
             psf_redetect_round_abs_max=_getf(raw, "psf_redetect_round_abs_max", 0.8),
@@ -866,25 +890,7 @@ class Parameters:
                 data = tomllib.load(f)
         except Exception:
             data = {}
-
-        def to_toml_value(attr: str, value: Any, path_keys: Iterable[str]) -> Any:
-            if isinstance(value, Path):
-                if tuple(path_keys) == ("io", "cache_dir"):
-                    return value.name
-                return str(value)
-            if attr == "peak_kernel_scales":
-                if isinstance(value, str):
-                    items = [v.strip() for v in value.split(",") if v.strip()]
-                    out: list[Any] = []
-                    for v in items:
-                        try:
-                            out.append(float(v))
-                        except Exception:
-                            out.append(v)
-                    return out
-                if isinstance(value, (list, tuple)):
-                    return list(value)
-            return value
+        ensure_schema_version(data)
 
         for path_keys, attr in TOML_KEY_MAP:
             if not hasattr(self.P, attr):
@@ -892,7 +898,7 @@ class Parameters:
             val = getattr(self.P, attr)
             if val is None:
                 continue
-            _set_path(data, path_keys, to_toml_value(attr, val, path_keys))
+            _set_path(data, path_keys, toml_value_for_runtime_attr(attr, val, path_keys))
 
         # Keep wcs_refine.enable in sync with the flat runtime flag if present.
         if hasattr(self.P, "wcs_refine_enable"):
@@ -903,6 +909,7 @@ class Parameters:
                 tomli_w.dump(data, f)
         except Exception:
             return False
+        self.param_hash = self._compute_hash(param_path)
         return True
 
     def print_summary(self):

@@ -10,7 +10,7 @@ from PyQt5.QtWidgets import (
     QFormLayout, QLineEdit, QDialogButtonBox, QSplitter, QApplication,
     QProgressBar, QCheckBox, QSpinBox, QDoubleSpinBox, QTableWidget,
     QTableWidgetItem, QHeaderView, QAbstractItemView, QSlider, QGridLayout,
-    QWidget, QTabWidget
+    QWidget, QTabWidget, QScrollArea,
 )
 from PyQt5.QtCore import Qt, QThread, pyqtSignal, QTimer
 from pathlib import Path
@@ -32,6 +32,8 @@ from scipy.ndimage import gaussian_filter, median_filter
 from scipy.spatial import cKDTree as KDTree
 
 from .step_window_base import StepWindowBase
+from .run_control import RunControlBar
+from .log_panel import WorkflowLogWindow, append_timestamped_log, show_raised
 from apex.utils.constants import get_parallel_workers
 from apex.utils.fast_stats import finite_nanmedian, finite_nanstd, robust_median_mad
 from apex.utils.step_paths import (
@@ -39,7 +41,13 @@ from apex.utils.step_paths import (
     crop_is_active,
     step4_dir,
 )
-from apex.utils.cache_utils import norm_path_key
+from apex.utils.cache_utils import (
+    DETECTION_CACHE_SCHEMA_VERSION,
+    build_detection_cache_signature,
+    detection_cache_signature_matches,
+    norm_path_key,
+    normalize_detect_engine as _normalize_detect_engine_util,
+)
 from apex.utils.astro_utils import compute_airmass_from_header
 
 _DETECT_MODE_PRESETS = {
@@ -123,20 +131,43 @@ def _get_detect_mode_from_params(params_obj) -> str:
 
 
 def _normalize_detect_engine(value) -> str:
-    s = str(value or "segm").strip().lower()
-    aliases = {
-        "sourceextractor": "sep",
-        "source_extractor": "sep",
-        "sextractor": "sep",
-        "sex": "sep",
-        "segmentation": "segm",
-        "photutils": "segm",
-        "daofind": "dao",
-    }
-    s = aliases.get(s, s)
-    if s in ("sep", "segm", "peak", "dao"):
-        return s
-    return "segm"
+    return _normalize_detect_engine_util(value)
+
+
+_COLLAPSE_BTN_STYLE = (
+    "QPushButton { border: none; text-align: left; color: #555; font-size: 8pt; padding: 0px; }"
+    "QPushButton:checked { color: #1565C0; }"
+)
+
+
+def _make_collapsible_group(
+    title: str, *, initial_expanded: bool = False
+) -> tuple[QGroupBox, QWidget]:
+    """Return (group_box, inner_container) for a toggle-collapsible section."""
+    group = QGroupBox(title)
+    group.setCheckable(False)
+    group.setStyleSheet("QGroupBox { font-weight: bold; }")
+    vbox = QVBoxLayout(group)
+    vbox.setContentsMargins(4, 4, 4, 4)
+    vbox.setSpacing(2)
+
+    btn = QPushButton("▼ 접기" if initial_expanded else "▶ 펼치기")
+    btn.setCheckable(True)
+    btn.setChecked(initial_expanded)
+    btn.setStyleSheet(_COLLAPSE_BTN_STYLE)
+    vbox.addWidget(btn)
+
+    container = QWidget()
+    container.setVisible(initial_expanded)
+    vbox.addWidget(container)
+
+    btn.toggled.connect(
+        lambda checked, b=btn, c=container: (
+            b.setText("▼ 접기" if checked else "▶ 펼치기"),
+            c.setVisible(checked),
+        )
+    )
+    return group, container
 
 
 class DetectionWorker(QThread):
@@ -251,20 +282,11 @@ class DetectionWorker(QThread):
                         file_path = cropped_dir / filename
                     else:
                         file_path = self.params.get_file_path(filename)
-                    source_sig = {
-                        "cache_schema": 4,  # v4: detection engine is part of cache compatibility
-                        "source_path": norm_path_key(file_path),
-                        "source_use_cropped": bool(self.use_cropped),
-                        "source_size": None,
-                        "source_mtime_ns": None,
-                        "detect_engine": _normalize_detect_engine(getattr(P, 'detect_engine', 'segm')),
-                    }
-                    try:
-                        st = Path(file_path).stat()
-                        source_sig["source_size"] = int(st.st_size)
-                        source_sig["source_mtime_ns"] = int(st.st_mtime_ns)
-                    except Exception:
-                        pass
+                    source_sig = build_detection_cache_signature(
+                        Path(file_path),
+                        use_cropped=bool(self.use_cropped),
+                        detect_engine=getattr(P, 'detect_engine', 'segm'),
+                    )
 
                     # Load FITS
                     with fits.open(file_path) as hdul:
@@ -2056,7 +2078,6 @@ class SourceDetectionWindow(StepWindowBase):
         self.file_manager = file_manager
         self.detection_worker = None
         self.detection_results = {}
-        self.previous_detection_results = None
         self.stop_requested = False
 
         # Image data
@@ -2127,6 +2148,16 @@ class SourceDetectionWindow(StepWindowBase):
         """Load filter-specific sigma values from parameters"""
         P = self.params.P
         raw = getattr(P, '_raw', {})
+
+        sigma_by_filter = getattr(P, "detect_sigma_by_filter", None)
+        if not isinstance(sigma_by_filter, dict):
+            sigma_by_filter = raw.get("detect_sigma_by_filter", {})
+        if isinstance(sigma_by_filter, dict):
+            for filt, val in sigma_by_filter.items():
+                try:
+                    self.filter_sigma_map[str(filt)] = float(val)
+                except Exception:
+                    pass
 
         # Read all detect_sigma_* patterns
         for key, val in raw.items():
@@ -2267,36 +2298,13 @@ class SourceDetectionWindow(StepWindowBase):
         sig = self._source_signature_for_file(filename)
         if sig is None:
             return False
-        try:
-            schema = int(payload.get("cache_schema", 0) or 0)
-        except Exception:
-            schema = 0
-        if schema < 4:
-            return False
-        current_engine = _normalize_detect_engine(getattr(self.params.P, "detect_engine", "segm"))
-        cached_engine = _normalize_detect_engine(payload.get("detect_engine", "segm"))
-        if cached_engine != current_engine:
-            return False
-        if bool(payload.get("source_use_cropped", None)) != bool(sig["source_use_cropped"]):
-            return False
-        if norm_path_key(payload.get("source_path")) != sig["source_path"]:
-            return False
-        try:
-            if int(payload.get("source_mtime_ns")) != int(sig["source_mtime_ns"]):
-                # Step5+ can update FITS headers in place, changing mtime only.
-                # For detection cache reuse, accept when path/crop/size still match.
-                try:
-                    saved_size = int(payload.get("source_size"))
-                    curr_size = int(sig["source_size"])
-                except Exception:
-                    return False
-                if saved_size <= 0 or curr_size <= 0:
-                    return False
-                if saved_size != curr_size:
-                    return False
-        except Exception:
-            return False
-        return True
+        return detection_cache_signature_matches(
+            payload,
+            sig,
+            min_schema=DETECTION_CACHE_SCHEMA_VERSION,
+            current_engine=getattr(self.params.P, "detect_engine", "segm"),
+            allow_mtime_drift=True,
+        )
 
     def _pick_detection_cache(self, filename: str, previous: bool = False):
         cache_dir = self.params.P.cache_dir
@@ -2414,27 +2422,15 @@ class SourceDetectionWindow(StepWindowBase):
 
         control_layout.addStretch()
 
-        self.btn_run = QPushButton("Run Detection")
-        self.btn_run.setStyleSheet("QPushButton { background-color: #4CAF50; color: white; font-weight: bold; padding: 8px 20px; }")
-        self.btn_run.clicked.connect(self.run_detection)
-        control_layout.addWidget(self.btn_run)
-
-        self.btn_stop = QPushButton("Stop")
-        self.btn_stop.setStyleSheet("QPushButton { background-color: #f44336; color: white; font-weight: bold; padding: 8px 15px; }")
-        self.btn_stop.clicked.connect(self.stop_detection)
-        self.btn_stop.setEnabled(False)
-        control_layout.addWidget(self.btn_stop)
-
-        self.btn_undo = QPushButton("Undo Detection")
-        self.btn_undo.setStyleSheet("QPushButton { background-color: #FF9800; color: white; font-weight: bold; padding: 8px 15px; }")
-        self.btn_undo.clicked.connect(self.undo_detection)
-        self.btn_undo.setEnabled(False)
-        control_layout.addWidget(self.btn_undo)
-
-        btn_log = QPushButton("Log & Workers")
-        btn_log.setStyleSheet("QPushButton { background-color: #607D8B; color: white; font-weight: bold; padding: 8px 15px; }")
-        btn_log.clicked.connect(self.show_log_window)
-        control_layout.addWidget(btn_log)
+        self.run_bar = RunControlBar(
+            "Run Detection", "Log & Workers",
+            run_cb=self.run_detection,
+            stop_cb=self.stop_detection,
+            log_cb=self.show_log_window,
+        )
+        control_layout.addWidget(self.run_bar)
+        self.btn_run = self.run_bar.btn_run
+        self.btn_stop = self.run_bar.btn_stop
 
         self.detect_layout.addLayout(control_layout)
 
@@ -2632,7 +2628,6 @@ class SourceDetectionWindow(StepWindowBase):
         self.file_combo.addItems(files)
         self._fits_cache.clear()
         self.load_cached_results()
-        self.load_previous_cached_results()
 
     def _refresh_qc_panel(self):
         if hasattr(self, "qc_panel") and self.qc_panel is not None:
@@ -2711,7 +2706,6 @@ class SourceDetectionWindow(StepWindowBase):
             self.detection_results = results
             self.populate_results_table()
             self.update_summary_from_results()
-            self.btn_undo.setEnabled(self.previous_detection_results is not None)
             self.log(f"Loaded cached results: {len(results)} files")
             if skipped_incompatible > 0:
                 self.log(f"Skipped incompatible detection cache: {skipped_incompatible} files")
@@ -2720,149 +2714,12 @@ class SourceDetectionWindow(StepWindowBase):
         elif skipped_incompatible > 0:
             self.log(f"Ignored incompatible detection cache: {skipped_incompatible} files")
 
-    def load_previous_cached_results(self):
-        """Load previous detection results for undo"""
-        cache_dir = self.params.P.cache_dir
-        if not cache_dir.exists():
-            return
-
-        results = {}
-        skipped_incompatible = 0
-        for filename in self.file_list:
-            data, pos_file, peak_file, cache_file = self._pick_detection_cache(filename, previous=True)
-            if data is None:
-                if (cache_dir / f"detect_prev_{filename}.json").exists():
-                    skipped_incompatible += 1
-                continue
-            try:
-                positions = []
-                peak_positions = []
-                if pos_file is not None and pos_file.exists():
-                    try:
-                        df_pos = pd.read_csv(pos_file)
-                        if 'x' in df_pos.columns and 'y' in df_pos.columns:
-                            positions = [(row['x'], row['y']) for _, row in df_pos.iterrows()]
-                        else:
-                            pos_data = np.loadtxt(pos_file, delimiter=',', skiprows=1)
-                            if pos_data.ndim == 1:
-                                positions = [(pos_data[0], pos_data[1])]
-                            else:
-                                positions = [(row[0], row[1]) for row in pos_data]
-                    except Exception:
-                        positions = []
-                if peak_file is not None and peak_file.exists():
-                    try:
-                        peak_positions = np.loadtxt(peak_file, delimiter=',', skiprows=1).tolist()
-                        if peak_positions and isinstance(peak_positions[0], float):
-                            peak_positions = [peak_positions]
-                    except Exception:
-                        peak_positions = []
-
-                result = {
-                    'n_sources': data.get('n_sources', 0),
-                    'positions': positions,
-                    'peak_positions': peak_positions,
-                    'fwhm_px': data.get('fwhm_px', 0.0),
-                    'fwhm_arcsec': data.get('fwhm_arcsec', 0.0),
-                    'bkg_median': data.get('bkg_median', 0.0),
-                    'bkg_rms': data.get('bkg_rms', 0.0),
-                    'filter': data.get('filter', ''),
-                    'threshold': data.get('threshold', 0.0),
-                    'sigma_used': data.get('sigma_used', 0.0),
-                    'detect_method': data.get('detect_method', 'segm'),
-                }
-                results[filename] = result
-            except Exception:
-                continue
-
-        if results:
-            self.previous_detection_results = results
-            self.btn_undo.setEnabled(True)
-            self.log(f"Loaded previous cached results: {len(results)} files")
-        elif skipped_incompatible > 0:
-            self.log(f"Ignored incompatible previous cache: {skipped_incompatible} files")
-
-    def backup_current_cache(self):
-        """Backup current cache to previous cache for undo"""
-        cache_dir = self.params.P.cache_dir
-        if not cache_dir.exists():
-            return
-
-        for filename in self.file_list:
-            src_json = cache_dir / f"detect_{filename}.json"
-            src_csv = cache_dir / f"detect_{filename}.csv"
-            src_peak = cache_dir / f"detect_peak_{filename}.csv"
-            dst_json = cache_dir / f"detect_prev_{filename}.json"
-            dst_csv = cache_dir / f"detect_prev_{filename}.csv"
-            dst_peak = cache_dir / f"detect_prev_peak_{filename}.csv"
-
-            if src_json.exists():
-                shutil.copy2(src_json, dst_json)
-            if src_csv.exists():
-                shutil.copy2(src_csv, dst_csv)
-            if src_peak.exists():
-                shutil.copy2(src_peak, dst_peak)
-
-    def swap_cache_with_previous(self):
-        """Swap current cache with previous cache on disk"""
-        cache_dir = self.params.P.cache_dir
-        if not cache_dir.exists():
-            return
-
-        for filename in self.file_list:
-            cur_json = cache_dir / f"detect_{filename}.json"
-            cur_csv = cache_dir / f"detect_{filename}.csv"
-            cur_peak = cache_dir / f"detect_peak_{filename}.csv"
-            prev_json = cache_dir / f"detect_prev_{filename}.json"
-            prev_csv = cache_dir / f"detect_prev_{filename}.csv"
-            prev_peak = cache_dir / f"detect_prev_peak_{filename}.csv"
-            tmp_json = cache_dir / f"detect_tmp_{filename}.json"
-            tmp_csv = cache_dir / f"detect_tmp_{filename}.csv"
-            tmp_peak = cache_dir / f"detect_tmp_peak_{filename}.csv"
-
-            if prev_json.exists():
-                if cur_json.exists():
-                    shutil.copy2(cur_json, tmp_json)
-                shutil.copy2(prev_json, cur_json)
-                if tmp_json.exists():
-                    shutil.copy2(tmp_json, prev_json)
-                    tmp_json.unlink()
-
-            if prev_csv.exists():
-                if cur_csv.exists():
-                    shutil.copy2(cur_csv, tmp_csv)
-                shutil.copy2(prev_csv, cur_csv)
-                if tmp_csv.exists():
-                    shutil.copy2(tmp_csv, prev_csv)
-                    tmp_csv.unlink()
-
-            if prev_peak.exists():
-                if cur_peak.exists():
-                    shutil.copy2(cur_peak, tmp_peak)
-                shutil.copy2(prev_peak, cur_peak)
-                if tmp_peak.exists():
-                    shutil.copy2(tmp_peak, prev_peak)
-                    tmp_peak.unlink()
 
     def setup_log_window(self):
         """Create the log/workers window"""
         if self.log_window is not None:
             return
 
-        self.log_window = QWidget(self, Qt.Window)
-        self.log_window.setWindowTitle("Detection Log & Workers")
-        self.log_window.resize(900, 500)
-
-        layout = QVBoxLayout(self.log_window)
-        log_splitter = QSplitter(Qt.Horizontal)
-
-        # Left: Log text
-        self.log_text = QTextEdit()
-        self.log_text.setReadOnly(True)
-        self.log_text.setStyleSheet("QTextEdit { font-family: monospace; font-size: 9pt; }")
-        log_splitter.addWidget(self.log_text)
-
-        # Right: Worker status panel
         worker_group = QGroupBox("Workers")
         worker_group.setMinimumWidth(430)
         worker_layout = QVBoxLayout(worker_group)
@@ -2874,20 +2731,21 @@ class SourceDetectionWindow(StepWindowBase):
         worker_layout.addLayout(self.worker_status_layout)
         worker_layout.addStretch()
 
-        log_splitter.addWidget(worker_group)
-        log_splitter.setStretchFactor(0, 2)
-        log_splitter.setStretchFactor(1, 1)
-
-        layout.addWidget(log_splitter)
+        self.log_window = WorkflowLogWindow(
+            self,
+            "Detection Log & Workers",
+            width=900,
+            height=500,
+            side_widget=worker_group,
+        )
+        self.log_text = self.log_window.log_text
         self.log_window.show()
 
     def show_log_window(self):
         """Show log/workers window"""
         if self.log_window is None:
             self.setup_log_window()
-        self.log_window.show()
-        self.log_window.raise_()
-        self.log_window.activateWindow()
+        show_raised(self.log_window)
 
     def clear_worker_status(self):
         """Clear worker status UI"""
@@ -3554,14 +3412,6 @@ class SourceDetectionWindow(StepWindowBase):
         else:
             pending_files = list(self.file_list)
 
-        if self.detection_results:
-            self.previous_detection_results = copy.deepcopy(self.detection_results)
-            self.btn_undo.setEnabled(True)
-        else:
-            self.previous_detection_results = None
-            self.btn_undo.setEnabled(False)
-
-        self.backup_current_cache()
         if not use_cache:
             self.detection_results = {}
             self._refresh_qc_panel()
@@ -3603,9 +3453,7 @@ class SourceDetectionWindow(StepWindowBase):
         self.detection_worker.worker_status.connect(self.on_worker_status)
 
         # Update UI
-        self.btn_run.setEnabled(False)
-        self.btn_stop.setEnabled(True)
-        self.btn_stop.setText("Stop")
+        self.run_bar.set_running(True)
         self.progress_bar.setValue(0)
         self.progress_bar.setMaximum(len(pending_files))
         self.progress_label.setText(f"0/{len(pending_files)} | Starting...")
@@ -3623,8 +3471,7 @@ class SourceDetectionWindow(StepWindowBase):
             if self.stop_requested:
                 return
             self.stop_requested = True
-            self.btn_stop.setEnabled(False)
-            self.btn_stop.setText("Stopping...")
+            self.run_bar.set_stopping()
             self.progress_label.setText("Stopping...")
             self.log("Stopping...")
             self.detection_worker.stop()
@@ -3730,9 +3577,7 @@ class SourceDetectionWindow(StepWindowBase):
 
     def on_detection_finished(self, summary):
         """Handle detection completion"""
-        self.btn_run.setEnabled(True)
-        self.btn_stop.setEnabled(False)
-        self.btn_stop.setText("Stop")
+        self.run_bar.set_running(False)
         self.stop_requested = False
         resume_mode = self._resume_cache_active
         self._resume_cache_active = False
@@ -3835,25 +3680,6 @@ class SourceDetectionWindow(StepWindowBase):
             f"Median FWHM: {median_fwhm:.2f}\""
         )
 
-    def undo_detection(self):
-        """Restore previous detection results"""
-        if not self.previous_detection_results:
-            return
-        try:
-            self.swap_cache_with_previous()
-            current = copy.deepcopy(self.detection_results)
-            self.detection_results = copy.deepcopy(self.previous_detection_results)
-            self.previous_detection_results = current if current else None
-            self.populate_results_table()
-            self.update_summary_from_results()
-            self.update_overlay()
-            self.btn_undo.setEnabled(self.previous_detection_results is not None)
-            self.log("Restored previous detection results")
-            self.save_state()
-            self.update_navigation_buttons()
-            self._refresh_qc_panel()
-        except Exception as e:
-            self.log(f"ERROR undo: {e}")
 
     def on_table_cell_clicked(self, row, col):
         """Handle table cell click - load that file"""
@@ -3865,8 +3691,7 @@ class SourceDetectionWindow(StepWindowBase):
 
     def log(self, message):
         """Add message to log"""
-        timestamp = time.strftime("%H:%M:%S")
-        self.log_text.append(f"[{timestamp}] {message}")
+        append_timestamped_log(self.log_text, message)
 
     def clear_detection_cache(self):
         cache_dir = self.params.P.cache_dir
@@ -3897,11 +3722,9 @@ class SourceDetectionWindow(StepWindowBase):
                     except Exception:
                         pass
         self.detection_results = {}
-        self.previous_detection_results = None
         self.populate_results_table()
         self.update_summary_from_results()
         self.update_overlay()
-        self.btn_undo.setEnabled(False)
         self.save_state()
         self.update_navigation_buttons()
         self._refresh_qc_panel()
@@ -3911,18 +3734,28 @@ class SourceDetectionWindow(StepWindowBase):
         """Open detection parameters dialog"""
         dialog = QDialog(self)
         dialog.setWindowTitle("Detection Parameters")
-        dialog.resize(500, 600)
+        dialog.resize(500, 640)
 
-        layout = QVBoxLayout(dialog)
+        outer_layout = QVBoxLayout(dialog)
+
+        # Scrollable content area
+        scroll = QScrollArea()
+        scroll.setWidgetResizable(True)
+        scroll.setFrameShape(QScrollArea.NoFrame)
+        content = QWidget()
+        layout = QVBoxLayout(content)
+        layout.setContentsMargins(4, 4, 4, 4)
+        scroll.setWidget(content)
+        outer_layout.addWidget(scroll, 1)
 
         # Info
         info = QLabel("Adjust source detection parameters.\nChanges apply to next detection run.")
         info.setStyleSheet("QLabel { background-color: #E3F2FD; padding: 10px; margin-bottom: 10px; }")
         layout.addWidget(info)
 
+        # Main form – always visible (mode, engine, base sigma)
         form = QFormLayout()
 
-        # Detection mode presets
         self.param_detect_mode = QComboBox()
         self.param_detect_mode.addItem("Normal (기본)", "normal")
         self.param_detect_mode.addItem("Crowded (혼잡장)", "crowded")
@@ -3942,7 +3775,6 @@ class SourceDetectionWindow(StepWindowBase):
         mode_row_layout.addWidget(self.param_detect_mode_apply)
         form.addRow("Detection Mode:", mode_row)
 
-        # Detection engine
         self.param_engine = QComboBox()
         self.param_engine.addItem("SEP (fast catalog)", "sep")
         self.param_engine.addItem("Photutils segmentation", "segm")
@@ -3954,7 +3786,6 @@ class SourceDetectionWindow(StepWindowBase):
             self.param_engine.setCurrentIndex(idx)
         form.addRow("Detection Engine:", self.param_engine)
 
-        # Detection sigma (base)
         self.param_detect_sigma = QDoubleSpinBox()
         self.param_detect_sigma.setRange(1.0, 10.0)
         self.param_detect_sigma.setSingleStep(0.1)
@@ -3963,42 +3794,37 @@ class SourceDetectionWindow(StepWindowBase):
 
         layout.addLayout(form)
 
-        # === Per-filter Sigma Section ===
-        filter_group = QGroupBox("Per-Filter Sigma (overrides base)")
-        filter_layout = QGridLayout(filter_group)
+        # === Per-Filter Sigma (collapsible) ===
+        filter_group, filter_container = _make_collapsible_group("Per-Filter Sigma (overrides base)")
+        filter_layout = QGridLayout(filter_container)
 
-        # Auto-detect filters from actual data files
         detected_filters = self.scan_filters_from_files()
-        if detected_filters:
-            filter_info = f"Detected filters from data: {', '.join(detected_filters)}"
-        else:
-            filter_info = "No filters detected (will use base sigma for all)"
+        filter_info = (
+            f"Detected filters from data: {', '.join(detected_filters)}"
+            if detected_filters
+            else "No filters detected (will use base sigma for all)"
+        )
         filter_layout.addWidget(QLabel(filter_info), 0, 0, 1, 2)
 
-        # Show current mappings - use detected filters + any already configured
         self.filter_sigma_edits = {}
-        current_filters = set(detected_filters)  # Start with detected
-        current_filters.update(self.filter_sigma_map.keys())  # Add previously configured
-
-        # If nothing found, show common examples
+        current_filters = set(detected_filters)
+        current_filters.update(self.filter_sigma_map.keys())
         if not current_filters:
-            current_filters = {'g', 'r', 'i'}  # SDSS default
+            current_filters = {'g', 'r', 'i'}
 
         row = 1
-        for filt in sorted(set(current_filters)):
-            lbl = QLabel(f"{filt}:")
+        for filt in sorted(current_filters):
             spin = QDoubleSpinBox()
             spin.setRange(1.0, 10.0)
             spin.setSingleStep(0.1)
             spin.setDecimals(2)
             spin.setValue(self.filter_sigma_map.get(filt, self.param_detect_sigma.value()))
             spin.setSpecialValueText("use base")
-            filter_layout.addWidget(lbl, row, 0)
+            filter_layout.addWidget(QLabel(f"{filt}:"), row, 0)
             filter_layout.addWidget(spin, row, 1)
             self.filter_sigma_edits[filt] = spin
             row += 1
 
-        # Add custom filter row
         filter_layout.addWidget(QLabel("Add filter:"), row, 0)
         custom_layout = QHBoxLayout()
         self.custom_filter_name = QLineEdit()
@@ -4017,63 +3843,63 @@ class SourceDetectionWindow(StepWindowBase):
 
         layout.addWidget(filter_group)
 
-        # Other parameters
-        form2 = QFormLayout()
+        # === Detection Options (collapsible) ===
+        detect_opts_group, detect_opts_container = _make_collapsible_group("Detection Options")
+        detect_opts_form = QFormLayout(detect_opts_container)
+        detect_opts_form.setContentsMargins(0, 0, 0, 0)
 
-        # Min area
         self.param_minarea = QSpinBox()
         self.param_minarea.setRange(1, 50)
         self.param_minarea.setValue(int(getattr(self.params.P, 'minarea_pix', 3)))
-        form2.addRow("Min Area (pixels):", self.param_minarea)
+        detect_opts_form.addRow("Min Area (pixels):", self.param_minarea)
 
         self.param_fwhm_all_sources = QCheckBox("Enable")
         self.param_fwhm_all_sources.setChecked(
             bool(getattr(self.params.P, 'fwhm_measure_all_sources', False))
         )
-        form2.addRow("All-source radial FWHM:", self.param_fwhm_all_sources)
+        detect_opts_form.addRow("All-source radial FWHM:", self.param_fwhm_all_sources)
 
-        # Deblend
         self.param_deblend = QCheckBox("Enable")
         self.param_deblend.setChecked(getattr(self.params.P, 'deblend_enable', True))
-        form2.addRow("Deblending:", self.param_deblend)
+        detect_opts_form.addRow("Deblending:", self.param_deblend)
 
         self.param_deblend_nthresh = QSpinBox()
         self.param_deblend_nthresh.setRange(8, 128)
         self.param_deblend_nthresh.setValue(int(getattr(self.params.P, 'deblend_nthresh', 64)))
-        form2.addRow("Deblend Levels:", self.param_deblend_nthresh)
+        detect_opts_form.addRow("Deblend Levels:", self.param_deblend_nthresh)
 
         self.param_deblend_cont = QDoubleSpinBox()
         self.param_deblend_cont.setRange(0.001, 0.1)
         self.param_deblend_cont.setDecimals(4)
         self.param_deblend_cont.setSingleStep(0.001)
         self.param_deblend_cont.setValue(float(getattr(self.params.P, 'deblend_cont', 0.004)))
-        form2.addRow("Deblend Contrast:", self.param_deblend_cont)
+        detect_opts_form.addRow("Deblend Contrast:", self.param_deblend_cont)
 
         self.param_deblend_max_labels = QSpinBox()
         self.param_deblend_max_labels.setRange(500, 20000)
         self.param_deblend_max_labels.setValue(int(getattr(self.params.P, 'deblend_max_labels', 4000)))
-        form2.addRow("Deblend Soft Max Labels:", self.param_deblend_max_labels)
+        detect_opts_form.addRow("Deblend Soft Max Labels:", self.param_deblend_max_labels)
 
         self.param_deblend_label_hard_max = QSpinBox()
         self.param_deblend_label_hard_max.setRange(500, 50000)
         self.param_deblend_label_hard_max.setValue(int(getattr(self.params.P, 'deblend_label_hard_max', 7000)))
-        form2.addRow("Deblend Hard Max Labels:", self.param_deblend_label_hard_max)
+        detect_opts_form.addRow("Deblend Hard Max Labels:", self.param_deblend_label_hard_max)
 
-        # Background
         self.param_bkg2d = QCheckBox("Enable")
         self.param_bkg2d.setChecked(getattr(self.params.P, 'bkg2d_in_detect', True))
-        form2.addRow("2D Background:", self.param_bkg2d)
+        detect_opts_form.addRow("2D Background:", self.param_bkg2d)
 
         self.param_bkg_box = QSpinBox()
         self.param_bkg_box.setRange(16, 256)
         self.param_bkg_box.setValue(int(getattr(self.params.P, 'bkg2d_box', 64)))
-        form2.addRow("Background Box:", self.param_bkg_box)
+        detect_opts_form.addRow("Background Box:", self.param_bkg_box)
 
-        layout.addLayout(form2)
+        layout.addWidget(detect_opts_group)
 
-        # DAO refine parameters
-        dao_group = QGroupBox("DAO Refine (hot pixel filter)")
-        dao_layout = QFormLayout(dao_group)
+        # === DAO Refine (collapsible) ===
+        dao_group, dao_container = _make_collapsible_group("DAO Refine (hot pixel filter)")
+        dao_layout = QFormLayout(dao_container)
+        dao_layout.setContentsMargins(0, 0, 0, 0)
 
         self.param_dao_enable = QCheckBox("Enable")
         self.param_dao_enable.setChecked(getattr(self.params.P, 'dao_refine_enable', False))
@@ -4117,38 +3943,11 @@ class SourceDetectionWindow(StepWindowBase):
 
         layout.addWidget(dao_group)
 
-        # Peak assist parameters (collapsible)
-        peak_group = QGroupBox("▶ Peak Assist (segm supplement)")
-        peak_group.setCheckable(False)
-        peak_group.setStyleSheet("QGroupBox { font-weight: bold; }")
-        peak_group_vbox = QVBoxLayout(peak_group)
-        peak_group_vbox.setContentsMargins(4, 4, 4, 4)
-        peak_group_vbox.setSpacing(2)
-
-        # Toggle button inside the group title area
-        peak_toggle_btn = QPushButton("▶ 펼치기")
-        peak_toggle_btn.setCheckable(True)
-        peak_toggle_btn.setChecked(False)
-        peak_toggle_btn.setStyleSheet(
-            "QPushButton { border: none; text-align: left; color: #555; font-size: 8pt; padding: 0px; }"
-            "QPushButton:checked { color: #1565C0; }"
-        )
-        peak_group_vbox.addWidget(peak_toggle_btn)
-
-        # Container that gets hidden/shown
-        peak_container = QWidget()
+        # === Peak Assist (collapsible) ===
+        peak_group, peak_container = _make_collapsible_group("Peak Assist (segm supplement)")
         peak_layout = QFormLayout(peak_container)
         peak_layout.setContentsMargins(0, 0, 0, 0)
         peak_layout.setSpacing(4)
-        peak_container.setVisible(False)
-        peak_group_vbox.addWidget(peak_container)
-
-        peak_toggle_btn.toggled.connect(
-            lambda checked: (
-                peak_toggle_btn.setText("▼ 접기" if checked else "▶ 펼치기"),
-                peak_container.setVisible(checked),
-            )
-        )
 
         self.param_peak_enable = QCheckBox("Enable")
         self.param_peak_enable.setChecked(getattr(self.params.P, 'peak_pass_enable', False))
@@ -4193,6 +3992,7 @@ class SourceDetectionWindow(StepWindowBase):
         peak_layout.addRow("Skip if Nsrc >=:", self.param_peak_skip_if_nsrc)
 
         layout.addWidget(peak_group)
+        layout.addStretch(1)
 
         # Connect detect mode signals
         self.param_detect_mode.currentIndexChanged.connect(self._update_detect_mode_ui_state)
@@ -4201,11 +4001,11 @@ class SourceDetectionWindow(StepWindowBase):
         self._update_detect_mode_ui_state()
         self._sync_engine_dependent_dialog_state()
 
-        # Buttons
+        # Buttons outside the scroll area
         buttons = QDialogButtonBox(QDialogButtonBox.Save | QDialogButtonBox.Cancel)
         buttons.accepted.connect(lambda: self.save_parameters(dialog))
         buttons.rejected.connect(dialog.reject)
-        layout.addWidget(buttons)
+        outer_layout.addWidget(buttons)
 
         dialog.exec_()
 
@@ -4269,11 +4069,16 @@ class SourceDetectionWindow(StepWindowBase):
         for filt, spin in self.filter_sigma_edits.items():
             val = spin.value()
             self.filter_sigma_map[filt] = val
+        self.params.P.detect_sigma_by_filter = dict(self.filter_sigma_map)
+        self.params.P.detect_sigma_g = self.filter_sigma_map.get("g")
+        self.params.P.detect_sigma_r = self.filter_sigma_map.get("r")
+        self.params.P.detect_sigma_i = self.filter_sigma_map.get("i")
 
-        self.persist_params()
+        saved = self.persist_params()
         self.save_state()
 
-        QMessageBox.information(dialog, "Success", "Parameters saved!")
+        msg = "Parameters saved!" if saved else "Parameters updated, but TOML save failed."
+        QMessageBox.information(dialog, "Success", msg)
         dialog.accept()
 
     def validate_step(self) -> bool:

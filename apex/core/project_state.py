@@ -120,6 +120,19 @@ class ProjectState:
             print(f"Warning: Could not load project state: {e}")
 
     def _normalize_state(self) -> None:
+        if not self.steps:
+            completed = [
+                i for i in self.state.get("completed_steps", [])
+                if isinstance(i, int) and i >= 0
+            ]
+            self.state["completed_steps"] = sorted(set(completed))
+
+            current = self.state.get("current_step", 0)
+            if not isinstance(current, int) or current < 0:
+                current = 0
+            self.state["current_step"] = current
+            return
+
         max_index = len(self.steps) - 1
         completed = [
             i for i in self.state.get("completed_steps", [])

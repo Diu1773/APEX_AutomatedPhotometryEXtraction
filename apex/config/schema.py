@@ -33,6 +33,7 @@ class ParallelMode(str, Enum):
 
 class DetectEngine(str, Enum):
     """Source detection engine"""
+    SEP = "sep"
     SEGM = "segm"
     PEAK = "peak"
     DAO = "dao"
@@ -1483,6 +1484,8 @@ class Parameters(BaseModel):
     """
     model_config = ConfigDict(validate_assignment=True)
 
+    schema_version: int = Field(default=1)
+
     # I/O and basic settings
     io: IOConfig = Field(default_factory=IOConfig)
     target: TargetConfig = Field(default_factory=TargetConfig)
@@ -1566,6 +1569,7 @@ class Parameters(BaseModel):
         cmd_data["color"] = cmd_data.pop("color", {})
 
         return cls(
+            schema_version=int(data.get("schema_version", 1) or 1),
             io=IOConfig(**data.get("io", {})),
             target=TargetConfig(**data.get("target", {})),
             parallel=ParallelConfig(**data.get("parallel", {})),

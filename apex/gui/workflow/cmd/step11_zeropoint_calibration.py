@@ -32,6 +32,7 @@ from PyQt5.QtWidgets import (
 )
 
 from apex.gui.workflow.step_window_base import StepWindowBase
+from apex.gui.workflow.run_control import RunControlBar
 from apex.utils.astro_utils import normalize_filter_name
 from apex.utils.step_paths import (
     step2_cropped_dir,
@@ -2719,23 +2720,15 @@ class ZeropointCalibrationWindow(StepWindowBase):
         btn_params.clicked.connect(self.open_parameters_dialog)
         control_layout.addWidget(btn_params)
 
-        self.btn_run = QPushButton("Run ZP Calibration")
-        self.btn_run.setStyleSheet("QPushButton { background-color: #4CAF50; color: white; font-weight: bold; padding: 8px 15px; }")
-        self.btn_run.clicked.connect(self.run_analysis)
-        control_layout.addWidget(self.btn_run)
-
-        self.btn_stop = QPushButton("Stop")
-        self.btn_stop.setStyleSheet("QPushButton { background-color: #f44336; color: white; font-weight: bold; padding: 8px 15px; }")
-        self.btn_stop.clicked.connect(self.stop_analysis)
-        self.btn_stop.setEnabled(False)
-        control_layout.addWidget(self.btn_stop)
-
-        btn_log = QPushButton("Open Log")
-        btn_log.setStyleSheet("QPushButton { background-color: #607D8B; color: white; font-weight: bold; padding: 8px 15px; }")
-        btn_log.clicked.connect(self.show_log_window)
-        control_layout.addWidget(btn_log)
-
-        control_layout.addStretch()
+        self.run_bar = RunControlBar(
+            "Run ZP Calibration", "Open Log",
+            run_cb=self.run_analysis,
+            stop_cb=self.stop_analysis,
+            log_cb=self.show_log_window,
+        )
+        control_layout.addWidget(self.run_bar)
+        self.btn_run = self.run_bar.btn_run
+        self.btn_stop = self.run_bar.btn_stop
         calib_layout.addLayout(control_layout)
 
         progress_group = QGroupBox("Progress")
@@ -2897,8 +2890,7 @@ class ZeropointCalibrationWindow(StepWindowBase):
         self.worker.finished.connect(self.on_finished)
         self.worker.error.connect(self.on_error)
 
-        self.btn_run.setEnabled(False)
-        self.btn_stop.setEnabled(True)
+        self.run_bar.set_running(True)
         self.worker.start()
         self.show_log_window()
 
@@ -2911,8 +2903,7 @@ class ZeropointCalibrationWindow(StepWindowBase):
         self.progress_label.setText(f"{current}/{total} | {filename}")
 
     def on_finished(self, summary):
-        self.btn_run.setEnabled(True)
-        self.btn_stop.setEnabled(False)
+        self.run_bar.set_running(False)
         if summary.get("stopped"):
             self.progress_label.setText("Stopped")
             self.log("Analysis stopped")
@@ -2925,8 +2916,7 @@ class ZeropointCalibrationWindow(StepWindowBase):
         self._cleanup_worker()
 
     def on_error(self, message):
-        self.btn_run.setEnabled(True)
-        self.btn_stop.setEnabled(False)
+        self.run_bar.set_running(False)
         self.progress_label.setText("Error")
         self.log(f"ERROR: {message}")
         self._cleanup_worker()

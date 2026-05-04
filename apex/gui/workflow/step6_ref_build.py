@@ -34,6 +34,7 @@ from matplotlib.backends.backend_qt5agg import FigureCanvasQTAgg as FigureCanvas
 from matplotlib.figure import Figure
 
 from .step_window_base import StepWindowBase
+from .run_control import RunControlBar
 from apex.utils.step_paths import (
     step5_wcs_dir,
     step6_refbuild_dir,
@@ -48,6 +49,8 @@ from apex.utils.qc_utils import filter_files_by_qc
 from apex.utils.cache_utils import (
     norm_path_key,
     build_file_signature,
+    cache_schema_value,
+    detection_cache_signature_matches,
     file_signature_matches,
     file_signature_matches_relaxed,
     astap_wcs_candidates,
@@ -220,24 +223,31 @@ class RefBuildWorker(QThread):
     def _detect_meta_compatible(self, fname: str, payload: dict, meta_path: Path) -> bool:
         if not isinstance(payload, dict):
             return False
-        try:
-            schema = int(payload.get("cache_schema", 0) or 0)
-        except Exception:
-            schema = 0
+        schema = cache_schema_value(payload)
         if schema < 2:
             return self._schema1_detect_cache_allowed(meta_path)
         sig_now = self._current_file_signature(fname)
         if sig_now is None:
             return False
-        if file_signature_matches(payload, sig_now):
+        if detection_cache_signature_matches(
+            payload,
+            sig_now,
+            min_schema=2,
+            allow_mtime_drift=False,
+        ):
             payload["__compat_relaxed_mtime"] = False
             payload["__compat_relaxed_size"] = False
             return True
-        if not file_signature_matches_relaxed(payload, sig_now):
-            return False
-        payload["__compat_relaxed_mtime"] = True
-        payload["__compat_relaxed_size"] = True
-        return True
+        if detection_cache_signature_matches(
+            payload,
+            sig_now,
+            min_schema=2,
+            allow_mtime_drift=True,
+        ):
+            payload["__compat_relaxed_mtime"] = True
+            payload["__compat_relaxed_size"] = True
+            return True
+        return False
 
     def _schema1_detect_cache_allowed(self, marker_path: Path) -> bool:
         try:
@@ -1393,29 +1403,15 @@ class RefBuildWindow(StepWindowBase):
         btn_params.clicked.connect(self.open_parameters_dialog)
         control_layout.addWidget(btn_params)
 
-        self.btn_run = QPushButton("Run Reference Build")
-        self.btn_run.setStyleSheet(
-            "QPushButton { background-color: #4CAF50; color: white; font-weight: bold; padding: 8px 20px; }"
+        self.run_bar = RunControlBar(
+            "Run Reference Build", "Show Log",
+            run_cb=self.run_ref_build,
+            stop_cb=self.stop_ref_build,
+            log_cb=self.show_log_window,
         )
-        self.btn_run.clicked.connect(self.run_ref_build)
-        control_layout.addWidget(self.btn_run)
-
-        self.btn_stop = QPushButton("Stop")
-        self.btn_stop.setStyleSheet(
-            "QPushButton { background-color: #f44336; color: white; font-weight: bold; padding: 8px 15px; }"
-        )
-        self.btn_stop.clicked.connect(self.stop_ref_build)
-        self.btn_stop.setEnabled(False)
-        control_layout.addWidget(self.btn_stop)
-
-        control_layout.addStretch()
-
-        btn_log = QPushButton("Show Log")
-        btn_log.setStyleSheet(
-            "QPushButton { background-color: #607D8B; color: white; font-weight: bold; padding: 8px 15px; }"
-        )
-        btn_log.clicked.connect(self.show_log_window)
-        control_layout.addWidget(btn_log)
+        control_layout.addWidget(self.run_bar)
+        self.btn_run = self.run_bar.btn_run
+        self.btn_stop = self.run_bar.btn_stop
 
         self.content_layout.addLayout(control_layout)
 
@@ -1712,8 +1708,7 @@ class RefBuildWindow(StepWindowBase):
         self.worker.finished.connect(self.on_finished)
         self.worker.error.connect(self.on_error)
 
-        self.btn_run.setEnabled(False)
-        self.btn_stop.setEnabled(True)
+        self.run_bar.set_running(True)
         self.progress_bar.setValue(0)
         self.progress_bar.setMaximum(len(files))
         self.progress_label.setText(f"0/{len(files)} | Starting...")
@@ -1738,8 +1733,7 @@ class RefBuildWindow(StepWindowBase):
         self.progress_label.setText(f"{current}/{total}{eta_str} | {filename}")
 
     def on_finished(self, summary: dict):
-        self.btn_run.setEnabled(True)
-        self.btn_stop.setEnabled(False)
+        self.run_bar.set_running(False)
         self.progress_label.setText("Done")
         if summary:
             self.results = summary
