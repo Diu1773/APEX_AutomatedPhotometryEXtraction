@@ -61,28 +61,11 @@ class FileSelectionWindow(StepWindowBase):
         btn_browse.clicked.connect(self.browse_directory)
         dir_layout.addWidget(btn_browse)
 
-        self.content_layout.addWidget(dir_group)
-
-        # === File Prefix Filter ===
-        filter_group = QGroupBox("File Filter")
-        filter_layout = QHBoxLayout(filter_group)
-
-        filter_layout.addWidget(QLabel("Filename Prefix:"))
-
-        self.prefix_edit = QLineEdit(self.params.P.filename_prefix)
-        self.prefix_edit.setMaximumWidth(150)
-        filter_layout.addWidget(self.prefix_edit)
-
-        btn_rescan = QPushButton("Rescan Files")
-        btn_rescan.clicked.connect(self.rescan_files)
-        filter_layout.addWidget(btn_rescan)
-
-        filter_layout.addStretch()
-
+        dir_layout.addStretch()
         self.file_count_label = QLabel("Files: 0")
-        filter_layout.addWidget(self.file_count_label)
+        dir_layout.addWidget(self.file_count_label)
 
-        self.content_layout.addWidget(filter_group)
+        self.content_layout.addWidget(dir_group)
 
         # === SIMBAD Target ===
         target_group = QGroupBox("SIMBAD Target")
@@ -167,24 +150,11 @@ class FileSelectionWindow(StepWindowBase):
             if hasattr(self.params, 'save_toml'):
                 self.params.save_toml()
 
-            # Clear file manager state
+            # Clear file manager state and auto-scan new directory
             self.file_manager.filenames = []
             self.file_manager.df_headers = None
             self.file_manager.ref_filename = None
-            # Don't auto-scan - user must click "Rescan Files" button
-
-    def rescan_files(self):
-        """Rescan files with current prefix"""
-        self.params.P.filename_prefix = self.prefix_edit.text()
-
-        try:
             self.load_files()
-            self.update_navigation_buttons()
-        except Exception as e:
-            QMessageBox.warning(
-                self, "Scan Error",
-                f"Failed to scan files:\n{str(e)}"
-            )
 
     def resolve_target(self):
         """Resolve target coordinates via SIMBAD"""
@@ -302,7 +272,6 @@ class FileSelectionWindow(StepWindowBase):
         self._sync_excluded_files()
         state_data = {
             "data_dir": str(self.params.P.data_dir),
-            "filename_prefix": self.params.P.filename_prefix,
             "file_count": len(self.file_manager.filenames),
             "excluded_files": sorted(self.file_manager.excluded_files),
         }
@@ -317,10 +286,6 @@ class FileSelectionWindow(StepWindowBase):
             if "data_dir" in state_data:
                 self.params.P.data_dir = Path(state_data["data_dir"])
                 self.dir_edit.setText(str(state_data["data_dir"]))
-
-            if "filename_prefix" in state_data:
-                self.params.P.filename_prefix = state_data["filename_prefix"]
-                self.prefix_edit.setText(state_data["filename_prefix"])
 
             # Restore exclusions before loading so checkboxes reflect saved state
             if "excluded_files" in state_data:

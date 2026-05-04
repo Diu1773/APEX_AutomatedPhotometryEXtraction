@@ -242,10 +242,6 @@ class FileSelectionWindow(StepWindowBase):
         options_row.addWidget(self.night_gap_spinbox)
         options_row.addWidget(QLabel("h"))
 
-        btn_rescan = QPushButton("Rescan Files")
-        btn_rescan.clicked.connect(self.rescan_files)
-        options_row.addWidget(btn_rescan)
-
         options_row.addStretch()
 
         self.file_count_label = QLabel("Files: 0")
@@ -282,19 +278,6 @@ class FileSelectionWindow(StepWindowBase):
         dir_layout.addWidget(self.night_table)
 
         self.content_layout.addWidget(dir_group)
-
-        # === File Prefix Filter ===
-        filter_group = QGroupBox("File Filter")
-        filter_layout = QHBoxLayout(filter_group)
-
-        filter_layout.addWidget(QLabel("Filename Prefix:"))
-
-        self.prefix_edit = QLineEdit(self.params.P.filename_prefix)
-        self.prefix_edit.setMaximumWidth(150)
-        filter_layout.addWidget(self.prefix_edit)
-
-        filter_layout.addStretch()
-        self.content_layout.addWidget(filter_group)
 
         # === SIMBAD Target ===
         target_group = QGroupBox("SIMBAD Target")
@@ -364,6 +347,7 @@ class FileSelectionWindow(StepWindowBase):
             self._manual_input_dirs = []
             self.file_manager.clear_multi_night_dirs()
             self._sync_input_dir_widgets()
+            self.rescan_files()
 
     def _pick_multiple_directories(self, start_dir: Path) -> list[Path]:
         dialog = QFileDialog(self, "입력 폴더 선택", str(start_dir))
@@ -458,11 +442,6 @@ class FileSelectionWindow(StepWindowBase):
 
     def rescan_files(self):
         """Rescan files then re-classify nights by JD gap."""
-        self.params.P.filename_prefix = self.prefix_edit.text()
-        self._persist_param_file(
-            io_updates={"filename_prefix": self.params.P.filename_prefix}
-        )
-
         # Persist gap to params and TOML
         gap = self.night_gap_spinbox.value()
         self.params.P.night_gap_hours = gap
@@ -505,15 +484,12 @@ class FileSelectionWindow(StepWindowBase):
         if not root.exists():
             return
 
-        prefix = self.prefix_edit.text().strip()
-        prefix_lower = prefix.lower()
         suffixes = (".fit", ".fits", ".fit.fz", ".fits.fz")
 
         sub_dirs = []
         for sub in sorted(p for p in root.iterdir() if p.is_dir()):
             has_fits = any(
                 f.is_file()
-                and f.name.lower().startswith(prefix_lower)
                 and f.name.lower().endswith(suffixes)
                 for f in sub.iterdir()
             )
@@ -821,7 +797,6 @@ class FileSelectionWindow(StepWindowBase):
             "multi_night": bool(self.file_manager.selected_dirs),
             "night_dirs": [str(p) for p in self.file_manager.selected_dirs],
             "manual_input_dirs": [str(p) for p in self._manual_input_dirs],
-            "filename_prefix": self.params.P.filename_prefix,
             "file_count": len(self.file_manager.filenames),
             "file_path_map": {k: str(v) for k, v in getattr(self.file_manager, "path_map", {}).items()},
             "night_gap_hours": self.night_gap_spinbox.value(),
@@ -876,9 +851,6 @@ class FileSelectionWindow(StepWindowBase):
                     bool(state_data["include_subfolders"])
                 )
 
-            if "filename_prefix" in state_data:
-                self.params.P.filename_prefix = state_data["filename_prefix"]
-                self.prefix_edit.setText(state_data["filename_prefix"])
 
             if "night_gap_hours" in state_data:
                 self.night_gap_spinbox.setValue(float(state_data["night_gap_hours"]))
