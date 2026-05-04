@@ -45,6 +45,7 @@ from PyQt5.QtWidgets import (
 from PyQt5.QtCore import Qt, QThread, pyqtSignal
 
 from .step_window_base import StepWindowBase
+from .run_control import RunControlBar
 from apex.utils.step_paths import (
     step2_cropped_dir,
     crop_is_active,
@@ -58,7 +59,7 @@ from apex.utils.io_utils import coerce_int64_source_id
 from apex.utils.cache_utils import (
     norm_path_key,
     build_file_signature,
-    file_signature_matches,
+    detection_cache_signature_matches,
     file_signature_matches_relaxed,
     astap_wcs_candidates,
     parse_astap_wcs_file,
@@ -579,17 +580,12 @@ class WcsWorker(QThread):
         return build_file_signature(src, use_cropped=bool(self.use_cropped))
 
     def _detect_meta_matches(self, payload: dict, sig_now: dict, meta_path: Path) -> bool:
-        if not isinstance(payload, dict) or not isinstance(sig_now, dict):
-            return False
-        try:
-            schema = int(payload.get("cache_schema", 0) or 0)
-        except Exception:
-            schema = 0
-        if schema < 2:
-            return False
-        if not file_signature_matches_relaxed(payload, sig_now):
-            return False
-        return True
+        return detection_cache_signature_matches(
+            payload,
+            sig_now,
+            min_schema=2,
+            allow_mtime_drift=True,
+        )
 
     def _schema1_detect_cache_allowed(self, marker_path: Path) -> bool:
         try:
@@ -606,6 +602,29 @@ class WcsWorker(QThread):
                 except Exception:
                     return False
         return True
+
+    def _refresh_detect_cache_signature(self, fits_path: Path, fname: str) -> None:
+        """After writing WCS headers into a FITS file, update size+mtime in detect JSONs."""
+        try:
+            st = fits_path.stat()
+            new_size = int(st.st_size)
+            new_mtime = int(st.st_mtime_ns)
+        except Exception:
+            return
+        candidates = [
+            self.cache_dir / f"detect_{fname}.json",
+            step4_dir(self.result_dir) / f"detect_{fname}.json",
+        ]
+        for p in candidates:
+            if not p.exists():
+                continue
+            try:
+                payload = json.loads(p.read_text(encoding="utf-8"))
+                payload["source_size"] = new_size
+                payload["source_mtime_ns"] = new_mtime
+                p.write_text(json.dumps(payload, indent=2), encoding="utf-8")
+            except Exception:
+                pass
 
     def _load_fwhm_for_frame(self, fname: str):
         sig_now = self._compatible_detect_signature(fname)
@@ -1901,6 +1920,7 @@ WHERE 1=CONTAINS(
                     return filename, None
                 # writeto로 확실하게 저장 (Windows 호환)
                 fits.writeto(fits_path, data, hdr, overwrite=True)
+                self._refresh_detect_cache_signature(fits_path, filename)
                 if self._stop_requested:
                     return filename, None
 
@@ -2919,6 +2939,33 @@ WHERE 1=CONTAINS(
                     pass
             return False, 0.0, "", str(e), cmd, None
 
+    def _refresh_detect_cache_signature(self, fits_path: Path, fname: str) -> None:
+        """After writing WCS headers into a FITS file, update size+mtime in detect JSONs.
+
+        Step 5 writes WCS keywords into the original FITS (changing file size/mtime).
+        Without this, Step 6 treats all detection caches as invalid (signature mismatch).
+        """
+        try:
+            st = fits_path.stat()
+            new_size = int(st.st_size)
+            new_mtime = int(st.st_mtime_ns)
+        except Exception:
+            return
+        candidates = [
+            self.cache_dir / f"detect_{fname}.json",
+            step4_dir(self.result_dir) / f"detect_{fname}.json",
+        ]
+        for p in candidates:
+            if not p.exists():
+                continue
+            try:
+                payload = json.loads(p.read_text(encoding="utf-8"))
+                payload["source_size"] = new_size
+                payload["source_mtime_ns"] = new_mtime
+                p.write_text(json.dumps(payload, indent=2), encoding="utf-8")
+            except Exception:
+                pass
+
     def _safe_header_update(self, fits_path: Path, new_hdr: fits.Header) -> None:
         for i in range(5):
             try:
@@ -3128,9 +3175,8 @@ WHERE 1=CONTAINS(
                         new_hdr = hdul_new[0].header
                         w = WCS(new_hdr, relax=True)
                         if w.has_celestial:
-                            # 헤더 업데이트 (Thread Safe하게 처리하기 위해 Lock 사용 권장되나, 
-                            # 파일이 서로 다르므로 여기선 직접 호출)
                             self._safe_header_update(fits_path, new_hdr)
+                            self._refresh_detect_cache_signature(fits_path, filename)
                             
                             pix_fit = float(np.mean(proj_plane_pixel_scales(w.celestial) * 3600.0))
                             with fits.open(fits_path, memmap=False) as hdul_src:
@@ -3597,23 +3643,15 @@ class WcsPlateSolvingWindow(StepWindowBase):
         btn_params.clicked.connect(self.open_parameters_dialog)
         control_layout.addWidget(btn_params)
 
-        control_layout.addStretch()
-
-        self.btn_run = QPushButton("Run ASTAP")
-        self.btn_run.setStyleSheet("QPushButton { background-color: #4CAF50; color: white; font-weight: bold; padding: 8px 20px; }")
-        self.btn_run.clicked.connect(self.run_wcs)
-        control_layout.addWidget(self.btn_run)
-
-        self.btn_stop = QPushButton("Stop")
-        self.btn_stop.setStyleSheet("QPushButton { background-color: #f44336; color: white; font-weight: bold; padding: 8px 15px; }")
-        self.btn_stop.clicked.connect(self.stop_wcs)
-        self.btn_stop.setEnabled(False)
-        control_layout.addWidget(self.btn_stop)
-
-        btn_log = QPushButton("Log")
-        btn_log.setStyleSheet("QPushButton { background-color: #607D8B; color: white; font-weight: bold; padding: 8px 15px; }")
-        btn_log.clicked.connect(self.show_log_window)
-        control_layout.addWidget(btn_log)
+        self.run_bar_astap = RunControlBar(
+            "Run ASTAP", "Log",
+            run_cb=self.run_wcs,
+            stop_cb=self.stop_wcs,
+            log_cb=self.show_log_window,
+        )
+        control_layout.addWidget(self.run_bar_astap)
+        self.btn_run = self.run_bar_astap.btn_run
+        self.btn_stop = self.run_bar_astap.btn_stop
 
         layout.addLayout(control_layout)
 
@@ -3678,23 +3716,15 @@ class WcsPlateSolvingWindow(StepWindowBase):
         btn_astnet_params.clicked.connect(self.open_astrometrynet_parameters_dialog)
         control_layout.addWidget(btn_astnet_params)
 
-        control_layout.addStretch()
-
-        self.btn_solve_astrometrynet = QPushButton("Solve All Frames")
-        self.btn_solve_astrometrynet.setStyleSheet("QPushButton { background-color: #2196F3; color: white; font-weight: bold; padding: 8px 20px; }")
-        self.btn_solve_astrometrynet.clicked.connect(self.run_astrometrynet_solve)
-        control_layout.addWidget(self.btn_solve_astrometrynet)
-
-        self.btn_stop_astrometrynet = QPushButton("Stop")
-        self.btn_stop_astrometrynet.setStyleSheet("QPushButton { background-color: #f44336; color: white; font-weight: bold; padding: 8px 15px; }")
-        self.btn_stop_astrometrynet.clicked.connect(self.stop_astrometrynet_solve)
-        self.btn_stop_astrometrynet.setEnabled(False)
-        control_layout.addWidget(self.btn_stop_astrometrynet)
-
-        btn_log2 = QPushButton("Log")
-        btn_log2.setStyleSheet("QPushButton { background-color: #607D8B; color: white; font-weight: bold; padding: 8px 15px; }")
-        btn_log2.clicked.connect(self.show_log_window)
-        control_layout.addWidget(btn_log2)
+        self.run_bar_astnet = RunControlBar(
+            "Solve All Frames", "Log",
+            run_cb=self.run_astrometrynet_solve,
+            stop_cb=self.stop_astrometrynet_solve,
+            log_cb=self.show_log_window,
+        )
+        control_layout.addWidget(self.run_bar_astnet)
+        self.btn_solve_astrometrynet = self.run_bar_astnet.btn_run
+        self.btn_stop_astrometrynet = self.run_bar_astnet.btn_stop
 
         layout.addLayout(control_layout)
 
@@ -3794,8 +3824,7 @@ class WcsPlateSolvingWindow(StepWindowBase):
         self.astrometrynet_worker.finished.connect(self.on_astrometrynet_finished)
         self.astrometrynet_worker.error.connect(self.on_astrometrynet_error)
 
-        self.btn_solve_astrometrynet.setEnabled(False)
-        self.btn_stop_astrometrynet.setEnabled(True)
+        self.run_bar_astnet.set_running(True)
         self.astrometrynet_progress.setValue(0)
         self.astrometrynet_status.setText("Starting local astrometry.net...")
         self._astnet_start_time = time.monotonic()
@@ -3807,7 +3836,7 @@ class WcsPlateSolvingWindow(StepWindowBase):
 
     def stop_astrometrynet_solve(self):
         if self.astrometrynet_worker and self.astrometrynet_worker.isRunning():
-            self.btn_stop_astrometrynet.setEnabled(False)
+            self.run_bar_astnet.set_stopping()
             self.astrometrynet_status.setText("Stopping...")
             self.log("Astrometry.net stop requested...")
             self.astrometrynet_worker.stop()
@@ -3866,8 +3895,7 @@ class WcsPlateSolvingWindow(StepWindowBase):
                 break
 
     def on_astrometrynet_finished(self, summary):
-        self.btn_solve_astrometrynet.setEnabled(True)
-        self.btn_stop_astrometrynet.setEnabled(False)
+        self.run_bar_astnet.set_running(False)
         stopped = bool(summary.get("stopped")) if isinstance(summary, dict) else False
         n_ok = summary.get("ok", 0)
         n_qc = summary.get("wcs_qc_pass", 0)
@@ -4245,8 +4273,7 @@ class WcsPlateSolvingWindow(StepWindowBase):
         self.worker.finished.connect(self.on_finished)
         self.worker.error.connect(self.on_error)
 
-        self.btn_run.setEnabled(False)
-        self.btn_stop.setEnabled(True)
+        self.run_bar_astap.set_running(True)
         self.progress_bar.setValue(0)
         self.progress_bar.setMaximum(len(self.file_list))
         self.progress_label.setText(f"0/{len(self.file_list)} | Starting...")
@@ -4257,7 +4284,7 @@ class WcsPlateSolvingWindow(StepWindowBase):
     def stop_wcs(self):
         if self.worker and self.worker.isRunning():
             self.stop_requested = True
-            self.btn_stop.setEnabled(False)
+            self.run_bar_astap.set_stopping()
             self.progress_label.setText("Stopping...")
             self.log("Stop requested...")
             self.worker.stop()
@@ -4349,8 +4376,7 @@ class WcsPlateSolvingWindow(StepWindowBase):
         self.log(f"ERROR {filename}: {error}")
 
     def on_finished(self, summary):
-        self.btn_run.setEnabled(True)
-        self.btn_stop.setEnabled(False)
+        self.run_bar_astap.set_running(False)
         self.stop_requested = False
         stopped = bool(summary.get("stopped")) if isinstance(summary, dict) else False
         self.progress_label.setText("Stopped" if stopped else "Done")
