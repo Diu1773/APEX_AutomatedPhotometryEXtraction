@@ -37,6 +37,13 @@ from PyQt5.QtWidgets import (
 )
 from PyQt5.QtCore import Qt, QThread, pyqtSignal
 
+try:
+    from matplotlib.backends.backend_qt5agg import FigureCanvasQTAgg
+    from matplotlib.figure import Figure
+    _HAVE_MPL = True
+except ImportError:
+    _HAVE_MPL = False
+
 from .step_window_base import StepWindowBase
 from .run_control import RunControlBar
 from apex.utils.step_paths import (
@@ -822,19 +829,22 @@ class ForcedPhotWindow(StepWindowBase):
         tab0 = QWidget()
         tab0_layout = QVBoxLayout(tab0)
 
+        # Growth curve plot
         gc_group = QGroupBox("Growth Curve (averaged across frames)")
         gc_layout = QVBoxLayout(gc_group)
-        self.gc_table = QTableWidget()
-        self.gc_table.setColumnCount(4)
-        self.gc_table.setHorizontalHeaderLabels(
-            ["r (px)", "r / FWHM", "Enclosed (%)", "Δmag (apcorr)"]
-        )
-        self.gc_table.horizontalHeader().setSectionResizeMode(QHeaderView.Stretch)
-        self.gc_table.setEditTriggers(QAbstractItemView.NoEditTriggers)
-        self.gc_table.setMaximumHeight(280)
-        gc_layout.addWidget(self.gc_table)
+        if _HAVE_MPL:
+            self._gc_fig = Figure(figsize=(5, 3), tight_layout=True)
+            self._gc_ax  = self._gc_fig.add_subplot(111)
+            self._gc_canvas = FigureCanvasQTAgg(self._gc_fig)
+            self._gc_canvas.setMinimumHeight(220)
+            gc_layout.addWidget(self._gc_canvas)
+            self._init_gc_axes()
+        else:
+            gc_layout.addWidget(QLabel("matplotlib not available — install it for the growth curve plot"))
+            self._gc_canvas = None
         tab0_layout.addWidget(gc_group)
 
+        # Per-frame apcorr table (below the plot)
         ap_group = QGroupBox("Per-frame Aperture Correction")
         ap_layout = QVBoxLayout(ap_group)
         self.apcorr_table = QTableWidget()
@@ -845,6 +855,7 @@ class ForcedPhotWindow(StepWindowBase):
         self.apcorr_table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeToContents)
         self.apcorr_table.horizontalHeader().setStretchLastSection(True)
         self.apcorr_table.setEditTriggers(QAbstractItemView.NoEditTriggers)
+        self.apcorr_table.setMaximumHeight(160)
         ap_layout.addWidget(self.apcorr_table)
         tab0_layout.addWidget(ap_group)
 
@@ -949,27 +960,56 @@ class ForcedPhotWindow(StepWindowBase):
                 item.setTextAlignment(Qt.AlignCenter)
                 self.results_table.setItem(ri, ci, item)
 
-    def _update_gc_table(self, gc_data: dict):
-        """Render the averaged growth curve in gc_table."""
-        radii = gc_data.get("radii_px", [])
-        encs  = gc_data.get("enclosed_frac", [])
-        fwhm  = float(gc_data.get("fwhm_px", 1.0) or 1.0)
-        if not radii or not encs or len(radii) != len(encs):
-            return
+    def _init_gc_axes(self):
+        ax = self._gc_ax
+        ax.set_xlabel("r / FWHM")
+        ax.set_ylabel("Enclosed flux (%)")
+        ax.set_title("Growth Curve")
+        ax.set_ylim(0, 110)
+        ax.grid(True, alpha=0.3)
+        ax.axhline(100, color="gray", lw=0.8, ls="--")
 
-        self.gc_table.setRowCount(len(radii))
-        for ri, (r, ef) in enumerate(zip(radii, encs)):
-            ef_safe = float(ef) if np.isfinite(ef) else 0.0
-            dmag = -2.5 * np.log10(ef_safe) if ef_safe > 0 else np.nan
-            for ci, val in enumerate([
-                f"{r:.2f}",
-                f"{r / fwhm:.2f}" if fwhm > 0 else "—",
-                f"{ef_safe * 100:.1f}",
-                f"{dmag:.3f}" if np.isfinite(dmag) else "—",
-            ]):
-                item = QTableWidgetItem(val)
-                item.setTextAlignment(Qt.AlignCenter)
-                self.gc_table.setItem(ri, ci, item)
+    def _update_gc_plot(self, all_gc: List[dict], avg_gc: dict):
+        """Redraw the growth curve figure with per-frame lines + averaged curve."""
+        if not _HAVE_MPL or self._gc_canvas is None:
+            return
+        ax = self._gc_ax
+        ax.cla()
+        self._init_gc_axes()
+
+        fwhm = float(avg_gc.get("fwhm_px", 1.0) or 1.0)
+        r_ap  = float(avg_gc.get("r_ap_px",  0.0))
+        r_ref = float(avg_gc.get("r_ref_px", 0.0))
+        n_frames = len(all_gc)
+
+        # Per-frame curves (thin, semi-transparent)
+        for gc in all_gc:
+            radii = gc.get("radii_px", [])
+            encs  = gc.get("enclosed_frac", [])
+            if not radii or not encs:
+                continue
+            x = [r / fwhm for r in radii]
+            y = [e * 100 for e in encs]
+            ax.plot(x, y, color="#90CAF9", lw=0.8, alpha=0.5)
+
+        # Averaged curve (thick)
+        avg_radii = avg_gc.get("radii_px", [])
+        avg_encs  = avg_gc.get("enclosed_frac", [])
+        if avg_radii and avg_encs:
+            x_avg = [r / fwhm for r in avg_radii]
+            y_avg = [e * 100 for e in avg_encs]
+            ax.plot(x_avg, y_avg, color="#1565C0", lw=2.0, label=f"Median ({n_frames} frames)")
+
+        # Vertical lines for r_ap and r_ref
+        if fwhm > 0:
+            if r_ap > 0:
+                ax.axvline(r_ap / fwhm, color="#E53935", lw=1.2, ls="--", label=f"r_ap={r_ap:.1f}px")
+            if r_ref > 0:
+                ax.axvline(r_ref / fwhm, color="#43A047", lw=1.2, ls="--", label=f"r_ref={r_ref:.1f}px")
+
+        ax.legend(fontsize=8, loc="lower right")
+        ax.set_title(f"Growth Curve  (n_frames={n_frames})")
+        self._gc_canvas.draw_idle()
 
     # ── Log window ─────────────────────────────────────────────────────────────
 
@@ -1071,17 +1111,16 @@ class ForcedPhotWindow(StepWindowBase):
             self.apcorr_table.setItem(ri, ci, item)
         self.apcorr_table.scrollToBottom()
 
-        # Average growth curves across frames and update gc_table
+        # Average growth curves across frames and update plot
         all_encs = [d["enclosed_frac"] for d in self._gc_accumulator if d.get("enclosed_frac")]
         if all_encs:
             min_len = min(len(e) for e in all_encs)
             mat = np.array([e[:min_len] for e in all_encs])
             avg_enc = np.nanmedian(mat, axis=0).tolist()
-            # Use the latest frame's radii/fwhm for display
             gc_avg = dict(gc_data)
             gc_avg["enclosed_frac"] = avg_enc
             gc_avg["radii_px"] = gc_data["radii_px"][:min_len]
-            self._update_gc_table(gc_avg)
+            self._update_gc_plot(self._gc_accumulator, gc_avg)
 
         # Switch to Apcorr tab so user sees it
         if self.tabs.currentIndex() != 0:
