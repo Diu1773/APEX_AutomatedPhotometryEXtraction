@@ -35,8 +35,8 @@ from matplotlib.figure import Figure
 
 from .step_window_base import StepWindowBase
 from apex.utils.step_paths import (
-    step6_wcs_dir,
-    step7_refbuild_dir,
+    step5_wcs_dir,
+    step6_refbuild_dir,
     step2_cropped_dir,
     step4_dir,
     crop_is_active,
@@ -202,7 +202,7 @@ class RefBuildWorker(QThread):
                 return orig
         except Exception:
             pass
-        step6_out = step6_wcs_dir(self.result_dir)
+        step6_out = step5_wcs_dir(self.result_dir)
         cand = step6_out / fname
         if cand.exists():
             return cand
@@ -331,7 +331,7 @@ class RefBuildWorker(QThread):
 
         mapping: Dict[str, dict] = {}
         candidates = [
-            step6_wcs_dir(self.result_dir) / "wcs_solve_summary.csv",
+            step5_wcs_dir(self.result_dir) / "wcs_solve_summary.csv",
         ]
         existing = [p for p in candidates if p.exists()]
         existing.sort(key=lambda p: p.stat().st_mtime_ns, reverse=True)
@@ -429,7 +429,7 @@ class RefBuildWorker(QThread):
             return None
 
     def _load_gaia_table(self) -> Optional[pd.DataFrame]:
-        gaia_path = step6_wcs_dir(self.result_dir) / "gaia_fov.ecsv"
+        gaia_path = step5_wcs_dir(self.result_dir) / "gaia_fov.ecsv"
         if not gaia_path.exists():
             return None
         try:
@@ -1247,7 +1247,7 @@ class RefBuildWorker(QThread):
                 master_df["neighbor_dist_px"] = np.nan
                 master_df["crowding_flag"] = False
 
-        out_dir = step7_refbuild_dir(self.result_dir)
+        out_dir = step6_refbuild_dir(self.result_dir)
         out_dir.mkdir(parents=True, exist_ok=True)
 
         filters = sorted(metrics["filter"].dropna().astype(str).unique().tolist())
@@ -1762,7 +1762,7 @@ class RefBuildWindow(StepWindowBase):
         n_sources = summary.get("n_sources", 0)
         ref_frames_by_date = summary.get("ref_frames_by_date", {}) or {}
 
-        metrics_path = step7_refbuild_dir(self.params.P.result_dir) / "ref_frame_stats.csv"
+        metrics_path = step6_refbuild_dir(self.params.P.result_dir) / "ref_frame_stats.csv"
         metrics_df = None
         if metrics_path.exists():
             try:
@@ -1803,7 +1803,7 @@ class RefBuildWindow(StepWindowBase):
             self.results_table.setItem(row, 5, QTableWidgetItem(str(sat)))
 
     def _update_stats_table(self):
-        stats_path = step7_refbuild_dir(self.params.P.result_dir) / "ref_frame_stats.csv"
+        stats_path = step6_refbuild_dir(self.params.P.result_dir) / "ref_frame_stats.csv"
         if not stats_path.exists():
             self.stats_table.setRowCount(0)
             self.stats_table.setColumnCount(0)
@@ -1866,7 +1866,7 @@ class RefBuildWindow(StepWindowBase):
         ax1 = fig.add_subplot(1, 2, 1)
         ax2 = fig.add_subplot(1, 2, 2)
 
-        stats_path = step7_refbuild_dir(self.params.P.result_dir) / "ref_frame_stats.csv"
+        stats_path = step6_refbuild_dir(self.params.P.result_dir) / "ref_frame_stats.csv"
         if not stats_path.exists():
             ax1.text(0.5, 0.5, "No ref stats available", ha="center", va="center")
             ax2.axis("off")
@@ -1962,7 +1962,7 @@ class RefBuildWindow(StepWindowBase):
             elif summary.get("ref_frame"):
                 selected_frames["ref"] = str(summary.get("ref_frame"))
         if not selected_frames:
-            meta_path = step7_refbuild_dir(self.params.P.result_dir) / "ref_build_meta.json"
+            meta_path = step6_refbuild_dir(self.params.P.result_dir) / "ref_build_meta.json"
             if meta_path.exists():
                 try:
                     meta = json.loads(meta_path.read_text(encoding="utf-8"))
@@ -2015,7 +2015,7 @@ class RefBuildWindow(StepWindowBase):
         self._update_plot_tab(summary)
 
     def validate_step(self) -> bool:
-        out_dir = step7_refbuild_dir(self.params.P.result_dir)
+        out_dir = step6_refbuild_dir(self.params.P.result_dir)
         return (out_dir / "ref_build_meta.json").exists()
 
     def save_state(self, summary: Optional[dict] = None):
@@ -2028,7 +2028,7 @@ class RefBuildWindow(StepWindowBase):
         n_sources = summary.get("n_sources", 0)
 
         if not ref_frame or not ref_filter:
-            meta_path = step7_refbuild_dir(self.params.P.result_dir) / "ref_build_meta.json"
+            meta_path = step6_refbuild_dir(self.params.P.result_dir) / "ref_build_meta.json"
             if meta_path.exists():
                 try:
                     meta = json.loads(meta_path.read_text(encoding="utf-8"))
@@ -2038,7 +2038,7 @@ class RefBuildWindow(StepWindowBase):
                     pass
 
         if (not n_sources) and ref_filter:
-            ref_path = step7_refbuild_dir(self.params.P.result_dir) / f"ref_catalog_{ref_filter}.tsv"
+            ref_path = step6_refbuild_dir(self.params.P.result_dir) / f"ref_catalog_{ref_filter}.tsv"
             if ref_path.exists():
                 try:
                     n_sources = len(pd.read_csv(ref_path, sep="\t"))

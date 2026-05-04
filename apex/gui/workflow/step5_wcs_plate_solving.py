@@ -50,8 +50,8 @@ from apex.utils.step_paths import (
     crop_is_active,
     crop_rect_path,
     step4_dir,
-    step_forced_phot_dir,
-    step6_wcs_dir,
+    step7_forced_phot_dir,
+    step5_wcs_dir,
 )
 from apex.utils.constants import get_parallel_workers
 from apex.utils.io_utils import coerce_int64_source_id
@@ -1021,7 +1021,8 @@ WHERE 1=CONTAINS(
         """.strip()
         tap = TapPlus(url="https://tapvizier.cds.unistra.fr/TAPVizieR/tap")
         try:
-            job = tap.launch_job(adql)
+            # async mode: no MAXREC=2000 server-side cap (sync mode silently truncates)
+            job = tap.launch_job_async(adql)
             tab = job.get_results()
         except Exception as e:
             raise RuntimeError(f"VizieR fallback query failed: {_exc_brief(e)}") from e
@@ -1080,6 +1081,10 @@ WHERE 1=CONTAINS(
             if cause in ("IP_BANNED", "SERVER_JOB_LOST", "SERVER_DOWN"):
                 try:
                     df_viz = self._query_gaia_vizier(center, radius_deg, mag_max)
+                    self.log_message.emit(
+                        f"[Gaia][WARN] ESA TAP failed [{cause}] → VizieR fallback 사용 (N={len(df_viz)}). "
+                        f"N이 2000 이하면 catalog truncation — Step 5(WCS) 재실행 권장."
+                    )
                     df_viz.attrs["gaia_source"] = "vizier_fallback"
                     return df_viz
                 except Exception as e2:
@@ -1093,7 +1098,7 @@ WHERE 1=CONTAINS(
         return _coerce_source_id_int64(tab.to_pandas())
 
     def _load_or_query_gaia(self, center: SkyCoord, radius_deg: float):
-        step5_out = step6_wcs_dir(self.result_dir)
+        step5_out = step5_wcs_dir(self.result_dir)
         step5_out.mkdir(parents=True, exist_ok=True)
         cache_path = step5_out / "gaia_fov.ecsv"
         meta_path = step5_out / "gaia_fov_meta.json"
@@ -1217,16 +1222,18 @@ WHERE 1=CONTAINS(
                     df_out = _coerce_source_id_int64(df.copy())
                     Table.from_pandas(df_out).write(cache_path, format="ascii.ecsv", overwrite=True)
                     # 메타데이터 저장
+                    gaia_src_tag = df.attrs.get("gaia_source", "esa") if hasattr(df, "attrs") else "esa"
                     meta_path.write_text(json.dumps({
                         "center_ra_deg": float(center.ra.deg),
                         "center_dec_deg": float(center.dec.deg),
                         "radius_deg": float(radius_deg),
                         "mag_max": float(mag_max),
                         "n_stars": len(df),
+                        "gaia_source": gaia_src_tag,
                     }, indent=2), encoding="utf-8")
                 except Exception:
                     pass
-                gaia_src_tag = df.attrs.get("gaia_source", "query") if hasattr(df, "attrs") else "query"
+                gaia_src_tag = df.attrs.get("gaia_source", "esa") if hasattr(df, "attrs") else "esa"
                 return df, gaia_src_tag
             except Exception as e:
                 if self._stop_requested:
@@ -1419,7 +1426,7 @@ WHERE 1=CONTAINS(
             # Optional QC filtering
             require_qc = bool(getattr(self.params.P, "wcs_require_qc_pass", True))
             if require_qc:
-                qpath = step_forced_phot_dir(self.result_dir) / "frame_quality.csv"
+                qpath = step7_forced_phot_dir(self.result_dir) / "frame_quality.csv"
                 if qpath.exists():
                     try:
                         dfq = pd.read_csv(qpath)
@@ -1986,7 +1993,7 @@ WHERE 1=CONTAINS(
             # Save summary CSV
             try:
                 df = pd.DataFrame(results)
-                step5_out = step6_wcs_dir(self.result_dir)
+                step5_out = step5_wcs_dir(self.result_dir)
                 step5_out.mkdir(parents=True, exist_ok=True)
                 df.to_csv(step5_out / "wcs_solve_summary.csv", index=False)
                 qc_cols = [
@@ -2128,7 +2135,8 @@ WHERE 1=CONTAINS(
         """.strip()
         tap = TapPlus(url="https://tapvizier.cds.unistra.fr/TAPVizieR/tap")
         try:
-            job = tap.launch_job(adql)
+            # async mode: no MAXREC=2000 server-side cap (sync mode silently truncates)
+            job = tap.launch_job_async(adql)
             tab = job.get_results()
         except Exception as e:
             raise RuntimeError(f"VizieR fallback query failed: {_exc_brief(e)}") from e
@@ -2203,7 +2211,7 @@ WHERE 1=CONTAINS(
         return _coerce_source_id_int64(tab.to_pandas())
 
     def _load_or_query_gaia(self, center: SkyCoord, radius_deg: float):
-        step5_out = step6_wcs_dir(self.result_dir)
+        step5_out = step5_wcs_dir(self.result_dir)
         step5_out.mkdir(parents=True, exist_ok=True)
         cache_path = step5_out / "gaia_fov.ecsv"
         meta_path = step5_out / "gaia_fov_meta.json"
@@ -2255,16 +2263,18 @@ WHERE 1=CONTAINS(
                 try:
                     df_out = _coerce_source_id_int64(df.copy())
                     Table.from_pandas(df_out).write(cache_path, format="ascii.ecsv", overwrite=True)
+                    gaia_src_tag2 = df.attrs.get("gaia_source", "esa") if hasattr(df, "attrs") else "esa"
                     meta_path.write_text(json.dumps({
                         "center_ra_deg": float(center.ra.deg),
                         "center_dec_deg": float(center.dec.deg),
                         "radius_deg": float(radius_deg),
                         "mag_max": float(mag_max),
                         "n_stars": len(df),
+                        "gaia_source": gaia_src_tag2,
                     }, indent=2), encoding="utf-8")
                 except Exception:
                     pass
-                return df, "query"
+                return df, df.attrs.get("gaia_source", "query") if hasattr(df, "attrs") else "query"
             except Exception as e:
                 if self._stop_requested:
                     raise RuntimeError("stopped")
@@ -3471,7 +3481,7 @@ WHERE 1=CONTAINS(
             res.update(qc_metrics)
 
         try:
-            step5_out = step6_wcs_dir(self.result_dir)
+            step5_out = step5_wcs_dir(self.result_dir)
             step5_out.mkdir(parents=True, exist_ok=True)
             df = pd.DataFrame(results)
             df.to_csv(step5_out / "wcs_solve_summary.csv", index=False)
@@ -4287,7 +4297,7 @@ class WcsPlateSolvingWindow(StepWindowBase):
         return status in {"ok", "ok_astnet_wsl", "solved"}
 
     def _restore_success_results_from_summary(self):
-        summary_path = step6_wcs_dir(self.params.P.result_dir) / "wcs_solve_summary.csv"
+        summary_path = step5_wcs_dir(self.params.P.result_dir) / "wcs_solve_summary.csv"
         if not summary_path.exists():
             return
         try:

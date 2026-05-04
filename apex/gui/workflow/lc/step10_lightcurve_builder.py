@@ -119,7 +119,7 @@ from apex.utils.step_paths_lc import (
     step1_dir,
     step2_cropped_dir,
     step5_photometry_dir,
-    step7_refbuild_dir,
+    step6_refbuild_dir,
     step9_selection_dir,
     step10_dir,
     tool_extinction_dir,
@@ -709,7 +709,7 @@ def _load_selection_ids(result_dir: Path) -> tuple[int | None, list[int]]:
             if comp_sids:
                 comp_ids = [final_id_map.get(int(s)) for s in comp_sids if int(s) in final_id_map]
         if target_id is None:
-            src_path = step7_refbuild_dir(result_dir) / "sourceid_to_ID.csv"
+            src_path = step6_refbuild_dir(result_dir) / "sourceid_to_ID.csv"
             src_id = target_sid
             if src_path.exists() and src_id is not None:
                 try:
@@ -723,7 +723,7 @@ def _load_selection_ids(result_dir: Path) -> tuple[int | None, list[int]]:
                 except Exception:
                     target_id = None
         if (not comp_ids) and comp_sids:
-            src_path = step7_refbuild_dir(result_dir) / "sourceid_to_ID.csv"
+            src_path = step6_refbuild_dir(result_dir) / "sourceid_to_ID.csv"
             src_ids = [int(s) for s in comp_sids if s is not None]
             if src_path.exists() and src_ids:
                 try:
@@ -780,7 +780,7 @@ def _load_selection_ids_by_filter(result_dir: Path) -> dict:
         key = "__step7_refbuild__"
         if key in id_map_cache:
             return id_map_cache[key]
-        candidates = [step7_refbuild_dir(result_dir) / "sourceid_to_ID.csv"]
+        candidates = [step6_refbuild_dir(result_dir) / "sourceid_to_ID.csv"]
         mapping: dict[int, int] = {}
         for path in candidates:
             if not path.exists():

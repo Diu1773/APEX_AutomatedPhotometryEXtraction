@@ -65,7 +65,7 @@ from apex.utils.step_paths_cmd import (
     step2_cropped_dir, step4_dir, step6_psf_dir,
     crop_is_active,
 )
-from apex.utils.step_paths import step_forced_phot_dir
+from apex.utils.step_paths import step7_forced_phot_dir
 from apex.utils.astro_utils import normalize_filter_name
 from apex.utils.constants import get_parallel_workers
 
@@ -941,7 +941,7 @@ class Step6PSFWorker(QThread):
                             "reason": f"all detections saturated (sat_adu={sat_adu:.0f})",
                         }
 
-                    ap_tsv = step_forced_phot_dir(self.result_dir) / f"photometry_{fname}.tsv"
+                    ap_tsv = step7_forced_phot_dir(self.result_dir) / f"photometry_{fname}.tsv"
                     flux_init_map = {}
                     if ap_tsv.exists():
                         try:
@@ -2318,7 +2318,7 @@ class PSFPhotometryWindow(StepWindowBase):
         files = list(files)
 
         # Hard gate: downstream should skip frames where apcorr was not applied.
-        apcorr_sum = step_forced_phot_dir(self.params.P.result_dir) / "apcorr_summary.csv"
+        apcorr_sum = step7_forced_phot_dir(self.params.P.result_dir) / "apcorr_summary.csv"
         if apcorr_sum.exists():
             try:
                 df_apc = pd.read_csv(apcorr_sum)
@@ -2350,7 +2350,7 @@ class PSFPhotometryWindow(StepWindowBase):
             return
         if self.worker and self.worker.isRunning():
             return
-        if not (step_forced_phot_dir(self.params.P.result_dir) / "photometry_index.csv").exists():
+        if not (step7_forced_phot_dir(self.params.P.result_dir) / "photometry_index.csv").exists():
             QMessageBox.warning(
                 self, "Prerequisite",
                 "Step 5 Aperture Photometry must be completed first."
@@ -3185,7 +3185,7 @@ class PSFPhotometryWindow(StepWindowBase):
             "v": "#bcbd22", "ha": "#e377c2",
         }
 
-        ap_dir = step_forced_phot_dir(self.params.P.result_dir)
+        ap_dir = step7_forced_phot_dir(self.params.P.result_dir)
         psf_dir = step6_psf_dir(self.params.P.result_dir)
 
         # Load and merge TSVs — cached; only re-read from disk when _cmp_merged_df is None

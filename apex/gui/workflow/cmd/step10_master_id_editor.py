@@ -36,9 +36,9 @@ from apex.gui.workflow.step_window_base import StepWindowBase
 from apex.utils.step_paths import (
     crop_is_active,
     step2_cropped_dir,
-    step_forced_phot_dir,
-    step6_wcs_dir,
-    step7_refbuild_dir,
+    step7_forced_phot_dir,
+    step5_wcs_dir,
+    step6_refbuild_dir,
 )
 from apex.utils.step_paths_cmd import step6_psf_dir, step10_selection_dir
 from apex.utils.io_utils import (
@@ -348,7 +348,7 @@ class MasterIdEditorWindow(StepWindowBase):
 
         base_count = len(files)
         # Hide unsolved frames: keep only rows with wcs_ok=True when available.
-        stats_path = step_forced_phot_dir(self.params.P.result_dir) / "step8_frame_stats.csv"
+        stats_path = step7_forced_phot_dir(self.params.P.result_dir) / "step8_frame_stats.csv"
         if stats_path.exists():
             try:
                 s7 = pd.read_csv(stats_path)
@@ -367,7 +367,7 @@ class MasterIdEditorWindow(StepWindowBase):
                 self.log(f"Step10 frame filter (wcs_ok): {len(files)}/{base_count} kept")
 
         # Filter: keep frames that have forced phot output.
-        forced_dir = step_forced_phot_dir(self.params.P.result_dir)
+        forced_dir = step7_forced_phot_dir(self.params.P.result_dir)
         if forced_dir.exists():
             before_idm = len(files)
             files = [f for f in files if (forced_dir / f"photometry_{f}.tsv").exists()]
@@ -418,7 +418,7 @@ class MasterIdEditorWindow(StepWindowBase):
         idx_path = next(
             (
                 p for p in (
-                    step_forced_phot_dir(self.params.P.result_dir) / "photometry_index.csv",
+                    step7_forced_phot_dir(self.params.P.result_dir) / "photometry_index.csv",
                     step6_psf_dir(self.params.P.result_dir) / "photometry_index.csv",
                     self.params.P.result_dir / "photometry_index.csv",
                 )
@@ -558,7 +558,7 @@ class MasterIdEditorWindow(StepWindowBase):
     def _load_refbuild_gmag_map(self):
         """Load G magnitudes from the APEX RefBuild catalog."""
         candidates = [
-            step7_refbuild_dir(self.params.P.result_dir) / "ref_catalog.tsv",
+            step6_refbuild_dir(self.params.P.result_dir) / "ref_catalog.tsv",
             self.params.P.result_dir / "ref_catalog.tsv",
         ]
         for path in candidates:
@@ -599,7 +599,7 @@ class MasterIdEditorWindow(StepWindowBase):
         self._global_id_map = {}
         candidates = [
             step10_selection_dir(self.params.P.result_dir) / "sourceid_to_ID.csv",
-            step7_refbuild_dir(self.params.P.result_dir) / "sourceid_to_ID.csv",
+            step6_refbuild_dir(self.params.P.result_dir) / "sourceid_to_ID.csv",
             self.params.P.result_dir / "sourceid_to_ID.csv",
         ]
         for path in candidates:
@@ -652,9 +652,9 @@ class MasterIdEditorWindow(StepWindowBase):
     def load_gaia_catalog(self):
         """Load Gaia catalog for source info lookup"""
         candidates = [
-            step6_wcs_dir(self.params.P.result_dir) / "gaia_derived.csv",
+            step5_wcs_dir(self.params.P.result_dir) / "gaia_derived.csv",
             self.params.P.result_dir / "gaia_derived.csv",
-            step6_wcs_dir(self.params.P.result_dir) / "gaia_fov.ecsv",
+            step5_wcs_dir(self.params.P.result_dir) / "gaia_fov.ecsv",
             self.params.P.result_dir / "gaia_fov.ecsv",
         ]
         for gaia_path in candidates:
@@ -803,7 +803,7 @@ class MasterIdEditorWindow(StepWindowBase):
 
     def _compute_membership_from_master(self) -> bool:
         master_candidates = [
-            step7_refbuild_dir(self.params.P.result_dir) / "master_catalog.tsv",
+            step6_refbuild_dir(self.params.P.result_dir) / "master_catalog.tsv",
             self.params.P.result_dir / "master_catalog.tsv",
         ]
         master_path = next((p for p in master_candidates if p.exists()), None)
@@ -896,7 +896,7 @@ class MasterIdEditorWindow(StepWindowBase):
 
         result_dir = self.params.P.result_dir
         candidates = [
-            step6_wcs_dir(result_dir) / "gaia_derived.csv",
+            step5_wcs_dir(result_dir) / "gaia_derived.csv",
             result_dir / "gaia_derived.csv",
             result_dir / "cmd_with_gaia_membership.csv",
             step10_selection_dir(result_dir) / "cmd_with_gaia_membership.csv",
@@ -904,7 +904,7 @@ class MasterIdEditorWindow(StepWindowBase):
             step10_selection_dir(result_dir) / "cmd_with_membership.csv",
             result_dir / "median_by_ID_filter_wide_cmd.csv",
             step10_selection_dir(result_dir) / "median_by_ID_filter_wide_cmd.csv",
-            step7_refbuild_dir(result_dir) / "master_catalog.tsv",
+            step6_refbuild_dir(result_dir) / "master_catalog.tsv",
             result_dir / "master_catalog.tsv",
         ]
 
@@ -1237,7 +1237,7 @@ class MasterIdEditorWindow(StepWindowBase):
             else:
                 self._auto_add_detections_to_master(self.idmatch_df)
             return
-        idmatch_dir = step_forced_phot_dir(self.params.P.result_dir)
+        idmatch_dir = step7_forced_phot_dir(self.params.P.result_dir)
         idmatch_path = idmatch_dir / f"photometry_{filename}.tsv"
         if idmatch_path.exists():
             try:
