@@ -560,17 +560,17 @@ class MainWindowWorkflow(QMainWindow):
 
         # ── Step 4: WCS (shared) ──
         elif step_index == _WCS:
-            from apex.gui.workflow.step6_wcs_plate_solving import WcsPlateSolvingWindow
+            from apex.gui.workflow.step5_wcs_plate_solving import WcsPlateSolvingWindow
             return WcsPlateSolvingWindow(p, fm, ps, self)
 
         # ── Step 5: MasterBuild (shared) ──
         elif step_index == _MASTER:
-            from apex.gui.workflow.step7_ref_build import RefBuildWindow
+            from apex.gui.workflow.step6_ref_build import RefBuildWindow
             return RefBuildWindow(p, fm, ps, self)
 
         # ── Step 6: Forced Aperture Phot (shared) ──
         elif step_index == _FORCED:
-            from apex.gui.workflow.step_forced_aperture_phot import ForcedPhotWindow
+            from apex.gui.workflow.step7_forced_aperture_phot import ForcedPhotWindow
             return ForcedPhotWindow(p, fm, ps, self)
 
         # ── Step 7+: mode-specific ──

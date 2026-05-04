@@ -32,8 +32,8 @@ from apex.utils.step_paths_lc import (
     step1_dir,
     step2_cropped_dir,
     step5_photometry_dir,
-    step7_refbuild_dir,
-    step_forced_phot_dir,
+    step6_refbuild_dir,
+    step7_forced_phot_dir,
 )
 from apex.utils.qc_utils import filter_files_by_qc
 
@@ -312,7 +312,7 @@ class ApertureOverlayWindow(StepWindowBase):
                 self.load_and_display(keep_view=True)
 
     def load_master_catalog(self):
-        master_path = step7_refbuild_dir(self.params.P.result_dir) / "ref_catalog.tsv"
+        master_path = step6_refbuild_dir(self.params.P.result_dir) / "ref_catalog.tsv"
         if master_path.exists():
             try:
                 self.master_df = pd.read_csv(master_path, sep="\t")
@@ -396,7 +396,7 @@ class ApertureOverlayWindow(StepWindowBase):
             })
             return lab
 
-        fm_path = step_forced_phot_dir(result_dir) / "frame_sourceid_to_ID.tsv"
+        fm_path = step7_forced_phot_dir(result_dir) / "frame_sourceid_to_ID.tsv"
         if fm_path.exists():
             try:
                 fm = pd.read_csv(fm_path, sep="\t")
@@ -430,7 +430,7 @@ class ApertureOverlayWindow(StepWindowBase):
                 x = idm.loc[mask, c_x].astype(float).to_numpy()
                 y = idm.loc[mask, c_y].astype(float).to_numpy()
 
-                map_path = step7_refbuild_dir(result_dir) / "sourceid_to_ID.csv"
+                map_path = step6_refbuild_dir(result_dir) / "sourceid_to_ID.csv"
                 if map_path.exists():
                     mp = pd.read_csv(map_path)
                     if ("source_id" in mp.columns) and ("ID" in mp.columns):
@@ -1308,7 +1308,7 @@ class ApertureOverlayWindow(StepWindowBase):
 
     def validate_step(self) -> bool:
         ap_path = step5_photometry_dir(self.params.P.result_dir) / "aperture_by_frame.csv"
-        master_path = step7_refbuild_dir(self.params.P.result_dir) / "ref_catalog.tsv"
+        master_path = step6_refbuild_dir(self.params.P.result_dir) / "ref_catalog.tsv"
         return ap_path.exists() and master_path.exists()
 
     def save_state(self):

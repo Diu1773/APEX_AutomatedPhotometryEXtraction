@@ -15,8 +15,8 @@ from apex.utils.step_paths import (
     crop_is_active,
     crop_rect_path,
     step2_cropped_dir,
-    step6_wcs_dir,
-    step7_refbuild_dir,
+    step5_wcs_dir,
+    step6_refbuild_dir,
 )
 from apex.utils.step_paths_cmd import step10_selection_dir, step11_zp_dir
 
@@ -66,7 +66,7 @@ def resolve_star_table_path(result_dir: Path) -> Optional[Path]:
 def resolve_ref_meta_path(result_dir: Path) -> Optional[Path]:
     root = Path(result_dir)
     candidates = [
-        step7_refbuild_dir(root) / "ref_build_meta.json",
+        step6_refbuild_dir(root) / "ref_build_meta.json",
         root / "ref_build_meta.json",
     ]
     for p in candidates:
@@ -140,7 +140,7 @@ def _resolve_ref_fits_path(params, result_dir: Path, ref_frame: str) -> Optional
         pass
     candidates.extend(
         [
-            step6_wcs_dir(result_dir) / ref_frame,
+            step5_wcs_dir(result_dir) / ref_frame,
             result_dir / ref_frame,
         ]
     )
@@ -230,7 +230,7 @@ def _pick_first_existing(columns: list[str], candidates: tuple[str, ...]) -> Opt
 
 
 def _load_master_catalog(result_dir: Path) -> Optional[pd.DataFrame]:
-    refbuild = step7_refbuild_dir(result_dir)
+    refbuild = step6_refbuild_dir(result_dir)
     per_filter = sorted(refbuild.glob("ref_catalog_*.tsv")) if refbuild.exists() else []
     candidates = (
         [refbuild / "ref_catalog.tsv"]
@@ -299,10 +299,10 @@ def _external_membership_tables(result_dir: Path) -> list[tuple[Path, str]]:
         (step10_selection_dir(root) / "cmd_with_gaia_membership.csv", ","),
         (root / "cmd_with_gaia_membership.csv", ","),
         (step11_zp_dir(root) / "cmd_with_gaia_membership.csv", ","),
-        (step6_wcs_dir(root) / "gaia_derived.csv", ","),
+        (step5_wcs_dir(root) / "gaia_derived.csv", ","),
         (root / "gaia_derived.csv", ","),
-        (step7_refbuild_dir(root) / "ref_catalog.tsv", "\t"),
-        (step7_refbuild_dir(root) / "master_catalog.tsv", "\t"),   # legacy
+        (step6_refbuild_dir(root) / "ref_catalog.tsv", "\t"),
+        (step6_refbuild_dir(root) / "master_catalog.tsv", "\t"),   # legacy
         (root / "ref_catalog.tsv", "\t"),
         (root / "master_catalog.tsv", "\t"),
     ]

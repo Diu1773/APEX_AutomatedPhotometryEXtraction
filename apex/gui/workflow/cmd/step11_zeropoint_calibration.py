@@ -36,9 +36,9 @@ from apex.utils.astro_utils import normalize_filter_name
 from apex.utils.step_paths import (
     step2_cropped_dir,
     crop_is_active,
-    step_forced_phot_dir,
-    step6_wcs_dir,
-    step7_refbuild_dir,
+    step7_forced_phot_dir,
+    step5_wcs_dir,
+    step6_refbuild_dir,
     tool_extinction_dir,
 )
 from apex.utils.step_paths_cmd import step6_psf_dir, step10_selection_dir, step11_zp_dir
@@ -85,8 +85,8 @@ def _normalize_master_columns(df: pd.DataFrame) -> pd.DataFrame:
 
 
 def _load_master_table(result_dir: Path) -> tuple[pd.DataFrame, str, Path]:
-    refbuild = step7_refbuild_dir(result_dir)
-    # Collect per-filter catalogs written by step7_ref_build
+    refbuild = step6_refbuild_dir(result_dir)
+    # Collect per-filter catalogs written by step6_ref_build
     per_filter = sorted(refbuild.glob("ref_catalog_*.tsv")) if refbuild.exists() else []
     candidates = [
         # step7 writes ref_catalog.tsv (no-filter copy) and ref_catalog_{filter}.tsv
@@ -158,7 +158,7 @@ class ZeropointCalibrationWorker(QThread):
             if p_win.exists():
                 return p_win
         for base in (
-            step_forced_phot_dir(self.result_dir),
+            step7_forced_phot_dir(self.result_dir),
             step6_psf_dir(self.result_dir),
             step10_selection_dir(self.result_dir),
             self.result_dir,
@@ -278,7 +278,7 @@ class ZeropointCalibrationWorker(QThread):
 
     def _find_idmatch_csv(self, fname: str, result_dir: Path):
         """Find per-frame photometry TSV from forced phot (replaces old idmatch CSV)."""
-        forced_dir = step_forced_phot_dir(result_dir)
+        forced_dir = step7_forced_phot_dir(result_dir)
         direct = forced_dir / f"photometry_{fname}.tsv"
         if direct.exists():
             return direct
@@ -443,7 +443,7 @@ class ZeropointCalibrationWorker(QThread):
             output_dir = step11_zp_dir(result_dir)
             output_dir.mkdir(parents=True, exist_ok=True)
             # Forced phot is preferred; PSF photometry is optional refinement.
-            phot_dir_forced = step_forced_phot_dir(result_dir)
+            phot_dir_forced = step7_forced_phot_dir(result_dir)
             phot_dir_psf    = step6_psf_dir(result_dir)
 
             idx_candidates = [
@@ -497,7 +497,7 @@ class ZeropointCalibrationWorker(QThread):
             else:
                 idx["filter"] = "unknown"
 
-            fq_path = step_forced_phot_dir(result_dir) / "frame_quality.csv"
+            fq_path = step7_forced_phot_dir(result_dir) / "frame_quality.csv"
             if not fq_path.exists():
                 fq_path = result_dir / "frame_quality.csv"
             if fq_path.exists() and ("file" in idx.columns):
@@ -734,8 +734,8 @@ class ZeropointCalibrationWorker(QThread):
                 if "source_id" not in df.columns:
                     raise RuntimeError("master_catalog missing Gaia mags and source_id for Gaia join")
                 gaia_candidates = [
-                    step6_wcs_dir(result_dir) / "gaia_fov.ecsv",
-                    step6_wcs_dir(result_dir) / "gaia_derived.csv",
+                    step5_wcs_dir(result_dir) / "gaia_fov.ecsv",
+                    step5_wcs_dir(result_dir) / "gaia_derived.csv",
                     result_dir / "gaia_derived.csv",
                     result_dir / "gaia_fov.ecsv",
                 ]
@@ -758,7 +758,7 @@ class ZeropointCalibrationWorker(QThread):
                     gaia_path = cand
                     break
                 if gaia_df is None or gaia_path is None:
-                    raise RuntimeError("master_catalog missing Gaia mags and step6_wcs/gaia_derived.csv not found")
+                    raise RuntimeError("master_catalog missing Gaia mags and step5_wcs/gaia_derived.csv not found")
                 gaia_join_name = gaia_path.name
                 if "source_id" in gaia_df.columns:
                     gaia_df["source_id"] = parse_int64_series(gaia_df["source_id"]).astype("Int64")
@@ -1541,8 +1541,8 @@ class CmdViewerWindow(QWidget):
 
     def _merge_columns_from_gaia_derived(self, needed_cols):
         candidates = [
-            step6_wcs_dir(self.result_dir) / "gaia_derived.csv",
-            step6_wcs_dir(self.result_dir) / "gaia_fov.ecsv",
+            step5_wcs_dir(self.result_dir) / "gaia_derived.csv",
+            step5_wcs_dir(self.result_dir) / "gaia_fov.ecsv",
             self.result_dir / "gaia_derived.csv",
         ]
         gdf = None

@@ -2,7 +2,7 @@
 Step 9: Target/Comparison Selection (Filter-based)
 
 완전 리팩토링:
-- Reference Build 출력물(step7_refbuild/)을 입력으로 사용
+- Reference Build 출력물(step6_refbuild/)을 입력으로 사용
 - 필터별 타겟/비교성 선택
 - Step 9에서 최종 master catalog 저장 (step9_selection/master_catalog_{filter}.tsv)
 - 출력: step9_selection/ 폴더
@@ -47,9 +47,9 @@ from PyQt5.QtCore import Qt, pyqtSignal
 from apex.gui.workflow.step_window_base import StepWindowBase
 from apex.utils.step_paths_lc import (
     step2_cropped_dir,
-    step6_wcs_dir,
-    step7_refbuild_dir,
-    step_forced_phot_dir,
+    step5_wcs_dir,
+    step6_refbuild_dir,
+    step7_forced_phot_dir,
     step9_selection_dir,
 )
 from apex.utils.io_utils import read_csv_int64_source_id, coerce_int64_source_id
@@ -723,8 +723,8 @@ class TargetComparisonSelectionWindow(StepWindowBase):
 
     def check_step7_status(self):
         """Step 8 ID-match 출력물 확인 및 필터 로드 (Reference Build 없이도 동작)"""
-        step8_out = step_forced_phot_dir(self.params.P.result_dir)
-        step7_out = step7_refbuild_dir(self.params.P.result_dir)
+        step8_out = step7_forced_phot_dir(self.params.P.result_dir)
+        step7_out = step6_refbuild_dir(self.params.P.result_dir)
 
         # Step 8 필터 정보 로드 (필수)
         filter_frames_path = step8_out / "step8_filter_frames.json"
@@ -857,7 +857,7 @@ class TargetComparisonSelectionWindow(StepWindowBase):
     def load_gaia_catalog(self):
         """Gaia 카탈로그 로드"""
         from astropy.table import Table
-        gaia_path = step6_wcs_dir(self.params.P.result_dir) / "gaia_fov.ecsv"
+        gaia_path = step5_wcs_dir(self.params.P.result_dir) / "gaia_fov.ecsv"
         if gaia_path.exists():
             try:
                 tab = Table.read(str(gaia_path), format="ascii.ecsv")
@@ -914,7 +914,7 @@ class TargetComparisonSelectionWindow(StepWindowBase):
 
     def load_step6_master_sources(self):
         """Step 8 master source list (ra/dec, Gaia mags)"""
-        step8_path = step_forced_phot_dir(self.params.P.result_dir) / "step8_master_sources.csv"
+        step8_path = step7_forced_phot_dir(self.params.P.result_dir) / "step8_master_sources.csv"
         if not step8_path.exists():
             return
         try:
@@ -1261,7 +1261,7 @@ class TargetComparisonSelectionWindow(StepWindowBase):
 
     def _load_global_id_map(self, flt: Optional[str] = None) -> None:
         """Load global ID map (source_id -> ID) from Step 7 output."""
-        step7_out = step7_refbuild_dir(self.params.P.result_dir)
+        step7_out = step6_refbuild_dir(self.params.P.result_dir)
         global_path = step7_out / "sourceid_to_ID.csv"
 
         path = None
@@ -1460,7 +1460,7 @@ class TargetComparisonSelectionWindow(StepWindowBase):
         if flt in self._filter_all_source_ids:
             return set(self._filter_all_source_ids[flt])
 
-        step8_out = step_forced_phot_dir(self.params.P.result_dir)
+        step8_out = step7_forced_phot_dir(self.params.P.result_dir)
         frames = self.filter_frames.get(flt, [])
         sids: Set[int] = set()
 
@@ -1494,7 +1494,7 @@ class TargetComparisonSelectionWindow(StepWindowBase):
         if cached is not None:
             return set(cached)
 
-        step8_out = step_forced_phot_dir(self.params.P.result_dir)
+        step8_out = step7_forced_phot_dir(self.params.P.result_dir)
         frames = self.filter_frames.get(flt, [])
         if not frames:
             return set()
@@ -1875,7 +1875,7 @@ class TargetComparisonSelectionWindow(StepWindowBase):
     def _load_ref_header(self) -> None:
         if self.ref_header is not None:
             return
-        meta_path = step7_refbuild_dir(self.params.P.result_dir) / "ref_build_meta.json"
+        meta_path = step6_refbuild_dir(self.params.P.result_dir) / "ref_build_meta.json"
         if not meta_path.exists():
             return
         try:
@@ -2151,7 +2151,7 @@ class TargetComparisonSelectionWindow(StepWindowBase):
             self.idmatch_df = self._idmatch_cache[filename]
             return
 
-        step8_out = step_forced_phot_dir(self.params.P.result_dir)
+        step8_out = step7_forced_phot_dir(self.params.P.result_dir)
         idmatch_path = _resolve_idmatch_path(step8_out, filename)
 
         if idmatch_path.exists():

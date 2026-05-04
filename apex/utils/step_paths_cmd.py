@@ -7,9 +7,9 @@ CMD pipeline layout:
   step2_crop/             Image crop
   step3_sky_preview/      Sky preview QC
   step4_detection/        Source detection + frame QC
-  step6_wcs/              WCS plate solving       } shared
-  step7_refbuild/         Reference catalog build  }
-  step_forced_phot/       Forced aperture photometry }
+  step5_wcs/              WCS plate solving       } shared
+  step6_refbuild/         Reference catalog build  }
+  step7_forced_phot/       Forced aperture photometry }
   cmd_psf/                PSF photometry (optional)
   cmd_selection/          Master ID editor
   cmd_zeropoint/          Zeropoint calibration

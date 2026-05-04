@@ -7,9 +7,9 @@ LC pipeline layout:
   step2_crop/             Image crop
   step3_sky_preview/      Sky preview QC
   step4_detection/        Source detection + frame QC
-  step6_wcs/              WCS plate solving       } shared
-  step7_refbuild/         Reference catalog build  }
-  step_forced_phot/       Forced aperture photometry }
+  step5_wcs/              WCS plate solving       } shared
+  step6_refbuild/         Reference catalog build  }
+  step7_forced_phot/       Forced aperture photometry }
   lc_selection/           Target/comparison selection
   lc_lightcurve/          Light curve builder
   lc_detrend/             Detrend & night merge
@@ -64,8 +64,8 @@ def find_best_lightcurve_csv(result_dir: PathLike, star_id: int) -> Path | None:
 
 def step5_photometry_dir(result_dir: PathLike) -> Path:
     """LC photometry directory — now points to forced aperture photometry output."""
-    from apex.utils.step_paths import step_forced_phot_dir
-    return step_forced_phot_dir(result_dir)
+    from apex.utils.step_paths import step7_forced_phot_dir
+    return step7_forced_phot_dir(result_dir)
 
 
 # ── LC short-name aliases used by analysis modules ───────────────────────────

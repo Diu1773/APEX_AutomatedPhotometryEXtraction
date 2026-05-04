@@ -7,7 +7,7 @@ re-center on detected stars (±max_recenter_shift px), measure flux
 at a fixed small aperture, apply aperture correction from bright
 isolated detected stars.
 
-Outputs (step_forced_phot/):
+Outputs (step7_forced_phot/):
   photometry_{fname}.tsv   — per-frame, per-source measurements
   photometry_index.csv     — summary row per frame
   apcorr_summary.csv       — per-frame aperture correction values
@@ -38,9 +38,9 @@ from .step_window_base import StepWindowBase
 from apex.utils.step_paths import (
     step2_cropped_dir,
     step4_dir,
-    step6_wcs_dir,
-    step7_refbuild_dir,
-    step_forced_phot_dir,
+    step5_wcs_dir,
+    step6_refbuild_dir,
+    step7_forced_phot_dir,
     crop_is_active,
 )
 from apex.utils.photometry_utils import (
@@ -122,7 +122,7 @@ class ForcedPhotWorker(QThread):
         self.result_dir = Path(result_dir)
         self.cache_dir = Path(cache_dir)
         self.file_list = list(file_list)
-        self.output_dir = Path(output_dir) if output_dir is not None else step_forced_phot_dir(result_dir)
+        self.output_dir = Path(output_dir) if output_dir is not None else step7_forced_phot_dir(result_dir)
         self._stop_requested = False
         self._wcs_header_cache: Dict[str, fits.Header] = {}
 
@@ -272,7 +272,7 @@ class ForcedPhotWorker(QThread):
 
     def _load_master_catalog(self, filt: str) -> Optional[pd.DataFrame]:
         """Load master catalog for a given filter from step7_refbuild."""
-        refbuild_dir = step7_refbuild_dir(self.result_dir)
+        refbuild_dir = step6_refbuild_dir(self.result_dir)
         candidates = [
             refbuild_dir / f"ref_catalog_{filt}.tsv",
             refbuild_dir / f"ref_catalog_{filt.lower()}.tsv",
@@ -843,15 +843,15 @@ class ForcedPhotWindow(StepWindowBase):
         self._try_load_existing_results()
 
     def _check_prerequisites(self):
-        refbuild_dir = step7_refbuild_dir(self.params.P.result_dir)
-        wcs_dir = step6_wcs_dir(self.params.P.result_dir)
+        refbuild_dir = step6_refbuild_dir(self.params.P.result_dir)
+        wcs_dir = step5_wcs_dir(self.params.P.result_dir)
         has_wcs = wcs_dir.exists() and any(wcs_dir.glob("wcs_solve_summary.csv"))
         has_cat = refbuild_dir.exists() and any(refbuild_dir.glob("ref_catalog*.tsv"))
         parts = []
         if not has_wcs:
-            parts.append("WCS (step6_wcs/) not found")
+            parts.append("WCS (step5_wcs/) not found")
         if not has_cat:
-            parts.append("Master catalog (step7_refbuild/) not found")
+            parts.append("Master catalog (step6_refbuild/) not found")
         if parts:
             self.status_label.setText("Missing: " + "; ".join(parts))
             self.status_label.setStyleSheet("QLabel { color: #f44336; }")
@@ -860,7 +860,7 @@ class ForcedPhotWindow(StepWindowBase):
             self.status_label.setStyleSheet("QLabel { color: #4CAF50; }")
 
     def _try_load_existing_results(self):
-        idx_path = step_forced_phot_dir(self.params.P.result_dir) / "photometry_index.csv"
+        idx_path = step7_forced_phot_dir(self.params.P.result_dir) / "photometry_index.csv"
         if not idx_path.exists():
             return
         try:
@@ -915,11 +915,11 @@ class ForcedPhotWindow(StepWindowBase):
             return
 
         # Check for master catalog
-        refbuild_dir = step7_refbuild_dir(result_dir)
+        refbuild_dir = step6_refbuild_dir(result_dir)
         if not any(refbuild_dir.glob("ref_catalog*.tsv")):
             QMessageBox.warning(
                 self, "No Master Catalog",
-                "Master catalog not found in step7_refbuild/. Run Master Catalog Build first."
+                "Master catalog not found in step6_refbuild/. Run Master Catalog Build first."
             )
             return
 
@@ -977,7 +977,7 @@ class ForcedPhotWindow(StepWindowBase):
     # ── StepWindowBase overrides ───────────────────────────────────────────────
 
     def validate_step(self) -> bool:
-        idx_path = step_forced_phot_dir(self.params.P.result_dir) / "photometry_index.csv"
+        idx_path = step7_forced_phot_dir(self.params.P.result_dir) / "photometry_index.csv"
         return idx_path.exists()
 
     def restore_state(self):

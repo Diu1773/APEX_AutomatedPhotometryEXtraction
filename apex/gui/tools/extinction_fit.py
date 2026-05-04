@@ -41,9 +41,9 @@ from apex.utils.qc_utils import load_frame_excludes as _load_frame_excludes
 from apex.utils.step_paths_lc import (
     step2_cropped_dir,
     step5_photometry_dir,
-    step6_wcs_dir,
-    step7_refbuild_dir,
-    step_forced_phot_dir,
+    step5_wcs_dir,
+    step6_refbuild_dir,
+    step7_forced_phot_dir,
     step9_selection_dir,
     tool_extinction_dir,
 )
@@ -1765,7 +1765,7 @@ class ExtinctionFitWorker(QThread):
             wide_snr.columns = [f"snr_{c}" for c in wide_snr.columns]
             wide = pd.concat([wide_mag, wide_snr], axis=1).reset_index()
 
-            refbuild = step7_refbuild_dir(result_dir)
+            refbuild = step6_refbuild_dir(result_dir)
             per_filter = sorted(refbuild.glob("ref_catalog_*.tsv")) if refbuild.exists() else []
             master_path = next(
                 (p for p in [refbuild / "ref_catalog.tsv"] + per_filter
@@ -1808,7 +1808,7 @@ class ExtinctionFitWorker(QThread):
                 src_sid = coerce_int64_source_id(df["source_id"])
                 df = df.loc[src_sid.notna()].copy()
                 df["source_id"] = src_sid[src_sid.notna()].astype("int64")
-                gaia_path = step6_wcs_dir(result_dir) / "gaia_fov.ecsv"
+                gaia_path = step5_wcs_dir(result_dir) / "gaia_fov.ecsv"
                 if not gaia_path.exists():
                     raise RuntimeError("gaia_fov.ecsv not found")
                 t_gaia = Table.read(gaia_path, format="ascii.ecsv")
@@ -2708,7 +2708,7 @@ class ExtinctionFitWindow(QWidget):
         base = base[base["source_id"].notna()].copy()
         base["source_id"] = base["source_id"].astype("int64")
 
-        ref_path = step7_refbuild_dir(source_dir) / "ref_catalog.tsv"
+        ref_path = step6_refbuild_dir(source_dir) / "ref_catalog.tsv"
         ref_meta = pd.DataFrame()
         if ref_path.exists():
             try:
@@ -2736,7 +2736,7 @@ class ExtinctionFitWindow(QWidget):
             except Exception as e:
                 self.log(f"[WARN] Failed to load ref_catalog metadata: {e}")
 
-        gaia_path = step6_wcs_dir(source_dir) / "gaia_fov.ecsv"
+        gaia_path = step5_wcs_dir(source_dir) / "gaia_fov.ecsv"
         gaia_meta = pd.DataFrame()
         if gaia_path.exists():
             try:
@@ -3222,7 +3222,7 @@ class ExtinctionFitWindow(QWidget):
     def _resolve_idmatch_path(self, source_dir: Path, fname: str) -> Path | None:
         # New pipeline: master_id is a column in forced phot TSV; no separate idmatch file.
         # Check forced_phot dir for per-frame photometry TSV.
-        forced_dir = step_forced_phot_dir(source_dir)
+        forced_dir = step7_forced_phot_dir(source_dir)
         candidates = [forced_dir / f"photometry_{fname}.tsv"]
         for path in candidates:
             if path.exists():

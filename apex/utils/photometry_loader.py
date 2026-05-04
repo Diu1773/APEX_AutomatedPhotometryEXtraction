@@ -7,7 +7,7 @@ import pandas as pd
 
 from .io_utils import read_csv_int64_source_id, coerce_int64_source_id
 from .step_paths import (
-    step_forced_phot_dir,
+    step7_forced_phot_dir,
 )
 from .step_paths_lc import (
     step5_photometry_dir,
@@ -53,7 +53,7 @@ def _read_table(path: Path) -> pd.DataFrame | None:
 
 def _resolve_photometry_path(result_dir: Path, fname: str) -> Path | None:
     # Forced phot output takes priority; fall back to legacy step5 location
-    forced_dir = step_forced_phot_dir(result_dir)
+    forced_dir = step7_forced_phot_dir(result_dir)
     legacy_dir = step5_photometry_dir(result_dir)
     for phot_dir in (forced_dir, legacy_dir):
         for name in (f"photometry_{fname}.tsv", f"{fname}_photometry.tsv"):
