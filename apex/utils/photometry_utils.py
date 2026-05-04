@@ -163,6 +163,122 @@ def phot_one_star(
 
 
 # ---------------------------------------------------------------------------
+# Vectorized photometry (N sources in one call)
+# ---------------------------------------------------------------------------
+
+def phot_vectorized(
+    img: np.ndarray,
+    positions: np.ndarray,          # shape (N, 2) — col-major (x, y)
+    r_ap: float,
+    r_in: float,
+    r_out: float,
+    gain: float = 1.0,
+    rn_param_e: float = 7.5,
+    sky_frame_e: float = np.nan,
+    sky_sigma_mode: str = "local",
+    sky_sigma_includes_rn: bool = True,
+    min_n_sky_for_local: int = 50,
+    sat_adu: float = 60000.0,
+    datamax_adu: float | None = None,
+    sigma_clip_val: float = 3.0,
+    maxiters: int = 5,
+) -> tuple[np.ndarray, ...]:
+    """Vectorized aperture photometry for N sources using photutils.
+
+    Returns
+    -------
+    flux_e, flux_err_e, snr, sky_med, is_sat, is_nonlinear  — each shape (N,)
+    Invalid positions produce NaN / False.
+    """
+    from photutils.aperture import CircularAperture, CircularAnnulus, ApertureStats, aperture_photometry
+
+    positions = np.asarray(positions, dtype=float)
+    N = len(positions)
+    nan = np.full(N, np.nan)
+    false = np.zeros(N, dtype=bool)
+
+    if N == 0:
+        return nan, nan, nan, nan, false, false
+
+    # Filter out-of-bounds / non-finite positions (photutils raises on these)
+    h, w = img.shape
+    valid = (
+        np.isfinite(positions[:, 0]) & np.isfinite(positions[:, 1]) &
+        (positions[:, 0] >= 0) & (positions[:, 0] < w) &
+        (positions[:, 1] >= 0) & (positions[:, 1] < h)
+    )
+    if not valid.any():
+        return nan.copy(), nan.copy(), nan.copy(), nan.copy(), false.copy(), false.copy()
+
+    pos_valid = positions[valid]
+
+    # ── Aperture flux (photutils vectorized C) ─────────────────────────
+    ap = CircularAperture(pos_valid, r=r_ap)
+    phot_tbl = aperture_photometry(img, ap, method="exact")
+    ap_sum = np.asarray(phot_tbl["aperture_sum"], dtype=float)
+    ap_area = float(ap.area)
+
+    # ── Sky from annulus (photutils ApertureStats — vectorized) ────────
+    sc = SigmaClip(sigma=sigma_clip_val, maxiters=maxiters)
+    ann = CircularAnnulus(pos_valid, r_in=r_in, r_out=r_out)
+    ann_stats = ApertureStats(img, ann, sigma_clip=sc)
+    bkg_med = np.asarray(ann_stats.median, dtype=float)
+    bkg_std = np.asarray(ann_stats.std,    dtype=float)
+    n_sky_arr = np.asarray(ann_stats.sum_aper_area, dtype=float)
+
+    # ── Net flux ────────────────────────────────────────────────────────
+    flux_net_adu = ap_sum - bkg_med * ap_area
+    flux_e_valid = flux_net_adu * gain
+
+    # ── CCD noise (vectorized) ──────────────────────────────────────────
+    sigma_local_e2 = (np.maximum(bkg_std, 0.0) * gain) ** 2
+    sigma_frame_e2 = float(sky_frame_e) ** 2 if np.isfinite(sky_frame_e) else np.nan
+
+    mode = str(sky_sigma_mode or "local").strip().lower()
+    use_local = np.isfinite(sigma_local_e2) & (bkg_std > 0) & (n_sky_arr >= min_n_sky_for_local)
+
+    if mode == "frame":
+        sigma_pix_e2 = np.where(np.isfinite(sigma_frame_e2), sigma_frame_e2, sigma_local_e2)
+    elif mode == "max":
+        sigma_pix_e2 = np.fmax(sigma_local_e2, sigma_frame_e2)
+    else:  # local (default)
+        sigma_pix_e2 = np.where(use_local, sigma_local_e2, sigma_frame_e2)
+
+    sigma_pix_e2 = np.where(np.isfinite(sigma_pix_e2), sigma_pix_e2, 0.0)
+
+    if sky_sigma_includes_rn:
+        sigma_pix_e2 = np.maximum(sigma_pix_e2 - rn_param_e ** 2, 0.0)
+
+    var_source  = np.maximum(flux_e_valid, 0.0)
+    var_bkg_ap  = ap_area * sigma_pix_e2
+    var_bkg_est = (ap_area ** 2 / np.maximum(n_sky_arr, 1)) * sigma_pix_e2
+    var_rn      = ap_area * rn_param_e ** 2 if sky_sigma_includes_rn else 0.0
+    var_e       = var_source + var_bkg_ap + var_bkg_est + var_rn
+
+    sigma_e_valid = np.sqrt(np.maximum(var_e, 0.0))
+    snr_valid = np.where(sigma_e_valid > 0, flux_e_valid / sigma_e_valid, np.nan)
+
+    # ── Saturation / nonlinearity (peak in aperture) ───────────────────
+    ap_stats = ApertureStats(img, ap)
+    peak_adu = np.asarray(ap_stats.max, dtype=float)
+    is_sat_valid = np.isfinite(peak_adu) & (peak_adu >= float(sat_adu))
+    if datamax_adu is not None and np.isfinite(datamax_adu) and float(datamax_adu) > 0:
+        is_nl_valid = np.isfinite(peak_adu) & (peak_adu >= float(datamax_adu))
+    else:
+        is_nl_valid = np.zeros(len(pos_valid), dtype=bool)
+
+    # ── Map back to full-N arrays ───────────────────────────────────────
+    flux_e   = nan.copy();  flux_e[valid]   = flux_e_valid
+    sigma_e  = nan.copy();  sigma_e[valid]  = sigma_e_valid
+    snr      = nan.copy();  snr[valid]      = snr_valid
+    sky_med  = nan.copy();  sky_med[valid]  = bkg_med
+    is_sat   = false.copy(); is_sat[valid]  = is_sat_valid
+    is_nl    = false.copy(); is_nl[valid]   = is_nl_valid
+
+    return flux_e, sigma_e, snr, sky_med, is_sat, is_nl
+
+
+# ---------------------------------------------------------------------------
 # DataFrame helpers
 # ---------------------------------------------------------------------------
 

@@ -45,6 +45,7 @@ from apex.utils.step_paths import (
 )
 from apex.utils.photometry_utils import (
     phot_one_star,
+    phot_vectorized,
     refine_local_centroid,
 )
 from apex.utils.cache_utils import astap_wcs_candidates, parse_astap_wcs_file
@@ -423,61 +424,19 @@ class ForcedPhotWorker(QThread):
             except Exception:
                 pass
 
-        # Run aperture photometry for every master position
-        flux_arr     = np.full(n, np.nan)
-        flux_err_arr = np.full(n, np.nan)
-        snr_arr      = np.full(n, np.nan)
-        sky_arr      = np.full(n, np.nan)
-        is_sat_arr   = np.zeros(n, dtype=bool)
-        is_nl_arr    = np.zeros(n, dtype=bool)
-
-        # Also measure at the reference aperture for apcorr
-        flux_ref_arr = np.full(n, np.nan)
-
-        for i in range(n):
-            xi, yi = x_fit[i], y_fit[i]
-            if not (np.isfinite(xi) and np.isfinite(yi)):
-                continue
-            if not (0 <= xi < w and 0 <= yi < h):
-                continue
-            try:
-                (flux_e, sigma_e, snr, _, bkg_med, _, _, _, is_sat, is_nl) = phot_one_star(
-                    img, xi, yi, r_ap, r_in, r_out,
-                    sigma_clip_val=sigma_clip,
-                    maxiters=max_iter,
-                    gain=gain,
-                    rn_param_e=rn_e,
-                    sky_frame_e=sky_e,
-                    sky_sigma_mode=sky_mode,
-                    sky_sigma_includes_rn=sky_incl_rn,
-                    min_n_sky_for_local=min_n_sky,
-                    sat_adu=sat_adu,
-                    datamax_adu=datamax_adu,
-                )
-                flux_arr[i]     = flux_e
-                flux_err_arr[i] = sigma_e
-                snr_arr[i]      = snr
-                sky_arr[i]      = bkg_med
-                is_sat_arr[i]   = is_sat
-                is_nl_arr[i]    = is_nl
-
-                # Reference aperture measurement (for apcorr)
-                (flux_ref_e, *_) = phot_one_star(
-                    img, xi, yi, r_ref, r_in, r_out,
-                    sigma_clip_val=sigma_clip,
-                    maxiters=max_iter,
-                    gain=gain,
-                    rn_param_e=rn_e,
-                    sky_frame_e=sky_e,
-                    sky_sigma_mode=sky_mode,
-                    sky_sigma_includes_rn=sky_incl_rn,
-                    min_n_sky_for_local=min_n_sky,
-                    sat_adu=sat_adu,
-                    datamax_adu=datamax_adu,
-                )
-                flux_ref_arr[i] = flux_ref_e
-            except Exception:
-                pass
+        # Run aperture photometry for every master position (vectorized)
+        positions = np.column_stack([x_fit, y_fit])
+        phot_kw = dict(
+            gain=gain, rn_param_e=rn_e, sky_frame_e=sky_e,
+            sky_sigma_mode=sky_mode, sky_sigma_includes_rn=sky_incl_rn,
+            min_n_sky_for_local=min_n_sky, sat_adu=sat_adu,
+            datamax_adu=datamax_adu, sigma_clip_val=sigma_clip, maxiters=max_iter,
+        )
+        flux_arr, flux_err_arr, snr_arr, sky_arr, is_sat_arr, is_nl_arr = phot_vectorized(
+            img, positions, r_ap, r_in, r_out, **phot_kw
+        )
+        # Reference aperture for apcorr (same positions, larger r_ref)
+        flux_ref_arr, *_ = phot_vectorized(img, positions, r_ref, r_in, r_out, **phot_kw)
 
         # --- Aperture correction ---
         crowding_flag = master_df["crowding_flag"].to_numpy(bool) if "crowding_flag" in master_df.columns else np.zeros(n, dtype=bool)
