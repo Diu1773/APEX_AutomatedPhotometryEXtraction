@@ -19,7 +19,9 @@ from __future__ import annotations
 import json
 import time
 import traceback
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
+from threading import Lock
 from typing import Dict, List, Optional, Tuple
 
 import numpy as np
@@ -46,7 +48,7 @@ except ImportError:
 
 from .step_window_base import StepWindowBase
 from .run_control import RunControlBar
-from .log_panel import WorkflowLogWindow, append_timestamped_log, show_raised
+from .log_panel import WorkflowLogWindow, WorkerStatusPanel, append_timestamped_log, show_raised
 from apex.utils.step_paths import (
     step2_cropped_dir,
     step4_dir,
@@ -60,6 +62,7 @@ from apex.utils.photometry_utils import (
     refine_local_centroid,
 )
 from apex.utils.cache_utils import astap_wcs_candidates, parse_astap_wcs_file
+from apex.utils.constants import get_parallel_workers
 
 MAG_ERR_COEFF = 2.5 / np.log(10)
 
@@ -110,11 +113,12 @@ def _normalize_filter_value(value) -> str:
 class ForcedPhotWorker(QThread):
     """Per-frame forced aperture photometry worker."""
 
-    progress     = pyqtSignal(int, int, str)   # current, total, fname
-    log          = pyqtSignal(str)
-    apcorr_update = pyqtSignal(dict)           # emitted per-frame with gc_data
-    finished     = pyqtSignal(dict)
-    error        = pyqtSignal(str, str)
+    progress      = pyqtSignal(int, int, str)   # current, total, fname
+    log           = pyqtSignal(str)
+    apcorr_update = pyqtSignal(dict)            # emitted per-frame with gc_data
+    worker_status = pyqtSignal(int, str, str, int)  # worker_id, fname, status, progress(0-100)
+    finished      = pyqtSignal(dict)
+    error         = pyqtSignal(str, str)
 
     def __init__(
         self,
@@ -134,6 +138,9 @@ class ForcedPhotWorker(QThread):
         self.output_dir = Path(output_dir) if output_dir is not None else step7_forced_phot_dir(result_dir)
         self._stop_requested = False
         self._wcs_header_cache: Dict[str, fits.Header] = {}
+        self._wcs_cache_lock = Lock()
+        self._results_lock = Lock()
+        self.max_workers = get_parallel_workers(params)
 
     def stop(self):
         self._stop_requested = True
@@ -172,11 +179,12 @@ class ForcedPhotWorker(QThread):
         for path in candidates:
             try:
                 key = str(path)
-                if key in self._wcs_header_cache:
-                    hdr = self._wcs_header_cache[key]
-                else:
+                with self._wcs_cache_lock:
+                    hdr = self._wcs_header_cache.get(key)
+                if hdr is None:
                     hdr = fits.getheader(path)
-                    self._wcs_header_cache[key] = hdr
+                    with self._wcs_cache_lock:
+                        self._wcs_header_cache[key] = hdr
                 w = WCS(hdr, relax=True)
                 if w.has_celestial:
                     return w
@@ -464,9 +472,11 @@ class ForcedPhotWorker(QThread):
             # One phot_vectorized call per radius — vectorized over all gc stars
             gc_radii = np.linspace(max(2.0, r_ap * 0.4), r_ref * 1.15, _GC_N_STEPS)
             gc_flux_matrix = np.empty((_GC_N_STEPS, n_gc_stars), dtype=float)
+            gc_ferr_matrix = np.empty((_GC_N_STEPS, n_gc_stars), dtype=float)
             for ri, r_gc in enumerate(gc_radii):
-                f_gc, *_ = phot_vectorized(img, gc_positions, r_gc, r_in, r_out, **phot_kw)
+                f_gc, fe_gc, *_ = phot_vectorized(img, gc_positions, r_gc, r_in, r_out, **phot_kw)
                 gc_flux_matrix[ri, :] = f_gc
+                gc_ferr_matrix[ri, :] = fe_gc
 
             # Normalize each star by its flux at the outermost radius
             f_outer = gc_flux_matrix[-1, :]
@@ -475,17 +485,36 @@ class ForcedPhotWorker(QThread):
                 gc_norm = gc_flux_matrix[:, valid_ref] / f_outer[valid_ref]  # (N_radii, N_valid)
                 gc_curve = np.nanmedian(gc_norm, axis=1)                     # (N_radii,)
 
+                # Per-radius median magnitude error from flux/flux_err
+                f_pos = gc_flux_matrix[:, valid_ref]
+                fe_pos = gc_ferr_matrix[:, valid_ref]
+                with np.errstate(divide="ignore", invalid="ignore"):
+                    mag_err_matrix = (2.5 / np.log(10.0)) * (fe_pos / f_pos)
+                mag_err_matrix = np.where(
+                    np.isfinite(mag_err_matrix) & (f_pos > 0), mag_err_matrix, np.nan
+                )
+                med_mag_err = np.nanmedian(mag_err_matrix, axis=1)           # (N_radii,)
+
                 # apcorr = 1 / enclosed_fraction at r_ap
                 r_ap_idx = int(np.argmin(np.abs(gc_radii - r_ap)))
                 enc_frac = float(gc_curve[r_ap_idx]) if np.isfinite(gc_curve[r_ap_idx]) else 0.0
                 apcorr = float(1.0 / enc_frac) if enc_frac > 0.05 else 1.0
 
+                # Optimal aperture radius = minimum of mag_err U-curve
+                err_finite = np.where(np.isfinite(med_mag_err), med_mag_err, np.inf)
+                r_opt_idx = int(np.argmin(err_finite)) if np.any(np.isfinite(med_mag_err)) else r_ap_idx
+                r_opt_px  = float(gc_radii[r_opt_idx])
+                err_opt   = float(med_mag_err[r_opt_idx]) if np.isfinite(med_mag_err[r_opt_idx]) else float("nan")
+
                 growth_curve_data = {
                     "radii_px":       gc_radii.tolist(),
                     "enclosed_frac":  [float(v) for v in gc_curve],
+                    "mag_err":        [float(v) for v in med_mag_err],
                     "n_stars":        int(valid_ref.sum()),
                     "r_ap_px":        float(r_ap),
                     "r_ref_px":       float(r_ref),
+                    "r_opt_px":       r_opt_px,
+                    "mag_err_opt":    err_opt,
                     "fwhm_px":        float(fwhm_px),
                     "fname":          fname,
                 }
@@ -622,48 +651,43 @@ class ForcedPhotWorker(QThread):
         total = len(self.file_list)
         index_rows: List[dict] = []
         apcorr_rows: List[dict] = []
-        n_done = 0
+        n_done = [0]
 
-        for filt, files in filter_map.items():
-            master_df = master_catalogs.get(filt)
-            if master_df is None or master_df.empty:
-                self._log(f"[FORCED] Skipping filter '{filt}' — no master catalog")
-                n_done += len(files)
-                continue
+        max_workers = max(1, int(self.max_workers))
+        from queue import Queue as _Queue
+        slot_queue: _Queue = _Queue()
+        for _i in range(max_workers):
+            slot_queue.put(_i)
 
-            for fname in files:
-                if self._stop_requested:
-                    self._log("[FORCED] Stopped by user.")
-                    self.finished.emit({"index_rows": index_rows, "apcorr_rows": apcorr_rows})
-                    return
+        def _process_one(filt: str, fname: str, master_df: pd.DataFrame):
+            if self._stop_requested:
+                return None
 
-                n_done += 1
-                self.progress.emit(n_done, total, fname)
-
+            slot = slot_queue.get()
+            try:
+                self.worker_status.emit(slot, fname, "Loading", 5)
                 img = self._load_image(fname)
                 if img is None:
-                    self._log(f"[FORCED] [{fname}] Image not found, skipping")
-                    index_rows.append({"file": fname, "filter": filt, "status": "no_image",
-                                       "n_master": 0, "n_detected": 0, "n_forced": 0, "apcorr": np.nan})
-                    continue
+                    self.worker_status.emit(slot, fname, "No image", 100)
+                    return ("no_image", fname, filt, None, None, None, None)
 
+                self.worker_status.emit(slot, fname, "WCS / FWHM", 20)
                 wcs = self._load_wcs_for_frame(fname)
-                if wcs is None:
-                    self._log(f"[FORCED] [{fname}] No WCS — using reference pixel coords")
-
                 fwhm_px = self._load_fwhm(fname, fallback=fwhm_guess)
 
+                self.worker_status.emit(slot, fname, "Photometry", 45)
                 try:
                     phot_df, apcorr_val, gc_data = self._phot_frame(
                         fname, master_df, img, wcs, fwhm_px, P
                     )
                 except Exception as exc:
-                    self._log(f"[FORCED] [{fname}] phot_frame failed: {exc}\n{traceback.format_exc()}")
-                    index_rows.append({"file": fname, "filter": filt, "status": "error",
-                                       "n_master": len(master_df), "n_detected": 0, "n_forced": 0,
-                                       "wcs_ok": bool(wcs is not None), "apcorr": np.nan})
-                    continue
+                    tb = traceback.format_exc()
+                    self.worker_status.emit(slot, fname, "Error", 100)
+                    return ("error", fname, filt, None, None, None,
+                            {"wcs_ok": wcs is not None, "exc": str(exc), "tb": tb,
+                             "n_master": len(master_df)})
 
+                self.worker_status.emit(slot, fname, "Saving", 85)
                 out_path = out_dir / f"photometry_{fname}.tsv"
                 try:
                     phot_df.insert(0, "file", fname)
@@ -673,42 +697,118 @@ class ForcedPhotWorker(QThread):
                 except Exception as exc:
                     self._log(f"[FORCED] [{fname}] write failed: {exc}")
 
+                self.worker_status.emit(slot, fname, "Done", 100)
+                return ("ok", fname, filt, phot_df, apcorr_val, gc_data,
+                        {"wcs_ok": wcs is not None, "fwhm_px": fwhm_px,
+                         "n_master": len(master_df), "out_path": str(out_path)})
+            finally:
+                slot_queue.put(slot)
+
+        tasks: List[Tuple[str, str, pd.DataFrame]] = []
+        for filt, files in filter_map.items():
+            master_df = master_catalogs.get(filt)
+            if master_df is None or master_df.empty:
+                self._log(f"[FORCED] Skipping filter '{filt}' — no master catalog")
+                with self._results_lock:
+                    n_done[0] += len(files)
+                continue
+            for fname in files:
+                tasks.append((filt, fname, master_df))
+
+        self._log(f"[FORCED] Starting parallel forced photometry with {max_workers} workers ({len(tasks)} frames)")
+
+        executor = ThreadPoolExecutor(max_workers=max_workers)
+        try:
+            future_map = {
+                executor.submit(_process_one, filt, fname, mdf): (filt, fname)
+                for (filt, fname, mdf) in tasks
+            }
+            for future in as_completed(future_map):
+                filt, fname = future_map[future]
+                if self._stop_requested:
+                    break
+
+                with self._results_lock:
+                    n_done[0] += 1
+                    cur = n_done[0]
+                self.progress.emit(cur, total, fname)
+
+                try:
+                    result = future.result()
+                except Exception as exc:
+                    self._log(f"[FORCED] [{fname}] task failed: {exc}\n{traceback.format_exc()}")
+                    with self._results_lock:
+                        index_rows.append({
+                            "file": fname, "filter": filt, "status": "error",
+                            "n_master": 0, "n_detected": 0, "n_forced": 0, "apcorr": np.nan,
+                        })
+                    continue
+
+                if result is None:
+                    continue
+
+                status, fname_r, filt_r, phot_df, apcorr_val, gc_data, info = result
+
+                if status == "no_image":
+                    self._log(f"[FORCED] [{fname_r}] Image not found, skipping")
+                    with self._results_lock:
+                        index_rows.append({"file": fname_r, "filter": filt_r, "status": "no_image",
+                                           "n_master": 0, "n_detected": 0, "n_forced": 0, "apcorr": np.nan})
+                    continue
+
+                if status == "error":
+                    self._log(f"[FORCED] [{fname_r}] phot_frame failed: {info['exc']}\n{info['tb']}")
+                    with self._results_lock:
+                        index_rows.append({"file": fname_r, "filter": filt_r, "status": "error",
+                                           "n_master": info["n_master"], "n_detected": 0, "n_forced": 0,
+                                           "wcs_ok": info["wcs_ok"], "apcorr": np.nan})
+                    continue
+
+                # status == "ok"
                 n_det    = int(phot_df["detected_flag"].sum())
                 n_forced = int(phot_df["forced_flag"].sum())
                 n_valid  = int(np.isfinite(phot_df["flux"]).sum())
+                fwhm_px  = info["fwhm_px"]
 
                 self._log(
-                    f"[FORCED] [{fname}] fwhm={fwhm_px:.1f}px  "
+                    f"[FORCED] [{cur}/{total}] {fname_r} fwhm={fwhm_px:.1f}px  "
                     f"det={n_det}  forced={n_forced}  "
                     f"valid={n_valid}  apcorr={apcorr_val:.4f}"
                 )
 
-                # Emit growth curve data so the UI can update Tab 0 in real-time
                 if gc_data:
-                    gc_data["filter"] = filt
+                    gc_data["filter"] = filt_r
                     gc_data["apcorr"] = apcorr_val
                     gc_data["n_detected"] = n_det
                     self.apcorr_update.emit(gc_data)
 
-                index_rows.append({
-                    "file":         fname,
-                    "filter":       filt,
-                    "status":       "ok",
-                    "n_master":     len(master_df),
-                    "n_detected":   n_det,
-                    "n_forced":     n_forced,
-                    "n_valid_phot": n_valid,
-                    "fwhm_px":      fwhm_px,
-                    "wcs_ok":       bool(wcs is not None),
-                    "apcorr":       apcorr_val,
-                    "path":         str(out_path),
-                })
-                apcorr_rows.append({
-                    "file":         fname,
-                    "filter":       filt,
-                    "apcorr":       apcorr_val,
-                    "n_apcorr_stars": n_det,
-                })
+                with self._results_lock:
+                    index_rows.append({
+                        "file":         fname_r,
+                        "filter":       filt_r,
+                        "status":       "ok",
+                        "n_master":     info["n_master"],
+                        "n_detected":   n_det,
+                        "n_forced":     n_forced,
+                        "n_valid_phot": n_valid,
+                        "fwhm_px":      fwhm_px,
+                        "wcs_ok":       info["wcs_ok"],
+                        "apcorr":       apcorr_val,
+                        "path":         info["out_path"],
+                    })
+                    apcorr_rows.append({
+                        "file":         fname_r,
+                        "filter":       filt_r,
+                        "apcorr":       apcorr_val,
+                        "n_apcorr_stars": n_det,
+                    })
+        finally:
+            executor.shutdown(wait=not self._stop_requested, cancel_futures=True)
+
+        if self._stop_requested:
+            self._log("[FORCED] Stopped by user.")
+            self.finished.emit({"index_rows": index_rows, "apcorr_rows": apcorr_rows})
+            return
 
         if index_rows:
             idx_df = pd.DataFrame(index_rows)
@@ -768,6 +868,7 @@ class ForcedPhotWindow(StepWindowBase):
         self.worker = None
         self.results: dict = {}
         self._gc_accumulator: List[dict] = []   # growth curves collected across frames
+        self._gc_per_frame: Dict[str, dict] = {}   # fname → growth curve dict
 
         super().__init__(
             step_index=6,
@@ -831,13 +932,14 @@ class ForcedPhotWindow(StepWindowBase):
         tab0_layout = QVBoxLayout(tab0)
 
         # Growth curve plot
-        gc_group = QGroupBox("Growth Curve (averaged across frames)")
+        gc_group = QGroupBox("Growth Curve (selected frame)")
         gc_layout = QVBoxLayout(gc_group)
         if _HAVE_MPL:
-            self._gc_fig = Figure(figsize=(5, 3), tight_layout=True)
-            self._gc_ax  = self._gc_fig.add_subplot(111)
+            self._gc_fig    = Figure(figsize=(5, 4.5), tight_layout=True)
+            self._gc_ax_mag = self._gc_fig.add_subplot(211)
+            self._gc_ax_err = self._gc_fig.add_subplot(212)
             self._gc_canvas = FigureCanvasQTAgg(self._gc_fig)
-            self._gc_canvas.setMinimumHeight(220)
+            self._gc_canvas.setMinimumHeight(320)
             gc_layout.addWidget(self._gc_canvas)
             self._init_gc_axes()
         else:
@@ -849,14 +951,33 @@ class ForcedPhotWindow(StepWindowBase):
         ap_group = QGroupBox("Per-frame Aperture Correction")
         ap_layout = QVBoxLayout(ap_group)
         self.apcorr_table = QTableWidget()
-        self.apcorr_table.setColumnCount(6)
-        self.apcorr_table.setHorizontalHeaderLabels(
-            ["File", "Filter", "Apcorr", "N stars", "r_ap (px)", "r_ref (px)"]
-        )
+        self.apcorr_table.setColumnCount(7)
+        _ap_headers = [
+            "File", "Filter", "Apcorr", "N stars",
+            "r_opt (px)", "r_opt/FWHM", "min mag_err",
+        ]
+        self.apcorr_table.setHorizontalHeaderLabels(_ap_headers)
+        _ap_tooltips = [
+            "FITS 파일명",
+            "필터명",
+            "Aperture Correction = 1 / enclosed_fraction(at r_ap).\n"
+            "측정 flux에 곱하는 무차원 보정 계수 (보통 1.05~1.3).",
+            "Apcorr 산정에 사용된 isolated bright star 개수",
+            "Optimal aperture 반지름 (px): U-shape mag_err 곡선의 최저점 = SNR 최대 구경.",
+            "최적 구경 배수 = r_opt / FWHM. 현재 r_ap/FWHM과 다르면 forced_r_ap_scale 튜닝 고려.",
+            "최저점 median mag_err.",
+        ]
+        for col, tip in enumerate(_ap_tooltips):
+            item = self.apcorr_table.horizontalHeaderItem(col)
+            if item is not None:
+                item.setToolTip(tip)
         self.apcorr_table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeToContents)
         self.apcorr_table.horizontalHeader().setStretchLastSection(True)
         self.apcorr_table.setEditTriggers(QAbstractItemView.NoEditTriggers)
-        self.apcorr_table.setMaximumHeight(160)
+        self.apcorr_table.setSelectionBehavior(QAbstractItemView.SelectRows)
+        self.apcorr_table.setSelectionMode(QAbstractItemView.SingleSelection)
+        self.apcorr_table.setMaximumHeight(180)
+        self.apcorr_table.itemSelectionChanged.connect(self._on_apcorr_row_selected)
         ap_layout.addWidget(self.apcorr_table)
         tab0_layout.addWidget(ap_group)
 
@@ -867,10 +988,31 @@ class ForcedPhotWindow(StepWindowBase):
         tab1_layout = QVBoxLayout(tab1)
 
         self.results_table = QTableWidget()
-        self.results_table.setColumnCount(7)
-        self.results_table.setHorizontalHeaderLabels(
-            ["File", "Filter", "Status", "N master", "N detected", "N forced", "Apcorr"]
-        )
+        _res_headers = [
+            "File", "Filter", "Status", "WCS",
+            "FWHM (px)", "r_ap (px)", "r_ref (px)",
+            "Apcorr", "N master", "N detected", "N forced", "N valid",
+        ]
+        self.results_table.setColumnCount(len(_res_headers))
+        self.results_table.setHorizontalHeaderLabels(_res_headers)
+        _res_tooltips = [
+            "FITS 파일명",
+            "필터명",
+            "처리 상태 (ok / no_image / error)",
+            "WCS solve 성공 여부",
+            "프레임 FWHM (px) — step4 detection에서",
+            "측광 aperture 반지름 (px). forced_r_ap_scale × FWHM",
+            "Reference aperture 반지름 (px). forced_ref_ap_scale × FWHM",
+            "Aperture correction = 1 / enclosed_fraction(at r_ap)",
+            "Master catalog source 수",
+            "프레임에서 검출된 source 수 (recenter용)",
+            "Forced 측광 source 수",
+            "유효 flux (finite) source 수",
+        ]
+        for col, tip in enumerate(_res_tooltips):
+            it = self.results_table.horizontalHeaderItem(col)
+            if it is not None:
+                it.setToolTip(tip)
         self.results_table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeToContents)
         self.results_table.horizontalHeader().setStretchLastSection(True)
         self.results_table.setEditTriggers(QAbstractItemView.NoEditTriggers)
@@ -878,22 +1020,17 @@ class ForcedPhotWindow(StepWindowBase):
 
         self.tabs.addTab(tab1, "Results")
 
-        # ── Floating log window ────────────────────────────────────────────────
-        _prog_group = QGroupBox("Progress")
-        _prog_group.setMinimumWidth(200)
-        _prog_layout = QVBoxLayout(_prog_group)
-        self._log_progress_label = QLabel("Idle")
-        self._log_progress_label.setWordWrap(True)
-        self._log_progress_bar = QProgressBar()
-        self._log_progress_bar.setMinimum(0)
-        self._log_progress_bar.setValue(0)
-        _prog_layout.addWidget(self._log_progress_label)
-        _prog_layout.addWidget(self._log_progress_bar)
-        _prog_layout.addStretch()
+        # ── Floating log window with Workers panel ─────────────────────────────
+        _workers_group = QGroupBox("Workers")
+        _workers_group.setMinimumWidth(430)
+        _wg_layout = QVBoxLayout(_workers_group)
+        _wg_layout.setContentsMargins(5, 5, 5, 5)
+        self._worker_panel = WorkerStatusPanel(_workers_group)
+        _wg_layout.addWidget(self._worker_panel)
 
         self._log_win = WorkflowLogWindow(
-            self, "Forced Phot Log", width=800, height=420,
-            side_widget=_prog_group,
+            self, "Forced Phot Log & Workers", width=900, height=500,
+            side_widget=_workers_group,
         )
         self.log_text = self._log_win.log_text
 
@@ -944,7 +1081,7 @@ class ForcedPhotWindow(StepWindowBase):
                         str(row.get("filter", "")),
                         f"{row.get('apcorr', float('nan')):.4f}" if pd.notna(row.get("apcorr")) else "—",
                         str(row.get("n_apcorr_stars", "")),
-                        "—", "—",
+                        "—", "—", "—",
                     ]):
                         item = QTableWidgetItem(val)
                         item.setTextAlignment(Qt.AlignCenter)
@@ -955,16 +1092,36 @@ class ForcedPhotWindow(StepWindowBase):
     # ── Table helpers ──────────────────────────────────────────────────────────
 
     def _populate_results_table(self, rows: list):
+        def _fmt_f(v, fmt="{:.2f}"):
+            try:
+                f = float(v)
+                if not np.isfinite(f):
+                    return "—"
+                return fmt.format(f)
+            except (TypeError, ValueError):
+                return "—"
+
         self.results_table.setRowCount(len(rows))
         for ri, row in enumerate(rows):
+            wcs_ok = row.get("wcs_ok")
+            wcs_str = "—" if wcs_ok is None else ("OK" if wcs_ok else "FAIL")
+            # r_ap / r_ref might not be in row dict; pull from gc_per_frame if available
+            gc = self._gc_per_frame.get(str(row.get("file", "")), {})
+            r_ap_val  = row.get("r_ap_px",  gc.get("r_ap_px"))
+            r_ref_val = row.get("r_ref_px", gc.get("r_ref_px"))
             vals = [
                 str(row.get("file", "")),
                 str(row.get("filter", "")),
                 str(row.get("status", "")),
+                wcs_str,
+                _fmt_f(row.get("fwhm_px"), "{:.2f}"),
+                _fmt_f(r_ap_val, "{:.1f}"),
+                _fmt_f(r_ref_val, "{:.1f}"),
+                _fmt_f(row.get("apcorr"), "{:.4f}"),
                 str(row.get("n_master", "")),
                 str(row.get("n_detected", "")),
                 str(row.get("n_forced", "")),
-                f"{row.get('apcorr', float('nan')):.4f}" if pd.notna(row.get("apcorr")) else "—",
+                str(row.get("n_valid_phot", "")),
             ]
             for ci, val in enumerate(vals):
                 item = QTableWidgetItem(val)
@@ -972,55 +1129,88 @@ class ForcedPhotWindow(StepWindowBase):
                 self.results_table.setItem(ri, ci, item)
 
     def _init_gc_axes(self):
-        ax = self._gc_ax
-        ax.set_xlabel("r / FWHM")
-        ax.set_ylabel("Enclosed flux (%)")
-        ax.set_title("Growth Curve")
-        ax.set_ylim(0, 110)
-        ax.grid(True, alpha=0.3)
-        ax.axhline(100, color="gray", lw=0.8, ls="--")
+        ax_mag = self._gc_ax_mag
+        ax_err = self._gc_ax_err
+        ax_mag.set_ylabel("Inst Magnitude", fontsize=9)
+        ax_mag.set_title("Growth Curve", fontsize=9)
+        ax_mag.grid(True, alpha=0.3)
+        ax_err.set_xlabel("Aperture radius (px)", fontsize=9)
+        ax_err.set_ylabel("Median mag_err", fontsize=9)
+        ax_err.set_title("Error vs Aperture (U-shape)", fontsize=9)
+        ax_err.grid(True, alpha=0.3)
 
-    def _update_gc_plot(self, all_gc: List[dict], avg_gc: dict):
-        """Redraw the growth curve figure with per-frame lines + averaged curve."""
+    def _update_gc_plot(self, gc: dict):
+        """Redraw the growth curve figure for a single frame."""
         if not _HAVE_MPL or self._gc_canvas is None:
             return
-        ax = self._gc_ax
-        ax.cla()
+        ax_mag = self._gc_ax_mag
+        ax_err = self._gc_ax_err
+        ax_mag.cla()
+        ax_err.cla()
         self._init_gc_axes()
 
-        fwhm = float(avg_gc.get("fwhm_px", 1.0) or 1.0)
-        r_ap  = float(avg_gc.get("r_ap_px",  0.0))
-        r_ref = float(avg_gc.get("r_ref_px", 0.0))
-        n_frames = len(all_gc)
+        if not gc:
+            self._gc_canvas.draw_idle()
+            return
 
-        # Per-frame curves (thin, semi-transparent)
-        for gc in all_gc:
-            radii = gc.get("radii_px", [])
-            encs  = gc.get("enclosed_frac", [])
-            if not radii or not encs:
-                continue
-            x = [r / fwhm for r in radii]
-            y = [e * 100 for e in encs]
-            ax.plot(x, y, color="#90CAF9", lw=0.8, alpha=0.5)
+        fwhm  = float(gc.get("fwhm_px", 0.0) or 0.0)
+        r_ap  = float(gc.get("r_ap_px",  0.0))
+        r_ref = float(gc.get("r_ref_px", 0.0))
+        r_opt = float(gc.get("r_opt_px", 0.0) or 0.0)
+        fname = str(gc.get("fname", ""))
+        apcorr_val = float(gc.get("apcorr", np.nan))
 
-        # Averaged curve (thick)
-        avg_radii = avg_gc.get("radii_px", [])
-        avg_encs  = avg_gc.get("enclosed_frac", [])
-        if avg_radii and avg_encs:
-            x_avg = [r / fwhm for r in avg_radii]
-            y_avg = [e * 100 for e in avg_encs]
-            ax.plot(x_avg, y_avg, color="#1565C0", lw=2.0, label=f"Median ({n_frames} frames)")
+        radii = gc.get("radii_px", [])
+        encs  = gc.get("enclosed_frac", [])
+        errs  = gc.get("mag_err", [])
 
-        # Vertical lines for r_ap and r_ref
-        if fwhm > 0:
+        if radii and encs:
+            arr = np.asarray(encs, dtype=float)
+            arr = np.where((arr > 0) & np.isfinite(arr), arr, np.nan)
+            mag = -2.5 * np.log10(arr)
+            ax_mag.plot(radii, mag, "-o", color="#1565C0",
+                        lw=1.5, markersize=5,
+                        markeredgecolor="white", markeredgewidth=0.5)
+        if radii and errs:
+            ax_err.plot(radii, errs, "-s", color="#E53935",
+                        lw=1.8, markersize=5,
+                        markeredgecolor="white", markeredgewidth=0.5)
+
+        for ax in (ax_mag, ax_err):
+            if r_opt > 0:
+                ax.axvline(r_opt, color="#7B1FA2", lw=1.6, ls="-",
+                           alpha=0.85, label=f"r_opt={r_opt:.1f}px")
             if r_ap > 0:
-                ax.axvline(r_ap / fwhm, color="#E53935", lw=1.2, ls="--", label=f"r_ap={r_ap:.1f}px")
+                ax.axvline(r_ap, color="#E53935", lw=1.2, ls="--",
+                           alpha=0.8, label=f"r_ap={r_ap:.1f}px")
             if r_ref > 0:
-                ax.axvline(r_ref / fwhm, color="#43A047", lw=1.2, ls="--", label=f"r_ref={r_ref:.1f}px")
+                ax.axvline(r_ref, color="#43A047", lw=1.2, ls="--",
+                           alpha=0.8, label=f"r_ref={r_ref:.1f}px")
+            if fwhm > 0:
+                ax.axvline(fwhm, color="#6D4C41", lw=1.0, ls=":",
+                           alpha=0.8, label=f"FWHM={fwhm:.2f}px")
 
-        ax.legend(fontsize=8, loc="lower right")
-        ax.set_title(f"Growth Curve  (n_frames={n_frames})")
+        ax_mag.invert_yaxis()
+        title = fname
+        if np.isfinite(apcorr_val):
+            title += f"  |  apcorr={apcorr_val:.4f}"
+        ax_mag.set_title(title, fontsize=9)
+        ax_mag.legend(fontsize=7, frameon=False, loc="best")
+        ax_err.legend(fontsize=7, frameon=False, loc="best")
         self._gc_canvas.draw_idle()
+
+    def _on_apcorr_row_selected(self):
+        rows = self.apcorr_table.selectionModel().selectedRows() if self.apcorr_table.selectionModel() else []
+        if not rows:
+            return
+        ri = rows[0].row()
+        item = self.apcorr_table.item(ri, 0)
+        if item is None:
+            return
+        fname = item.text()
+        gc = self._gc_per_frame.get(fname)
+        if gc:
+            self._update_gc_plot(gc)
 
     # ── Log window ─────────────────────────────────────────────────────────────
 
@@ -1058,8 +1248,11 @@ class ForcedPhotWindow(StepWindowBase):
 
         self.log_text.clear()
         self._gc_accumulator.clear()
+        self._gc_per_frame.clear()
         self.apcorr_table.setRowCount(0)
-        self.gc_table.setRowCount(0)
+        self._update_gc_plot({})
+        if hasattr(self, "_worker_panel"):
+            self._worker_panel.clear()
 
         self.worker = ForcedPhotWorker(
             params=self.params,
@@ -1071,6 +1264,7 @@ class ForcedPhotWindow(StepWindowBase):
         self.worker.progress.connect(self._on_progress)
         self.worker.log.connect(self._on_log)
         self.worker.apcorr_update.connect(self._on_apcorr_update)
+        self.worker.worker_status.connect(self._worker_panel.update_worker)
         self.worker.finished.connect(self._on_finished)
         self.worker.error.connect(self._on_error)
         self.worker.start()
@@ -1091,10 +1285,6 @@ class ForcedPhotWindow(StepWindowBase):
     def _on_progress(self, current: int, total: int, fname: str):
         self.progress_bar.setMaximum(total)
         self.progress_bar.setValue(current)
-        if hasattr(self, "_log_progress_bar"):
-            self._log_progress_bar.setMaximum(total)
-            self._log_progress_bar.setValue(current)
-            self._log_progress_label.setText(fname)
         self.progress_label.setText(f"[{current}/{total}] {fname}")
 
     def _on_log(self, msg: str):
@@ -1102,38 +1292,35 @@ class ForcedPhotWindow(StepWindowBase):
 
     def _on_apcorr_update(self, gc_data: dict):
         """Called per frame when growth curve data is available."""
+        fname = str(gc_data.get("fname", ""))
         self._gc_accumulator.append(gc_data)
+        self._gc_per_frame[fname] = gc_data
 
         # Append row to apcorr_table
         ri = self.apcorr_table.rowCount()
         self.apcorr_table.insertRow(ri)
         fwhm  = float(gc_data.get("fwhm_px", 0) or 0)
-        r_ap  = float(gc_data.get("r_ap_px",  0) or 0)
-        r_ref = float(gc_data.get("r_ref_px", 0) or 0)
+        r_opt = float(gc_data.get("r_opt_px", 0) or 0)
+        err_opt = float(gc_data.get("mag_err_opt", float("nan")))
         apcorr_val = float(gc_data.get("apcorr", np.nan))
+        r_opt_scale = (r_opt / fwhm) if (fwhm > 0 and r_opt > 0) else float("nan")
         for ci, val in enumerate([
-            str(gc_data.get("fname", "")),
+            fname,
             str(gc_data.get("filter", "")),
             f"{apcorr_val:.4f}" if np.isfinite(apcorr_val) else "—",
             str(gc_data.get("n_stars", "")),
-            f"{r_ap:.1f}",
-            f"{r_ref:.1f}",
+            f"{r_opt:.1f}" if r_opt > 0 else "—",
+            f"{r_opt_scale:.2f}" if np.isfinite(r_opt_scale) else "—",
+            f"{err_opt:.4f}" if np.isfinite(err_opt) else "—",
         ]):
             item = QTableWidgetItem(val)
             item.setTextAlignment(Qt.AlignCenter)
             self.apcorr_table.setItem(ri, ci, item)
         self.apcorr_table.scrollToBottom()
 
-        # Average growth curves across frames and update plot
-        all_encs = [d["enclosed_frac"] for d in self._gc_accumulator if d.get("enclosed_frac")]
-        if all_encs:
-            min_len = min(len(e) for e in all_encs)
-            mat = np.array([e[:min_len] for e in all_encs])
-            avg_enc = np.nanmedian(mat, axis=0).tolist()
-            gc_avg = dict(gc_data)
-            gc_avg["enclosed_frac"] = avg_enc
-            gc_avg["radii_px"] = gc_data["radii_px"][:min_len]
-            self._update_gc_plot(self._gc_accumulator, gc_avg)
+        # If the user hasn't selected a row yet, show the most recent frame
+        if not self.apcorr_table.selectionModel().hasSelection():
+            self._update_gc_plot(gc_data)
 
         # Switch to Apcorr tab so user sees it
         if self.tabs.currentIndex() != 0:

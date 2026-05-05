@@ -34,7 +34,7 @@ from scipy.spatial import cKDTree as KDTree
 from .step_window_base import StepWindowBase
 from .run_control import RunControlBar
 from apex.core.cache_manager import StepCacheManager
-from .log_panel import WorkflowLogWindow, append_timestamped_log, show_raised
+from .log_panel import WorkflowLogWindow, WorkerStatusPanel, append_timestamped_log, show_raised
 from apex.utils.constants import get_parallel_workers
 from apex.utils.fast_stats import finite_nanmedian, finite_nanstd, robust_median_mad
 from apex.utils.step_paths import (
@@ -2735,13 +2735,9 @@ class SourceDetectionWindow(StepWindowBase):
         worker_group = QGroupBox("Workers")
         worker_group.setMinimumWidth(430)
         worker_layout = QVBoxLayout(worker_group)
-        worker_layout.setSpacing(2)
         worker_layout.setContentsMargins(5, 5, 5, 5)
-
-        # Worker progress bars (will be created dynamically)
-        self.worker_status_layout = QVBoxLayout()
-        worker_layout.addLayout(self.worker_status_layout)
-        worker_layout.addStretch()
+        self.worker_panel = WorkerStatusPanel(worker_group)
+        worker_layout.addWidget(self.worker_panel)
 
         self.log_window = WorkflowLogWindow(
             self,
@@ -2763,28 +2759,8 @@ class SourceDetectionWindow(StepWindowBase):
         """Clear worker status UI"""
         self.worker_progress_bars = {}
         self.worker_last_status = {}
-        if hasattr(self, "worker_status_layout"):
-            while self.worker_status_layout.count():
-                item = self.worker_status_layout.takeAt(0)
-                widget = item.widget()
-                if widget is not None:
-                    widget.setParent(None)
-
-    @staticmethod
-    def _fit_status_text(value, width: int) -> str:
-        text = str(value or "")
-        width = max(4, int(width))
-        if len(text) <= width:
-            return text.ljust(width)
-        keep = max(1, width - 3)
-        head = max(1, keep // 2)
-        tail = max(1, keep - head)
-        return f"{text[:head]}...{text[-tail:]}"
-
-    def _format_worker_status_text(self, worker_id: int, filename: str, status: str) -> str:
-        fname = self._fit_status_text(Path(str(filename)).name, 28)
-        state = self._fit_status_text(status, 18)
-        return f"W{int(worker_id):02d}  {fname}  {state}"
+        if hasattr(self, "worker_panel") and self.worker_panel is not None:
+            self.worker_panel.clear()
 
     def on_file_changed(self, index):
         """Handle file selection change"""
@@ -3502,55 +3478,16 @@ class SourceDetectionWindow(StepWindowBase):
         self.progress_label.setText(f"{current}/{total}{eta_str} | W:{active_workers} | {filename}")
 
     def on_worker_status(self, worker_id, filename, status, progress):
-        """Update worker status panel"""
-        mono = "QLabel { font-family: Consolas, 'Courier New', monospace; font-size: 9pt; }"
-        if worker_id not in self.worker_progress_bars:
-            row_widget = QWidget()
-            row_layout = QHBoxLayout(row_widget)
-            row_layout.setContentsMargins(0, 0, 0, 0)
-            row_layout.setSpacing(4)
-
-            id_lbl = QLabel()
-            id_lbl.setFixedWidth(32)
-            id_lbl.setStyleSheet(mono)
-
-            fname_lbl = QLabel()
-            fname_lbl.setStyleSheet(mono)
-            fname_lbl.setMinimumWidth(160)
-
-            status_lbl = QLabel()
-            status_lbl.setFixedWidth(110)
-            status_lbl.setStyleSheet(mono)
-
-            bar = QProgressBar()
-            bar.setRange(0, 100)
-            bar.setValue(0)
-            bar.setTextVisible(True)
-            bar.setFixedWidth(80)
-
-            row_layout.addWidget(id_lbl)
-            row_layout.addWidget(fname_lbl, stretch=1)
-            row_layout.addWidget(status_lbl)
-            row_layout.addWidget(bar)
-            self.worker_status_layout.addWidget(row_widget)
-            self.worker_progress_bars[worker_id] = (id_lbl, fname_lbl, status_lbl, bar)
-
-        id_lbl, fname_lbl, status_lbl, bar = self.worker_progress_bars[worker_id]
-        short_fname = Path(str(filename)).name
-        id_lbl.setText(f"W{int(worker_id):02d}")
-        # Elide filename to fit available label width
-        fm = fname_lbl.fontMetrics()
-        elided = fm.elidedText(short_fname, Qt.ElideMiddle, fname_lbl.width() or 160)
-        fname_lbl.setText(elided)
-        fname_lbl.setToolTip(short_fname)
-        status_lbl.setText(status)
-        bar.setValue(progress)
+        """Update worker status panel + log meaningful state changes."""
+        if not hasattr(self, "worker_panel") or self.worker_panel is None:
+            self.setup_log_window()
+        self.worker_panel.update_worker(worker_id, filename, status, progress)
 
         last = self.worker_last_status.get(worker_id)
         current = (filename, status)
         if last != current:
-            log_text = f"W{int(worker_id):02d} {short_fname}  {status}"
-            self.log(log_text)
+            short_fname = Path(str(filename)).name
+            self.log(f"W{int(worker_id):02d} {short_fname}  {status}")
             self.worker_last_status[worker_id] = current
 
     def _get_detect_cache_mgr(self) -> StepCacheManager:
