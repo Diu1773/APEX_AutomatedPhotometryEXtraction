@@ -61,6 +61,7 @@ import matplotlib.colors as mcolors
 from matplotlib.patches import Rectangle, Patch
 
 from apex.gui.workflow.step_window_base import StepWindowBase
+from apex.gui.workflow.log_panel import WorkflowLogWindow, append_timestamped_log, show_raised
 from apex.utils.step_paths_cmd import (
     step2_cropped_dir, step4_dir, step6_psf_dir,
     crop_is_active,
@@ -2267,27 +2268,18 @@ class PSFPhotometryWindow(StepWindowBase):
         self.main_tabs.setCurrentIndex(0)
 
         # ── Log window ────────────────────────────────────────────────────────
-        self.log_window = QWidget(self, Qt.Window)
-        self.log_window.setWindowTitle("Step6 PSF Photometry Log")
-        self.log_window.resize(900, 420)
-        log_layout = QVBoxLayout(self.log_window)
-
-        log_splitter = QSplitter(Qt.Horizontal)
-        self.log_text = QTextEdit()
-        self.log_text.setReadOnly(True)
-        self.log_text.setStyleSheet("QTextEdit { font-family: monospace; font-size: 9pt; }")
-        log_splitter.addWidget(self.log_text)
-
         _log_worker_group = QGroupBox("Workers")
         _log_worker_group_layout = QVBoxLayout(_log_worker_group)
         self._log_worker_layout = QVBoxLayout()
         _log_worker_group_layout.addLayout(self._log_worker_layout)
         _log_worker_group_layout.addStretch()
-        log_splitter.addWidget(_log_worker_group)
 
-        log_splitter.setStretchFactor(0, 2)
-        log_splitter.setStretchFactor(1, 1)
-        log_layout.addWidget(log_splitter)
+        self.log_window = WorkflowLogWindow(
+            self, "PSF Photometry Log",
+            width=900, height=420,
+            side_widget=_log_worker_group,
+        )
+        self.log_text = self.log_window.log_text
 
         # Keyboard shortcuts: ← → navigate cutout stars
         from PyQt5.QtWidgets import QShortcut
@@ -3760,13 +3752,10 @@ class PSFPhotometryWindow(StepWindowBase):
     # ── Log ───────────────────────────────────────────────────────────────────
 
     def log(self, message: str):
-        ts = time.strftime("%H:%M:%S")
-        self.log_text.append(f"[{ts}] {message}")
+        append_timestamped_log(self.log_text, message)
 
     def show_log_window(self):
-        self.log_window.show()
-        self.log_window.raise_()
-        self.log_window.activateWindow()
+        show_raised(self.log_window)
 
     # ── Skip label ────────────────────────────────────────────────────────────
 

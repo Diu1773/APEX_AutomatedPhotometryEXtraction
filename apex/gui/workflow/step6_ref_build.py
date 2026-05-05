@@ -1491,7 +1491,22 @@ class RefBuildWindow(StepWindowBase):
 
         self.content_layout.addWidget(self.tabs)
 
-        self.log_window = WorkflowLogWindow(self, "Reference Build Log", width=900, height=500)
+        _prog_group = QGroupBox("Progress")
+        _prog_group.setMinimumWidth(200)
+        _prog_layout = QVBoxLayout(_prog_group)
+        self._log_progress_label = QLabel("Idle")
+        self._log_progress_label.setWordWrap(True)
+        self._log_progress_bar = QProgressBar()
+        self._log_progress_bar.setMinimum(0)
+        self._log_progress_bar.setValue(0)
+        _prog_layout.addWidget(self._log_progress_label)
+        _prog_layout.addWidget(self._log_progress_bar)
+        _prog_layout.addStretch()
+
+        self.log_window = WorkflowLogWindow(
+            self, "Reference Build Log", width=900, height=500,
+            side_widget=_prog_group,
+        )
         self.log_text = self.log_window.log_text
 
         self.check_detection_status()
@@ -1611,6 +1626,10 @@ class RefBuildWindow(StepWindowBase):
 
     def on_progress(self, current, total, filename):
         self.progress_bar.setValue(current)
+        if hasattr(self, "_log_progress_bar"):
+            self._log_progress_bar.setMaximum(total)
+            self._log_progress_bar.setValue(current)
+            self._log_progress_label.setText(filename)
         eta_str = ""
         if current > 0 and total > 0 and hasattr(self, "_ref_start_time"):
             elapsed = time.monotonic() - self._ref_start_time

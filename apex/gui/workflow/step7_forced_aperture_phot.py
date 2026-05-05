@@ -879,7 +879,22 @@ class ForcedPhotWindow(StepWindowBase):
         self.tabs.addTab(tab1, "Results")
 
         # ── Floating log window ────────────────────────────────────────────────
-        self._log_win = WorkflowLogWindow(self, "Forced Phot Log", width=700, height=400)
+        _prog_group = QGroupBox("Progress")
+        _prog_group.setMinimumWidth(200)
+        _prog_layout = QVBoxLayout(_prog_group)
+        self._log_progress_label = QLabel("Idle")
+        self._log_progress_label.setWordWrap(True)
+        self._log_progress_bar = QProgressBar()
+        self._log_progress_bar.setMinimum(0)
+        self._log_progress_bar.setValue(0)
+        _prog_layout.addWidget(self._log_progress_label)
+        _prog_layout.addWidget(self._log_progress_bar)
+        _prog_layout.addStretch()
+
+        self._log_win = WorkflowLogWindow(
+            self, "Forced Phot Log", width=800, height=420,
+            side_widget=_prog_group,
+        )
         self.log_text = self._log_win.log_text
 
         self._try_load_existing_results()
@@ -1076,6 +1091,10 @@ class ForcedPhotWindow(StepWindowBase):
     def _on_progress(self, current: int, total: int, fname: str):
         self.progress_bar.setMaximum(total)
         self.progress_bar.setValue(current)
+        if hasattr(self, "_log_progress_bar"):
+            self._log_progress_bar.setMaximum(total)
+            self._log_progress_bar.setValue(current)
+            self._log_progress_label.setText(fname)
         self.progress_label.setText(f"[{current}/{total}] {fname}")
 
     def _on_log(self, msg: str):

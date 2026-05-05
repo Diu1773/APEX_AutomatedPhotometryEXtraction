@@ -2702,18 +2702,10 @@ class ZeropointCalibrationWindow(StepWindowBase):
         self.restore_state()
 
     def setup_step_ui(self):
-        tab_widget = QTabWidget()
-        self.content_layout.addWidget(tab_widget)
-
-        # --- Tab 1: Calibration ---
-        calib_widget = QWidget()
-        calib_layout = QVBoxLayout(calib_widget)
-
-        info = QLabel(
-            "Build per-frame ZP calibration and standardized catalogs."
-        )
+        # ── Controls ─────────────────────────────────────────────────────────
+        info = QLabel("Build per-frame ZP calibration and standardized catalogs.")
         info.setStyleSheet("QLabel { background-color: #E3F2FD; padding: 10px; border-radius: 5px; }")
-        calib_layout.addWidget(info)
+        self.content_layout.addWidget(info)
 
         control_layout = QHBoxLayout()
         btn_params = QPushButton("Calibration Parameters")
@@ -2730,23 +2722,33 @@ class ZeropointCalibrationWindow(StepWindowBase):
         control_layout.addWidget(self.run_bar)
         self.btn_run = self.run_bar.btn_run
         self.btn_stop = self.run_bar.btn_stop
-        calib_layout.addLayout(control_layout)
+        self.content_layout.addLayout(control_layout)
 
-        progress_group = QGroupBox("Progress")
-        progress_layout = QVBoxLayout(progress_group)
         self.progress_label = QLabel("Idle")
-        progress_layout.addWidget(self.progress_label)
-        calib_layout.addWidget(progress_group)
-        calib_layout.addStretch()
+        self.progress_label.setStyleSheet("QLabel { padding: 4px; }")
+        self.content_layout.addWidget(self.progress_label)
 
-        tab_widget.addTab(calib_widget, "Calibration")
-
-        # --- Tab 2: ZP Fit Plot ---
+        # ── ZP Fit Plot (takes remaining space) ──────────────────────────────
         self.fit_tab = ZPFitPlotWidget(self.params.P.result_dir)
-        tab_widget.addTab(self.fit_tab, "ZP Fit Plot")
+        self.content_layout.addWidget(self.fit_tab, 1)
 
-        # Log window (floating, not in tab)
-        self.log_window = WorkflowLogWindow(self, "Calibration Log", width=800, height=400)
+        # ── Log window with progress panel ───────────────────────────────────
+        _prog_group = QGroupBox("Progress")
+        _prog_group.setMinimumWidth(200)
+        _prog_layout = QVBoxLayout(_prog_group)
+        self._log_progress_label = QLabel("Idle")
+        self._log_progress_label.setWordWrap(True)
+        self._log_progress_bar = QProgressBar()
+        self._log_progress_bar.setMinimum(0)
+        self._log_progress_bar.setValue(0)
+        _prog_layout.addWidget(self._log_progress_label)
+        _prog_layout.addWidget(self._log_progress_bar)
+        _prog_layout.addStretch()
+
+        self.log_window = WorkflowLogWindow(
+            self, "Calibration Log", width=850, height=420,
+            side_widget=_prog_group,
+        )
         self.log_text = self.log_window.log_text
 
     def log(self, message: str):
@@ -2893,6 +2895,10 @@ class ZeropointCalibrationWindow(StepWindowBase):
 
     def on_progress(self, current, total, filename):
         self.progress_label.setText(f"{current}/{total} | {filename}")
+        if hasattr(self, "_log_progress_bar"):
+            self._log_progress_bar.setMaximum(total)
+            self._log_progress_bar.setValue(current)
+            self._log_progress_label.setText(filename)
 
     def on_finished(self, summary):
         self.run_bar.set_running(False)
