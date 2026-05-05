@@ -47,6 +47,7 @@ from PyQt5.QtCore import Qt, QThread, pyqtSignal
 from .step_window_base import StepWindowBase
 from .run_control import RunControlBar
 from .log_panel import WorkflowLogWindow, append_timestamped_log, show_raised
+from apex.core.cache_manager import StepCacheManager
 from apex.utils.step_paths import (
     step2_cropped_dir,
     crop_is_active,
@@ -3595,6 +3596,7 @@ class WcsPlateSolvingWindow(StepWindowBase):
         self.results = {}
         self.stop_requested = False
         self.log_window = None
+        self._wcs_cache_mgr: StepCacheManager | None = None
 
         self.file_list = []
         self.use_cropped = False
@@ -4339,6 +4341,33 @@ class WcsPlateSolvingWindow(StepWindowBase):
         if restored:
             self.results = restored
 
+    def _get_wcs_cache_mgr(self) -> StepCacheManager:
+        if self._wcs_cache_mgr is None:
+            self._wcs_cache_mgr = StepCacheManager(
+                self.params.P.cache_dir, "wcs_plate_solving", cache_schema_version=1
+            )
+        return self._wcs_cache_mgr
+
+    def _write_wcs_manifest(self, filename: str, result: dict) -> None:
+        try:
+            from apex.utils.step_paths import step5_wcs_dir
+            fits_path = (
+                step2_cropped_dir(self.params.P.result_dir) / filename
+                if self.use_cropped
+                else Path(self.params.P.data_dir) / filename
+            )
+            wcs_out = step5_wcs_dir(self.params.P.result_dir)
+            stem = Path(filename).stem
+            mgr = self._get_wcs_cache_mgr()
+            manifest = mgr.build_manifest(
+                input_paths=[fits_path] if fits_path.exists() else [],
+                payload_paths={"wcs_summary": wcs_out / "wcs_solve_summary.csv"},
+                extra={"status": result.get("status", ""), "filename": filename},
+            )
+            mgr.write_manifest(filename, manifest)
+        except Exception:
+            pass
+
     def on_file_done(self, filename, result):
         if self._is_successful_wcs_result(result):
             self.results[filename] = result
@@ -4363,6 +4392,8 @@ class WcsPlateSolvingWindow(StepWindowBase):
         resid_log = result.get("resid_med")
         resid_str = f"{resid_log:.3f}" if isinstance(resid_log, float) and np.isfinite(resid_log) else "-"
         self.log(f"{filename}: {result.get('status', '')} pix={pix_log} refine={refine or '-'} resid_med={resid_str}")
+        if self._is_successful_wcs_result(result):
+            self._write_wcs_manifest(filename, result)
 
     def on_error(self, filename, error):
         self.log(f"ERROR {filename}: {error}")

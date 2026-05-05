@@ -33,6 +33,7 @@ from scipy.spatial import cKDTree as KDTree
 
 from .step_window_base import StepWindowBase
 from .run_control import RunControlBar
+from apex.core.cache_manager import StepCacheManager
 from .log_panel import WorkflowLogWindow, append_timestamped_log, show_raised
 from apex.utils.constants import get_parallel_workers
 from apex.utils.fast_stats import finite_nanmedian, finite_nanstd, robust_median_mad
@@ -2079,6 +2080,7 @@ class SourceDetectionWindow(StepWindowBase):
         self.detection_worker = None
         self.detection_results = {}
         self.stop_requested = False
+        self._detect_cache_mgr: StepCacheManager | None = None
 
         # Image data
         self.current_filename = None
@@ -2650,7 +2652,17 @@ class SourceDetectionWindow(StepWindowBase):
 
         results = {}
         skipped_incompatible = 0
+        mgr = self._get_detect_cache_mgr()
         for filename in self.file_list:
+            # manifest validation (supplemental — missing manifest is OK for backward compat)
+            try:
+                vr = mgr.validate_key(filename, required_payloads=["detect_json"])
+                if vr.manifest is not None and not vr.valid:
+                    skipped_incompatible += 1
+                    continue
+            except Exception:
+                pass
+
             data, pos_file, peak_file, cache_file = self._pick_detection_cache(filename, previous=False)
             if data is None:
                 # meta exists but all incompatible -> count for log
@@ -3541,9 +3553,38 @@ class SourceDetectionWindow(StepWindowBase):
             self.log(log_text)
             self.worker_last_status[worker_id] = current
 
+    def _get_detect_cache_mgr(self) -> StepCacheManager:
+        if self._detect_cache_mgr is None:
+            self._detect_cache_mgr = StepCacheManager(
+                self.params.P.cache_dir, "source_detection", cache_schema_version=1
+            )
+        return self._detect_cache_mgr
+
+    def _write_detect_manifest(self, filename: str) -> None:
+        try:
+            from apex.utils.step_paths import step2_cropped_dir, crop_is_active
+            cache_dir = Path(self.params.P.cache_dir)
+            fits_path = (
+                step2_cropped_dir(self.params.P.result_dir) / filename
+                if getattr(self, "use_cropped", False)
+                else Path(self.params.P.data_dir) / filename
+            )
+            mgr = self._get_detect_cache_mgr()
+            manifest = mgr.build_manifest(
+                input_paths=[fits_path] if fits_path.exists() else [],
+                payload_paths={
+                    "detect_json": cache_dir / f"detect_{filename}.json",
+                    "detect_csv": cache_dir / f"detect_{filename}.csv",
+                },
+            )
+            mgr.write_manifest(filename, manifest)
+        except Exception:
+            pass
+
     def on_file_done(self, filename, result):
         """Handle single file completion"""
         self.detection_results[filename] = result
+        self._write_detect_manifest(filename)
 
         # Periodic state save every 20 frames (protects against overnight crash)
         if len(self.detection_results) % 20 == 0:
