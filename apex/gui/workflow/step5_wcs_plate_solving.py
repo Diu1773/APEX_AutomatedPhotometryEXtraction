@@ -3856,6 +3856,11 @@ class WcsPlateSolvingWindow(StepWindowBase):
             else:
                 eta_str = f" | ETA {int(remaining // 60)}m{int(remaining % 60):02d}s"
         self.astrometrynet_status.setText(f"{status}{eta_str}")
+        if hasattr(self, "_log_progress_bar"):
+            self._log_progress_bar.setMaximum(100)
+            self._log_progress_bar.setValue(pct)
+            self._log_file_label.setText(status)
+            self._log_solver_label.setText("Solver: Astrometry.net")
 
     def on_astrometrynet_file_done(self, filename, result):
         row = self.astrometrynet_results_table.rowCount()
@@ -3917,7 +3922,26 @@ class WcsPlateSolvingWindow(StepWindowBase):
     def setup_log_window(self):
         if self.log_window is not None:
             return
-        self.log_window = WorkflowLogWindow(self, "WCS Log", width=800, height=400)
+
+        status_group = QGroupBox("Current Progress")
+        status_group.setMinimumWidth(260)
+        status_layout = QVBoxLayout(status_group)
+        self._log_solver_label = QLabel("Solver: —")
+        self._log_file_label = QLabel("File: —")
+        self._log_file_label.setWordWrap(True)
+        self._log_progress_bar = QProgressBar()
+        self._log_progress_bar.setMinimum(0)
+        self._log_progress_bar.setValue(0)
+        status_layout.addWidget(self._log_solver_label)
+        status_layout.addWidget(QLabel("Current file:"))
+        status_layout.addWidget(self._log_file_label)
+        status_layout.addWidget(self._log_progress_bar)
+        status_layout.addStretch()
+
+        self.log_window = WorkflowLogWindow(
+            self, "WCS Log", width=900, height=450,
+            side_widget=status_group,
+        )
         self.log_text = self.log_window.log_text
 
     def show_log_window(self):
@@ -4294,6 +4318,11 @@ class WcsPlateSolvingWindow(StepWindowBase):
             else:
                 eta_str = f" | ETA {int(remaining // 60)}m{int(remaining % 60):02d}s"
         self.progress_label.setText(f"{current}/{total}{eta_str} | {filename}")
+        if hasattr(self, "_log_progress_bar"):
+            self._log_progress_bar.setMaximum(total)
+            self._log_progress_bar.setValue(current)
+            self._log_file_label.setText(filename)
+            self._log_solver_label.setText("Solver: ASTAP")
 
     @staticmethod
     def _boolish(value) -> bool:
