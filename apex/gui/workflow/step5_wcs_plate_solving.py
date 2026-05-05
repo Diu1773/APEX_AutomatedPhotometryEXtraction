@@ -46,6 +46,7 @@ from PyQt5.QtCore import Qt, QThread, pyqtSignal
 
 from .step_window_base import StepWindowBase
 from .run_control import RunControlBar
+from .log_panel import WorkflowLogWindow, append_timestamped_log, show_raised
 from apex.utils.step_paths import (
     step2_cropped_dir,
     crop_is_active,
@@ -3914,25 +3915,16 @@ class WcsPlateSolvingWindow(StepWindowBase):
     def setup_log_window(self):
         if self.log_window is not None:
             return
-        self.log_window = QWidget(self, Qt.Window)
-        self.log_window.setWindowTitle("WCS Log")
-        self.log_window.resize(800, 400)
-        layout = QVBoxLayout(self.log_window)
-        self.log_text = QTextEdit()
-        self.log_text.setReadOnly(True)
-        self.log_text.setStyleSheet("QTextEdit { font-family: monospace; font-size: 9pt; }")
-        layout.addWidget(self.log_text)
+        self.log_window = WorkflowLogWindow(self, "WCS Log", width=800, height=400)
+        self.log_text = self.log_window.log_text
 
     def show_log_window(self):
         if self.log_window is None:
             self.setup_log_window()
-        self.log_window.show()
-        self.log_window.raise_()
-        self.log_window.activateWindow()
+        show_raised(self.log_window)
 
     def log(self, message: str):
-        timestamp = time.strftime("%H:%M:%S")
-        self.log_text.append(f"[{timestamp}] {message}")
+        append_timestamped_log(self.log_text, message)
 
     def populate_file_list(self):
         crop_active = crop_is_active(self.params.P.result_dir)

@@ -35,6 +35,8 @@ from matplotlib.figure import Figure
 
 from .step_window_base import StepWindowBase
 from .run_control import RunControlBar
+from .param_dialog import ParamSpec, run_param_dialog
+from .log_panel import WorkflowLogWindow, append_timestamped_log, show_raised
 from apex.utils.step_paths import (
     step5_wcs_dir,
     step6_refbuild_dir,
@@ -1359,6 +1361,27 @@ class RefBuildWorker(QThread):
         })
 
 
+_STEP6_SPECS: tuple[ParamSpec, ...] = (
+    ParamSpec("Drop top saturation frames", "ref_select_sat_pct", "float", 0.0, 100.0, 1.0, 1, "%", default=20.0),
+    ParamSpec("Drop top elongation frames", "ref_select_elong_pct", "float", 0.0, 100.0, 1.0, 1, "%", default=20.0),
+    ParamSpec("Per-date reference", "ref_per_date", "bool", default=True),
+    ParamSpec("Ref catalog max sources (0=all)", "ref_cat_max_sources", "int", 0, 50000, default=0),
+    ParamSpec("Ref catalog min sources", "ref_cat_min_sources", "int", 0, 50000, default=50),
+    ParamSpec("Ref max elongation", "ref_cat_max_elong", "float", 0.0, 10.0, 0.1, 2, default=1.5),
+    ParamSpec("Ref max |roundness|", "ref_cat_max_abs_round", "float", 0.0, 5.0, 0.05, 2, default=0.4),
+    ParamSpec("Ref sharpness min", "ref_cat_sharp_min", "float", -5.0, 5.0, 0.1, 2, default=0.2),
+    ParamSpec("Ref sharpness max", "ref_cat_sharp_max", "float", -5.0, 5.0, 0.1, 2, default=1.0),
+    ParamSpec("Ref min peak/flux (0=off)", "ref_cat_min_peak_adu", "float", 0.0, 1e9, 1.0, 1, default=0.0),
+    ParamSpec("WCS match radius (arcsec)", "ref_wcs_match_radius_arcsec", "float", 0.1, 30.0, 0.1, 2, default=2.0),
+    ParamSpec("WCS min match rate", "ref_wcs_min_match_rate", "float", 0.0, 1.0, 0.05, 2, default=0.2),
+    ParamSpec("WCS min match count", "ref_wcs_min_match_n", "int", 0, 100000, default=50),
+    ParamSpec("WCS max sep median (arcsec)", "ref_wcs_max_sep_med_arcsec", "float", 0.0, 30.0, 0.1, 2, default=1.5),
+    ParamSpec("WCS max sep p90 (arcsec)", "ref_wcs_max_sep_p90_arcsec", "float", 0.0, 60.0, 0.1, 2, default=2.5),
+    ParamSpec("WCS max duplicate rate", "ref_wcs_max_dup_rate", "float", 0.0, 1.0, 0.05, 2, default=0.1),
+    ParamSpec("Gaia G limit (hybrid ID)", "idmatch_gaia_g_limit", "float", 10.0, 25.0, 0.5, 2, default=18.0),
+)
+
+
 class RefBuildWindow(StepWindowBase):
     """Step 7: Reference Build (WCS-based)"""
 
@@ -1468,14 +1491,8 @@ class RefBuildWindow(StepWindowBase):
 
         self.content_layout.addWidget(self.tabs)
 
-        self.log_window = QWidget(self, Qt.Window)
-        self.log_window.setWindowTitle("Reference Build Log")
-        self.log_window.resize(900, 500)
-        log_layout = QVBoxLayout(self.log_window)
-        self.log_text = QTextEdit()
-        self.log_text.setReadOnly(True)
-        self.log_text.setStyleSheet("QTextEdit { font-family: monospace; font-size: 9pt; }")
-        log_layout.addWidget(self.log_text)
+        self.log_window = WorkflowLogWindow(self, "Reference Build Log", width=900, height=500)
+        self.log_text = self.log_window.log_text
 
         self.check_detection_status()
 
@@ -1493,141 +1510,13 @@ class RefBuildWindow(StepWindowBase):
         self.status_label.setStyleSheet("color: green;")
 
     def open_parameters_dialog(self):
-        dialog = QDialog(self)
-        dialog.setWindowTitle("Reference Build Parameters")
-        dialog.resize(460, 350)
-
-        layout = QVBoxLayout(dialog)
-        form = QFormLayout()
-        layout.addLayout(form)
-
-        sat_spin = QDoubleSpinBox()
-        sat_spin.setRange(0.0, 100.0)
-        sat_spin.setDecimals(1)
-        sat_spin.setSuffix("%")
-        sat_spin.setValue(float(getattr(self.params.P, "ref_select_sat_pct", 20.0)))
-        form.addRow("Drop top saturation frames:", sat_spin)
-
-        elong_spin = QDoubleSpinBox()
-        elong_spin.setRange(0.0, 100.0)
-        elong_spin.setDecimals(1)
-        elong_spin.setSuffix("%")
-        elong_spin.setValue(float(getattr(self.params.P, "ref_select_elong_pct", 20.0)))
-        form.addRow("Drop top elongation frames:", elong_spin)
-
-        per_date_check = QCheckBox("Per-date reference (default)")
-        per_date_check.setChecked(bool(getattr(self.params.P, "ref_per_date", True)))
-        form.addRow("Per-date reference:", per_date_check)
-
-        max_src_spin = QSpinBox()
-        max_src_spin.setRange(0, 50000)
-        max_src_spin.setValue(int(getattr(self.params.P, "ref_cat_max_sources", 0)))
-        form.addRow("Ref catalog max sources (0=all):", max_src_spin)
-
-        min_src_spin = QSpinBox()
-        min_src_spin.setRange(0, 50000)
-        min_src_spin.setValue(int(getattr(self.params.P, "ref_cat_min_sources", 50)))
-        form.addRow("Ref catalog min sources:", min_src_spin)
-
-        max_elong_spin = QDoubleSpinBox()
-        max_elong_spin.setRange(0.0, 10.0)
-        max_elong_spin.setDecimals(2)
-        max_elong_spin.setValue(float(getattr(self.params.P, "ref_cat_max_elong", 1.5)))
-        form.addRow("Ref max elongation:", max_elong_spin)
-
-        max_round_spin = QDoubleSpinBox()
-        max_round_spin.setRange(0.0, 5.0)
-        max_round_spin.setDecimals(2)
-        max_round_spin.setValue(float(getattr(self.params.P, "ref_cat_max_abs_round", 0.4)))
-        form.addRow("Ref max |roundness|:", max_round_spin)
-
-        sharp_min_spin = QDoubleSpinBox()
-        sharp_min_spin.setRange(-5.0, 5.0)
-        sharp_min_spin.setDecimals(2)
-        sharp_min_spin.setValue(float(getattr(self.params.P, "ref_cat_sharp_min", 0.2)))
-        form.addRow("Ref sharpness min:", sharp_min_spin)
-
-        sharp_max_spin = QDoubleSpinBox()
-        sharp_max_spin.setRange(-5.0, 5.0)
-        sharp_max_spin.setDecimals(2)
-        sharp_max_spin.setValue(float(getattr(self.params.P, "ref_cat_sharp_max", 1.0)))
-        form.addRow("Ref sharpness max:", sharp_max_spin)
-
-        peak_spin = QDoubleSpinBox()
-        peak_spin.setRange(0.0, 1e9)
-        peak_spin.setDecimals(1)
-        peak_spin.setValue(float(getattr(self.params.P, "ref_cat_min_peak_adu", 0.0)))
-        form.addRow("Ref min peak/flux (0=off):", peak_spin)
-
-        match_r_spin = QDoubleSpinBox()
-        match_r_spin.setRange(0.1, 30.0)
-        match_r_spin.setDecimals(2)
-        match_r_spin.setValue(float(getattr(self.params.P, "ref_wcs_match_radius_arcsec", 2.0)))
-        form.addRow("WCS match radius (arcsec):", match_r_spin)
-
-        min_rate_spin = QDoubleSpinBox()
-        min_rate_spin.setRange(0.0, 1.0)
-        min_rate_spin.setDecimals(2)
-        min_rate_spin.setSingleStep(0.05)
-        min_rate_spin.setValue(float(getattr(self.params.P, "ref_wcs_min_match_rate", 0.2)))
-        form.addRow("WCS min match rate:", min_rate_spin)
-
-        min_match_spin = QSpinBox()
-        min_match_spin.setRange(0, 100000)
-        min_match_spin.setValue(int(getattr(self.params.P, "ref_wcs_min_match_n", 50)))
-        form.addRow("WCS min match count:", min_match_spin)
-
-        max_sep_med_spin = QDoubleSpinBox()
-        max_sep_med_spin.setRange(0.0, 30.0)
-        max_sep_med_spin.setDecimals(2)
-        max_sep_med_spin.setValue(float(getattr(self.params.P, "ref_wcs_max_sep_med_arcsec", 1.5)))
-        form.addRow("WCS max sep median (arcsec):", max_sep_med_spin)
-
-        max_sep_p90_spin = QDoubleSpinBox()
-        max_sep_p90_spin.setRange(0.0, 60.0)
-        max_sep_p90_spin.setDecimals(2)
-        max_sep_p90_spin.setValue(float(getattr(self.params.P, "ref_wcs_max_sep_p90_arcsec", 2.5)))
-        form.addRow("WCS max sep p90 (arcsec):", max_sep_p90_spin)
-
-        max_dup_spin = QDoubleSpinBox()
-        max_dup_spin.setRange(0.0, 1.0)
-        max_dup_spin.setDecimals(2)
-        max_dup_spin.setSingleStep(0.05)
-        max_dup_spin.setValue(float(getattr(self.params.P, "ref_wcs_max_dup_rate", 0.1)))
-        form.addRow("WCS max duplicate rate:", max_dup_spin)
-
-        gaia_mag_spin = QDoubleSpinBox()
-        gaia_mag_spin.setRange(10.0, 25.0)
-        gaia_mag_spin.setDecimals(2)
-        gaia_mag_spin.setSingleStep(0.5)
-        gaia_mag_spin.setValue(float(getattr(self.params.P, "idmatch_gaia_g_limit", getattr(self.params.P, "gaia_mag_max", 18.0))))
-        form.addRow("Gaia G limit (hybrid ID):", gaia_mag_spin)
-
-        buttons = QDialogButtonBox(QDialogButtonBox.Save | QDialogButtonBox.Cancel)
-        buttons.accepted.connect(dialog.accept)
-        buttons.rejected.connect(dialog.reject)
-        layout.addWidget(buttons)
-
-        if dialog.exec_() == QDialog.Accepted:
-            self.params.P.ref_select_sat_pct = sat_spin.value()
-            self.params.P.ref_select_elong_pct = elong_spin.value()
-            self.params.P.ref_per_date = per_date_check.isChecked()
-            self.params.P.ref_cat_max_sources = max_src_spin.value()
-            self.params.P.ref_cat_min_sources = min_src_spin.value()
-            self.params.P.ref_cat_max_elong = max_elong_spin.value()
-            self.params.P.ref_cat_max_abs_round = max_round_spin.value()
-            self.params.P.ref_cat_sharp_min = sharp_min_spin.value()
-            self.params.P.ref_cat_sharp_max = sharp_max_spin.value()
-            self.params.P.ref_cat_min_peak_adu = peak_spin.value()
-            self.params.P.ref_wcs_match_radius_arcsec = match_r_spin.value()
-            self.params.P.ref_wcs_min_match_rate = min_rate_spin.value()
-            self.params.P.ref_wcs_min_match_n = min_match_spin.value()
-            self.params.P.ref_wcs_max_sep_med_arcsec = max_sep_med_spin.value()
-            self.params.P.ref_wcs_max_sep_p90_arcsec = max_sep_p90_spin.value()
-            self.params.P.ref_wcs_max_dup_rate = max_dup_spin.value()
-            self.params.P.idmatch_gaia_g_limit = gaia_mag_spin.value()
-            self.persist_params()
-            QMessageBox.information(dialog, "Success", "Parameters saved!")
+        run_param_dialog(
+            self, "Reference Build Parameters", _STEP6_SPECS,
+            on_save=self.persist_params,
+            overrides={"idmatch_gaia_g_limit": getattr(self.params.P, "idmatch_gaia_g_limit",
+                        getattr(self.params.P, "gaia_mag_max", 18.0))},
+            resize=(460, 350),
+        )
 
     def run_ref_build(self):
         if self.worker and self.worker.isRunning():
@@ -2055,10 +1944,7 @@ class RefBuildWindow(StepWindowBase):
         self._update_plot_tab(state)
 
     def log(self, msg: str):
-        if self.log_text is not None:
-            self.log_text.append(msg)
+        append_timestamped_log(self.log_text, msg)
 
     def show_log_window(self):
-        if self.log_window is not None:
-            self.log_window.show()
-            self.log_window.raise_()
+        show_raised(self.log_window)

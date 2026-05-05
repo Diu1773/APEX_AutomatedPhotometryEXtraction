@@ -33,6 +33,7 @@ from PyQt5.QtWidgets import (
 
 from apex.gui.workflow.step_window_base import StepWindowBase
 from apex.gui.workflow.run_control import RunControlBar
+from apex.gui.workflow.log_panel import WorkflowLogWindow, append_timestamped_log, show_raised
 from apex.utils.astro_utils import normalize_filter_name
 from apex.utils.step_paths import (
     step2_cropped_dir,
@@ -2745,23 +2746,14 @@ class ZeropointCalibrationWindow(StepWindowBase):
         tab_widget.addTab(self.fit_tab, "ZP Fit Plot")
 
         # Log window (floating, not in tab)
-        self.log_window = QWidget(self, Qt.Window)
-        self.log_window.setWindowTitle("Calibration Log")
-        self.log_window.resize(800, 400)
-        log_layout = QVBoxLayout(self.log_window)
-        self.log_text = QTextEdit()
-        self.log_text.setReadOnly(True)
-        self.log_text.setStyleSheet("QTextEdit { font-family: monospace; font-size: 9pt; }")
-        log_layout.addWidget(self.log_text)
+        self.log_window = WorkflowLogWindow(self, "Calibration Log", width=800, height=400)
+        self.log_text = self.log_window.log_text
 
     def log(self, message: str):
-        timestamp = time.strftime("%H:%M:%S")
-        self.log_text.append(f"[{timestamp}] {message}")
+        append_timestamped_log(self.log_text, message)
 
     def show_log_window(self):
-        self.log_window.show()
-        self.log_window.raise_()
-        self.log_window.activateWindow()
+        show_raised(self.log_window)
 
     def open_parameters_dialog(self):
         dialog = QDialog(self)

@@ -46,6 +46,7 @@ except ImportError:
 
 from .step_window_base import StepWindowBase
 from .run_control import RunControlBar
+from .log_panel import WorkflowLogWindow, append_timestamped_log, show_raised
 from apex.utils.step_paths import (
     step2_cropped_dir,
     step4_dir,
@@ -878,13 +879,8 @@ class ForcedPhotWindow(StepWindowBase):
         self.tabs.addTab(tab1, "Results")
 
         # ── Floating log window ────────────────────────────────────────────────
-        self._log_win = QWidget(self, Qt.Window)
-        self._log_win.setWindowTitle("Forced Phot Log")
-        self._log_win.resize(700, 400)
-        log_layout = QVBoxLayout(self._log_win)
-        self.log_text = QTextEdit()
-        self.log_text.setReadOnly(True)
-        log_layout.addWidget(self.log_text)
+        self._log_win = WorkflowLogWindow(self, "Forced Phot Log", width=700, height=400)
+        self.log_text = self._log_win.log_text
 
         self._try_load_existing_results()
 
@@ -1014,9 +1010,7 @@ class ForcedPhotWindow(StepWindowBase):
     # ── Log window ─────────────────────────────────────────────────────────────
 
     def _show_log(self):
-        self._log_win.show()
-        self._log_win.raise_()
-        self._log_win.activateWindow()
+        show_raised(self._log_win)
 
     # ── Worker control ─────────────────────────────────────────────────────────
 
@@ -1085,7 +1079,7 @@ class ForcedPhotWindow(StepWindowBase):
         self.progress_label.setText(f"[{current}/{total}] {fname}")
 
     def _on_log(self, msg: str):
-        self.log_text.append(msg)
+        append_timestamped_log(self.log_text, msg)
 
     def _on_apcorr_update(self, gc_data: dict):
         """Called per frame when growth curve data is available."""
