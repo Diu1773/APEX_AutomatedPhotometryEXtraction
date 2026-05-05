@@ -33,7 +33,7 @@ from PyQt5.QtWidgets import (
 
 from apex.gui.workflow.step_window_base import StepWindowBase
 from apex.gui.workflow.run_control import RunControlBar
-from apex.gui.workflow.log_panel import WorkflowLogWindow, append_timestamped_log, show_raised
+from apex.gui.workflow.log_panel import WorkflowLogWindow, WorkerStatusPanel, append_timestamped_log, show_raised
 from apex.utils.astro_utils import normalize_filter_name
 from apex.utils.step_paths import (
     step2_cropped_dir,
@@ -2732,22 +2732,17 @@ class ZeropointCalibrationWindow(StepWindowBase):
         self.fit_tab = ZPFitPlotWidget(self.params.P.result_dir)
         self.content_layout.addWidget(self.fit_tab, 1)
 
-        # ── Log window with progress panel ───────────────────────────────────
-        _prog_group = QGroupBox("Progress")
-        _prog_group.setMinimumWidth(200)
-        _prog_layout = QVBoxLayout(_prog_group)
-        self._log_progress_label = QLabel("Idle")
-        self._log_progress_label.setWordWrap(True)
-        self._log_progress_bar = QProgressBar()
-        self._log_progress_bar.setMinimum(0)
-        self._log_progress_bar.setValue(0)
-        _prog_layout.addWidget(self._log_progress_label)
-        _prog_layout.addWidget(self._log_progress_bar)
-        _prog_layout.addStretch()
+        # ── Log window with Workers panel ────────────────────────────────────
+        _worker_group = QGroupBox("Workers")
+        _worker_group.setMinimumWidth(300)
+        _wg_layout = QVBoxLayout(_worker_group)
+        _wg_layout.setContentsMargins(5, 5, 5, 5)
+        self.worker_panel = WorkerStatusPanel(_worker_group)
+        _wg_layout.addWidget(self.worker_panel)
 
         self.log_window = WorkflowLogWindow(
             self, "Calibration Log", width=850, height=420,
-            side_widget=_prog_group,
+            side_widget=_worker_group,
         )
         self.log_text = self.log_window.log_text
 
@@ -2895,10 +2890,9 @@ class ZeropointCalibrationWindow(StepWindowBase):
 
     def on_progress(self, current, total, filename):
         self.progress_label.setText(f"{current}/{total} | {filename}")
-        if hasattr(self, "_log_progress_bar"):
-            self._log_progress_bar.setMaximum(total)
-            self._log_progress_bar.setValue(current)
-            self._log_progress_label.setText(filename)
+        if hasattr(self, "worker_panel"):
+            pct = int(100 * current / max(1, total))
+            self.worker_panel.update_worker(0, filename, f"{current}/{total}", pct)
 
     def on_finished(self, summary):
         self.run_bar.set_running(False)

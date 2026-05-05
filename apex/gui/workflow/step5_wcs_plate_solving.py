@@ -46,7 +46,7 @@ from PyQt5.QtCore import Qt, QThread, pyqtSignal
 
 from .step_window_base import StepWindowBase
 from .run_control import RunControlBar
-from .log_panel import WorkflowLogWindow, append_timestamped_log, show_raised
+from .log_panel import WorkflowLogWindow, WorkerStatusPanel, append_timestamped_log, show_raised
 from apex.core.cache_manager import StepCacheManager
 from apex.utils.step_paths import (
     step2_cropped_dir,
@@ -226,6 +226,7 @@ class WcsWorker(QThread):
     """Worker thread for ASTAP WCS solving"""
     progress = pyqtSignal(int, int, str)
     file_done = pyqtSignal(str, dict)
+    worker_status = pyqtSignal(int, str, str, int)
     finished = pyqtSignal(dict)
     error = pyqtSignal(str, str)
 
@@ -1991,8 +1992,23 @@ WHERE 1=CONTAINS(
             completed = 0
             _default_workers = get_parallel_workers(self.params)
             max_workers = int(getattr(self.params.P, "wcs_max_workers", _default_workers))
+            from queue import Queue as _Queue
+            _slot_q: _Queue = _Queue()
+            for _i in range(max(1, max_workers)):
+                _slot_q.put(_i)
+
+            def _slotted_solve(filename: str):
+                slot = _slot_q.get()
+                try:
+                    self.worker_status.emit(slot, filename, "Solving", 5)
+                    out = solve_one(filename)
+                    self.worker_status.emit(slot, filename, "Done", 100)
+                    return out
+                finally:
+                    _slot_q.put(slot)
+
             with ThreadPoolExecutor(max_workers=max(1, max_workers)) as ex:
-                futures = {ex.submit(solve_one, f): f for f in files}
+                futures = {ex.submit(_slotted_solve, f): f for f in files}
                 for fut in as_completed(futures):
                     if self._stop_requested:
                         for f_cancel in futures:
@@ -2081,6 +2097,7 @@ class AstrometryNetWorker(QThread):
     file_done = pyqtSignal(str, dict)
     refine_done = pyqtSignal(str, dict)  # 파일명, refine 결과
     log_message = pyqtSignal(str)
+    worker_status = pyqtSignal(int, str, str, int)
     finished = pyqtSignal(dict)
     error = pyqtSignal(str, str)
 
@@ -3275,9 +3292,24 @@ WHERE 1=CONTAINS(
             return filename, result
 
         file_results = {}  # filename -> result 매핑
+        from queue import Queue as _Queue
+        _slot_q: _Queue = _Queue()
+        for _i in range(max(1, max_workers)):
+            _slot_q.put(_i)
+
+        def _slotted_process(filename: str):
+            slot = _slot_q.get()
+            try:
+                self.worker_status.emit(slot, filename, "Astnet", 5)
+                out = process_single_file(filename)
+                self.worker_status.emit(slot, filename, "Done", 100)
+                return out
+            finally:
+                _slot_q.put(slot)
+
         with ThreadPoolExecutor(max_workers=max_workers) as executor:
             # 모든 작업을 큐에 등록
-            future_to_file = {executor.submit(process_single_file, f): f for f in self.file_list}
+            future_to_file = {executor.submit(_slotted_process, f): f for f in self.file_list}
 
             completed_count = 0
             for future in as_completed(future_to_file):
@@ -3826,6 +3858,10 @@ class WcsPlateSolvingWindow(StepWindowBase):
         self.astrometrynet_worker.log_message.connect(self.log)
         self.astrometrynet_worker.finished.connect(self.on_astrometrynet_finished)
         self.astrometrynet_worker.error.connect(self.on_astrometrynet_error)
+        self.setup_log_window()
+        if hasattr(self, "_worker_panel") and self._worker_panel is not None:
+            self._worker_panel.clear()
+            self.astrometrynet_worker.worker_status.connect(self._worker_panel.update_worker)
 
         self.run_bar_astnet.set_running(True)
         self.astrometrynet_progress.setValue(0)
@@ -3856,11 +3892,6 @@ class WcsPlateSolvingWindow(StepWindowBase):
             else:
                 eta_str = f" | ETA {int(remaining // 60)}m{int(remaining % 60):02d}s"
         self.astrometrynet_status.setText(f"{status}{eta_str}")
-        if hasattr(self, "_log_progress_bar"):
-            self._log_progress_bar.setMaximum(100)
-            self._log_progress_bar.setValue(pct)
-            self._log_file_label.setText(status)
-            self._log_solver_label.setText("Solver: Astrometry.net")
 
     def on_astrometrynet_file_done(self, filename, result):
         row = self.astrometrynet_results_table.rowCount()
@@ -3923,24 +3954,16 @@ class WcsPlateSolvingWindow(StepWindowBase):
         if self.log_window is not None:
             return
 
-        status_group = QGroupBox("Current Progress")
-        status_group.setMinimumWidth(260)
-        status_layout = QVBoxLayout(status_group)
-        self._log_solver_label = QLabel("Solver: —")
-        self._log_file_label = QLabel("File: —")
-        self._log_file_label.setWordWrap(True)
-        self._log_progress_bar = QProgressBar()
-        self._log_progress_bar.setMinimum(0)
-        self._log_progress_bar.setValue(0)
-        status_layout.addWidget(self._log_solver_label)
-        status_layout.addWidget(QLabel("Current file:"))
-        status_layout.addWidget(self._log_file_label)
-        status_layout.addWidget(self._log_progress_bar)
-        status_layout.addStretch()
+        worker_group = QGroupBox("Workers")
+        worker_group.setMinimumWidth(430)
+        wg_layout = QVBoxLayout(worker_group)
+        wg_layout.setContentsMargins(5, 5, 5, 5)
+        self._worker_panel = WorkerStatusPanel(worker_group)
+        wg_layout.addWidget(self._worker_panel)
 
         self.log_window = WorkflowLogWindow(
-            self, "WCS Log", width=900, height=450,
-            side_widget=status_group,
+            self, "WCS Log & Workers", width=900, height=500,
+            side_widget=worker_group,
         )
         self.log_text = self.log_window.log_text
 
@@ -4290,6 +4313,10 @@ class WcsPlateSolvingWindow(StepWindowBase):
         self.worker.file_done.connect(self.on_file_done)
         self.worker.finished.connect(self.on_finished)
         self.worker.error.connect(self.on_error)
+        self.setup_log_window()
+        if hasattr(self, "_worker_panel") and self._worker_panel is not None:
+            self._worker_panel.clear()
+            self.worker.worker_status.connect(self._worker_panel.update_worker)
 
         self.run_bar_astap.set_running(True)
         self.progress_bar.setValue(0)
@@ -4318,11 +4345,6 @@ class WcsPlateSolvingWindow(StepWindowBase):
             else:
                 eta_str = f" | ETA {int(remaining // 60)}m{int(remaining % 60):02d}s"
         self.progress_label.setText(f"{current}/{total}{eta_str} | {filename}")
-        if hasattr(self, "_log_progress_bar"):
-            self._log_progress_bar.setMaximum(total)
-            self._log_progress_bar.setValue(current)
-            self._log_file_label.setText(filename)
-            self._log_solver_label.setText("Solver: ASTAP")
 
     @staticmethod
     def _boolish(value) -> bool:

@@ -36,7 +36,7 @@ from matplotlib.figure import Figure
 from .step_window_base import StepWindowBase
 from .run_control import RunControlBar
 from .param_dialog import ParamSpec, run_param_dialog
-from .log_panel import WorkflowLogWindow, append_timestamped_log, show_raised
+from .log_panel import WorkflowLogWindow, WorkerStatusPanel, append_timestamped_log, show_raised
 from apex.utils.step_paths import (
     step5_wcs_dir,
     step6_refbuild_dir,
@@ -1491,21 +1491,16 @@ class RefBuildWindow(StepWindowBase):
 
         self.content_layout.addWidget(self.tabs)
 
-        _prog_group = QGroupBox("Progress")
-        _prog_group.setMinimumWidth(200)
-        _prog_layout = QVBoxLayout(_prog_group)
-        self._log_progress_label = QLabel("Idle")
-        self._log_progress_label.setWordWrap(True)
-        self._log_progress_bar = QProgressBar()
-        self._log_progress_bar.setMinimum(0)
-        self._log_progress_bar.setValue(0)
-        _prog_layout.addWidget(self._log_progress_label)
-        _prog_layout.addWidget(self._log_progress_bar)
-        _prog_layout.addStretch()
+        _worker_group = QGroupBox("Workers")
+        _worker_group.setMinimumWidth(300)
+        _wg_layout = QVBoxLayout(_worker_group)
+        _wg_layout.setContentsMargins(5, 5, 5, 5)
+        self.worker_panel = WorkerStatusPanel(_worker_group)
+        _wg_layout.addWidget(self.worker_panel)
 
         self.log_window = WorkflowLogWindow(
             self, "Reference Build Log", width=900, height=500,
-            side_widget=_prog_group,
+            side_widget=_worker_group,
         )
         self.log_text = self.log_window.log_text
 
@@ -1626,10 +1621,9 @@ class RefBuildWindow(StepWindowBase):
 
     def on_progress(self, current, total, filename):
         self.progress_bar.setValue(current)
-        if hasattr(self, "_log_progress_bar"):
-            self._log_progress_bar.setMaximum(total)
-            self._log_progress_bar.setValue(current)
-            self._log_progress_label.setText(filename)
+        if hasattr(self, "worker_panel"):
+            pct = int(100 * current / max(1, total))
+            self.worker_panel.update_worker(0, filename, f"{current}/{total}", pct)
         eta_str = ""
         if current > 0 and total > 0 and hasattr(self, "_ref_start_time"):
             elapsed = time.monotonic() - self._ref_start_time
