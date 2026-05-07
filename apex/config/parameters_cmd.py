@@ -332,6 +332,9 @@ TOML_KEY_MAP: list[tuple[Iterable[str], str]] = [
     (("psf", "use_error_image"), "psf_use_error_image"),
     (("psf", "save_residuals"), "psf_save_residuals"),
     (("psf", "save_model_image"), "psf_save_model_image"),
+    (("psf", "shared_filter_epsf"), "psf_shared_filter_epsf"),
+    (("psf", "grouper_max_size"), "psf_grouper_max_size"),
+    (("psf", "save_all_iter_residuals"), "psf_save_all_iter_residuals"),
     # Cross-frame pixel matching (Steps 7–8)
     (("cross_frame", "ransac_tol_px"), "cross_frame_ransac_tol_px"),
     (("cross_frame", "ransac_max_iter"), "cross_frame_ransac_max_iter"),
@@ -733,7 +736,7 @@ class Parameters:
             overlay_shift_max_vectors=_geti(raw, "overlay_shift_max_vectors", 300),
             overlay_shift_min_px=_getf(raw, "overlay_shift_min_px", 1.5),
 
-            # CMD/analysis (Step 13)
+            # CMD/analysis (Step 12)
             pixel_scale_arcsec=_as_float_or_none(raw.get("pixel_scale_arcsec", "")),
             match_tol_px=_getf(raw, "match_tol_px", 1.0),
             min_master_gaia_matches=_geti(raw, "min_master_gaia_matches", 10),
@@ -793,6 +796,9 @@ class Parameters:
             psf_use_error_image=_as_bool(raw.get("psf_use_error_image", "false"), False),
             psf_save_residuals=_as_bool(raw.get("psf_save_residuals", "true"), True),
             psf_save_model_image=_as_bool(raw.get("psf_save_model_image", "true"), True),
+            psf_shared_filter_epsf=_as_bool(raw.get("psf_shared_filter_epsf", "false"), False),
+            psf_grouper_max_size=_geti(raw, "psf_grouper_max_size", 25),
+            psf_save_all_iter_residuals=_as_bool(raw.get("psf_save_all_iter_residuals", "false"), False),
 
             # Cross-frame pixel matching (Steps 7–8)
             cross_frame_ransac_tol_px=_getf(raw, "cross_frame_ransac_tol_px", 2.0),

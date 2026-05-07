@@ -13,6 +13,8 @@ from PyQt5.QtWidgets import (
     QWidget, QTabWidget, QScrollArea,
 )
 from PyQt5.QtCore import Qt, QThread, pyqtSignal, QTimer
+from PyQt5.QtGui import QColor
+from apex.gui.widgets.fits_viewer import FITSViewerWidget, OverlayMarker
 from pathlib import Path
 from typing import Optional
 import copy
@@ -1325,8 +1327,25 @@ class QCInspectionPanel(QWidget):
 
         control_layout.addWidget(z_group)
 
+        elong_group = QGroupBox("Elongation Filter (absolute)")
+        elong_layout = QFormLayout(elong_group)
+        self.elong_thresh_spin = QDoubleSpinBox()
+        self.elong_thresh_spin.setRange(1.0, 5.0)
+        self.elong_thresh_spin.setSingleStep(0.05)
+        self.elong_thresh_spin.setDecimals(2)
+        self.elong_thresh_spin.setValue(1.3)
+        elong_layout.addRow("elong > (exclude):", self.elong_thresh_spin)
+        self.btn_elong_filter = QPushButton("Auto-filter elong")
+        self.btn_elong_filter.setToolTip(
+            "Exclude all frames whose median elongation exceeds the threshold.\n"
+            "Works per filter band. Useful for catching tracking-trailed frames."
+        )
+        self.btn_elong_filter.clicked.connect(self.auto_filter_elong)
+        elong_layout.addRow(self.btn_elong_filter)
+        control_layout.addWidget(elong_group)
+
         btn_row = QHBoxLayout()
-        self.btn_find = QPushButton("Find Outliers")
+        self.btn_find = QPushButton("Find Outliers (z)")
         self.btn_find.clicked.connect(self.find_outliers)
         btn_row.addWidget(self.btn_find)
         self.btn_apply = QPushButton("Exclude Candidates")
@@ -1708,6 +1727,30 @@ class QCInspectionPanel(QWidget):
             self._show_frame_info(first_candidate)
         self.update_plots()
 
+    def auto_filter_elong(self):
+        """Exclude frames whose median elongation exceeds the absolute threshold."""
+        df = self._subset_df()
+        if df.empty or "elong_med" not in df.columns:
+            self.warning_label.setText("No elongation data available.")
+            return
+        thresh = float(self.elong_thresh_spin.value())
+        n_excluded = 0
+        for _, row in df.iterrows():
+            elong = float(row.get("elong_med", np.nan))
+            fname = str(row["file"])
+            if np.isfinite(elong) and elong > thresh:
+                self.exclude_reasons.setdefault(fname, set()).add("high_elong")
+                n_excluded += 1
+        if n_excluded:
+            self.warning_label.setText(
+                f"Auto-filter: excluded {n_excluded} frame(s) with elong > {thresh:.2f}. "
+                "Click Save to persist."
+            )
+        else:
+            self.warning_label.setText(f"No frames with elong > {thresh:.2f}.")
+        self.update_plots()
+        self.update_summary()
+
     def apply_candidates(self):
         if not self.pending_candidates:
             return
@@ -2028,7 +2071,7 @@ class QCInspectionPanel(QWidget):
         if df.empty:
             self.summary_text.setText("No data.")
             return
-        reasons_count = {"sky_outlier": 0, "fwhm_outlier": 0, "low_nsrc": 0, "manual": 0}
+        reasons_count = {"sky_outlier": 0, "fwhm_outlier": 0, "low_nsrc": 0, "high_elong": 0, "manual": 0}
         excluded_files = []
         for fname in df["file"].tolist():
             r = self.exclude_reasons.get(fname, set())
@@ -2050,6 +2093,7 @@ class QCInspectionPanel(QWidget):
             f"Reasons: sky={reasons_count['sky_outlier']} "
             f"fwhm={reasons_count['fwhm_outlier']} "
             f"nsrc={reasons_count['low_nsrc']} "
+            f"elong={reasons_count['high_elong']} "
             f"manual={reasons_count['manual']}",
             "",
             "Top sky_med:",
@@ -2087,20 +2131,11 @@ class SourceDetectionWindow(StepWindowBase):
         self.image_data = None
         self.header = None
 
-        # Matplotlib components
-        self.figure = None
-        self.canvas = None
-        self.ax = None
-        self._imshow_obj = None
-        self._normalized_cache = None
+        # Image viewer
+        self._viewer: FITSViewerWidget | None = None
+        self._selected_star_pos = None
         self._fits_cache: OrderedDict = OrderedDict()  # filename -> (image_data, header), LRU order
         self._FITS_CACHE_SIZE = max(3, int(getattr(params.P, "step4_fits_cache_size", 6)))
-
-        # Zoom/pan state
-        self.xlim_original = None
-        self.ylim_original = None
-        self.panning = False
-        self.pan_start = None
 
         # File list
         self.file_list = []
@@ -2476,76 +2511,16 @@ class SourceDetectionWindow(StepWindowBase):
         file_layout.addStretch()
         viewer_layout.addLayout(file_layout)
 
-        # === Stretch Controls Row ===
-        stretch_layout = QHBoxLayout()
-
-        stretch_layout.addWidget(QLabel("Stretch:"))
-        self.scale_combo = QComboBox()
-        self.scale_combo.addItems([
-            'Auto Stretch (Siril)',
-            'Asinh Stretch',
-            'Midtone (MTF)',
-            'Histogram Eq',
-            'Log Stretch',
-            'Sqrt Stretch',
-            'Linear (1-99%)',
-            'ZScale (IRAF)'
-        ])
-        self.scale_combo.currentIndexChanged.connect(self.on_stretch_changed)
-        stretch_layout.addWidget(self.scale_combo)
-
-        stretch_layout.addWidget(QLabel("Intensity:"))
-        self.stretch_slider = QSlider(Qt.Horizontal)
-        self.stretch_slider.setMinimum(1)
-        self.stretch_slider.setMaximum(100)
-        self.stretch_slider.setValue(25)
-        self.stretch_slider.setFixedWidth(100)
-        self.stretch_slider.sliderReleased.connect(self.redisplay_image)
-        self.stretch_slider.valueChanged.connect(self.update_stretch_label)
-        stretch_layout.addWidget(self.stretch_slider)
-
-        self.stretch_value_label = QLabel("25")
-        self.stretch_value_label.setFixedWidth(25)
-        stretch_layout.addWidget(self.stretch_value_label)
-
-        stretch_layout.addWidget(QLabel("Black:"))
-        self.black_slider = QSlider(Qt.Horizontal)
-        self.black_slider.setMinimum(0)
-        self.black_slider.setMaximum(100)
-        self.black_slider.setValue(0)
-        self.black_slider.setFixedWidth(60)
-        self.black_slider.sliderReleased.connect(self.redisplay_image)
-        self.black_slider.valueChanged.connect(self.update_black_label)
-        stretch_layout.addWidget(self.black_slider)
-
-        self.black_value_label = QLabel("0")
-        self.black_value_label.setFixedWidth(20)
-        stretch_layout.addWidget(self.black_value_label)
-
-        btn_reset_zoom = QPushButton("Reset Zoom")
-        btn_reset_zoom.clicked.connect(self.reset_zoom)
-        stretch_layout.addWidget(btn_reset_zoom)
-
+        # 2D Plot button (top bar)
         btn_2d_plot = QPushButton("2D Plot")
         btn_2d_plot.setStyleSheet("QPushButton { background-color: #FF9800; color: white; font-weight: bold; }")
         btn_2d_plot.clicked.connect(self.open_stretch_plot)
-        stretch_layout.addWidget(btn_2d_plot)
+        file_layout.addWidget(btn_2d_plot)
 
-        stretch_layout.addStretch()
-        viewer_layout.addLayout(stretch_layout)
-
-        # Matplotlib canvas
-        self.figure = Figure(figsize=(8, 6))
-        self.canvas = FigureCanvas(self.figure)
-        self.ax = self.figure.add_subplot(111)
-
-        # Connect mouse events for zoom/pan
-        self.canvas.mpl_connect('scroll_event', self.on_scroll)
-        self.canvas.mpl_connect('button_press_event', self.on_button_press)
-        self.canvas.mpl_connect('button_release_event', self.on_button_release)
-        self.canvas.mpl_connect('motion_notify_event', self.on_motion)
-
-        viewer_layout.addWidget(self.canvas)
+        # GPU-accelerated FITS viewer
+        self._viewer = FITSViewerWidget(self)
+        self._viewer.gl.mouse_pressed.connect(self._on_viewer_click)
+        viewer_layout.addWidget(self._viewer)
 
         main_splitter.addWidget(viewer_group)
 
@@ -2575,7 +2550,7 @@ class SourceDetectionWindow(StepWindowBase):
         star_info_group.setStyleSheet("QGroupBox { font-weight: bold; }")
         star_info_layout = QVBoxLayout(star_info_group)
 
-        self.star_info_label = QLabel("Click on a star in the image to see details\n(Left-click near a detected source)")
+        self.star_info_label = QLabel("Right-click on a star in the image to see details\n(Right-click near a detected source)")
         self.star_info_label.setStyleSheet("""
             QLabel {
                 font-family: monospace;
@@ -2792,43 +2767,31 @@ class SourceDetectionWindow(StepWindowBase):
 
         try:
             new_data, new_header = self._load_fits_cached(filename)
-            shape_changed = (self.image_data is None or new_data.shape != self.image_data.shape)
             self.image_data = new_data
             self.header = new_header
-
             self.current_filename = filename
-            if (not quick_switch) or shape_changed:
-                self._normalized_cache = None
-                self._imshow_obj = None
-                self.xlim_original = None
-                self.ylim_original = None
-
-            self.reset_stretch_plot_values()
-            self.display_image(full_redraw=(self._imshow_obj is None))
+            self._stretch_vmin = None
+            self._stretch_vmax = None
+            self._selected_star_pos = None
+            self._update_viewer_image(keep_view=quick_switch)
             self.update_overlay()
 
         except Exception as e:
             QMessageBox.critical(self, "Error", f"Failed to load: {str(e)}")
 
-    # === Stretch Functions (from Step 3) ===
+    # === Viewer methods ===
 
-    def on_stretch_changed(self, index):
-        """Handle stretch method change"""
-        self._normalized_cache = None
-        self.reset_stretch_plot_values()
-        self.display_image()
+    def _update_viewer_image(self, keep_view=False):
+        if self._viewer is None or self.image_data is None:
+            return
+        self._viewer.set_data(self.image_data)
+        if not keep_view:
+            self._viewer.auto_stf()
+            self._viewer.fit_in_view()
 
-    def update_stretch_label(self, value):
-        """Update intensity label"""
-        self.stretch_value_label.setText(str(value))
-
-    def update_black_label(self, value):
-        """Update black point label"""
-        self.black_value_label.setText(str(value))
-
-    def redisplay_image(self):
-        """Redisplay with new scaling"""
-        self.display_image()
+    def _on_viewer_click(self, x, y, btn):
+        if btn == int(Qt.RightButton):
+            self.select_nearest_star(int(round(x)), int(round(y)))
 
     def open_stretch_plot(self):
         """Open stretch plot window showing histogram with draggable min/max markers"""
@@ -2895,20 +2858,17 @@ class SourceDetectionWindow(StepWindowBase):
         self._stretch_data_range = (float(p_low), float(p_high))
 
         if self._stretch_vmin is None or self._stretch_vmax is None:
-            stretch_idx = self.scale_combo.currentIndex()
-            if stretch_idx == 6:
-                vmin = np.percentile(flat, 1)
-                vmax = np.percentile(flat, 99)
-            elif stretch_idx == 7:
-                vmin, vmax = self.calculate_zscale()
+            if self._viewer is not None:
+                shadow, highlight, _ = self._viewer.get_stf_params()
+                vmin, vmax = float(shadow), float(highlight)
             else:
                 _, median_val, std_val = sigma_clipped_stats(flat, sigma=3.0, maxiters=5)
-                vmin = max(np.min(flat), median_val - 2.8 * std_val)
-                vmax = min(np.max(flat), np.percentile(flat, 99.9))
+                vmin = max(float(np.min(flat)), median_val - 2.8 * std_val)
+                vmax = min(float(np.max(flat)), np.percentile(flat, 99.9))
 
             if vmax <= vmin:
-                vmin = np.min(flat)
-                vmax = np.max(flat)
+                vmin = float(np.min(flat))
+                vmax = float(np.max(flat))
 
             self._stretch_vmin = float(vmin)
             self._stretch_vmax = float(vmax)
@@ -2941,9 +2901,9 @@ class SourceDetectionWindow(StepWindowBase):
         ax.legend(loc='upper right', fontsize=8)
 
         if self.stretch_plot_info_label:
-            stretch_name = self.scale_combo.currentText()
+            mode_name = self._viewer._mode_combo.currentText() if self._viewer else "STF"
             self.stretch_plot_info_label.setText(
-                f"Stretch: {stretch_name} | Min: {vmin:.2f} | Max: {vmax:.2f}"
+                f"Stretch: {mode_name} | Min: {vmin:.2f} | Max: {vmax:.2f}"
             )
 
         self.stretch_plot_canvas.draw_idle()
@@ -2983,247 +2943,14 @@ class SourceDetectionWindow(StepWindowBase):
         self._stretch_drag_target = None
 
     def _apply_custom_stretch(self):
-        """Apply custom vmin/vmax stretch to the image"""
-        if self.image_data is None:
+        if self.image_data is None or self._viewer is None:
             return
         if self._stretch_vmin is None or self._stretch_vmax is None:
             return
-
-        vmin = self._stretch_vmin
-        vmax = self._stretch_vmax
+        vmin, vmax = self._stretch_vmin, self._stretch_vmax
         if vmax <= vmin:
             vmax = vmin + 1
-
-        data = self.image_data.copy()
-        normalized = (data - vmin) / (vmax - vmin + 1e-10)
-        normalized = np.clip(normalized, 0, 1)
-        stretched = self.apply_stretch(normalized)
-
-        if self._imshow_obj is not None:
-            self._imshow_obj.set_data(stretched)
-            self.canvas.draw_idle()
-
-    def reset_stretch_plot_values(self):
-        """Reset stretch plot values when changing image or stretch mode"""
-        self._stretch_vmin = None
-        self._stretch_vmax = None
-        if self.stretch_plot_dialog and self.stretch_plot_dialog.isVisible():
-            self._update_stretch_plot()
-
-    def normalize_image(self):
-        """Normalize image data to [0, 1] range"""
-        if self.image_data is None:
-            return None
-
-        stretch_idx = self.scale_combo.currentIndex()
-        cache_key = (id(self.image_data), stretch_idx)
-        if hasattr(self, '_normalized_cache') and self._normalized_cache is not None:
-            if self._normalized_cache[0] == cache_key:
-                return self._normalized_cache[1].copy()
-
-        finite = np.isfinite(self.image_data)
-        if not finite.any():
-            return np.zeros_like(self.image_data)
-
-        data = self.image_data.copy()
-
-        if stretch_idx == 6:  # Linear (1-99%)
-            vmin = np.percentile(data[finite], 1)
-            vmax = np.percentile(data[finite], 99)
-        elif stretch_idx == 7:  # ZScale (IRAF)
-            vmin, vmax = self.calculate_zscale()
-        else:
-            mean_val, median_val, std_val = sigma_clipped_stats(data[finite], sigma=3.0, maxiters=5)
-            vmin = max(np.min(data[finite]), median_val - 2.8 * std_val)
-            vmax = min(np.max(data[finite]), np.percentile(data[finite], 99.9))
-
-        if vmax <= vmin:
-            vmin = np.min(data[finite])
-            vmax = np.max(data[finite])
-
-        normalized = (data - vmin) / (vmax - vmin + 1e-10)
-        normalized = np.clip(normalized, 0, 1)
-        self._normalized_cache = (cache_key, normalized)
-
-        return normalized.copy()
-
-    def calculate_zscale(self):
-        """Calculate ZScale vmin/vmax"""
-        finite = np.isfinite(self.image_data)
-        if not finite.any():
-            return 0, 1
-
-        data = self.image_data[finite]
-        mean_val, median_val, std_val = sigma_clipped_stats(data, sigma=3.0, maxiters=5)
-
-        vmin = float(median_val - 2.8 * std_val)
-        vmax_percentile = np.percentile(data, 99.5)
-        vmax_sigma = median_val + 6.0 * std_val
-        vmax = float(min(vmax_percentile, vmax_sigma))
-
-        if vmax <= vmin:
-            vmin = float(np.min(data))
-            vmax = float(np.max(data))
-
-        return vmin, vmax
-
-    def apply_stretch(self, data):
-        """Apply selected stretch to normalized data"""
-        stretch_idx = self.scale_combo.currentIndex()
-        intensity = self.stretch_slider.value() / 100.0
-        black_point = self.black_slider.value() / 100.0
-
-        data = np.clip((data - black_point) / (1.0 - black_point + 1e-10), 0, 1)
-
-        if stretch_idx == 0:  # Auto Stretch (Siril)
-            return self.stretch_auto_siril(data, intensity)
-        elif stretch_idx == 1:  # Asinh
-            return self.stretch_asinh(data, intensity)
-        elif stretch_idx == 2:  # MTF
-            return self.stretch_mtf(data, intensity)
-        elif stretch_idx == 3:  # Histogram Eq
-            return self.stretch_histogram_eq(data)
-        elif stretch_idx == 4:  # Log
-            return self.stretch_log(data, intensity)
-        elif stretch_idx == 5:  # Sqrt
-            return self.stretch_sqrt(data, intensity)
-        else:
-            return data
-
-    def stretch_auto_siril(self, data, intensity):
-        """Siril-style auto stretch"""
-        finite = data[np.isfinite(data)]
-        if len(finite) == 0:
-            return data
-
-        median_val = np.median(finite)
-        mad = np.median(np.abs(finite - median_val))
-        sigma = mad * 1.4826
-
-        shadows = max(0, median_val - 2.8 * sigma)
-        stretched = (data - shadows) / (1.0 - shadows + 1e-10)
-        stretched = np.clip(stretched, 0, 1)
-
-        midtone = 0.15 + (1.0 - intensity) * 0.35
-        return self.mtf_function(stretched, midtone)
-
-    def stretch_asinh(self, data, intensity):
-        """Asinh stretch"""
-        beta = 1.0 + intensity * 15.0
-        stretched = np.arcsinh(data * beta) / np.arcsinh(beta)
-        return np.clip(stretched, 0, 1)
-
-    def stretch_mtf(self, data, intensity):
-        """MTF stretch"""
-        midtone = 0.05 + (1.0 - intensity) * 0.45
-        return self.mtf_function(data, midtone)
-
-    def mtf_function(self, data, midtone):
-        """MTF formula"""
-        m = np.clip(midtone, 0.001, 0.999)
-        result = np.zeros_like(data)
-        mask = data > 0
-        result[mask] = (m - 1) * data[mask] / ((2 * m - 1) * data[mask] - m)
-        result[data == 0] = 0
-        result[data == 1] = 1
-        return np.clip(result, 0, 1)
-
-    def stretch_histogram_eq(self, data):
-        """Histogram equalization"""
-        finite = data[np.isfinite(data)]
-        if len(finite) == 0:
-            return data
-
-        hist, bin_edges = np.histogram(finite.flatten(), bins=65536, range=(0, 1))
-        cdf = hist.cumsum()
-        cdf = cdf / cdf[-1]
-        bin_centers = (bin_edges[:-1] + bin_edges[1:]) / 2
-        return np.clip(np.interp(data, bin_centers, cdf), 0, 1)
-
-    def stretch_log(self, data, intensity):
-        """Log stretch"""
-        a = 100 + intensity * 900
-        return np.clip(np.log(1 + a * data) / np.log(1 + a), 0, 1)
-
-    def stretch_sqrt(self, data, intensity):
-        """Sqrt stretch"""
-        power = 0.2 + (1.0 - intensity) * 0.8
-        return np.clip(np.power(data, power), 0, 1)
-
-    def display_image(self, full_redraw=False):
-        """Display image with selected stretch"""
-        if self.image_data is None:
-            return
-
-        normalized = self.normalize_image()
-        if normalized is None:
-            return
-
-        stretched = self.apply_stretch(normalized)
-
-        if self._imshow_obj is not None and not full_redraw:
-            self._imshow_obj.set_data(stretched)
-            stretch_name = self.scale_combo.currentText()
-            self.ax.set_title(f"{self.current_filename} | {stretch_name}")
-            self.canvas.draw_idle()
-            return
-
-        xlim_current = self.ax.get_xlim() if self.xlim_original else None
-        ylim_current = self.ax.get_ylim() if self.ylim_original else None
-
-        self.ax.clear()
-        self._imshow_obj = None
-
-        self._imshow_obj = self.ax.imshow(
-            stretched, cmap='gray', origin='lower',
-            vmin=0, vmax=1, interpolation='nearest'
-        )
-
-        self.ax.set_xlabel("X (pixels)")
-        self.ax.set_ylabel("Y (pixels)")
-        stretch_name = self.scale_combo.currentText()
-        self.ax.set_title(f"{self.current_filename} | {stretch_name}")
-
-        if self.xlim_original is None:
-            self.xlim_original = self.ax.get_xlim()
-            self.ylim_original = self.ax.get_ylim()
-        elif xlim_current is not None:
-            self.ax.set_xlim(xlim_current)
-            self.ax.set_ylim(ylim_current)
-
-        self.canvas.draw()
-
-    # === Zoom/Pan ===
-
-    def on_scroll(self, event):
-        """Handle mouse wheel zoom"""
-        if event.inaxes != self.ax:
-            return
-
-        scale = 1.2 if event.button == 'down' else 1/1.2
-
-        xlim = self.ax.get_xlim()
-        ylim = self.ax.get_ylim()
-
-        xdata, ydata = event.xdata, event.ydata
-        new_width = (xlim[1] - xlim[0]) * scale
-        new_height = (ylim[1] - ylim[0]) * scale
-
-        relx = (xlim[1] - xdata) / (xlim[1] - xlim[0])
-        rely = (ylim[1] - ydata) / (ylim[1] - ylim[0])
-
-        self.ax.set_xlim([xdata - new_width * (1-relx), xdata + new_width * relx])
-        self.ax.set_ylim([ydata - new_height * (1-rely), ydata + new_height * rely])
-
-        self.canvas.draw_idle()
-
-    def on_button_press(self, event):
-        """Handle mouse button press"""
-        if event.button == 3:  # Right click
-            self.panning = True
-            self.pan_start = (event.xdata, event.ydata)
-        elif event.button == 1 and event.inaxes == self.ax:  # Left click - select star
-            self.select_nearest_star(event.xdata, event.ydata)
+        self._viewer.set_shadow_highlight(vmin, vmax)
 
     def select_nearest_star(self, click_x, click_y):
         """Find and display info for the nearest detected star"""
@@ -3305,74 +3032,30 @@ class SourceDetectionWindow(StepWindowBase):
             self.star_info_label.setText(f"Error reading source data:\n{str(e)}")
 
     def highlight_selected_star(self, x, y):
-        """Highlight the selected star with a circle"""
-        for artist in self.ax.patches[:]:
-            if hasattr(artist, '_is_selection_highlight'):
-                artist.remove()
-
-        from matplotlib.patches import Circle
-        highlight = Circle((x, y), radius=15, fill=False, color='yellow', linewidth=2, linestyle='--')
-        highlight._is_selection_highlight = True
-        self.ax.add_patch(highlight)
-        self.canvas.draw_idle()
-
-    def on_button_release(self, event):
-        """Handle mouse button release"""
-        if event.button == 3:
-            self.panning = False
-            self.pan_start = None
-
-    def on_motion(self, event):
-        """Handle mouse motion for panning"""
-        if not self.panning or event.inaxes != self.ax:
-            return
-        if self.pan_start is None or event.xdata is None:
-            return
-
-        dx = self.pan_start[0] - event.xdata
-        dy = self.pan_start[1] - event.ydata
-
-        xlim = self.ax.get_xlim()
-        ylim = self.ax.get_ylim()
-
-        self.ax.set_xlim([xlim[0] + dx, xlim[1] + dx])
-        self.ax.set_ylim([ylim[0] + dy, ylim[1] + dy])
-
-        self.canvas.draw_idle()
-
-    def reset_zoom(self):
-        """Reset zoom to original"""
-        if self.xlim_original is not None:
-            self.ax.set_xlim(self.xlim_original)
-            self.ax.set_ylim(self.ylim_original)
-            self.canvas.draw_idle()
+        self._selected_star_pos = (float(x), float(y))
+        self.update_overlay()
 
     def update_overlay(self):
         """Update source overlay on image"""
-        if self.image_data is None or self.current_filename is None:
+        if self._viewer is None or self.image_data is None or self.current_filename is None:
             return
 
-        # Remove existing scatter
-        for coll in self.ax.collections[:]:
-            coll.remove()
+        markers = []
+        lime = QColor(0, 255, 0, 180)
+        cyan = QColor(0, 220, 255, 180)
 
         if self.chk_overlay.isChecked() and self.current_filename in self.detection_results:
             result = self.detection_results[self.current_filename]
-            positions = result.get('positions', [])
-            peak_positions = result.get('peak_positions', [])
+            for (x, y) in result.get('positions', []):
+                markers.append(OverlayMarker(col=float(x), row=float(y), radius=6.0, color=lime))
+            for (x, y) in result.get('peak_positions', []):
+                markers.append(OverlayMarker(col=float(x), row=float(y), radius=7.5, color=cyan))
 
-            if positions:
-                x = [p[0] for p in positions]
-                y = [p[1] for p in positions]
-                self.ax.scatter(x, y, s=30, facecolors='none',
-                              edgecolors='lime', linewidths=1, alpha=0.7)
-            if peak_positions:
-                x = [p[0] for p in peak_positions]
-                y = [p[1] for p in peak_positions]
-                self.ax.scatter(x, y, s=40, facecolors='none',
-                              edgecolors='cyan', linewidths=1.2, alpha=0.8)
+        if self._selected_star_pos is not None:
+            sx, sy = self._selected_star_pos
+            markers.append(OverlayMarker(col=sx, row=sy, radius=15.0, color=QColor(255, 220, 0, 220)))
 
-        self.canvas.draw_idle()
+        self._viewer.set_overlay_markers(markers)
 
     def run_detection(self):
         """Start detection process"""

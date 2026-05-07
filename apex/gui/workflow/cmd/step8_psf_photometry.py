@@ -1,12 +1,12 @@
 """
-Step 6 – PSF Photometry  (photutils EPSFBuilder + PSFPhotometry, skippable)
+Step 8 - PSF Photometry  (photutils EPSFBuilder + PSFPhotometry, skippable)
 
 Reads:
     step4_detection/detect_{fname}.csv   (det_uid, x, y)
-    step5_aperture/photometry_{fname}.tsv (flux_net_adu as initial flux_0 estimate, optional)
+    step7_forced_phot/photometry_{fname}.tsv (initial flux estimate, optional)
     <FITS image>
 
-Writes to step6_psf/:
+Writes to cmd_psf/:
     photometry_{fname}.tsv   – det_uid, x_fit, y_fit, mag_psf, mag_psf_err,
                                 chi2, iter_found, flags_psf
     epsf_model_{filter}_{frame_stem}.fits – oversampled ePSF model (per-frame)
@@ -15,8 +15,8 @@ Writes to step6_psf/:
     photometry_index.csv     – per-frame summary
 
 Step can be SKIPPED: clicking "Skip PSF" marks step as complete and
-passes control to Step 7 (WCS). Then Step 8 (RefBuild) will use Step 5
-aperture results when PSF outputs are unavailable.
+passes control to Step 9 (Master ID Editor). Downstream steps use Step 7 forced aperture
+photometry results when PSF outputs are unavailable.
 """
 from __future__ import annotations
 
@@ -61,9 +61,9 @@ import matplotlib.colors as mcolors
 from matplotlib.patches import Rectangle, Patch
 
 from apex.gui.workflow.step_window_base import StepWindowBase
-from apex.gui.workflow.log_panel import WorkflowLogWindow, append_timestamped_log, show_raised
+from apex.gui.workflow.log_panel import WorkflowLogWindow, WorkerStatusPanel, append_timestamped_log, show_raised
 from apex.utils.step_paths_cmd import (
-    step2_cropped_dir, step4_dir, step6_psf_dir,
+    step2_cropped_dir, step4_dir, step8_psf_dir,
     crop_is_active,
 )
 from apex.utils.step_paths import step7_forced_phot_dir
@@ -375,7 +375,7 @@ class Step6PSFWorker(QThread):
                 return
 
             P = self.params.P
-            output_dir = step6_psf_dir(self.result_dir)
+            output_dir = step8_psf_dir(self.result_dir)
             output_dir.mkdir(parents=True, exist_ok=True)
 
             GAIN = _to_float(getattr(P, "gain_e_per_adu", 1.0), 1.0)
@@ -413,15 +413,18 @@ class Step6PSFWorker(QThread):
             conv_new_frac = _to_float(getattr(P, "psf_conv_new_frac", 0.02), 0.02)
             flux_conv_threshold = _to_float(getattr(P, "psf_flux_conv_threshold", 0.01), 0.01)
             fit_init_max_sources = _to_int(getattr(P, "psf_fit_init_max_sources", 0), 0)
-            use_error_image = bool(getattr(P, "psf_use_error_image", False))
+            use_error_image = bool(getattr(P, "psf_use_error_image", True))
             use_grouper = bool(getattr(P, "psf_use_grouper", True))
+            grouper_max_size = _to_int(getattr(P, "psf_grouper_max_size", 25), 25)
+            grouper_max_size = max(2, grouper_max_size) if grouper_max_size > 0 else 0
+            save_all_iter_residuals = bool(getattr(P, "psf_save_all_iter_residuals", False))
             model_mode = str(getattr(P, "psf_model_mode", "per_frame")).strip().lower()
             max_workers = max(1, int(self.max_workers))
 
             if model_mode != "per_frame":
                 self._log(f"PSF mode '{model_mode}' is disabled; forcing per_frame")
                 model_mode = "per_frame"
-            use_shared_filter_epsf = False
+            use_shared_filter_epsf = bool(getattr(P, "psf_shared_filter_epsf", False))
 
             redetect_sigma = max(1.0, redetect_sigma)
             new_sources_cap_per_iter = max(0, new_sources_cap_per_iter)
@@ -470,6 +473,27 @@ class Step6PSFWorker(QThread):
             )
 
             frames = list(self.file_list)
+
+            # Skip frames that Step 4 QC excluded (passed=False in frame_quality.csv)
+            fq_path = step4_dir(self.result_dir) / "frame_quality.csv"
+            _qc_excluded: set[str] = set()
+            if fq_path.exists():
+                try:
+                    _fq_df = pd.read_csv(fq_path)
+                    if "file" in _fq_df.columns and "passed" in _fq_df.columns:
+                        _qc_excluded = set(
+                            str(r["file"]) for _, r in _fq_df.iterrows()
+                            if not bool(r.get("passed", True))
+                        )
+                except Exception as _e:
+                    self._log(f"[WARN] Could not read frame_quality.csv: {_e}")
+            if _qc_excluded:
+                frames = [f for f in frames if f not in _qc_excluded]
+                self._log(
+                    f"Step4 QC: skipping {len(_qc_excluded)} excluded frame(s) — "
+                    + ", ".join(sorted(_qc_excluded))
+                )
+
             total = len(frames)
             index_rows = []
             counters = {"processed": 0, "no_detect": 0, "no_fits": 0, "stopped": 0}
@@ -529,6 +553,12 @@ class Step6PSFWorker(QThread):
                     min_value=25,
                     max_value=101,
                 )
+                _epsf_desired = int(round(float(epsf_size_fwhm_mult) * fwhm_safe))
+                if _epsf_desired > 101:
+                    self._log(
+                        f"  [PSF] epsf_size capped to max: desired={_epsf_desired}px → {epsf_size_frame}px "
+                        f"(fwhm={fwhm_safe:.1f}px, mult={epsf_size_fwhm_mult:.2f}x)"
+                    )
                 fit_shape_frame = _odd_int(
                     float(fit_shape_fwhm_mult) * fwhm_safe,
                     min_value=9,
@@ -556,7 +586,7 @@ class Step6PSFWorker(QThread):
                         # SigmaClip within each box rejects bright star pixels —
                         # equivalent to source masking, no external mask needed.
                         _bkg2d = Background2D(img, (_box, _box), filter_size=(5, 5),
-                                              sigma_clip=_SigmaClip(sigma=3.0),
+                                              sigma_clip=_SigmaClip(sigma=3.0, maxiters=3),
                                               bkg_estimator=MedianBackground())
                         bkg_map = np.asarray(_bkg2d.background, dtype=np.float32)
                         bkg_rms_scalar = float(_bkg2d.background_rms_median)
@@ -1071,9 +1101,11 @@ class Step6PSFWorker(QThread):
                                 )
                             kw["mode"] = fit_mode_cfg
                         if with_grouper and _has_grouper and "grouper" in sig:
-                            kw["grouper"] = SourceGrouper(
-                                min_separation=2.5 * fwhm_safe
-                            )
+                            _grouper_kw: dict = {"min_separation": 2.5 * fwhm_safe}
+                            _sg_sig = _ins.signature(SourceGrouper).parameters
+                            if "max_group_size" in _sg_sig and grouper_max_size > 0:
+                                _grouper_kw["max_group_size"] = grouper_max_size
+                            kw["grouper"] = SourceGrouper(**_grouper_kw)
                         return IterativePSFPhotometry(**kw)
 
                     def _results_to_init_params(results_tbl, photometry_obj=None):
@@ -1218,24 +1250,36 @@ class Step6PSFWorker(QThread):
                         refine_init = _results_to_init_params(phot_result, photometry_obj=photometry)
                         if refine_init is not None and len(refine_init) > 0:
                             if len(refine_init) <= refine_pass_max_sources:
-                                photometry_refine, phot_result_refine, refine_reason = _run_iterative_fit(
-                                    refine_init,
-                                    "pass2",
-                                )
-                                if refine_reason == "stopped":
-                                    return {"file": fname, "status": "stopped"}
-                                if phot_result_refine is not None and len(phot_result_refine) > 0:
-                                    self._log(
-                                        f"  [PSF] refine pass accepted | seed={len(refine_init)} "
-                                        f"fit={len(phot_result_refine)}"
+                                _skip_pass2 = False
+                                if "iter_detected" in phot_result.colnames and conv_new_frac > 0:
+                                    _it_p1 = np.asarray(phot_result["iter_detected"], dtype=float)
+                                    _it_p1 = np.where(np.isfinite(_it_p1), _it_p1, 1.0).astype(int)
+                                    _new_frac_p1 = float(np.sum(_it_p1 > 1)) / max(1, len(phot_result))
+                                    if _new_frac_p1 <= conv_new_frac:
+                                        _skip_pass2 = True
+                                        self._log(
+                                            f"  [PSF] pass2 skipped: converged "
+                                            f"(new_frac={_new_frac_p1:.3f} <= conv_new_frac={conv_new_frac:.3f})"
+                                        )
+                                if not _skip_pass2:
+                                    photometry_refine, phot_result_refine, refine_reason = _run_iterative_fit(
+                                        refine_init,
+                                        "pass2",
                                     )
-                                    photometry = photometry_refine
-                                    phot_result = phot_result_refine
-                                    fit_fail_reason = None
-                                elif refine_reason:
-                                    self._log(
-                                        f"  [PSF] refine pass failed; keeping pass1 solution | {refine_reason}"
-                                    )
+                                    if refine_reason == "stopped":
+                                        return {"file": fname, "status": "stopped"}
+                                    if phot_result_refine is not None and len(phot_result_refine) > 0:
+                                        self._log(
+                                            f"  [PSF] refine pass accepted | seed={len(refine_init)} "
+                                            f"fit={len(phot_result_refine)}"
+                                        )
+                                        photometry = photometry_refine
+                                        phot_result = phot_result_refine
+                                        fit_fail_reason = None
+                                    elif refine_reason:
+                                        self._log(
+                                            f"  [PSF] refine pass failed; keeping pass1 solution | {refine_reason}"
+                                        )
                             else:
                                 self._log(
                                     f"  [PSF] refine pass skipped | seed={len(refine_init)} "
@@ -1556,7 +1600,6 @@ class Step6PSFWorker(QThread):
                         # Earlier iter → exact_full_model minus later-iter contributions
                         #   (add back later-iter _render_model_subset so only iter1..N remain).
                         # Fallback (model_img is None) → _render_model_subset only.
-                        model_i = _render_model_subset(fit_xy_i, fit_flux_i)  # fallback only
                         if model_img is not None:
                             if it_no == iter_max_used:
                                 # Exact: photometry.make_model_image() covers all fitted sources
@@ -1583,6 +1626,7 @@ class Step6PSFWorker(QThread):
                                     starsub_i = np.asarray(starsub_raw, dtype=np.float32)
                                 res_std_i = _fast_res_std(residual_i)
                         else:
+                            model_i = _render_model_subset(fit_xy_i, fit_flux_i)
                             residual_i = (img_sub - model_i).astype(np.float32, copy=False)
                             starsub_i = (img - model_i).astype(np.float32, copy=False)
                             res_std_i = _fast_res_std(residual_i)
@@ -1598,8 +1642,11 @@ class Step6PSFWorker(QThread):
                         appliedxy_iter_path = output_dir / f"appliedxy_iter{it_no}_{fname}.npy"
                         detxy_iter_path = output_dir / f"detxy_iter{it_no}_{fname}.npy"
                         boxxy_iter_path = output_dir / f"boxxy_iter{it_no}_{fname}.npy"
-                        fits.writeto(str(residual_iter_path), residual_i, hdr_it, overwrite=True)
-                        fits.writeto(str(starsub_iter_path), starsub_i, hdr_it, overwrite=True)
+                        _is_final_iter = (it_no == iter_max_used)
+                        _write_fits = save_all_iter_residuals or _is_final_iter
+                        if _write_fits:
+                            fits.writeto(str(residual_iter_path), residual_i, hdr_it, overwrite=True)
+                            fits.writeto(str(starsub_iter_path), starsub_i, hdr_it, overwrite=True)
                         np.save(str(fitxy_iter_path), np.asarray(fit_xy_i, dtype=np.float32))
                         # modelxy: sources first detected at THIS iter only (not cumulative).
                         # iter1 → initial seeds (1023), iter2 → new residual detections (70).
@@ -1632,8 +1679,8 @@ class Step6PSFWorker(QThread):
                             "n_new_raw": int(n_new_i_raw),
                             "n_new_kept": int(n_new_i_kept),
                             "n_applied_prev": int(len(applied_xy_i)),
-                            "residual_path": residual_iter_path.name,
-                            "starsub_path": starsub_iter_path.name,
+                            "residual_path": residual_iter_path.name if _write_fits else None,
+                            "starsub_path": starsub_iter_path.name if _write_fits else None,
                             "fitxy_path": fitxy_iter_path.name,
                             "modelxy_path": modelxy_iter_path.name,
                             "detxy_path": detxy_iter_path.name,
@@ -1660,7 +1707,14 @@ class Step6PSFWorker(QThread):
                     if phot_result is not None:
                         x_fit = np.array(phot_result["x_fit"])
                         y_fit = np.array(phot_result["y_fit"])
-                        flux_fit = np.array(phot_result["flux_fit"])
+                        _ff_col_main = next(
+                            (c for c in ("flux_fit", "flux", "flux_0") if c in phot_result.colnames), None
+                        )
+                        flux_fit = (
+                            np.array(phot_result[_ff_col_main], dtype=float)
+                            if _ff_col_main is not None
+                            else np.full(len(x_fit), np.nan, dtype=float)
+                        )
                         flux_err = (np.array(phot_result["flux_err"]) if "flux_err" in phot_result.colnames else np.full(len(x_fit), np.nan))
                         chi2 = (np.array(phot_result["qfit"]) if "qfit" in phot_result.colnames else np.full(len(x_fit), np.nan))
                         flags_col = np.zeros(len(x_fit), dtype=int)
@@ -2012,9 +2066,9 @@ class Step6PSFWorker(QThread):
 # ── PSF Photometry Window ─────────────────────────────────────────────────────
 
 class PSFPhotometryWindow(StepWindowBase):
-    """Step 6 – PSF Photometry (skippable).
+    """Step 8 - PSF Photometry (skippable).
 
-    If skipped, Step 8 RefBuild falls back to Step 5 aperture results.
+    If skipped, Step 9 Master ID Editor falls back to Step 7 forced photometry results.
     """
 
     def __init__(self, params, file_manager, project_state, main_window):
@@ -2030,7 +2084,6 @@ class PSFPhotometryWindow(StepWindowBase):
         self._last_new_xy: dict[str, np.ndarray | None] = {} # fname  → new-detect XY or None
         self._cutout_idx: int = 0  # current star index in cutout viewer
         self._run_started_ts: float | None = None
-        self._log_worker_bars: dict[int, tuple] = {}   # worker_id → (QLabel, QProgressBar)
         self._log_worker_frame: dict[int, str] = {}    # worker_id → current frame name
 
         super().__init__(
@@ -2046,7 +2099,7 @@ class PSFPhotometryWindow(StepWindowBase):
     def setup_step_ui(self):
         info = QLabel(
             "Optional PSF photometry using photutils EPSFBuilder.\n"
-            "Click Skip PSF to continue to Step 7 (WCS); Step 8 (RefBuild) will use aperture results."
+            "Click Skip PSF to continue to Step 9; downstream steps will use Step 7 forced photometry results."
         )
         info.setWordWrap(True)
         info.setStyleSheet("QLabel { background-color: #E8F5E9; padding: 8px; margin-bottom: 6px; }")
@@ -2062,7 +2115,9 @@ class PSFPhotometryWindow(StepWindowBase):
         self.btn_skip.setStyleSheet(
             "QPushButton { background-color: #FF7043; color: white; font-weight: bold; padding: 8px 20px; }"
         )
-        self.btn_skip.setToolTip("Skip PSF photometry; Step 8 RefBuild will use aperture results from Step 5.")
+        self.btn_skip.setToolTip(
+            "Skip PSF photometry; Step 9 Master ID Editor will use Step 7 forced photometry results."
+        )
         self.btn_skip.clicked.connect(self.skip_psf)
         ctrl.addWidget(self.btn_skip)
 
@@ -2270,13 +2325,13 @@ class PSFPhotometryWindow(StepWindowBase):
         # ── Log window ────────────────────────────────────────────────────────
         _log_worker_group = QGroupBox("Workers")
         _log_worker_group_layout = QVBoxLayout(_log_worker_group)
-        self._log_worker_layout = QVBoxLayout()
-        _log_worker_group_layout.addLayout(self._log_worker_layout)
-        _log_worker_group_layout.addStretch()
+        _log_worker_group_layout.setContentsMargins(5, 5, 5, 5)
+        self._worker_panel = WorkerStatusPanel(_log_worker_group)
+        _log_worker_group_layout.addWidget(self._worker_panel)
 
         self.log_window = WorkflowLogWindow(
-            self, "PSF Photometry Log",
-            width=900, height=420,
+            self, "PSF Photometry Log & Workers",
+            width=900, height=500,
             side_widget=_log_worker_group,
         )
         self.log_text = self.log_window.log_text
@@ -2334,7 +2389,7 @@ class PSFPhotometryWindow(StepWindowBase):
         self.save_state()
         self._update_skip_label()
         self.update_navigation_buttons()
-        self.log("PSF skipped — Step 8 RefBuild will use Step 5 aperture results.")
+        self.log("PSF skipped — Step 9 Master ID Editor will use Step 7 forced photometry results.")
 
     def run_psf(self):
         if not self.file_list:
@@ -2345,7 +2400,7 @@ class PSFPhotometryWindow(StepWindowBase):
         if not (step7_forced_phot_dir(self.params.P.result_dir) / "photometry_index.csv").exists():
             QMessageBox.warning(
                 self, "Prerequisite",
-                "Step 5 Aperture Photometry must be completed first."
+                "Step 7 Forced Aperture Photometry must be completed first."
             )
             return
 
@@ -2365,7 +2420,7 @@ class PSFPhotometryWindow(StepWindowBase):
             self.res_file_combo.setCurrentIndex(0)
 
         # Remove stale residual/model artifacts for selected frames to avoid mixing old runs.
-        out_dir = step6_psf_dir(self.params.P.result_dir)
+        out_dir = step8_psf_dir(self.params.P.result_dir)
         for fname in self.file_list:
             patterns = [
                 f"residual_meta_{fname}.json",
@@ -2386,12 +2441,9 @@ class PSFPhotometryWindow(StepWindowBase):
                         pass
 
         # Clear log window worker bars from previous run
-        self._log_worker_bars.clear()
         self._log_worker_frame.clear()
-        while self._log_worker_layout.count():
-            item = self._log_worker_layout.takeAt(0)
-            if item.widget():
-                item.widget().deleteLater()
+        if hasattr(self, "_worker_panel") and self._worker_panel is not None:
+            self._worker_panel.clear()
 
         self.log(f"Start PSF photometry | {len(self.file_list)} frames")
         self._run_started_ts = time.time()
@@ -2428,37 +2480,9 @@ class PSFPhotometryWindow(StepWindowBase):
     # ── Callbacks ─────────────────────────────────────────────────────────────
 
     def on_worker_status(self, worker_id: int, frame: str, stage: str, pct: int):
-        # Update log window worker bars
-        w_key = int(worker_id)
-        self._log_worker_frame[w_key] = frame
-        if w_key not in self._log_worker_bars:
-            row_w = QWidget()
-            row_h = QHBoxLayout(row_w)
-            row_h.setContentsMargins(2, 1, 2, 1)
-            row_h.setSpacing(4)
-            wid_lbl = QLabel(f"W{w_key + 1}")
-            wid_lbl.setFixedWidth(22)
-            name_lbl = QLabel()
-            stage_lbl = QLabel()
-            stage_lbl.setFixedWidth(72)
-            stage_lbl.setAlignment(Qt.AlignCenter)
-            stage_lbl.setStyleSheet("QLabel { color: #888; font-size: 8pt; }")
-            bar = QProgressBar()
-            bar.setRange(0, 100)
-            bar.setValue(0)
-            bar.setFixedHeight(14)
-            bar.setFixedWidth(80)
-            bar.setTextVisible(True)
-            row_h.addWidget(wid_lbl)
-            row_h.addWidget(name_lbl, 1)   # stretch
-            row_h.addWidget(stage_lbl)
-            row_h.addWidget(bar)
-            self._log_worker_layout.addWidget(row_w)
-            self._log_worker_bars[w_key] = (name_lbl, stage_lbl, bar)
-        name_lbl, stage_lbl, bar = self._log_worker_bars[w_key]
-        name_lbl.setText(frame)
-        stage_lbl.setText(f"[{stage}]")
-        bar.setValue(int(max(0, min(100, int(pct)))))
+        self._log_worker_frame[int(worker_id)] = frame
+        if hasattr(self, "_worker_panel") and self._worker_panel is not None:
+            self._worker_panel.update_worker(worker_id, frame, stage, pct)
 
     def on_progress(self, current, total, filename):
         self.progress_bar.setValue(current)
@@ -2483,10 +2507,8 @@ class PSFPhotometryWindow(StepWindowBase):
         # Mark log window worker bar as done
         for w_key, fname in self._log_worker_frame.items():
             if fname == filename:
-                if w_key in self._log_worker_bars:
-                    name_lbl, stage_lbl, bar = self._log_worker_bars[w_key]
-                    stage_lbl.setText("[Done]")
-                    bar.setValue(100)
+                if hasattr(self, "_worker_panel") and self._worker_panel is not None:
+                    self._worker_panel.update_worker(w_key, fname, "Done", 100)
                 break
 
     def on_epsf_ready(self, display_key: str, _frame_name: str, epsf_arr: np.ndarray):
@@ -2643,7 +2665,7 @@ class PSFPhotometryWindow(StepWindowBase):
         self.res_iter_combo.blockSignals(False)
 
     def _load_starsub_for_iter(self, fname: str, rec: dict) -> np.ndarray | None:
-        out_dir = step6_psf_dir(self.params.P.result_dir)
+        out_dir = step8_psf_dir(self.params.P.result_dir)
         meta = self._residual_meta.get(fname, {})
         bkg_med = float(meta.get("bkg_med", 0.0)) if isinstance(meta, dict) else 0.0
 
@@ -2669,7 +2691,7 @@ class PSFPhotometryWindow(StepWindowBase):
         return None
 
     def _load_xy_npy_for_iter(self, rec: dict, key: str, max_points: int = 500) -> np.ndarray:
-        out_dir = step6_psf_dir(self.params.P.result_dir)
+        out_dir = step8_psf_dir(self.params.P.result_dir)
         arr_name = str(rec.get(key, "")).strip()
         if not arr_name:
             return np.zeros((0, 2), dtype=float)
@@ -2828,13 +2850,13 @@ class PSFPhotometryWindow(StepWindowBase):
             return padded
 
         # ── Filter xy_list to photometry-successful sources only ─────────────
-        # Load the step6 photometry TSV and keep only positions where
+        # Load the Step 8 PSF photometry TSV and keep only positions where
         # mag_psf is finite and FLAG_SAT is not set.  Saturated / edge /
         # fit-fail sources have NaN mag_psf or FLAG_SAT=1 — showing their
         # cutouts is misleading (over-subtraction rings, clipped PSF, etc.).
         if len(xy_list) > 0:
             try:
-                _psf_tsv = step6_psf_dir(self.params.P.result_dir) / f"photometry_{fname}.tsv"
+                _psf_tsv = step8_psf_dir(self.params.P.result_dir) / f"photometry_{fname}.tsv"
                 if _psf_tsv.exists():
                     _df_phot = pd.read_csv(_psf_tsv, sep="\t")
                     _good = (
@@ -2894,7 +2916,7 @@ class PSFPhotometryWindow(StepWindowBase):
         # Beyond 2px → genuinely new source not in step4.
         seed_tag = ""
         if iter_val >= 2:
-            out_dir_ui = step6_psf_dir(self.params.P.result_dir)
+            out_dir_ui = step8_psf_dir(self.params.P.result_dir)
             meta_ui = self._residual_meta.get(fname, {})
             seedxy_name = meta_ui.get("seedxy_path", "") if isinstance(meta_ui, dict) else ""
             if seedxy_name:
@@ -3009,7 +3031,7 @@ class PSFPhotometryWindow(StepWindowBase):
     # ── Frame table refresh ───────────────────────────────────────────────────
 
     def update_frame_table(self):
-        idx_path = step6_psf_dir(self.params.P.result_dir) / "photometry_index.csv"
+        idx_path = step8_psf_dir(self.params.P.result_dir) / "photometry_index.csv"
         if not idx_path.exists() or not hasattr(self, "frame_table"):
             return
         try:
@@ -3031,10 +3053,10 @@ class PSFPhotometryWindow(StepWindowBase):
         """Compute PSF QC statistics and update the QC tab text + Ap vs PSF plot."""
         if not hasattr(self, "qc_text"):
             return
-        psf_dir = step6_psf_dir(self.params.P.result_dir)
+        psf_dir = step8_psf_dir(self.params.P.result_dir)
         idx_path = psf_dir / "photometry_index.csv"
         if not idx_path.exists():
-            self.qc_text.setPlainText("photometry_index.csv not found.\nRun Step 6 first.")
+            self.qc_text.setPlainText("photometry_index.csv not found.\nRun Step 8 first.")
             self._cmp_merged_df = None
             self._plot_mag_comparison()
             return
@@ -3178,10 +3200,10 @@ class PSFPhotometryWindow(StepWindowBase):
         }
 
         ap_dir = step7_forced_phot_dir(self.params.P.result_dir)
-        psf_dir = step6_psf_dir(self.params.P.result_dir)
+        psf_dir = step8_psf_dir(self.params.P.result_dir)
 
         # Load and merge TSVs — cached; only re-read from disk when _cmp_merged_df is None
-        # (step5 already outputs only apcorr=True frames, so no extra filter needed here)
+        # (Step 7 forced photometry already filters usable frames, so no extra filter needed here)
         if not hasattr(self, "_cmp_merged_df") or self._cmp_merged_df is None:
             merged_rows = []
             split_excluded_total = 0
@@ -3266,7 +3288,7 @@ class PSFPhotometryWindow(StepWindowBase):
             self.cmp_stats_label.setText(msg)
 
         if self._cmp_merged_df.empty:
-            _empty("No matched data.\nRun Step 5 and Step 6 first.")
+            _empty("No matched data.\nRun Step 7 and Step 8 first.")
             return
 
         df = self._cmp_merged_df.copy()
@@ -3304,7 +3326,7 @@ class PSFPhotometryWindow(StepWindowBase):
         df = df[np.isfinite(df["mag_ap"]) & np.isfinite(df["mag_psf"])].copy()
 
         if len(df) == 0:
-            _empty("All magnitudes are NaN.\nCheck step5/step6 outputs.")
+            _empty("All magnitudes are NaN.\nCheck Step 7 forced photometry and Step 8 PSF outputs.")
             return
 
         df["delta"] = df["mag_ap"] - df["mag_psf"]
@@ -3407,7 +3429,7 @@ class PSFPhotometryWindow(StepWindowBase):
 
     def _load_from_disk(self):
         """Reload EPSF models and residual images from disk into memory caches."""
-        out_dir = step6_psf_dir(self.params.P.result_dir)
+        out_dir = step8_psf_dir(self.params.P.result_dir)
         if not out_dir.exists():
             return
         self._residual_meta.clear()
@@ -3472,7 +3494,7 @@ class PSFPhotometryWindow(StepWindowBase):
 
     def open_parameters_dialog(self):
         dialog = QDialog(self)
-        dialog.setWindowTitle("Step6 PSF Parameters")
+        dialog.setWindowTitle("Step 8 PSF Parameters")
         dialog.resize(520, 660)
         layout = QVBoxLayout(dialog)
         form = QFormLayout()
@@ -3617,9 +3639,28 @@ class PSFPhotometryWindow(StepWindowBase):
         self.p_use_grouper.setChecked(bool(getattr(self.params.P, "psf_use_grouper", True)))
         form.addRow("", self.p_use_grouper)
 
+        self.p_grouper_max_size = QSpinBox()
+        self.p_grouper_max_size.setRange(0, 500)
+        self.p_grouper_max_size.setSingleStep(5)
+        self.p_grouper_max_size.setSpecialValueText("unlimited")
+        self.p_grouper_max_size.setValue(_to_int(getattr(self.params.P, "psf_grouper_max_size", 25), 25))
+        self.p_grouper_max_size.setToolTip(
+            "Max sources per group (0=unlimited). Large groups cause exponential slowdown — "
+            "25 is safe for most fields."
+        )
+        form.addRow("Grouper max group size:", self.p_grouper_max_size)
+
         self.p_use_error_img = QCheckBox("Use error image (slower, higher RAM)")
-        self.p_use_error_img.setChecked(bool(getattr(self.params.P, "psf_use_error_image", False)))
+        self.p_use_error_img.setChecked(bool(getattr(self.params.P, "psf_use_error_image", True)))
         form.addRow("", self.p_use_error_img)
+
+        self.p_shared_filter_epsf = QCheckBox(
+            "Share EPSF per filter (faster; disable if seeing varies >1px across frames)"
+        )
+        self.p_shared_filter_epsf.setChecked(
+            bool(getattr(self.params.P, "psf_shared_filter_epsf", False))
+        )
+        form.addRow("", self.p_shared_filter_epsf)
 
         self.p_sharp_lo = QDoubleSpinBox()
         self.p_sharp_lo.setRange(0.0, 1.0)
@@ -3646,6 +3687,14 @@ class PSFPhotometryWindow(StepWindowBase):
         self.p_save_residuals.setChecked(True)
         self.p_save_residuals.setEnabled(False)
         form.addRow("", self.p_save_residuals)
+
+        self.p_save_all_iter_residuals = QCheckBox(
+            "Save residuals for ALL iterations (off = final iter only; saves ~2/3 disk)"
+        )
+        self.p_save_all_iter_residuals.setChecked(
+            bool(getattr(self.params.P, "psf_save_all_iter_residuals", False))
+        )
+        form.addRow("", self.p_save_all_iter_residuals)
 
         layout.addLayout(form)
 
@@ -3724,7 +3773,10 @@ class PSFPhotometryWindow(StepWindowBase):
         self.params.P.psf_conv_new_frac = self.p_conv_new.value()
         self.params.P.psf_flux_conv_threshold = self.p_conv_flux.value()
         self.params.P.psf_use_grouper = self.p_use_grouper.isChecked()
+        self.params.P.psf_grouper_max_size = self.p_grouper_max_size.value()
         self.params.P.psf_use_error_image = self.p_use_error_img.isChecked()
+        self.params.P.psf_shared_filter_epsf = self.p_shared_filter_epsf.isChecked()
+        self.params.P.psf_save_all_iter_residuals = self.p_save_all_iter_residuals.isChecked()
         self.params.P.psf_redetect_sharp_lo = self.p_sharp_lo.value()
         self.params.P.psf_redetect_sharp_hi = self.p_sharp_hi.value()
         self.params.P.psf_redetect_round_abs_max = self.p_round_max.value()
@@ -3764,10 +3816,10 @@ class PSFPhotometryWindow(StepWindowBase):
             return
         if self._skip_psf:
             self.skip_label.setText(
-                "PSF SKIPPED — Step 8 RefBuild will use Step 5 aperture results."
+                "PSF SKIPPED — Step 9 Master ID Editor will use Step 7 forced photometry results."
             )
         else:
-            psf_idx = step6_psf_dir(self.params.P.result_dir) / "photometry_index.csv"
+            psf_idx = step8_psf_dir(self.params.P.result_dir) / "photometry_index.csv"
             if psf_idx.exists():
                 self.skip_label.setText("PSF photometry results available.")
             else:
@@ -3776,10 +3828,10 @@ class PSFPhotometryWindow(StepWindowBase):
     # ── Validation / State ────────────────────────────────────────────────────
 
     def validate_step(self) -> bool:
-        """Step 6 is always valid: either PSF was run or it was skipped."""
+        """Step 8 is always valid: either PSF was run or it was skipped."""
         if self._skip_psf:
             return True
-        psf_idx = step6_psf_dir(self.params.P.result_dir) / "photometry_index.csv"
+        psf_idx = step8_psf_dir(self.params.P.result_dir) / "photometry_index.csv"
         return psf_idx.exists()
 
     def save_state(self):
@@ -3809,7 +3861,10 @@ class PSFPhotometryWindow(StepWindowBase):
             "psf_substar_max_sources": getattr(self.params.P, "psf_substar_max_sources", 1500),
             "psf_conv_new_frac": getattr(self.params.P, "psf_conv_new_frac", 0.02),
             "psf_flux_conv_threshold": getattr(self.params.P, "psf_flux_conv_threshold", 0.01),
-            "psf_use_error_image": getattr(self.params.P, "psf_use_error_image", False),
+            "psf_use_error_image": getattr(self.params.P, "psf_use_error_image", True),
+            "psf_shared_filter_epsf": getattr(self.params.P, "psf_shared_filter_epsf", False),
+            "psf_grouper_max_size": getattr(self.params.P, "psf_grouper_max_size", 25),
+            "psf_save_all_iter_residuals": getattr(self.params.P, "psf_save_all_iter_residuals", False),
             "psf_redetect_sharp_lo": getattr(self.params.P, "psf_redetect_sharp_lo", 0.15),
             "psf_redetect_sharp_hi": getattr(self.params.P, "psf_redetect_sharp_hi", 0.95),
             "psf_redetect_round_abs_max": getattr(self.params.P, "psf_redetect_round_abs_max", 0.8),
