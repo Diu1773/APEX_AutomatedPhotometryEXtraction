@@ -1621,11 +1621,13 @@ class QCInspectionPanel(QWidget):
         if row.empty:
             return
         r = row.iloc[0]
+        elong_val = r.get("elong_med", np.nan)
+        elong_str = f"{float(elong_val):.3f}" if np.isfinite(float(elong_val)) else "N/A"
         self.selected_label.setText(
             f"{fname}\n"
             f"filter={r.get('filter','')}, airmass={r.get('airmass', np.nan):.3f}\n"
             f"sky={r.get('sky_med', np.nan):.2f}, fwhm={r.get('fwhm_med', np.nan):.2f}, "
-            f"n_sources={int(r.get('n_sources', 0))}"
+            f"elong={elong_str}, n_sources={int(r.get('n_sources', 0))}"
         )
         self.selected_label.repaint()
         self._selected_fname = fname
@@ -1734,6 +1736,13 @@ class QCInspectionPanel(QWidget):
             self.warning_label.setText("No elongation data available.")
             return
         thresh = float(self.elong_thresh_spin.value())
+        elong_vals = df["elong_med"].to_numpy(float)
+        n_finite = int(np.isfinite(elong_vals).sum())
+        if n_finite == 0:
+            self.warning_label.setText(
+                "elong_med is N/A for all frames — re-run Step 4 detection to refresh cache."
+            )
+            return
         n_excluded = 0
         for _, row in df.iterrows():
             elong = float(row.get("elong_med", np.nan))
@@ -1743,13 +1752,14 @@ class QCInspectionPanel(QWidget):
                 n_excluded += 1
         if n_excluded:
             self.warning_label.setText(
-                f"Auto-filter: excluded {n_excluded} frame(s) with elong > {thresh:.2f}. "
-                "Click Save to persist."
+                f"Auto-filter: excluded {n_excluded} frame(s) with elong > {thresh:.2f} "
+                f"(checked {n_finite}/{len(df)} frames). Click Save to persist."
             )
         else:
-            self.warning_label.setText(f"No frames with elong > {thresh:.2f}.")
-        self.update_plots()
-        self.update_summary()
+            self.warning_label.setText(
+                f"No frames with elong > {thresh:.2f} "
+                f"(max elong = {np.nanmax(elong_vals):.3f}, n={n_finite}/{len(df)})."
+            )
 
     def apply_candidates(self):
         if not self.pending_candidates:

@@ -425,6 +425,7 @@ class Step6PSFWorker(QThread):
                 self._log(f"PSF mode '{model_mode}' is disabled; forcing per_frame")
                 model_mode = "per_frame"
             use_shared_filter_epsf = bool(getattr(P, "psf_shared_filter_epsf", False))
+            min_epsf_stars = max(1, _to_int(getattr(P, "psf_min_epsf_stars", 10), 10))
 
             redetect_sigma = max(1.0, redetect_sigma)
             new_sources_cap_per_iter = max(0, new_sources_cap_per_iter)
@@ -712,6 +713,7 @@ class Step6PSFWorker(QThread):
                         else:
                             xy_iso = xy_cand
                             fl_iso = fluxes_cand
+                            n_iso = len(xy_cand)
 
                         order = np.argsort(fl_iso)[::-1]
                         xy_iso = xy_iso[order][:n_stars_max]
@@ -925,8 +927,25 @@ class Step6PSFWorker(QThread):
                             f"epsf_size={epsf_size_frame} | fit_shape={fit_shape_frame}"
                         )
                         with epsf_cache_lock:
-                            if epsf_cache_key not in epsf_cache:
-                                epsf_cache[epsf_cache_key] = epsf
+                            _has_cached = epsf_cache_key in epsf_cache
+                            _enough_stars = n_iso >= min_epsf_stars
+                            if use_shared_filter_epsf and not _enough_stars and _has_cached:
+                                # Too few isolated stars — reuse existing shared ePSF
+                                self._log(
+                                    f"[EPSF] {fname}: only {n_iso} isolated stars "
+                                    f"(min={min_epsf_stars}) → reusing cached ePSF for filter={this_filter}"
+                                )
+                                self.log.emit(
+                                    f"⚠ EPSF [{fname}]: {n_iso} isolated stars < {min_epsf_stars} → using shared ePSF"
+                                )
+                            else:
+                                if not _has_cached:
+                                    epsf_cache[epsf_cache_key] = epsf
+                                    if use_shared_filter_epsf and not _enough_stars:
+                                        self._log(
+                                            f"[WARN][EPSF] {fname}: only {n_iso} isolated stars "
+                                            f"(min={min_epsf_stars}), no cached ePSF yet → using this frame's ePSF"
+                                        )
                             epsf_model = epsf_cache[epsf_cache_key]
 
                     from astropy.table import Table as AstropyTable
@@ -3662,6 +3681,17 @@ class PSFPhotometryWindow(StepWindowBase):
         )
         form.addRow("", self.p_shared_filter_epsf)
 
+        self.p_min_epsf_stars = QSpinBox()
+        self.p_min_epsf_stars.setRange(1, 200)
+        self.p_min_epsf_stars.setSingleStep(1)
+        self.p_min_epsf_stars.setValue(_to_int(getattr(self.params.P, "psf_min_epsf_stars", 10), 10))
+        self.p_min_epsf_stars.setToolTip(
+            "Min isolated PSF stars required to build/cache a new EPSF.\n"
+            "With 'Share EPSF' ON: frames below this threshold reuse the cached filter EPSF.\n"
+            "Raise to avoid bad EPSF from crowded/trailed frames (e.g. 10–20)."
+        )
+        form.addRow("Min isolated PSF stars:", self.p_min_epsf_stars)
+
         self.p_sharp_lo = QDoubleSpinBox()
         self.p_sharp_lo.setRange(0.0, 1.0)
         self.p_sharp_lo.setSingleStep(0.05)
@@ -3776,6 +3806,7 @@ class PSFPhotometryWindow(StepWindowBase):
         self.params.P.psf_grouper_max_size = self.p_grouper_max_size.value()
         self.params.P.psf_use_error_image = self.p_use_error_img.isChecked()
         self.params.P.psf_shared_filter_epsf = self.p_shared_filter_epsf.isChecked()
+        self.params.P.psf_min_epsf_stars = self.p_min_epsf_stars.value()
         self.params.P.psf_save_all_iter_residuals = self.p_save_all_iter_residuals.isChecked()
         self.params.P.psf_redetect_sharp_lo = self.p_sharp_lo.value()
         self.params.P.psf_redetect_sharp_hi = self.p_sharp_hi.value()
@@ -3864,6 +3895,7 @@ class PSFPhotometryWindow(StepWindowBase):
             "psf_use_error_image": getattr(self.params.P, "psf_use_error_image", True),
             "psf_shared_filter_epsf": getattr(self.params.P, "psf_shared_filter_epsf", False),
             "psf_grouper_max_size": getattr(self.params.P, "psf_grouper_max_size", 25),
+            "psf_min_epsf_stars": getattr(self.params.P, "psf_min_epsf_stars", 10),
             "psf_save_all_iter_residuals": getattr(self.params.P, "psf_save_all_iter_residuals", False),
             "psf_redetect_sharp_lo": getattr(self.params.P, "psf_redetect_sharp_lo", 0.15),
             "psf_redetect_sharp_hi": getattr(self.params.P, "psf_redetect_sharp_hi", 0.95),

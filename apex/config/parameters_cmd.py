@@ -335,6 +335,7 @@ TOML_KEY_MAP: list[tuple[Iterable[str], str]] = [
     (("psf", "shared_filter_epsf"), "psf_shared_filter_epsf"),
     (("psf", "grouper_max_size"), "psf_grouper_max_size"),
     (("psf", "save_all_iter_residuals"), "psf_save_all_iter_residuals"),
+    (("psf", "min_epsf_stars"), "psf_min_epsf_stars"),
     # Cross-frame pixel matching (Steps 7–8)
     (("cross_frame", "ransac_tol_px"), "cross_frame_ransac_tol_px"),
     (("cross_frame", "ransac_max_iter"), "cross_frame_ransac_max_iter"),
@@ -799,6 +800,7 @@ class Parameters:
             psf_shared_filter_epsf=_as_bool(raw.get("psf_shared_filter_epsf", "false"), False),
             psf_grouper_max_size=_geti(raw, "psf_grouper_max_size", 25),
             psf_save_all_iter_residuals=_as_bool(raw.get("psf_save_all_iter_residuals", "false"), False),
+            psf_min_epsf_stars=_geti(raw, "psf_min_epsf_stars", 10),
 
             # Cross-frame pixel matching (Steps 7–8)
             cross_frame_ransac_tol_px=_getf(raw, "cross_frame_ransac_tol_px", 2.0),
