@@ -19,13 +19,13 @@ from apex.utils.photometry_loader import load_frame_photometry
 from apex.utils.run_workspace import infer_result_workspace_label, write_run_manifest
 from apex.utils.step_paths_lc import (
     step1_dir,
-    step5_photometry_dir,
-    step9_selection_dir,
-    step10_dir,
-    step11_dir,
-    step12_period_dir,
+    step7_forced_phot_dir,
+    step8_selection_dir,
+    step9_lc_dir,
+    step10_detrend_dir,
+    step11_period_dir,
 )
-from .workspace_scan import normalize_filter_key, read_step5_index
+from .workspace_scan import normalize_filter_key, read_step7_index
 
 
 def selection_to_id_map(
@@ -56,7 +56,7 @@ def write_selection_outputs(
     selection_check_by_filter: dict[str, int | None],
     stamp: str | None = None,
 ) -> None:
-    s9 = step9_selection_dir(out_dir)
+    s9 = step8_selection_dir(out_dir)
     s9.mkdir(parents=True, exist_ok=True)
     stamp = stamp or time.strftime("%Y-%m-%d %H:%M:%S")
 
@@ -145,14 +145,14 @@ def materialize_merged_workspace(
     match_records: list[dict],
 ) -> dict:
     s1 = step1_dir(out_dir)
-    s5 = step5_photometry_dir(out_dir)
-    s9 = step9_selection_dir(out_dir)
+    forced_phot_dir = step7_forced_phot_dir(out_dir)
+    selection_dir = step8_selection_dir(out_dir)
     s1.mkdir(parents=True, exist_ok=True)
-    s5.mkdir(parents=True, exist_ok=True)
-    s9.mkdir(parents=True, exist_ok=True)
-    step10_dir(out_dir).mkdir(parents=True, exist_ok=True)
-    step11_dir(out_dir).mkdir(parents=True, exist_ok=True)
-    step12_period_dir(out_dir).mkdir(parents=True, exist_ok=True)
+    forced_phot_dir.mkdir(parents=True, exist_ok=True)
+    selection_dir.mkdir(parents=True, exist_ok=True)
+    step9_lc_dir(out_dir).mkdir(parents=True, exist_ok=True)
+    step10_detrend_dir(out_dir).mkdir(parents=True, exist_ok=True)
+    step11_period_dir(out_dir).mkdir(parents=True, exist_ok=True)
 
     merged_headers_rows: list[dict] = []
     merged_index_rows: list[dict] = []
@@ -165,7 +165,7 @@ def materialize_merged_workspace(
         folder_key = str(folder)
         folder_tag = folder_tags.get(folder_key, folder.name)
         source_path_map = load_file_path_map(folder)
-        idx = read_step5_index(folder)
+        idx = read_step7_index(folder)
         if idx.empty or "file" not in idx.columns:
             continue
 
@@ -223,31 +223,8 @@ def materialize_merged_workspace(
             phot_df["source_folder"] = folder_tag
             phot_df["original_file"] = fname
 
-            out_phot_path = s5 / f"{merged_fname}_photometry.tsv"
+            out_phot_path = forced_phot_dir / f"photometry_{merged_fname}.tsv"
             phot_df.to_csv(out_phot_path, sep="\t", index=False, na_rep="NaN")
-
-            idmatch_df = pd.DataFrame(
-                {
-                    "ID": pd.to_numeric(phot_df["ID"], errors="coerce").astype("Int64"),
-                    "source_id": coerce_int64_source_id(phot_df["source_id"]).astype("Int64"),
-                    "x": pd.to_numeric(
-                        phot_df["xcenter"] if "xcenter" in phot_df.columns else phot_df.get("x_det"),
-                        errors="coerce",
-                    ),
-                    "y": pd.to_numeric(
-                        phot_df["ycenter"] if "ycenter" in phot_df.columns else phot_df.get("y_det"),
-                        errors="coerce",
-                    ),
-                }
-            )
-            for extra_col in ("x_det", "y_det", "xcenter", "ycenter", "FILTER", "source_folder", "original_file"):
-                if extra_col in phot_df.columns and extra_col not in idmatch_df.columns:
-                    idmatch_df[extra_col] = phot_df[extra_col]
-            if "ra_deg" in phot_df.columns:
-                idmatch_df["ra"] = pd.to_numeric(phot_df["ra_deg"], errors="coerce")
-            if "dec_deg" in phot_df.columns:
-                idmatch_df["dec"] = pd.to_numeric(phot_df["dec_deg"], errors="coerce")
-            idmatch_df.to_csv(s8 / f"idmatch_{merged_fname}.csv", index=False, na_rep="NaN")
 
             original_path = source_path_map.get(fname)
             if original_path:
@@ -275,9 +252,9 @@ def materialize_merged_workspace(
             merged_headers_rows.append(header_row)
 
     if not merged_index_rows:
-        raise RuntimeError("병합 가능한 Step 5 photometry rows를 만들지 못했습니다.")
+        raise RuntimeError("병합 가능한 forced photometry rows를 만들지 못했습니다.")
 
-    pd.DataFrame(merged_index_rows).to_csv(s5 / "photometry_index.csv", index=False)
+    pd.DataFrame(merged_index_rows).to_csv(forced_phot_dir / "photometry_index.csv", index=False)
     if merged_headers_rows:
         pd.DataFrame(merged_headers_rows).drop_duplicates(
             subset=["Filename"], keep="first"
@@ -290,7 +267,7 @@ def materialize_merged_workspace(
         json.dumps(merged_path_map, indent=2, ensure_ascii=False),
         encoding="utf-8",
     )
-    (s8 / "step8_filter_frames.json").write_text(
+    (forced_phot_dir / "filter_frames.json").write_text(
         json.dumps(merged_filter_frames, indent=2, ensure_ascii=False),
         encoding="utf-8",
     )
@@ -331,7 +308,9 @@ def materialize_merged_workspace(
                     row[col] = df.at[idx, col]
             master_source_rows.append(row)
     if master_source_rows:
-        pd.DataFrame(master_source_rows).to_csv(s8 / "step8_master_sources.csv", index=False, na_rep="NaN")
+        pd.DataFrame(master_source_rows).to_csv(
+            forced_phot_dir / "master_sources.csv", index=False, na_rep="NaN"
+        )
 
     write_selection_outputs(
         out_dir=out_dir,

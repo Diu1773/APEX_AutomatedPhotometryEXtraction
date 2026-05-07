@@ -9,10 +9,7 @@ from .io_utils import read_csv_int64_source_id, coerce_int64_source_id
 from .step_paths import (
     step7_forced_phot_dir,
 )
-from .step_paths_lc import (
-    step5_photometry_dir,
-    step9_selection_dir,
-)
+from .step_paths_lc import step8_selection_dir
 
 
 _DATE_RE = re.compile(r"(20\d{6})")
@@ -52,14 +49,11 @@ def _read_table(path: Path) -> pd.DataFrame | None:
 
 
 def _resolve_photometry_path(result_dir: Path, fname: str) -> Path | None:
-    # Forced phot output takes priority; fall back to legacy step5 location
     forced_dir = step7_forced_phot_dir(result_dir)
-    legacy_dir = step5_photometry_dir(result_dir)
-    for phot_dir in (forced_dir, legacy_dir):
-        for name in (f"photometry_{fname}.tsv", f"{fname}_photometry.tsv"):
-            p = phot_dir / name
-            if p.exists():
-                return p
+    for name in (f"photometry_{fname}.tsv", f"{fname}_photometry.tsv"):
+        p = forced_dir / name
+        if p.exists():
+            return p
     return None
 
 
@@ -71,7 +65,7 @@ def _resolve_idmatch_path(result_dir: Path, fname: str) -> Path | None:
 
 
 def _load_source_to_id_map(result_dir: Path, filt_hint: str | None = None) -> dict[int, int]:
-    step9_out = step9_selection_dir(result_dir)
+    step9_out = step8_selection_dir(result_dir)
     if not step9_out.exists():
         return {}
 
@@ -109,11 +103,11 @@ def _load_source_to_id_map(result_dir: Path, filt_hint: str | None = None) -> di
 
 
 def load_frame_photometry(result_dir: Path, fname: str, filt_hint: str | None = None) -> pd.DataFrame | None:
-    """Load Step 5 photometry and enrich it with source identity from Step 8/9.
+    """Load Step 7 forced photometry and enrich it with Step 8 final IDs.
 
-    The refactored Step 5 writes all-source photometry keyed by per-frame `det_uid`.
-    Downstream steps still need `source_id` and final stable `ID`, so this loader
-    joins Step 8 idmatch output and Step 9 selection catalogs when available.
+    Forced photometry already carries source identity. Downstream steps still
+    need the final stable display `ID`, so this loader applies Step 8 selection
+    catalogs when available.
     """
 
     phot_path = _resolve_photometry_path(result_dir, fname)
@@ -167,7 +161,7 @@ def load_frame_photometry(result_dir: Path, fname: str, filt_hint: str | None = 
         if sid_map:
             mapped_ids = df["source_id"].map(sid_map).astype("Int64")
             if "ID" in df.columns:
-                # Step 5 may still carry a stale per-frame/local ID from pre-refactor runs.
+                # Legacy forced-phot tables may still carry a stale per-frame/local ID.
                 existing_ids = pd.to_numeric(df["ID"], errors="coerce").astype("Int64")
                 df["ID"] = mapped_ids.where(mapped_ids.notna(), existing_ids).astype("Int64")
             else:

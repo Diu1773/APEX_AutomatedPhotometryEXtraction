@@ -16,8 +16,8 @@ from PyQt5.QtWidgets import (
     QLineEdit, QPushButton, QLabel, QMessageBox, QFileDialog
 )
 
-from apex.gui.workflow.cmd.step11_zeropoint_calibration import CmdViewerWindow
-from apex.gui.workflow.cmd.step13_isochrone_model import IsochroneModelWindow
+from apex.gui.workflow.cmd.step10_zeropoint_calibration import CmdViewerWindow
+from apex.gui.workflow.cmd.step12_isochrone_model import IsochroneModelWindow
 
 
 class _ParamsNamespaceProxy:

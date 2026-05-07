@@ -18,7 +18,7 @@ from apex.utils.step_paths import (
     step5_wcs_dir,
     step6_refbuild_dir,
 )
-from apex.utils.step_paths_cmd import step10_selection_dir, step11_zp_dir
+from apex.utils.step_paths_cmd import step9_selection_dir, step10_zp_dir
 
 
 @dataclass
@@ -47,15 +47,15 @@ def ensure_output_dirs(result_dir: Path) -> tuple[Path, Path, Path]:
 def resolve_star_table_path(result_dir: Path) -> Optional[Path]:
     root = Path(result_dir)
     candidates = [
-        step10_selection_dir(root) / "cmd_with_gaia_membership.csv",
+        step9_selection_dir(root) / "cmd_with_gaia_membership.csv",
         root / "cmd_with_gaia_membership.csv",
-        step11_zp_dir(root) / "cmd_with_gaia_membership.csv",
-        step10_selection_dir(root) / "median_by_ID_filter_wide_cmd.csv",
+        step10_zp_dir(root) / "cmd_with_gaia_membership.csv",
+        step9_selection_dir(root) / "median_by_ID_filter_wide_cmd.csv",
         root / "median_by_ID_filter_wide_cmd.csv",
-        step11_zp_dir(root) / "median_by_ID_filter_wide_cmd.csv",
-        step10_selection_dir(root) / "median_by_ID_filter_wide.csv",
+        step10_zp_dir(root) / "median_by_ID_filter_wide_cmd.csv",
+        step9_selection_dir(root) / "median_by_ID_filter_wide.csv",
         root / "median_by_ID_filter_wide.csv",
-        step11_zp_dir(root) / "median_by_ID_filter_wide.csv",
+        step10_zp_dir(root) / "median_by_ID_filter_wide.csv",
     ]
     for p in candidates:
         if p.exists():
@@ -296,9 +296,9 @@ def _ensure_join_keys_from_master(result_dir: Path, df: pd.DataFrame) -> pd.Data
 def _external_membership_tables(result_dir: Path) -> list[tuple[Path, str]]:
     root = Path(result_dir)
     return [
-        (step10_selection_dir(root) / "cmd_with_gaia_membership.csv", ","),
+        (step9_selection_dir(root) / "cmd_with_gaia_membership.csv", ","),
         (root / "cmd_with_gaia_membership.csv", ","),
-        (step11_zp_dir(root) / "cmd_with_gaia_membership.csv", ","),
+        (step10_zp_dir(root) / "cmd_with_gaia_membership.csv", ","),
         (step5_wcs_dir(root) / "gaia_derived.csv", ","),
         (root / "gaia_derived.csv", ","),
         (step6_refbuild_dir(root) / "ref_catalog.tsv", "\t"),

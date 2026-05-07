@@ -1,8 +1,42 @@
-"""Shared file-signature and WCS-cache helpers used by workflow steps."""
+"""Shared cache schema, file-signature, and WCS-cache helpers."""
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Dict, List
+from typing import Dict, List, Mapping
+
+
+DETECTION_CACHE_SCHEMA_VERSION = 4
+DETECTION_CACHE_MIN_SIGNATURE_SCHEMA = 2
+
+
+def cache_schema_value(payload: Mapping | None, default: int = 0) -> int:
+    """Return the integer cache schema from a cache payload."""
+
+    if not isinstance(payload, Mapping):
+        return int(default)
+    try:
+        return int(payload.get("cache_schema", default) or default)
+    except Exception:
+        return int(default)
+
+
+def normalize_detect_engine(value) -> str:
+    """Normalize detection-engine aliases used in cache compatibility checks."""
+
+    s = str(value or "segm").strip().lower()
+    aliases = {
+        "sourceextractor": "sep",
+        "source_extractor": "sep",
+        "sextractor": "sep",
+        "sex": "sep",
+        "segmentation": "segm",
+        "photutils": "segm",
+        "daofind": "dao",
+    }
+    s = aliases.get(s, s)
+    if s in ("sep", "segm", "peak", "dao"):
+        return s
+    return "segm"
 
 
 def norm_path_key(path_value) -> str:
@@ -34,6 +68,22 @@ def build_file_signature(path: Path, *, use_cropped: bool) -> dict:
         sig["source_mtime_ns"] = int(st.st_mtime_ns)
     except Exception:
         pass
+    return sig
+
+
+def build_detection_cache_signature(
+    path: Path,
+    *,
+    use_cropped: bool,
+    detect_engine=None,
+    cache_schema: int = DETECTION_CACHE_SCHEMA_VERSION,
+) -> dict:
+    """Build the canonical Step4 detection cache signature block."""
+
+    sig = build_file_signature(path, use_cropped=use_cropped)
+    sig["cache_schema"] = int(cache_schema)
+    if detect_engine is not None:
+        sig["detect_engine"] = normalize_detect_engine(detect_engine)
     return sig
 
 
@@ -75,6 +125,29 @@ def file_signature_matches_relaxed(saved_sig: dict, current_sig: dict) -> bool:
     if saved_size <= 0 or curr_size <= 0:
         return False
     return saved_size == curr_size
+
+
+def detection_cache_signature_matches(
+    payload: Mapping | None,
+    current_sig: Mapping | None,
+    *,
+    min_schema: int = DETECTION_CACHE_MIN_SIGNATURE_SCHEMA,
+    current_engine=None,
+    allow_mtime_drift: bool = True,
+) -> bool:
+    """Validate a Step4 detection cache payload against current input state."""
+
+    if not isinstance(payload, Mapping) or not isinstance(current_sig, Mapping):
+        return False
+    if cache_schema_value(payload) < int(min_schema):
+        return False
+    if current_engine is not None:
+        cached_engine = normalize_detect_engine(payload.get("detect_engine", "segm"))
+        if cached_engine != normalize_detect_engine(current_engine):
+            return False
+    if allow_mtime_drift:
+        return file_signature_matches_relaxed(dict(payload), dict(current_sig))
+    return file_signature_matches(dict(payload), dict(current_sig))
 
 
 def astap_wcs_candidates(fits_path: Path) -> List[Path]:

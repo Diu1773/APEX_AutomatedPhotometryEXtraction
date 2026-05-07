@@ -1,5 +1,5 @@
 """
-Step 10: Master Star IDs Editor
+Step 9: Master ID Editor
 """
 
 from __future__ import annotations
@@ -15,22 +15,22 @@ import pandas as pd
 from astropy.io import fits
 from astropy.wcs import WCS
 from astropy.stats import sigma_clipped_stats
-from astropy.visualization import ZScaleInterval
 from astropy.coordinates import SkyCoord
 import astropy.units as u
 from matplotlib.backends.backend_qt5agg import FigureCanvasQTAgg as FigureCanvas
 from matplotlib.figure import Figure
-from matplotlib.patches import Circle as MplCircle
 
 from PyQt5.QtWidgets import (
     QVBoxLayout, QHBoxLayout, QPushButton, QLabel, QGroupBox, QMessageBox,
     QTextEdit, QDialog, QFormLayout, QDialogButtonBox, QProgressBar,
     QCheckBox, QSpinBox, QDoubleSpinBox, QLineEdit, QTableWidget,
     QTableWidgetItem, QHeaderView, QAbstractItemView, QWidget, QComboBox,
-    QSlider, QColorDialog, QFrame
+    QColorDialog, QFrame
 )
 from PyQt5.QtGui import QColor
 from PyQt5.QtCore import Qt, QPoint
+
+from apex.gui.widgets.fits_viewer import FITSViewerWidget, OverlayMarker
 
 from apex.gui.workflow.step_window_base import StepWindowBase
 from apex.utils.step_paths import (
@@ -40,7 +40,7 @@ from apex.utils.step_paths import (
     step5_wcs_dir,
     step6_refbuild_dir,
 )
-from apex.utils.step_paths_cmd import step6_psf_dir, step10_selection_dir
+from apex.utils.step_paths_cmd import step8_psf_dir, step9_selection_dir
 from apex.utils.io_utils import (
     parse_int64_scalar,
     parse_int64_series,
@@ -50,7 +50,7 @@ from apex.utils.io_utils import (
 
 
 class MasterIdEditorWindow(StepWindowBase):
-    """Step 10: Master Star IDs Editor"""
+    """Step 9: Master ID Editor"""
 
     def __init__(self, params, file_manager, project_state, main_window):
         self.file_manager = file_manager
@@ -60,7 +60,7 @@ class MasterIdEditorWindow(StepWindowBase):
         self.image_data = None
         self.header = None
         self._file_filter_map = {}
-        self.idmatch_df = None
+        self.phot_df = None
         self.master_ids = set()
         self.selected_source_id = None
         self.last_click_xy = None
@@ -78,65 +78,43 @@ class MasterIdEditorWindow(StepWindowBase):
         self._global_id_map = {}
         self._auto_master_dirty = False
 
-        # Matplotlib components
-        self.figure = None
-        self.canvas = None
-        self.ax = None
-        self._imshow_obj = None
-        self._norm_cache: dict = {}     # (filename, stretch_idx) -> normalized_array (LRU 5)
-        self.xlim_original = None
-        self.ylim_original = None
-        self.panning = False
-        self.pan_start = None
-        self.hover_xy = None  # Track mouse hover position for G key
+        # GPU-accelerated FITS viewer
+        self._viewer: FITSViewerWidget | None = None
 
-        # Persistent scatter artists (avoids remove/recreate each overlay update)
-        self._scat_unmatched = None
-        self._scat_removed = None
-        self._scat_local = None
-        self._scat_gaia = None
-        self._scat_member = None
-        self._scat_selected = None
-        self._scat_psf_iter2 = None
+        self.hover_xy = None  # Track mouse hover position for G key
 
         # PSF iter2 source tracking (det_uid < 0)
         self.psf_iter2_ids: set = set()
 
         # CMD ROI (circle in image pixel coords, saved to cmd_roi.json)
-        self._roi_circle: dict | None = None   # {cx, cy, radius}
-        self._roi_patch = None                 # matplotlib Circle artist on ax
-        self._roi_preview_patch = None         # temporary preview during drag
+        self._roi_circle: dict | None = None   # {ra_deg, dec_deg, radius_arcsec}
+        self._roi_preview: tuple | None = None # (cx, cy, r_px) live preview while dragging
         self._roi_mode = False                 # draw-mode toggle
         self._roi_drag_start: tuple | None = None
 
-        # Overlay color customization
+        # Overlay color customization (simplified: 3 categories + selected)
         self._overlay_colors: dict = {
-            "gaia":      "#00FF00",
-            "member":    "#FF4DA6",
-            "psf_iter2": "#FF5722",
-            "local":     "#00BCD4",
-            "removed":   "#FFEB3B",
-            "unmatched": "#FF9800",
-            "selected":  "#FF0000",
+            "gaia":     "#00FF00",   # forced phot + Gaia + in master
+            "local":    "#FFC107",   # forced phot + non-Gaia + in master
+            "removed":  "#9E9E9E",   # forced phot but not in master
+            "selected": "#FF0000",
         }
         self._color_window: "QWidget | None" = None
         self._color_btns: dict = {}
         self._overlay_visible: dict = {k: True for k in (
-            "gaia", "member", "psf_iter2", "local", "removed", "unmatched", "selected"
+            "gaia", "local", "removed", "selected"
         )}
+        self._show_members: bool = False  # toggle for member center dot
 
         # Frame data caches: filename -> data  (LRU, max _FITS_CACHE_SIZE entries)
         self._fits_cache: dict = {}        # filename -> (image_data, header)
         self._fits_cache_order: list = []  # LRU order
         self._FITS_CACHE_SIZE = max(3, int(getattr(params.P, "step8_fits_cache_size", 8)))
-        self._idmatch_cache: dict = {}     # filename -> idmatch_df (all frames, small)
-        self._idmatch_arr_cache: dict = {} # filename -> (x, y, sids) numpy arrays
+        self._phot_cache: dict = {}     # filename -> phot_df (all frames, small)
+        self._phot_arr_cache: dict = {} # filename -> (x, y, sids) numpy arrays
         self._prefetch_lock = threading.Lock()
         self._prefetch_pending: set[str] = set()
         self._prefetch_executor = ThreadPoolExecutor(max_workers=1)
-        # Display cache: (filename, stretch_idx, intensity, black_point) -> stretched image (LRU)
-        self._display_cache: dict = {}
-        self._display_cache_order: list = []
 
         super().__init__(
             step_index=8,
@@ -152,9 +130,9 @@ class MasterIdEditorWindow(StepWindowBase):
 
     def setup_step_ui(self):
         info = QLabel(
-            "Edit master_star_ids.csv using idmatch overlays.\n"
-            "Shortcuts: A=Add (detected or undetected star), D=Remove, Shift+D=Remove Box, G=Radial Profile (at cursor), [ / ] = Prev/Next frame\n"
-            "Overlay: Gaia(master)=green, Membership(member)=pink (when enabled)"
+            "Inspect forced-photometry results from step7. Click a star to see info.\n"
+            "Shortcuts: G=Radial profile (at cursor), [ / ]=Prev/Next frame\n"
+            "Green=Gaia in master, Yellow=Local in master. Members ● = Gaia member dot."
         )
         info.setStyleSheet("QLabel { background-color: #E3F2FD; padding: 10px; border-radius: 5px; }")
         self.content_layout.addWidget(info)
@@ -179,6 +157,11 @@ class MasterIdEditorWindow(StepWindowBase):
         self.btn_colors.toggled.connect(self._toggle_color_panel)
         control_layout.addWidget(self.btn_colors)
 
+        self.chk_members = QCheckBox("Members ●")
+        self.chk_members.setToolTip("Show center dot on Gaia member stars (Pmem ≥ threshold)")
+        self.chk_members.toggled.connect(self._on_members_toggled)
+        control_layout.addWidget(self.chk_members)
+
         self.content_layout.addLayout(control_layout)
 
         # Selected info
@@ -201,57 +184,6 @@ class MasterIdEditorWindow(StepWindowBase):
         file_layout.addWidget(self.file_combo)
         viewer_layout.addLayout(file_layout)
 
-        # Stretch controls (from Step 4)
-        stretch_layout = QHBoxLayout()
-        stretch_layout.addWidget(QLabel("Stretch:"))
-        self.scale_combo = QComboBox()
-        self.scale_combo.addItems([
-            "Auto Stretch (Siril)",
-            "Asinh Stretch",
-            "Midtone (MTF)",
-            "Histogram Eq",
-            "Log Stretch",
-            "Sqrt Stretch",
-            "Linear (1-99%)",
-            "ZScale (IRAF)"
-        ])
-        self.scale_combo.currentIndexChanged.connect(self.on_stretch_changed)
-        stretch_layout.addWidget(self.scale_combo)
-
-        stretch_layout.addWidget(QLabel("Intensity:"))
-        self.stretch_slider = QSlider(Qt.Horizontal)
-        self.stretch_slider.setMinimum(1)
-        self.stretch_slider.setMaximum(100)
-        self.stretch_slider.setValue(25)
-        self.stretch_slider.setFixedWidth(100)
-        self.stretch_slider.sliderReleased.connect(self.redisplay_image)
-        self.stretch_slider.valueChanged.connect(self.update_stretch_label)
-        stretch_layout.addWidget(self.stretch_slider)
-
-        self.stretch_value_label = QLabel("25")
-        self.stretch_value_label.setFixedWidth(25)
-        stretch_layout.addWidget(self.stretch_value_label)
-
-        stretch_layout.addWidget(QLabel("Black:"))
-        self.black_slider = QSlider(Qt.Horizontal)
-        self.black_slider.setMinimum(0)
-        self.black_slider.setMaximum(100)
-        self.black_slider.setValue(0)
-        self.black_slider.setFixedWidth(60)
-        self.black_slider.sliderReleased.connect(self.redisplay_image)
-        self.black_slider.valueChanged.connect(self.update_black_label)
-        stretch_layout.addWidget(self.black_slider)
-
-        self.black_value_label = QLabel("0")
-        self.black_value_label.setFixedWidth(20)
-        stretch_layout.addWidget(self.black_value_label)
-
-        btn_reset_zoom = QPushButton("Reset Zoom")
-        btn_reset_zoom.clicked.connect(self.reset_zoom)
-        stretch_layout.addWidget(btn_reset_zoom)
-
-        stretch_layout.addStretch()
-        viewer_layout.addLayout(stretch_layout)
 
         # CMD ROI controls
         roi_layout = QHBoxLayout()
@@ -276,18 +208,11 @@ class MasterIdEditorWindow(StepWindowBase):
         roi_layout.addStretch()
         viewer_layout.addLayout(roi_layout)
 
-        self.figure = Figure(figsize=(6, 5))
-        self.canvas = FigureCanvas(self.figure)
-        self.ax = self.figure.add_subplot(111)
-        self.canvas.setFocusPolicy(Qt.ClickFocus)
-
-        self.canvas.mpl_connect('scroll_event', self.on_scroll)
-        self.canvas.mpl_connect('button_press_event', self.on_button_press)
-        self.canvas.mpl_connect('button_release_event', self.on_button_release)
-        self.canvas.mpl_connect('motion_notify_event', self.on_motion)
-        self.canvas.mpl_connect('button_press_event', self.on_click)
-
-        viewer_layout.addWidget(self.canvas)
+        self._viewer = FITSViewerWidget(self)
+        self._viewer.gl.mouse_pressed.connect(self._on_viewer_press)
+        self._viewer.gl.mouse_released.connect(self._on_viewer_release)
+        self._viewer.gl.mouse_moved.connect(self._on_viewer_move)
+        viewer_layout.addWidget(self._viewer)
         main_layout.addWidget(viewer_group, stretch=2)
 
         table_group = QGroupBox("Master IDs")
@@ -348,7 +273,17 @@ class MasterIdEditorWindow(StepWindowBase):
 
         base_count = len(files)
         # Hide unsolved frames: keep only rows with wcs_ok=True when available.
-        stats_path = step7_forced_phot_dir(self.params.P.result_dir) / "step8_frame_stats.csv"
+        forced_dir = step7_forced_phot_dir(self.params.P.result_dir)
+        stats_path = next(
+            (
+                p for p in (
+                    forced_dir / "frame_stats.csv",
+                    forced_dir / "step8_frame_stats.csv",  # legacy
+                )
+                if p.exists()
+            ),
+            forced_dir / "frame_stats.csv",
+        )
         if stats_path.exists():
             try:
                 s7 = pd.read_csv(stats_path)
@@ -364,14 +299,14 @@ class MasterIdEditorWindow(StepWindowBase):
                     wcs_ok = pd.Series(True, index=s7.index, dtype=bool)
                 keep = set(s7.loc[wcs_ok, "file"].astype(str).tolist())
                 files = [f for f in files if f in keep]
-                self.log(f"Step10 frame filter (wcs_ok): {len(files)}/{base_count} kept")
+                self.log(f"Step 9 frame filter (wcs_ok): {len(files)}/{base_count} kept")
 
         # Filter: keep frames that have forced phot output.
         forced_dir = step7_forced_phot_dir(self.params.P.result_dir)
         if forced_dir.exists():
             before_idm = len(files)
             files = [f for f in files if (forced_dir / f"photometry_{f}.tsv").exists()]
-            self.log(f"Step10 frame filter (forced phot tsv): {len(files)}/{before_idm} kept")
+            self.log(f"Step 9 frame filter (forced phot tsv): {len(files)}/{before_idm} kept")
 
         self.file_list = list(files)
         self.file_combo.clear()
@@ -380,10 +315,7 @@ class MasterIdEditorWindow(StepWindowBase):
         with self._prefetch_lock:
             self._fits_cache.clear()
             self._fits_cache_order.clear()
-            self._idmatch_arr_cache.clear()
-            self._display_cache.clear()
-            self._display_cache_order.clear()
-            self._norm_cache.clear()
+            self._phot_arr_cache.clear()
             self._prefetch_pending.clear()
 
     @staticmethod
@@ -419,7 +351,7 @@ class MasterIdEditorWindow(StepWindowBase):
             (
                 p for p in (
                     step7_forced_phot_dir(self.params.P.result_dir) / "photometry_index.csv",
-                    step6_psf_dir(self.params.P.result_dir) / "photometry_index.csv",
+                    step8_psf_dir(self.params.P.result_dir) / "photometry_index.csv",
                     self.params.P.result_dir / "photometry_index.csv",
                 )
                 if p.exists()
@@ -455,14 +387,8 @@ class MasterIdEditorWindow(StepWindowBase):
         self._file_filter_map[fname] = fkey
         return fkey
 
-    @staticmethod
-    def _idmatch_output_exists(idmatch_dir: Path, fname: str) -> bool:
-        if (idmatch_dir / f"idmatch_{fname}.csv").exists():
-            return True
-        return any(idmatch_dir.glob(f"*/idmatch_{fname}.csv"))
-
     def load_master_ids(self):
-        master_path = step10_selection_dir(self.params.P.result_dir) / "master_star_ids.csv"
+        master_path = step9_selection_dir(self.params.P.result_dir) / "master_star_ids.csv"
         self.internal_id_map = {}
         self.source_id_from_internal = {}
         self._load_global_id_map()
@@ -505,13 +431,13 @@ class MasterIdEditorWindow(StepWindowBase):
                 self.log(f"Error loading master IDs: {e}")
 
     def load_psf_new_sources(self):
-        """Step 6 PSF iter2에서 발견된 새 소스(det_uid < 0)를 마스터 목록에 추가.
+        """Step 8 PSF iter2에서 발견된 새 소스(det_uid < 0)를 마스터 목록에 추가.
 
         PSF 측광 iter2에서 잔차 이미지로부터 새로 검출된 별들은 음수 det_uid를
         가진다. 이 소스들은 RefBuild ref catalog에 없으므로 별도로 master_id를
         부여하여 마스터 목록에 추가한다.
         """
-        psf_dir = step6_psf_dir(self.params.P.result_dir)
+        psf_dir = step8_psf_dir(self.params.P.result_dir)
         if not psf_dir.exists():
             return
 
@@ -598,7 +524,7 @@ class MasterIdEditorWindow(StepWindowBase):
         """Load source_id -> ID map generated by RefBuild or this editor."""
         self._global_id_map = {}
         candidates = [
-            step10_selection_dir(self.params.P.result_dir) / "sourceid_to_ID.csv",
+            step9_selection_dir(self.params.P.result_dir) / "sourceid_to_ID.csv",
             step6_refbuild_dir(self.params.P.result_dir) / "sourceid_to_ID.csv",
             self.params.P.result_dir / "sourceid_to_ID.csv",
         ]
@@ -802,22 +728,47 @@ class MasterIdEditorWindow(StepWindowBase):
         }
 
     def _compute_membership_from_master(self) -> bool:
-        master_candidates = [
-            step6_refbuild_dir(self.params.P.result_dir) / "master_catalog.tsv",
-            self.params.P.result_dir / "master_catalog.tsv",
-        ]
-        master_path = next((p for p in master_candidates if p.exists()), None)
-        if master_path is None:
-            return False
-
-        try:
-            df = pd.read_csv(master_path, sep="\t")
-        except Exception:
-            return False
-        if df.empty:
-            return False
+        # Prefer gaia_fov.ecsv (written by step5 WCS) — always has pmra/pmdec/parallax
+        # keyed by Gaia source_id.  master_catalog.tsv only carries photometry (G/BP/RP),
+        # so it never has the astrometric columns needed for GMM membership.
+        result_dir = self.params.P.result_dir
         req = ("pmra", "pmdec", "parallax")
-        if not all(c in df.columns for c in req):
+
+        df = None
+        df_is_gaia_keyed = False  # True when source_id column = Gaia source_id
+
+        gaia_fov_path = step5_wcs_dir(result_dir) / "gaia_fov.ecsv"
+        if gaia_fov_path.exists():
+            try:
+                from astropy.table import Table as _ATable
+                tab = _ATable.read(str(gaia_fov_path), format="ascii.ecsv")
+                cols_lower = [c.lower() for c in tab.colnames]
+                if cols_lower != list(tab.colnames):
+                    tab.rename_columns(tab.colnames, cols_lower)
+                gaia_df = tab.to_pandas()
+                if all(c in gaia_df.columns for c in req):
+                    # source_id here is the Gaia source_id
+                    df = gaia_df.rename(columns={"source_id": "gaia_source_id"})
+                    df_is_gaia_keyed = True
+            except Exception:
+                pass
+
+        # Fallback: master_catalog.tsv (only works if astrometric cols were written)
+        if df is None:
+            master_candidates = [
+                step6_refbuild_dir(result_dir) / "master_catalog.tsv",
+                result_dir / "master_catalog.tsv",
+            ]
+            master_path = next((p for p in master_candidates if p.exists()), None)
+            if master_path is not None:
+                try:
+                    master_df = pd.read_csv(master_path, sep="\t")
+                    if not master_df.empty and all(c in master_df.columns for c in req):
+                        df = master_df
+                except Exception:
+                    pass
+
+        if df is None or df.empty:
             return False
 
         pmra = pd.to_numeric(df["pmra"], errors="coerce").to_numpy(float)
@@ -854,21 +805,48 @@ class MasterIdEditorWindow(StepWindowBase):
         e0 = np.exp(lp0 - m)
         e1 = np.exp(lp1 - m)
         den = e0 + e1 + 1e-12
-        r0 = e0 / den
-        r1 = e1 / den
-        p_cluster = r0 if k_cluster == 0 else r1
+        p_cluster = (e0 if k_cluster == 0 else e1) / den
 
-        pmem = np.full(len(df), np.nan, dtype=float)
-        pmem[finite] = np.clip(p_cluster, 0.0, 1.0)
+        pmem_arr = np.full(len(df), np.nan, dtype=float)
+        pmem_arr[finite] = np.clip(p_cluster, 0.0, 1.0)
 
-        src = parse_int64_series(df["source_id"]).tolist() if "source_id" in df.columns else [pd.NA] * len(df)
-        gaia = parse_int64_series(df["gaia_source_id"]).tolist() if "gaia_source_id" in df.columns else [pd.NA] * len(df)
-        ids = pd.to_numeric(df["ID"], errors="coerce").tolist() if "ID" in df.columns else [np.nan] * len(df)
+        gaia_ids = parse_int64_series(df["gaia_source_id"]).tolist() if "gaia_source_id" in df.columns else [pd.NA] * len(df)
+        src_ids  = parse_int64_series(df["source_id"]).tolist()     if "source_id"      in df.columns else [pd.NA] * len(df)
+        int_ids  = pd.to_numeric(df["ID"], errors="coerce").tolist() if "ID"             in df.columns else [np.nan] * len(df)
 
-        n_src = 0
-        n_gaia = 0
-        n_id = 0
-        for s, g, i, p in zip(src, gaia, ids, pmem.tolist()):
+        # When we loaded from gaia_fov (gaia_keyed), source_id col was renamed to
+        # gaia_source_id, so src_ids is empty — use gaia_ids for membership_by_source
+        # as well (hybrid mode assigns Gaia source_id as source_id for matched stars).
+        if df_is_gaia_keyed:
+            src_ids = gaia_ids
+
+        # Load master catalog to resolve gaia_source_id → source_id / ID mapping
+        if df_is_gaia_keyed:
+            master_candidates = [
+                step6_refbuild_dir(result_dir) / "master_catalog.tsv",
+                result_dir / "master_catalog.tsv",
+            ]
+            master_path = next((p for p in master_candidates if p.exists()), None)
+            if master_path is not None:
+                try:
+                    mdf = pd.read_csv(master_path, sep="\t")
+                    if "gaia_source_id" in mdf.columns and "source_id" in mdf.columns:
+                        g2s = dict(zip(
+                            parse_int64_series(mdf["gaia_source_id"]).tolist(),
+                            parse_int64_series(mdf["source_id"]).tolist(),
+                        ))
+                        src_ids = [g2s.get(g, g) for g in gaia_ids]
+                    if "gaia_source_id" in mdf.columns and "ID" in mdf.columns:
+                        g2id = dict(zip(
+                            parse_int64_series(mdf["gaia_source_id"]).tolist(),
+                            pd.to_numeric(mdf["ID"], errors="coerce").tolist(),
+                        ))
+                        int_ids = [g2id.get(g, np.nan) for g in gaia_ids]
+                except Exception:
+                    pass
+
+        n_src = n_gaia = n_id = 0
+        for s, g, i, p in zip(src_ids, gaia_ids, int_ids, pmem_arr.tolist()):
             if not np.isfinite(p):
                 continue
             pp = float(np.clip(p, 0.0, 1.0))
@@ -882,8 +860,9 @@ class MasterIdEditorWindow(StepWindowBase):
                 self.membership_by_id[int(i)] = pp
                 n_id += 1
 
+        src_label = "gaia_fov.ecsv" if df_is_gaia_keyed else "master_catalog.tsv"
         self.log(
-            "Membership map computed from master astrometry "
+            f"Membership map computed from {src_label} astrometry "
             f"(source={n_src}, gaia={n_gaia}, id={n_id}, fit={int(fit_mask.sum())})"
         )
         return (n_src + n_gaia + n_id) > 0
@@ -899,11 +878,11 @@ class MasterIdEditorWindow(StepWindowBase):
             step5_wcs_dir(result_dir) / "gaia_derived.csv",
             result_dir / "gaia_derived.csv",
             result_dir / "cmd_with_gaia_membership.csv",
-            step10_selection_dir(result_dir) / "cmd_with_gaia_membership.csv",
+            step9_selection_dir(result_dir) / "cmd_with_gaia_membership.csv",
             result_dir / "cmd_with_membership.csv",
-            step10_selection_dir(result_dir) / "cmd_with_membership.csv",
+            step9_selection_dir(result_dir) / "cmd_with_membership.csv",
             result_dir / "median_by_ID_filter_wide_cmd.csv",
-            step10_selection_dir(result_dir) / "median_by_ID_filter_wide_cmd.csv",
+            step9_selection_dir(result_dir) / "median_by_ID_filter_wide_cmd.csv",
             step6_refbuild_dir(result_dir) / "master_catalog.tsv",
             result_dir / "master_catalog.tsv",
         ]
@@ -1197,21 +1176,12 @@ class MasterIdEditorWindow(StepWindowBase):
             return
         try:
             new_data, new_header = self._load_fits_cached(filename)
-            # Detect size change — forces full redraw if image shape differs
             shape_changed = (self.image_data is None or new_data.shape != self.image_data.shape)
             self.image_data = new_data
             self.header = new_header
             self.current_filename = filename
-            if not quick_switch or shape_changed:
-                self.xlim_original = None
-                self.ylim_original = None
-                self._imshow_obj = None
-            self.load_idmatch_for_file(filename)
-            full_redraw = self._imshow_obj is None
-            self.display_image(full_redraw=full_redraw)
-            if not full_redraw:
-                # Fast path skipped display_image's full rebuild; refresh ROI for new WCS
-                self._redraw_roi_patch()
+            self.load_photometry_for_file(filename)
+            self._update_viewer_image(keep_view=quick_switch and not shape_changed)
             self.update_overlay()
             if self._auto_master_dirty:
                 self.save_master_ids(log_action="auto_add")
@@ -1227,22 +1197,22 @@ class MasterIdEditorWindow(StepWindowBase):
             pass
         super().closeEvent(event)
 
-    def load_idmatch_for_file(self, filename):
+    def load_photometry_for_file(self, filename):
         # Check cache first
-        if filename in self._idmatch_cache:
-            self.idmatch_df = self._idmatch_cache[filename]
-            arr = self._idmatch_arr_cache.get(filename, None)
+        if filename in self._phot_cache:
+            self.phot_df = self._phot_cache[filename]
+            arr = self._phot_arr_cache.get(filename, None)
             if arr is not None:
-                self._auto_add_detections_to_master(self.idmatch_df, arr[2])
+                self._auto_add_detections_to_master(self.phot_df, arr[2])
             else:
-                self._auto_add_detections_to_master(self.idmatch_df)
+                self._auto_add_detections_to_master(self.phot_df)
             return
-        idmatch_dir = step7_forced_phot_dir(self.params.P.result_dir)
-        idmatch_path = idmatch_dir / f"photometry_{filename}.tsv"
-        if idmatch_path.exists():
+        phot_dir = step7_forced_phot_dir(self.params.P.result_dir)
+        phot_path = phot_dir / f"photometry_{filename}.tsv"
+        if phot_path.exists():
             try:
-                sep = "\t" if idmatch_path.suffix.lower() == ".tsv" else ","
-                df = read_csv_int64_source_id(idmatch_path, sep=sep)
+                sep = "\t" if phot_path.suffix.lower() == ".tsv" else ","
+                df = read_csv_int64_source_id(phot_path, sep=sep)
                 if {"x_fit", "y_fit"} <= set(df.columns) and not {"x", "y"} <= set(df.columns):
                     df = df.rename(columns={"x_fit": "x", "y_fit": "y"})
                 if {"x", "y", "source_id"} <= set(df.columns):
@@ -1255,33 +1225,33 @@ class MasterIdEditorWindow(StepWindowBase):
                     )
                     dropped = int((~valid).sum())
                     if dropped > 0:
-                        self.log(f"[{filename}] idmatch: dropped {dropped} invalid rows (x/y)")
+                        self.log(f"[{filename}] photometry: dropped {dropped} invalid rows (x/y)")
                     clean = clean.loc[valid].copy()
                     unmatched = int(clean["source_id"].apply(
                         lambda s: pd.isna(s)
                     ).sum())
                     if unmatched > 0:
-                        self.log(f"[{filename}] idmatch: unmatched detections kept={unmatched}")
+                        self.log(f"[{filename}] photometry: unmatched rows kept={unmatched}")
                     clean["source_id"] = parse_int64_series(clean["source_id"]).fillna(0).astype("int64")
                     result = clean.reset_index(drop=True)
                     x_arr = result["x"].to_numpy(float, copy=False)
                     y_arr = result["y"].to_numpy(float, copy=False)
                     sid_arr = result["source_id"].to_numpy(np.int64, copy=False)
-                    self._idmatch_cache[filename] = result
-                    self._idmatch_arr_cache[filename] = (x_arr, y_arr, sid_arr)
-                    self.idmatch_df = result
-                    self._auto_add_detections_to_master(self.idmatch_df, sid_arr)
+                    self._phot_cache[filename] = result
+                    self._phot_arr_cache[filename] = (x_arr, y_arr, sid_arr)
+                    self.phot_df = result
+                    self._auto_add_detections_to_master(self.phot_df, sid_arr)
                     return
             except Exception:
                 pass
         empty = pd.DataFrame(columns=["x", "y", "source_id"])
-        self._idmatch_cache[filename] = empty
-        self._idmatch_arr_cache[filename] = (
+        self._phot_cache[filename] = empty
+        self._phot_arr_cache[filename] = (
             np.array([], dtype=float),
             np.array([], dtype=float),
             np.array([], dtype=np.int64),
         )
-        self.idmatch_df = empty
+        self.phot_df = empty
 
     def _auto_add_detections_to_master(self, df: pd.DataFrame, sid_arr: np.ndarray | None = None):
         if sid_arr is None:
@@ -1298,197 +1268,97 @@ class MasterIdEditorWindow(StepWindowBase):
         self.master_ids |= new_ids
         self._auto_master_dirty = True
 
-    def display_image(self, full_redraw=False):
-        if self.image_data is None:
+    def _update_viewer_image(self, keep_view=False):
+        if self._viewer is None or self.image_data is None:
             return
-
-        stretched = self._get_stretched_display_cached()
-        if stretched is None:
-            return
-
-        filt = ""
-        if self.header is not None:
-            filt = str(self.header.get("FILTER", self.header.get("filter", ""))).strip()
-        stretch_name = self.scale_combo.currentText()
-        title = f"{self.current_filename}"
-        if filt:
-            title += f" [{filt}]"
-        title += f" | {stretch_name}"
-
-        if self._imshow_obj is not None and not full_redraw:
-            self._imshow_obj.set_data(stretched)
-            self.ax.set_title(title)
-            self.canvas.draw_idle()
-            return
-
-        xlim_current = self.ax.get_xlim() if self.xlim_original else None
-        ylim_current = self.ax.get_ylim() if self.ylim_original else None
-
-        self.ax.clear()
-        # ax.clear() destroys all artists — reset scatter refs
-        self._scat_unmatched = None
-        self._scat_removed = None
-        self._scat_local = None
-        self._scat_gaia = None
-        self._scat_member = None
-        self._scat_selected = None
-
-        self._imshow_obj = self.ax.imshow(
-            stretched, cmap='gray', origin='lower',
-            vmin=0, vmax=1, interpolation='nearest'
-        )
-        # Pre-create persistent scatter artists (updated via set_offsets, no remove/recreate)
-        c = self._overlay_colors
-        self._scat_unmatched = self.ax.scatter([], [], s=20, facecolors='none',
-                                               edgecolors=c["unmatched"], linewidths=0.8, alpha=0.7)
-        self._scat_removed   = self.ax.scatter([], [], s=22, facecolors='none',
-                                               edgecolors=c["removed"], linewidths=0.9, alpha=0.75)
-        self._scat_local     = self.ax.scatter([], [], s=26, facecolors='none',
-                                               edgecolors=c["local"], linewidths=1.0, alpha=0.8)
-        self._scat_gaia      = self.ax.scatter([], [], s=28, facecolors='none',
-                                               edgecolors=c["gaia"], linewidths=1.1, alpha=0.85)
-        self._scat_psf_iter2 = self.ax.scatter([], [], s=32, facecolors='none',
-                                               edgecolors=c["psf_iter2"], linewidths=1.2, alpha=0.85)
-        self._scat_member    = self.ax.scatter([], [], s=30, facecolors='none',
-                                               edgecolors=c["member"], linewidths=1.2, alpha=0.9)
-        self._scat_selected  = self.ax.scatter([], [], s=60, facecolors='none',
-                                               edgecolors=c["selected"], linewidths=1.5, alpha=0.9)
-
-        self.ax.set_title(title)
-        self.ax.set_xlabel("X")
-        self.ax.set_ylabel("Y")
-
-        # Re-add ROI patch (ax.clear() removes it)
-        self._roi_patch = None
-        self._roi_preview_patch = None
-        self._redraw_roi_patch()
-
-        if self.xlim_original is None:
-            self.xlim_original = self.ax.get_xlim()
-            self.ylim_original = self.ax.get_ylim()
-        elif xlim_current is not None:
-            self.ax.set_xlim(xlim_current)
-            self.ax.set_ylim(ylim_current)
-
-        self.canvas.draw_idle()
-
-    @staticmethod
-    def _safe_offsets(x_arr, y_arr):
-        """Return Nx2 offsets array (empty-safe) for set_offsets()."""
-        if len(x_arr) == 0:
-            return np.zeros((0, 2), dtype=float)
-        return np.column_stack([x_arr, y_arr])
+        self._viewer.set_data(self.image_data)
+        if not keep_view:
+            self._viewer.auto_stf()
+            self._viewer.fit_in_view()
 
     def update_overlay(self):
-        # Scatter artists may not exist yet (before first full_redraw)
-        if self._scat_gaia is None:
-            self.canvas.draw_idle()
+        if self._viewer is None:
             return
 
-        empty = np.zeros((0, 2), dtype=float)
-
-        if self.idmatch_df is None or self.idmatch_df.empty:
-            for s in (self._scat_unmatched, self._scat_removed,
-                      self._scat_local, self._scat_psf_iter2, self._scat_gaia, self._scat_member, self._scat_selected):
-                s.set_offsets(empty)
-            self.canvas.draw_idle()
-            return
-
-        arr = self._idmatch_arr_cache.get(self.current_filename or "", None)
-        if arr is None:
-            x = pd.to_numeric(self.idmatch_df["x"], errors="coerce").to_numpy(float)
-            y = pd.to_numeric(self.idmatch_df["y"], errors="coerce").to_numpy(float)
-            sid = np.asarray(pd.to_numeric(self.idmatch_df["source_id"], errors="coerce"), dtype=float)
-            valid = np.isfinite(x) & np.isfinite(y) & np.isfinite(sid)
-            if not np.any(valid):
-                for s in (self._scat_unmatched, self._scat_removed,
-                          self._scat_local, self._scat_gaia, self._scat_member, self._scat_selected):
-                    s.set_offsets(empty)
-                self.canvas.draw_idle()
-                return
-            x = x[valid]
-            y = y[valid]
-            sids = sid[valid].astype(np.int64, copy=False)
-            self._idmatch_arr_cache[self.current_filename or ""] = (x, y, sids)
-        else:
-            x, y, sids = arr
-
-        if sids.size == 0:
-            for s in (self._scat_unmatched, self._scat_removed,
-                      self._scat_local, self._scat_psf_iter2, self._scat_gaia, self._scat_member, self._scat_selected):
-                s.set_offsets(empty)
-            self.canvas.draw_idle()
-            return
-
-        if self.master_ids:
-            master_vals = np.fromiter((int(v) for v in self.master_ids), dtype=np.int64, count=len(self.master_ids))
-            in_master = np.isin(sids, master_vals)
-        else:
-            in_master = np.zeros_like(sids, dtype=bool)
-        is_unmatched  = sids == 0
-        is_matched    = ~is_unmatched
-        is_gaia       = sids > 0
-        is_local      = sids < 0
-        is_removed    = is_matched & ~in_master
-        is_gaia_master = is_matched & in_master & is_gaia
-        is_local_master = is_matched & in_master & is_local
-
-        is_member = np.zeros_like(is_gaia_master, dtype=bool)
-        if bool(getattr(self.params.P, "step8_membership_overlay_enable", False)):
-            self._ensure_membership_map()
-            thr = float(getattr(self.params.P, "step8_membership_threshold", 0.5))
-            idx_gaia = np.where(is_gaia_master)[0]
-            if idx_gaia.size > 0:
-                sid_gaia = sids[idx_gaia]
-                pmem = np.fromiter(
-                    (self._membership_prob_for_sid(int(s)) for s in sid_gaia),
-                    dtype=float,
-                    count=sid_gaia.size,
-                )
-                is_member[idx_gaia] = np.isfinite(pmem) & (pmem >= thr)
-        is_gaia_nonmember = is_gaia_master & (~is_member)
-
-        # Split local sources: PSF iter2 (det_uid<0 from PSF residuals) vs other local
-        if self.psf_iter2_ids:
-            _psf2_arr = np.fromiter(self.psf_iter2_ids, dtype=np.int64, count=len(self.psf_iter2_ids))
-            is_psf_iter2   = is_local_master & np.isin(sids, _psf2_arr)
-            is_local_other = is_local_master & ~is_psf_iter2
-        else:
-            is_psf_iter2   = np.zeros(len(sids), dtype=bool)
-            is_local_other = is_local_master
-
+        markers: list[OverlayMarker] = []
+        c = self._overlay_colors
         vis = self._overlay_visible
 
-        def _off(mask, key):
-            return self._safe_offsets(x[mask], y[mask]) if vis.get(key, True) else empty
+        arr = self._phot_arr_cache.get(self.current_filename or "", None)
+        if arr is None and self.phot_df is not None and not self.phot_df.empty:
+            x_f = pd.to_numeric(self.phot_df["x"], errors="coerce").to_numpy(float)
+            y_f = pd.to_numeric(self.phot_df["y"], errors="coerce").to_numpy(float)
+            sid_f = np.asarray(pd.to_numeric(self.phot_df["source_id"], errors="coerce"), dtype=float)
+            valid = np.isfinite(x_f) & np.isfinite(y_f) & np.isfinite(sid_f)
+            if np.any(valid):
+                x_f = x_f[valid]
+                y_f = y_f[valid]
+                sids_f = sid_f[valid].astype(np.int64, copy=False)
+                self._phot_arr_cache[self.current_filename or ""] = (x_f, y_f, sids_f)
+                arr = (x_f, y_f, sids_f)
 
-        self._scat_unmatched.set_offsets(_off(is_unmatched,    "unmatched"))
-        self._scat_removed.set_offsets(  _off(is_removed,      "removed"))
-        self._scat_local.set_offsets(    _off(is_local_other,  "local"))
-        self._scat_psf_iter2.set_offsets(_off(is_psf_iter2,    "psf_iter2"))
-        self._scat_gaia.set_offsets(     _off(is_gaia_nonmember, "gaia"))
-        self._scat_member.set_offsets(   _off(is_member,       "member"))
+        if arr is not None:
+            x, y, sids = arr
+            if sids.size > 0:
+                if self.master_ids:
+                    master_vals = np.fromiter((int(v) for v in self.master_ids), dtype=np.int64, count=len(self.master_ids))
+                    in_master = np.isin(sids, master_vals)
+                else:
+                    in_master = np.zeros_like(sids, dtype=bool)
+                is_matched   = sids != 0
+                is_gaia_sid  = sids > 0
+                is_local_sid = sids < 0
+                is_removed   = is_matched & ~in_master
+                is_gaia      = is_matched & in_master & is_gaia_sid
+                is_local     = is_matched & in_master & is_local_sid
 
-        if self.selected_source_id is not None:
-            sel_mask = sids == self.selected_source_id
-            self._scat_selected.set_offsets(
-                self._safe_offsets(x[sel_mask], y[sel_mask]) if vis.get("selected", True) else empty
-            )
-        else:
-            self._scat_selected.set_offsets(empty)
+                is_member = np.zeros(len(sids), dtype=bool)
+                if self._show_members:
+                    self._ensure_membership_map()
+                    thr = float(getattr(self.params.P, "step8_membership_threshold", 0.5))
+                    idx_g = np.where(is_gaia)[0]
+                    if idx_g.size > 0:
+                        pmem = np.fromiter(
+                            (self._membership_prob_for_sid(int(s)) for s in sids[idx_g]),
+                            dtype=float, count=idx_g.size,
+                        )
+                        is_member[idx_g] = np.isfinite(pmem) & (pmem >= thr)
 
-        self.canvas.draw_idle()
+                sel_id  = self.selected_source_id
+                sel_vis = vis.get("selected", True)
+                sel_col = QColor(c["selected"])
 
-    def on_click(self, event):
-        if event.inaxes != self.ax:
-            return
-        if event.button != 1:
-            return
-        if self._roi_mode:
-            return  # handled by on_button_press/release
-        x, y = event.xdata, event.ydata
-        if x is None or y is None:
-            return
+                def _add_markers(mask, key, radius):
+                    if not vis.get(key, True):
+                        return
+                    cat_col = QColor(c[key])
+                    for xi, yi, sid, mem in zip(x[mask], y[mask], sids[mask], is_member[mask]):
+                        is_sel = sel_vis and sel_id is not None and int(sid) == int(sel_id)
+                        col = sel_col if is_sel else cat_col
+                        markers.append(OverlayMarker(
+                            col=float(xi), row=float(yi),
+                            radius=radius, color=col,
+                            member=bool(mem),
+                        ))
+
+                _add_markers(is_removed, "removed", 5.0)
+                _add_markers(is_local,   "local",   5.5)
+                _add_markers(is_gaia,    "gaia",    6.5)
+
+        # ROI circle (saved, projected to current frame pixel coords)
+        pix = self._sky_roi_to_pixels()
+        if pix is not None:
+            cx, cy, r_px = pix
+            markers.append(OverlayMarker(col=cx, row=cy, radius=r_px, color=QColor(0, 229, 255, 200)))
+
+        # ROI drag preview
+        if self._roi_preview is not None:
+            cx, cy, r_px = self._roi_preview
+            markers.append(OverlayMarker(col=cx, row=cy, radius=max(r_px, 1.0), color=QColor(0, 229, 255, 130)))
+
+        self._viewer.set_overlay_markers(markers)
+
+    def on_click_xy(self, x: float, y: float):
         self.setFocus()
         self.last_click_xy = (x, y)
 
@@ -1496,20 +1366,20 @@ class MasterIdEditorWindow(StepWindowBase):
         search_r = float(getattr(self.params.P, "search_radius_px", 7.0))
         found_detected = False
 
-        if self.idmatch_df is not None and not self.idmatch_df.empty:
-            dx = self.idmatch_df["x"].to_numpy(float) - x
-            dy = self.idmatch_df["y"].to_numpy(float) - y
+        if self.phot_df is not None and not self.phot_df.empty:
+            dx = self.phot_df["x"].to_numpy(float) - x
+            dy = self.phot_df["y"].to_numpy(float) - y
             dist2 = dx * dx + dy * dy
             if dist2.size > 0:
                 i = int(np.argmin(dist2))
                 if dist2[i] <= search_r * search_r:
                     found_detected = True
-                    sid = int(self.idmatch_df.iloc[i]["source_id"])
+                    sid = int(self.phot_df.iloc[i]["source_id"])
                     if sid == 0:
                         self.selected_source_id = None
                         frame = self.current_filename or "?"
-                        px_x = float(self.idmatch_df.iloc[i]["x"])
-                        px_y = float(self.idmatch_df.iloc[i]["y"])
+                        px_x = float(self.phot_df.iloc[i]["x"])
+                        px_y = float(self.phot_df.iloc[i]["y"])
                         self.selected_label.setText(
                             f"Selected: unmatched detection at ({px_x:.1f}, {px_y:.1f})"
                         )
@@ -1528,7 +1398,7 @@ class MasterIdEditorWindow(StepWindowBase):
 
                     # Log with frame name
                     gaia_info = self.get_gaia_info(self.selected_source_id)
-                    row = self.idmatch_df.iloc[i]
+                    row = self.phot_df.iloc[i]
                     px_x, px_y = row["x"], row["y"]
                     frame = self.current_filename or "?"
                     self.log(f"[{frame}] Selected ID {internal_id}: {self.selected_source_id} | px=({px_x:.1f}, {px_y:.1f}) | {in_master}")
@@ -1547,67 +1417,46 @@ class MasterIdEditorWindow(StepWindowBase):
             self.selected_label.setText(f"No detection at ({x:.1f}, {y:.1f}) - click on a circled star")
             self.update_overlay()
 
-    def add_selected(self):
-        """Add selected source to master (only detected sources with circles)"""
-        frame = self.current_filename or "?"
+    def _on_viewer_press(self, x: float, y: float, btn: int):
+        if btn == int(Qt.LeftButton):
+            if self._roi_mode:
+                self._roi_drag_start = (x, y)
+                self._roi_preview = (x, y, 0.0)
+                self.update_overlay()
+            else:
+                self.on_click_xy(x, y)
 
-        # Only allow adding detected sources (those with circles)
-        if self.selected_source_id is None:
-            self.log(f"[{frame}] No detected source selected - click on a circled star first")
-            return
+    def _on_viewer_release(self, x: float, y: float, btn: int):
+        if btn == int(Qt.LeftButton) and self._roi_mode and self._roi_drag_start is not None:
+            x0, y0 = self._roi_drag_start
+            r_px = float(np.hypot(x - x0, y - y0))
+            self._roi_drag_start = None
+            self._roi_preview = None
+            if r_px >= 1.0:
+                roi = self._pixels_to_sky_roi(x0, y0, r_px)
+                if roi is not None:
+                    self._roi_circle = roi
+                    self._save_roi()
+                    self._update_roi_info_label()
+                else:
+                    self.log("ROI: no WCS in current frame header, cannot convert to sky coords")
+            self.btn_set_roi.blockSignals(True)
+            self.btn_set_roi.setChecked(False)
+            self.btn_set_roi.setText("Set CMD ROI")
+            self.btn_set_roi.blockSignals(False)
+            self._roi_mode = False
+            self.update_overlay()
 
-        if self.selected_source_id in self.master_ids:
-            self.log(f"[{frame}] Already in master: {self.selected_source_id}")
-            return
-
-        self.master_ids.add(self.selected_source_id)
-        self._ensure_stable_id(int(self.selected_source_id))
-        gaia_info = self.get_gaia_info(self.selected_source_id)
-        self.log(f"[{frame}] ✓ ADDED to master: {self.selected_source_id}")
-        if gaia_info:
-            self.log(f"  Gaia: {gaia_info}")
-        self.save_master_ids(log_action="added")
-
-    def remove_selected(self):
-        frame = self.current_filename or "?"
-        if self.selected_source_id is None:
-            self.log(f"[{frame}] No source selected to remove")
-            return
-        if self.selected_source_id not in self.master_ids:
-            self.log(f"[{frame}] Source {self.selected_source_id} not in master list")
-            return
-        internal_id = self.internal_id_map.get(self.selected_source_id, "?")
-        gaia_info = self.get_gaia_info(self.selected_source_id)
-        self.master_ids.remove(self.selected_source_id)
-        self.log(f"[{frame}] ✗ REMOVED from master: ID {internal_id} ({self.selected_source_id})")
-        if gaia_info:
-            self.log(f"  Was: {gaia_info}")
-        self.save_master_ids(log_action="removed")
-
-    def remove_box(self):
-        frame = self.current_filename or "?"
-        if self.last_click_xy is None or self.idmatch_df is None or self.idmatch_df.empty:
-            self.log(f"[{frame}] No position for box removal")
-            return
-        x0, y0 = self.last_click_xy
-        box = int(getattr(self.params.P, "bulk_drop_box_px", 200))
-        half = box / 2.0
-        df = self.idmatch_df
-        in_box = (df["x"].between(x0 - half, x0 + half) &
-                  df["y"].between(y0 - half, y0 + half))
-        sid_vals = parse_int64_series(df.loc[in_box, "source_id"])
-        sids = set(sid_vals[sid_vals.notna()].astype("int64").tolist())
-        # Only remove those that are in master
-        to_remove = sids & self.master_ids
-        if not to_remove:
-            self.log(f"[{frame}] No master sources in box ({box}x{box}px at {x0:.0f},{y0:.0f})")
-            return
-        self.master_ids -= to_remove
-        self.log(f"[{frame}] ✗ BOX REMOVED {len(to_remove)} sources from master ({box}x{box}px)")
-        self.save_master_ids(log_action=f"box_removed_{len(to_remove)}")
+    def _on_viewer_move(self, x: float, y: float, val: float):
+        self.hover_xy = (x, y)
+        if self._roi_mode and self._roi_drag_start is not None:
+            x0, y0 = self._roi_drag_start
+            r_px = float(np.hypot(x - x0, y - y0))
+            self._roi_preview = (x0, y0, r_px)
+            self.update_overlay()
 
     def save_master_ids(self, log_action: str = None):
-        output_dir = step10_selection_dir(self.params.P.result_dir)
+        output_dir = step9_selection_dir(self.params.P.result_dir)
         output_dir.mkdir(parents=True, exist_ok=True)
         master_path = output_dir / "master_star_ids.csv"
         sid2id_path = output_dir / "sourceid_to_ID.csv"
@@ -1653,47 +1502,6 @@ class MasterIdEditorWindow(StepWindowBase):
             return float(val)
         return float(self.master_gmag_map.get(int(source_id), np.nan))
 
-    def _refine_centroid(self, x: float, y: float) -> tuple | None:
-        """
-        Refine centroid near (x, y) to verify there's a real star.
-        Returns (xc, yc, med) if star found, None otherwise.
-        Refine a centroid around the current click position.
-        """
-        if self.image_data is None:
-            return None
-
-        img = self.image_data
-        H, W = img.shape
-        seed_fwhm_px = float(getattr(self.params.P, "fwhm_seed_px", 5.0))
-
-        r = max(int(round(3.5 * max(seed_fwhm_px, 2.0))), 8)
-        xi, yi = int(round(x)), int(round(y))
-        x0, x1 = max(0, xi - r), min(W, xi + r + 1)
-        y0, y1 = max(0, yi - r), min(H, yi + r + 1)
-
-        if (x1 - x0) < 9 or (y1 - y0) < 9:
-            return None
-
-        cut = img[y0:y1, x0:x1]
-        try:
-            _, med, _ = sigma_clipped_stats(cut, sigma=3.0, maxiters=5, mask=~np.isfinite(cut))
-        except Exception:
-            return None
-
-        Z = cut - med
-        Z[~np.isfinite(Z)] = 0.0
-        Z[Z < 0] = 0.0
-        S = np.nansum(Z)
-
-        if S <= 0:
-            return None
-
-        yy, xx = np.mgrid[y0:y1, x0:x1]
-        xc = float(np.nansum(xx * Z) / S)
-        yc = float(np.nansum(yy * Z) / S)
-
-        return xc, yc, float(med)
-
     def _get_wcs(self) -> WCS | None:
         """Get WCS from header or .wcs file"""
         # First try header
@@ -1724,105 +1532,6 @@ class MasterIdEditorWindow(StepWindowBase):
 
         return None
 
-    def add_undetected_star(self):
-        """
-        Add undetected star at click position (A key for non-detected positions).
-        1. Verify there's actually a star using centroid refinement
-        2. Find matching Gaia source
-        3. Add to master
-        """
-        frame = self.current_filename or "?"
-
-        if self.last_click_xy is None:
-            self.log(f"[{frame}] No position clicked")
-            return
-
-        x, y = self.last_click_xy
-
-        # Check if this position is already in idmatch
-        if self.idmatch_df is not None and not self.idmatch_df.empty:
-            dx = self.idmatch_df["x"].to_numpy(float) - x
-            dy = self.idmatch_df["y"].to_numpy(float) - y
-            dist2 = dx * dx + dy * dy
-            search_r = float(getattr(self.params.P, "search_radius_px", 7.0))
-            if dist2.size > 0 and np.min(dist2) <= search_r * search_r:
-                # Already detected - use normal add
-                self.log(f"[{frame}] Position is already detected - using regular add")
-                self.add_selected()
-                return
-
-        # Verify there's a star at this position
-        centroid = self._refine_centroid(x, y)
-        if centroid is None:
-            self.log(f"[{frame}] No star detected at ({x:.1f}, {y:.1f}) - centroid refinement failed")
-            return
-
-        xc, yc, med = centroid
-        self.log(f"[{frame}] Star detected at ({xc:.1f}, {yc:.1f}) - searching Gaia catalog...")
-
-        # Get WCS for coordinate conversion
-        w = self._get_wcs()
-        if w is None:
-            self.log(f"[{frame}] No WCS available - cannot match to Gaia")
-            return
-
-        # Convert pixel to sky coordinates
-        try:
-            sky = w.celestial.pixel_to_world(xc, yc)
-        except Exception as e:
-            self.log(f"[{frame}] WCS conversion failed: {e}")
-            return
-
-        # Match to Gaia catalog
-        if self.gaia_df is None or len(self.gaia_df) == 0:
-            self.log(f"[{frame}] Gaia catalog not loaded")
-            return
-
-        gaia = self.gaia_df
-        if "ra" not in gaia.columns or "dec" not in gaia.columns or "source_id" not in gaia.columns:
-            self.log(f"[{frame}] Gaia catalog missing required columns")
-            return
-
-        try:
-            gsky = SkyCoord(
-                ra=gaia["ra"].to_numpy(float) * u.deg,
-                dec=gaia["dec"].to_numpy(float) * u.deg
-            )
-            idx, sep2d, _ = sky.match_to_catalog_sky(gsky)
-            max_sep = float(getattr(self.params.P, "gaia_add_max_sep_arcsec", 2.0))
-            sep_arcsec = float(sep2d.arcsec)
-
-            if sep_arcsec > max_sep:
-                self.log(f"[{frame}] No Gaia source within {max_sep}\" of ({xc:.1f}, {yc:.1f}) - nearest is {sep_arcsec:.2f}\"")
-                return
-
-            sid = int(gaia.iloc[int(idx)]["source_id"])
-            if sid in self.master_ids:
-                # Already in master - select it and show info
-                internal_id = self._ensure_stable_id(sid)
-                gaia_info = self.get_gaia_info(sid)
-                self.log(f"[{frame}] ★ Already in master: ID {internal_id} | source_id: {sid} (sep={sep_arcsec:.2f}\")")
-                if gaia_info:
-                    self.log(f"  Gaia: {gaia_info}")
-                # Select this source and highlight in table
-                self.selected_source_id = sid
-                self.selected_label.setText(f"Selected: ID {internal_id} | source_id: {sid} (✓ IN MASTER - not detected in this frame)")
-                self.select_source_in_table(sid)
-                self.update_overlay()
-                return
-
-            self.master_ids.add(sid)
-            self._ensure_stable_id(sid)
-            gaia_info = self.get_gaia_info(sid)
-            self.log(f"[{frame}] ✓ ADDED undetected star: {sid} (sep={sep_arcsec:.2f}\")")
-            if gaia_info:
-                self.log(f"  Gaia: {gaia_info}")
-            self.save_master_ids(log_action="added_undetected")
-            # Select the newly added source
-            self.selected_source_id = sid
-
-        except Exception as e:
-            self.log(f"[{frame}] Gaia matching failed: {e}")
 
     def open_parameters_dialog(self):
         dialog = QDialog(self)
@@ -1879,7 +1588,7 @@ class MasterIdEditorWindow(StepWindowBase):
         dialog.accept()
 
     def validate_step(self) -> bool:
-        return (step10_selection_dir(self.params.P.result_dir) / "master_star_ids.csv").exists()
+        return (step9_selection_dir(self.params.P.result_dir) / "master_star_ids.csv").exists()
 
     # ── Color legend floating window ─────────────────────────────────────────
 
@@ -1899,13 +1608,10 @@ class MasterIdEditorWindow(StepWindowBase):
         layout.addWidget(hint)
 
         entries = [
-            ("gaia",      "Gaia (master)"),
-            ("member",    "Membership"),
-            ("psf_iter2", "PSF iter2 (new)"),
-            ("local",     "Local (other)"),
-            ("removed",   "Removed"),
-            ("unmatched", "Unmatched"),
-            ("selected",  "Selected"),
+            ("gaia",     "In master · Gaia"),
+            ("local",    "In master · Local"),
+            ("removed",  "Removed by D-key (press A to restore)"),
+            ("selected", "Selected"),
         ]
         for key, label_text in entries:
             row_w = QWidget()
@@ -1962,24 +1668,13 @@ class MasterIdEditorWindow(StepWindowBase):
         col = QColorDialog.getColor(cur, self, f"Pick color — {key}")
         if not col.isValid():
             return
-        hex_color = col.name()
-        self._overlay_colors[key] = hex_color
+        self._overlay_colors[key] = col.name()
         self._refresh_color_btn(key)
-        # Update live scatter artist edge color
-        scat_map = {
-            "gaia":      "_scat_gaia",
-            "member":    "_scat_member",
-            "psf_iter2": "_scat_psf_iter2",
-            "local":     "_scat_local",
-            "removed":   "_scat_removed",
-            "unmatched": "_scat_unmatched",
-            "selected":  "_scat_selected",
-        }
-        scat = getattr(self, scat_map.get(key, ""), None)
-        if scat is not None:
-            scat.set_edgecolors(hex_color)
-            if self.canvas is not None:
-                self.canvas.draw_idle()
+        self.update_overlay()
+
+    def _on_members_toggled(self, checked: bool):
+        self._show_members = bool(checked)
+        self.update_overlay()
 
     def _toggle_color_panel(self, checked: bool):
         if self._color_window is None:
@@ -2027,7 +1722,7 @@ class MasterIdEditorWindow(StepWindowBase):
     # CMD ROI helpers
     # ------------------------------------------------------------------
     def _roi_path(self) -> Path:
-        return step10_selection_dir(self.params.P.result_dir) / "cmd_roi.json"
+        return step9_selection_dir(self.params.P.result_dir) / "cmd_roi.json"
 
     def _load_roi(self):
         p = self._roi_path()
@@ -2102,23 +1797,8 @@ class MasterIdEditorWindow(StepWindowBase):
             self.roi_info_label.setStyleSheet("QLabel { color: #90A4AE; font-size: 9pt; }")
 
     def _redraw_roi_patch(self):
-        """Draw (or remove) the ROI circle patch, projected to the current frame's pixel coords."""
-        if self._roi_patch is not None:
-            try:
-                self._roi_patch.remove()
-            except Exception:
-                pass
-            self._roi_patch = None
-        if self._roi_circle is not None:
-            pix = self._sky_roi_to_pixels()
-            if pix is not None:
-                cx_px, cy_px, r_px = pix
-                self._roi_patch = MplCircle(
-                    (cx_px, cy_px), r_px, fill=False,
-                    edgecolor='#00E5FF', linestyle='--', linewidth=1.5, alpha=0.85
-                )
-                self.ax.add_patch(self._roi_patch)
-        self.canvas.draw_idle()
+        """Refresh the ROI overlay circle for the current frame."""
+        self.update_overlay()
 
     def _on_set_roi_toggled(self, checked: bool):
         self._roi_mode = checked
@@ -2128,13 +1808,8 @@ class MasterIdEditorWindow(StepWindowBase):
         else:
             self.btn_set_roi.setText("Set CMD ROI")
             self._roi_drag_start = None
-            if self._roi_preview_patch is not None:
-                try:
-                    self._roi_preview_patch.remove()
-                except Exception:
-                    pass
-                self._roi_preview_patch = None
-            self.canvas.draw_idle()
+            self._roi_preview = None
+            self.update_overlay()
 
     def _on_clear_roi(self):
         self._roi_circle = None
@@ -2182,20 +1857,6 @@ class MasterIdEditorWindow(StepWindowBase):
             self.load_and_display(quick_switch=True)
 
     def keyPressEvent(self, event):
-        if event.key() == Qt.Key_A:
-            # If a detected source is selected, add it
-            # Otherwise, try to add undetected star at click position
-            if self.selected_source_id is not None:
-                self.add_selected()
-            else:
-                self.add_undetected_star()
-            return
-        if event.key() == Qt.Key_D:
-            if event.modifiers() & Qt.ShiftModifier:
-                self.remove_box()
-            else:
-                self.remove_selected()
-            return
         if event.key() == Qt.Key_G:
             self.show_radial_profile()
             return
@@ -2310,277 +1971,3 @@ class MasterIdEditorWindow(StepWindowBase):
         except Exception as e:
             self.log(f"[{frame}] Radial profile error: {e}")
 
-    # Zoom/pan from Step4
-    def reset_zoom(self):
-        if self.xlim_original is not None:
-            self.ax.set_xlim(self.xlim_original)
-            self.ax.set_ylim(self.ylim_original)
-            self.canvas.draw_idle()
-
-    # Stretch functions (from Step4)
-    def on_stretch_changed(self, index):
-        self._norm_cache.clear()  # Stretch changed — invalidate all normalized caches
-        self._display_cache.clear()
-        self._display_cache_order.clear()
-        self.display_image()
-
-    def update_stretch_label(self, value):
-        self.stretch_value_label.setText(str(value))
-
-    def update_black_label(self, value):
-        self.black_value_label.setText(str(value))
-
-    def redisplay_image(self):
-        self.display_image()
-
-    def _get_stretched_display_cached(self):
-        if self.image_data is None:
-            return None
-        stretch_idx = int(self.scale_combo.currentIndex())
-        intensity = int(self.stretch_slider.value())
-        black_point = int(self.black_slider.value())
-        cache_key = (self.current_filename, stretch_idx, intensity, black_point)
-        if cache_key in self._display_cache:
-            try:
-                self._display_cache_order.remove(cache_key)
-            except ValueError:
-                pass
-            self._display_cache_order.append(cache_key)
-            return self._display_cache[cache_key]
-
-        normalized = self.normalize_image()
-        if normalized is None:
-            return None
-        stretched = self.apply_stretch(normalized).astype(np.float32, copy=False)
-
-        while len(self._display_cache_order) >= self._FITS_CACHE_SIZE:
-            oldest = self._display_cache_order.pop(0)
-            self._display_cache.pop(oldest, None)
-        self._display_cache[cache_key] = stretched
-        self._display_cache_order.append(cache_key)
-        return stretched
-
-    def normalize_image(self):
-        if self.image_data is None:
-            return None
-
-        stretch_idx = self.scale_combo.currentIndex()
-        cache_key = (self.current_filename, stretch_idx)
-        if cache_key in self._norm_cache:
-            return self._norm_cache[cache_key]
-
-        finite = np.isfinite(self.image_data)
-        if not finite.any():
-            return np.zeros_like(self.image_data)
-
-        data = self.image_data.copy()
-
-        if stretch_idx == 6:  # Linear (1-99%)
-            vmin = np.percentile(data[finite], 1)
-            vmax = np.percentile(data[finite], 99)
-        elif stretch_idx == 7:  # ZScale (IRAF)
-            vmin, vmax = self.calculate_zscale()
-        else:
-            mean_val, median_val, std_val = sigma_clipped_stats(data[finite], sigma=3.0, maxiters=5)
-            vmin = max(np.min(data[finite]), median_val - 2.8 * std_val)
-            vmax = min(np.max(data[finite]), np.percentile(data[finite], 99.9))
-
-        if vmax <= vmin:
-            vmin = np.min(data[finite])
-            vmax = np.max(data[finite])
-
-        normalized = (data - vmin) / (vmax - vmin + 1e-10)
-        normalized = np.clip(normalized, 0, 1)
-        # LRU: evict oldest if over limit
-        if len(self._norm_cache) >= self._FITS_CACHE_SIZE:
-            oldest = next(iter(self._norm_cache))
-            del self._norm_cache[oldest]
-        self._norm_cache[cache_key] = normalized.astype(np.float32, copy=False)
-
-        return self._norm_cache[cache_key]
-
-    def calculate_zscale(self):
-        finite = np.isfinite(self.image_data)
-        if not finite.any():
-            return 0, 1
-
-        data = self.image_data[finite]
-        mean_val, median_val, std_val = sigma_clipped_stats(data, sigma=3.0, maxiters=5)
-
-        vmin = float(median_val - 2.8 * std_val)
-        vmax_percentile = np.percentile(data, 99.5)
-        vmax_sigma = median_val + 6.0 * std_val
-        vmax = float(min(vmax_percentile, vmax_sigma))
-
-        if vmax <= vmin:
-            vmin = float(np.min(data))
-            vmax = float(np.max(data))
-
-        return vmin, vmax
-
-    def apply_stretch(self, data):
-        stretch_idx = self.scale_combo.currentIndex()
-        intensity = self.stretch_slider.value() / 100.0
-        black_point = self.black_slider.value() / 100.0
-
-        data = np.clip((data - black_point) / (1.0 - black_point + 1e-10), 0, 1)
-
-        if stretch_idx == 0:  # Auto Stretch (Siril)
-            return self.stretch_auto_siril(data, intensity)
-        if stretch_idx == 1:  # Asinh
-            return self.stretch_asinh(data, intensity)
-        if stretch_idx == 2:  # MTF
-            return self.stretch_mtf(data, intensity)
-        if stretch_idx == 3:  # Histogram Eq
-            return self.stretch_histogram_eq(data)
-        if stretch_idx == 4:  # Log
-            return self.stretch_log(data, intensity)
-        if stretch_idx == 5:  # Sqrt
-            return self.stretch_sqrt(data, intensity)
-        return data
-
-    def stretch_auto_siril(self, data, intensity):
-        finite = data[np.isfinite(data)]
-        if len(finite) == 0:
-            return data
-
-        median_val = np.median(finite)
-        mad = np.median(np.abs(finite - median_val))
-        sigma = mad * 1.4826
-
-        shadows = max(0, median_val - 2.8 * sigma)
-        stretched = (data - shadows) / (1.0 - shadows + 1e-10)
-        stretched = np.clip(stretched, 0, 1)
-
-        midtone = 0.15 + (1.0 - intensity) * 0.35
-        return self.mtf_function(stretched, midtone)
-
-    def stretch_asinh(self, data, intensity):
-        beta = 1.0 + intensity * 15.0
-        stretched = np.arcsinh(data * beta) / np.arcsinh(beta)
-        return np.clip(stretched, 0, 1)
-
-    def stretch_mtf(self, data, intensity):
-        midtone = 0.05 + (1.0 - intensity) * 0.45
-        return self.mtf_function(data, midtone)
-
-    def mtf_function(self, data, midtone):
-        m = np.clip(midtone, 0.001, 0.999)
-        result = np.zeros_like(data)
-        mask = data > 0
-        result[mask] = (m - 1) * data[mask] / ((2 * m - 1) * data[mask] - m)
-        result[data == 0] = 0
-        result[data == 1] = 1
-        return np.clip(result, 0, 1)
-
-    def stretch_histogram_eq(self, data):
-        finite = data[np.isfinite(data)]
-        if len(finite) == 0:
-            return data
-
-        hist, bin_edges = np.histogram(finite.flatten(), bins=65536, range=(0, 1))
-        cdf = hist.cumsum()
-        cdf = cdf / cdf[-1]
-        bin_centers = (bin_edges[:-1] + bin_edges[1:]) / 2
-        return np.clip(np.interp(data, bin_centers, cdf), 0, 1)
-
-    def stretch_log(self, data, intensity):
-        a = 100 + intensity * 900
-        return np.clip(np.log(1 + a * data) / np.log(1 + a), 0, 1)
-
-    def stretch_sqrt(self, data, intensity):
-        power = 0.2 + (1.0 - intensity) * 0.8
-        return np.clip(np.power(data, power), 0, 1)
-
-    def on_scroll(self, event):
-        if event.inaxes != self.ax:
-            return
-        scale = 1.2 if event.button == 'down' else 1 / 1.2
-        xlim = self.ax.get_xlim()
-        ylim = self.ax.get_ylim()
-        xdata, ydata = event.xdata, event.ydata
-        new_width = (xlim[1] - xlim[0]) * scale
-        new_height = (ylim[1] - ylim[0]) * scale
-        relx = (xlim[1] - xdata) / (xlim[1] - xlim[0])
-        rely = (ylim[1] - ydata) / (ylim[1] - ylim[0])
-        self.ax.set_xlim([xdata - new_width * (1 - relx), xdata + new_width * relx])
-        self.ax.set_ylim([ydata - new_height * (1 - rely), ydata + new_height * rely])
-        self.canvas.draw_idle()
-
-    def on_button_press(self, event):
-        if self._roi_mode and event.button == 1 and event.inaxes == self.ax:
-            if event.xdata is not None and event.ydata is not None:
-                self._roi_drag_start = (event.xdata, event.ydata)
-            return
-        if event.button == 3:
-            self.panning = True
-            self.pan_start = (event.xdata, event.ydata)
-
-    def on_button_release(self, event):
-        if self._roi_mode and event.button == 1:
-            if self._roi_drag_start is not None and event.inaxes == self.ax:
-                x0, y0 = self._roi_drag_start
-                x1 = event.xdata if event.xdata is not None else x0
-                y1 = event.ydata if event.ydata is not None else y0
-                r_px = float(np.hypot(x1 - x0, y1 - y0))
-                if r_px >= 1.0:
-                    roi = self._pixels_to_sky_roi(x0, y0, r_px)
-                    if roi is not None:
-                        self._roi_circle = roi
-                        self._save_roi()
-                        self._update_roi_info_label()
-                        if self._roi_preview_patch is not None:
-                            try:
-                                self._roi_preview_patch.remove()
-                            except Exception:
-                                pass
-                            self._roi_preview_patch = None
-                        self._redraw_roi_patch()
-                    else:
-                        self.log("ROI: no WCS in current frame header, cannot convert to sky coords")
-            self._roi_drag_start = None
-            # exit draw mode
-            self.btn_set_roi.blockSignals(True)
-            self.btn_set_roi.setChecked(False)
-            self.btn_set_roi.setText("Set CMD ROI")
-            self.btn_set_roi.blockSignals(False)
-            self._roi_mode = False
-            return
-        if event.button == 3:
-            self.panning = False
-            self.pan_start = None
-
-    def on_motion(self, event):
-        # Track hover position for G key
-        if event.inaxes == self.ax and event.xdata is not None and event.ydata is not None:
-            self.hover_xy = (event.xdata, event.ydata)
-
-        # ROI drag preview
-        if self._roi_mode and self._roi_drag_start is not None and event.inaxes == self.ax:
-            if event.xdata is not None and event.ydata is not None:
-                x0, y0 = self._roi_drag_start
-                r = float(np.hypot(event.xdata - x0, event.ydata - y0))
-                if self._roi_preview_patch is not None:
-                    try:
-                        self._roi_preview_patch.remove()
-                    except Exception:
-                        pass
-                self._roi_preview_patch = MplCircle(
-                    (x0, y0), r, fill=False,
-                    edgecolor='#00E5FF', linestyle=':', linewidth=1.5, alpha=0.7
-                )
-                self.ax.add_patch(self._roi_preview_patch)
-                self.canvas.draw_idle()
-            return
-
-        if not self.panning or event.inaxes != self.ax:
-            return
-        if self.pan_start is None or event.xdata is None:
-            return
-        dx = self.pan_start[0] - event.xdata
-        dy = self.pan_start[1] - event.ydata
-        xlim = self.ax.get_xlim()
-        ylim = self.ax.get_ylim()
-        self.ax.set_xlim([xlim[0] + dx, xlim[1] + dx])
-        self.ax.set_ylim([ylim[0] + dy, ylim[1] + dy])
-        self.canvas.draw_idle()

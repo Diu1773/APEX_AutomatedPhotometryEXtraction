@@ -1,5 +1,5 @@
 """
-Step 11: Zeropoint & Standardization
+Step 10: Zeropoint & Standardization
 """
 
 from __future__ import annotations
@@ -43,7 +43,7 @@ from apex.utils.step_paths import (
     step6_refbuild_dir,
     tool_extinction_dir,
 )
-from apex.utils.step_paths_cmd import step6_psf_dir, step10_selection_dir, step11_zp_dir
+from apex.utils.step_paths_cmd import step8_psf_dir, step9_selection_dir, step10_zp_dir
 from apex.utils.io_utils import parse_int64_series, read_ecsv_int64_source_id
 
 
@@ -161,8 +161,8 @@ class ZeropointCalibrationWorker(QThread):
                 return p_win
         for base in (
             step7_forced_phot_dir(self.result_dir),
-            step6_psf_dir(self.result_dir),
-            step10_selection_dir(self.result_dir),
+            step8_psf_dir(self.result_dir),
+            step9_selection_dir(self.result_dir),
             self.result_dir,
             self.result_dir / "phot",
             self.result_dir / "photometry",
@@ -377,7 +377,7 @@ class ZeropointCalibrationWorker(QThread):
         if df.empty:
             df = pd.DataFrame(columns=["file", "filter", "airmass", "airmass_source", "alt_deg", "zenith_deg", "datetime_utc", "datetime_local", "ra_deg", "dec_deg"])
         if len(df):
-            output_dir = step11_zp_dir(self.result_dir)
+            output_dir = step10_zp_dir(self.result_dir)
             output_dir.mkdir(parents=True, exist_ok=True)
             out_path = output_dir / "frame_airmass.csv"
             df.to_csv(out_path, index=False)
@@ -442,11 +442,11 @@ class ZeropointCalibrationWorker(QThread):
         try:
             P = self.params.P
             result_dir = self.result_dir
-            output_dir = step11_zp_dir(result_dir)
+            output_dir = step10_zp_dir(result_dir)
             output_dir.mkdir(parents=True, exist_ok=True)
             # Forced phot is preferred; PSF photometry is optional refinement.
             phot_dir_forced = step7_forced_phot_dir(result_dir)
-            phot_dir_psf    = step6_psf_dir(result_dir)
+            phot_dir_psf    = step8_psf_dir(result_dir)
 
             idx_candidates = [
                 phot_dir_forced / "photometry_index.csv",
@@ -514,7 +514,7 @@ class ZeropointCalibrationWorker(QThread):
 
             # Pre-load sourceid_to_ID for fallback ID injection (det_uid → source_id → ID)
             _sid_map = None
-            for _cand_dir in (step10_selection_dir(result_dir),):
+            for _cand_dir in (step9_selection_dir(result_dir),):
                 _sid_csv = _cand_dir / "sourceid_to_ID.csv"
                 if _sid_csv.exists():
                     try:
@@ -1392,14 +1392,14 @@ class CmdViewerWindow(QWidget):
         controls2.addSpacing(16)
         self.roi_check = QCheckBox("ROI filter")
         self.roi_check.setChecked(False)
-        self.roi_check.setToolTip("Filter CMD sources by the spatial ROI circle set in Step 10.\nDoes not affect ZP calibration.")
+        self.roi_check.setToolTip("Filter CMD sources by the spatial ROI circle set in Step 9.\nDoes not affect ZP calibration.")
         controls2.addWidget(self.roi_check)
         self.roi_info_label = QLabel("(no ROI)")
         self.roi_info_label.setStyleSheet("QLabel { color: #90A4AE; font-size: 9pt; }")
         controls2.addWidget(self.roi_info_label)
         self.btn_reload_roi = QPushButton("Reload")
         self.btn_reload_roi.setFixedWidth(56)
-        self.btn_reload_roi.setToolTip("Re-read cmd_roi.json from Step 10 output directory")
+        self.btn_reload_roi.setToolTip("Re-read cmd_roi.json from Step 9 output directory")
         controls2.addWidget(self.btn_reload_roi)
         controls2.addStretch()
         layout.addLayout(controls2)
@@ -1412,7 +1412,7 @@ class CmdViewerWindow(QWidget):
 
     def _load_roi(self):
         """Load cmd_roi.json from step8 output directory and update UI."""
-        roi_path = step10_selection_dir(self.result_dir) / "cmd_roi.json"
+        roi_path = step9_selection_dir(self.result_dir) / "cmd_roi.json"
         try:
             if roi_path.exists():
                 self._roi_data = json.loads(roi_path.read_text())
@@ -1476,7 +1476,7 @@ class CmdViewerWindow(QWidget):
                 from PyQt5.QtWidgets import QMessageBox
                 QMessageBox.warning(self, "Parallax Unavailable",
                     "parallax column not found in CMD data or master_catalog.\n"
-                    "Rerun Step 8 (Ref Build) and Step 11 (ZP Calibration).")
+                    "Rerun Step 6 (Master Catalog Build) and Step 10 (ZP Calibration).")
                 return
         self._redraw()
 
@@ -2402,7 +2402,7 @@ class ZPFitPlotWidget(QWidget):
     def reload(self, result_dir: Path = None):
         if result_dir is not None:
             self.result_dir = Path(result_dir)
-        out_dir = step11_zp_dir(self.result_dir)
+        out_dir = step10_zp_dir(self.result_dir)
         self._cal_df = None
         self._frame_df = None
         self._coeff_df = None
@@ -2683,7 +2683,7 @@ class ZPFitPlotWidget(QWidget):
 
 
 class ZeropointCalibrationWindow(StepWindowBase):
-    """Step 11: Zeropoint & Standardization"""
+    """Step 10: Zeropoint & Standardization"""
 
     def __init__(self, params, file_manager, project_state, main_window):
         self.file_manager = file_manager
@@ -2950,8 +2950,8 @@ class ZeropointCalibrationWindow(StepWindowBase):
 
     def validate_step(self) -> bool:
         result_dir = self.params.P.result_dir
-        wide_cmd = step11_zp_dir(result_dir) / "median_by_ID_filter_wide_cmd.csv"
-        wide = step11_zp_dir(result_dir) / "median_by_ID_filter_wide.csv"
+        wide_cmd = step10_zp_dir(result_dir) / "median_by_ID_filter_wide_cmd.csv"
+        wide = step10_zp_dir(result_dir) / "median_by_ID_filter_wide.csv"
         if not wide_cmd.exists() and not wide.exists():
             wide_cmd = result_dir / "median_by_ID_filter_wide_cmd.csv"
             wide = result_dir / "median_by_ID_filter_wide.csv"

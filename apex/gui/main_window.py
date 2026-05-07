@@ -558,56 +558,56 @@ class MainWindowWorkflow(QMainWindow):
             from apex.gui.workflow.step4_source_detection import SourceDetectionWindow
             return SourceDetectionWindow(p, fm, ps, self)
 
-        # ── Step 4: WCS (shared) ──
+        # ── Step 5: WCS (shared) ──
         elif step_index == _WCS:
             from apex.gui.workflow.step5_wcs_plate_solving import WcsPlateSolvingWindow
             return WcsPlateSolvingWindow(p, fm, ps, self)
 
-        # ── Step 5: MasterBuild (shared) ──
+        # ── Step 6: MasterBuild (shared) ──
         elif step_index == _MASTER:
             from apex.gui.workflow.step6_ref_build import RefBuildWindow
             return RefBuildWindow(p, fm, ps, self)
 
-        # ── Step 6: Forced Aperture Phot (shared) ──
+        # ── Step 7: Forced Aperture Phot (shared) ──
         elif step_index == _FORCED:
             from apex.gui.workflow.step7_forced_aperture_phot import ForcedPhotWindow
             return ForcedPhotWindow(p, fm, ps, self)
 
-        # ── Step 7+: mode-specific ──
+        # ── Step 8+: mode-specific ──
         elif step_index == 7:
             if self.mode == "cmd":
-                from apex.gui.workflow.cmd.step6_psf_photometry import PSFPhotometryWindow
+                from apex.gui.workflow.cmd.step8_psf_photometry import PSFPhotometryWindow
                 return PSFPhotometryWindow(p, fm, ps, self)
             else:
-                from apex.gui.workflow.lc.step9_target_selection import TargetComparisonSelectionWindow
+                from apex.gui.workflow.lc.step8_target_selection import TargetComparisonSelectionWindow
                 return TargetComparisonSelectionWindow(p, fm, ps, self)
 
         elif step_index == 8:
             if self.mode == "cmd":
-                from apex.gui.workflow.cmd.step10_master_id_editor import MasterIdEditorWindow
+                from apex.gui.workflow.cmd.step9_master_id_editor import MasterIdEditorWindow
                 return MasterIdEditorWindow(p, fm, ps, self)
             else:
-                from apex.gui.workflow.lc.step10_lightcurve_builder import LightCurveBuilderWindow
+                from apex.gui.workflow.lc.step9_lightcurve_builder import LightCurveBuilderWindow
                 return LightCurveBuilderWindow(p, fm, ps, self)
 
         elif step_index == 9:
             if self.mode == "cmd":
-                from apex.gui.workflow.cmd.step11_zeropoint_calibration import ZeropointCalibrationWindow
+                from apex.gui.workflow.cmd.step10_zeropoint_calibration import ZeropointCalibrationWindow
                 return ZeropointCalibrationWindow(p, fm, ps, self)
             else:
-                from apex.gui.workflow.lc.step11_detrend_merge import DetrendNightMergeWindow
+                from apex.gui.workflow.lc.step10_detrend_merge import DetrendNightMergeWindow
                 return DetrendNightMergeWindow(p, fm, ps, self)
 
         elif step_index == 10:
             if self.mode == "cmd":
-                from apex.gui.workflow.cmd.step12_cmd_plot import CmdPlotWindow
+                from apex.gui.workflow.cmd.step11_cmd_plot import CmdPlotWindow
                 return CmdPlotWindow(p, fm, ps, self)
             else:
-                from apex.gui.workflow.lc.step12_period_analysis import PeriodAnalysisWindow
+                from apex.gui.workflow.lc.step11_period_analysis import PeriodAnalysisWindow
                 return PeriodAnalysisWindow(p, fm, ps, self)
 
         elif step_index == 11 and self.mode == "cmd":
-            from apex.gui.workflow.cmd.step13_isochrone_model import IsochroneModelWindow
+            from apex.gui.workflow.cmd.step12_isochrone_model import IsochroneModelWindow
             return IsochroneModelWindow(p, fm, ps, self)
 
         return None
@@ -957,6 +957,15 @@ class MainWindowWorkflow(QMainWindow):
                 self.instrument.sensor_nx_1x = int(cam_nx_edit.text())
                 self.instrument.sensor_ny_1x = int(cam_ny_edit.text())
                 self.instrument.binning = int(cam_binning_edit.text())
+                self.params.P.telescope_focal_mm = float(self.instrument.focal_length_mm)
+                self.params.P.camera_pixel_um = float(self.instrument.pix_size_um)
+                self.params.P.binning_default = int(self.instrument.binning)
+                self.params.P.pixel_scale_arcsec = (
+                    206.265
+                    * float(self.instrument.pix_size_um)
+                    * float(self.instrument.binning)
+                    / float(self.instrument.focal_length_mm)
+                )
                 self.params.P.gain_e_per_adu = float(gain_edit.text())
                 self.params.P.rdnoise_e = float(rdnoise_edit.text())
                 self.params.P.saturation_adu = float(saturation_edit.text())
@@ -965,10 +974,13 @@ class MainWindowWorkflow(QMainWindow):
                 self.params.P.site_alt_m = float(site_alt_edit.text())
                 self.params.P.site_tz_offset_hours = float(site_tz_edit.text())
                 self.params.P.max_workers = int(parallel_workers_spin.value())
-                if not self.params.save_toml():
+                self.params.P.parallel_max_workers = int(parallel_workers_spin.value())
+                saved = self.params.save_toml()
+                if not saved:
                     self.append_log("Warning: could not save settings to TOML")
                 QMessageBox.information(self, "Settings Saved",
-                                        "Instrument settings updated.")
+                                        "Instrument settings updated." if saved else
+                                        "Instrument settings updated, but TOML save failed.")
                 self.append_log("Instrument settings updated")
             except ValueError as e:
                 QMessageBox.warning(self, "Invalid Input",

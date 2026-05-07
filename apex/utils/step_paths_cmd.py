@@ -1,6 +1,6 @@
 """
 CMD-mode step path helpers.
-Re-exports shared paths (step1-8) and adds CMD-specific paths (step9-13).
+Re-exports shared paths (step1-7) and adds CMD-specific paths (step8-12).
 
 CMD pipeline layout:
   step1_file_selection/   File selection
@@ -10,11 +10,11 @@ CMD pipeline layout:
   step5_wcs/              WCS plate solving       } shared
   step6_refbuild/         Reference catalog build  }
   step7_forced_phot/       Forced aperture photometry }
-  cmd_psf/                PSF photometry (optional)
-  cmd_selection/          Master ID editor
-  cmd_zeropoint/          Zeropoint calibration
-  cmd_plot/               CMD diagram
-  cmd_isochrone/          Isochrone fitting
+  cmd_psf/                Step 8 PSF photometry (optional)
+  cmd_selection/          Step 9 Master ID editor
+  cmd_zeropoint/          Step 10 zeropoint calibration
+  cmd_plot/               Step 11 CMD diagram
+  cmd_isochrone/          Step 12 isochrone fitting
 """
 
 from __future__ import annotations
@@ -36,22 +36,47 @@ CMD_PLOT_DIRNAME       = "cmd_plot"
 CMD_ISO_DIRNAME        = "cmd_isochrone"
 
 
-def step6_psf_dir(result_dir: PathLike) -> Path:
+def step8_psf_dir(result_dir: PathLike) -> Path:
     return step_dir(result_dir, CMD_PSF_DIRNAME)
 
 
-def step10_selection_dir(result_dir: PathLike) -> Path:
+def step9_selection_dir(result_dir: PathLike) -> Path:
     return step_dir(result_dir, CMD_SELECTION_DIRNAME)
 
 
-def step11_zp_dir(result_dir: PathLike) -> Path:
+def step10_zp_dir(result_dir: PathLike) -> Path:
     return step_dir(result_dir, CMD_ZP_DIRNAME)
 
 
-def step12_cmd_dir(result_dir: PathLike) -> Path:
+def step11_cmd_dir(result_dir: PathLike) -> Path:
     return step_dir(result_dir, CMD_PLOT_DIRNAME)
 
 
-def step13_iso_dir(result_dir: PathLike) -> Path:
+def step12_iso_dir(result_dir: PathLike) -> Path:
     return step_dir(result_dir, CMD_ISO_DIRNAME)
+
+
+def step6_psf_dir(result_dir: PathLike) -> Path:
+    """Legacy alias for Step 8 PSF output."""
+    return step8_psf_dir(result_dir)
+
+
+def step10_selection_dir(result_dir: PathLike) -> Path:
+    """Legacy alias for Step 9 Master ID Editor output."""
+    return step9_selection_dir(result_dir)
+
+
+def step11_zp_dir(result_dir: PathLike) -> Path:
+    """Legacy alias for Step 10 zeropoint output."""
+    return step10_zp_dir(result_dir)
+
+
+def step12_cmd_dir(result_dir: PathLike) -> Path:
+    """Legacy alias for Step 11 CMD plot output."""
+    return step11_cmd_dir(result_dir)
+
+
+def step13_iso_dir(result_dir: PathLike) -> Path:
+    """Legacy alias for Step 12 isochrone output."""
+    return step12_iso_dir(result_dir)
 

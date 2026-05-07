@@ -39,7 +39,7 @@ from apex.analysis.merge.workspace_scan import (
     folder_tag as _folder_tag,
     load_master_catalogs_by_filter as _load_master_catalogs_by_filter,
     load_selection_payloads as _load_selection_payloads,
-    read_step5_index as _read_step5_index,
+    read_step7_index as _read_step7_index,
     scan_merge_input_workspace,
     workspace_scan_signature,
 )
@@ -51,7 +51,7 @@ from apex.utils.run_workspace import (
     build_merged_workspace_dir,
 )
 from apex.utils.step_paths_lc import (
-    step9_selection_dir,
+    step8_selection_dir,
 )
 
 
@@ -111,10 +111,9 @@ class MultiNightMergerWindow(QMainWindow):
         "Crop",
         "Sky Preview",
         "Source Detection",
-        "Photometry",
         "WCS",
-        "Ref Build",
-        "ID Match",
+        "Master Catalog Build",
+        "Forced Phot",
         "Selection",
         "Light Curve",
         "Detrend",
@@ -278,7 +277,7 @@ class MultiNightMergerWindow(QMainWindow):
         info_grp = QGroupBox("폴더 스캔")
         info_layout = QVBoxLayout(info_grp)
         self.folder_info_table = QTableWidget(0, 10)
-        self.folder_info_table.setHorizontalHeaderLabels(["폴더", "Label", "Type", "Start", "End", "Step 5", "Step 9", "Step 10", "필터", "상태"])
+        self.folder_info_table.setHorizontalHeaderLabels(["폴더", "Label", "Type", "Start", "End", "Step 7", "Step 8", "Step 9", "필터", "상태"])
         self.folder_info_table.horizontalHeader().setSectionResizeMode(QHeaderView.Stretch)
         self.folder_info_table.setEditTriggers(QAbstractItemView.NoEditTriggers)
         self.folder_info_table.setMinimumHeight(180)
@@ -351,7 +350,7 @@ class MultiNightMergerWindow(QMainWindow):
 
     def _make_step3(self) -> QWidget:
         return self._make_embedded_step_page(
-            "Merged workspace의 Step 9 Selection UI를 그대로 보여줍니다.\n"
+            "Merged workspace의 Step 8 Selection UI를 그대로 보여줍니다.\n"
             "여기서 target / comparison / check를 바로 수정하면 merged workspace에 즉시 저장됩니다.",
             "selection_status_label",
             "step9_host_layout",
@@ -359,21 +358,21 @@ class MultiNightMergerWindow(QMainWindow):
 
     def _make_step4(self) -> QWidget:
         return self._make_embedded_step_page(
-            "Merged workspace의 Step 10 Light Curve Builder UI를 그대로 보여줍니다.",
+            "Merged workspace의 Step 9 Light Curve Builder UI를 그대로 보여줍니다.",
             "step10_status_label",
             "step10_host_layout",
         )
 
     def _make_step5(self) -> QWidget:
         return self._make_embedded_step_page(
-            "Merged workspace의 Step 11 Detrend UI를 그대로 보여줍니다.",
+            "Merged workspace의 Step 10 Detrend UI를 그대로 보여줍니다.",
             "step11_status_label",
             "step11_host_layout",
         )
 
     def _make_step6(self) -> QWidget:
         return self._make_embedded_step_page(
-            "Merged workspace의 Step 12 Period Analysis UI를 그대로 보여줍니다.",
+            "Merged workspace의 Step 11 Period Analysis UI를 그대로 보여줍니다.",
             "step12_status_label",
             "step12_host_layout",
         )
@@ -448,7 +447,7 @@ class MultiNightMergerWindow(QMainWindow):
             return self.step9_embedded_window
         if self.merged_result_dir is None:
             return None
-        from apex.gui.workflow.lc.step9_target_selection import TargetComparisonSelectionWindow
+        from apex.gui.workflow.lc.step8_target_selection import TargetComparisonSelectionWindow
 
         window = TargetComparisonSelectionWindow(
             self.merged_runtime_params,
@@ -466,7 +465,7 @@ class MultiNightMergerWindow(QMainWindow):
             return self.step10_embedded_window
         if self.merged_result_dir is None:
             return None
-        from apex.gui.workflow.lc.step10_lightcurve_builder import LightCurveBuilderWindow
+        from apex.gui.workflow.lc.step9_lightcurve_builder import LightCurveBuilderWindow
 
         window = LightCurveBuilderWindow(
             self.merged_runtime_params,
@@ -484,7 +483,7 @@ class MultiNightMergerWindow(QMainWindow):
             return self.step11_embedded_window
         if self.merged_result_dir is None:
             return None
-        from apex.gui.workflow.lc.step11_detrend_merge import DetrendNightMergeWindow
+        from apex.gui.workflow.lc.step10_detrend_merge import DetrendNightMergeWindow
 
         window = DetrendNightMergeWindow(
             self.merged_runtime_params,
@@ -502,7 +501,7 @@ class MultiNightMergerWindow(QMainWindow):
             return self.step12_embedded_window
         if self.merged_result_dir is None:
             return None
-        from apex.gui.workflow.lc.step12_period_analysis import PeriodAnalysisWindow
+        from apex.gui.workflow.lc.step11_period_analysis import PeriodAnalysisWindow
 
         window = PeriodAnalysisWindow(
             self.merged_runtime_params,
@@ -563,7 +562,7 @@ class MultiNightMergerWindow(QMainWindow):
         self.step12_status_label.setText(status_text)
 
     def _step9_signature(self, result_dir: Path) -> tuple:
-        s9 = step9_selection_dir(result_dir)
+        s9 = step8_selection_dir(result_dir)
         return (
             str(result_dir.resolve()),
             max((p.stat().st_mtime for p in s9.glob("master_catalog_*.tsv")), default=None),
@@ -680,7 +679,7 @@ class MultiNightMergerWindow(QMainWindow):
             self.folder_info_table.setItem(row, 2, QTableWidgetItem(str(row_info["run_type"])))
             self.folder_info_table.setItem(row, 3, QTableWidgetItem(str(row_info["date_start"])))
             self.folder_info_table.setItem(row, 4, QTableWidgetItem(str(row_info["date_end"])))
-            for col_idx, key in enumerate(("has_step5", "has_step9", "has_step10"), start=5):
+            for col_idx, key in enumerate(("has_step7", "has_step8", "has_step9"), start=5):
                 ok = bool(row_info[key])
                 item = QTableWidgetItem("OK" if ok else "없음")
                 item.setForeground(QColor("#2E7D32") if ok else QColor("#C62828"))
@@ -699,7 +698,7 @@ class MultiNightMergerWindow(QMainWindow):
             self._scan_folders()
         invalid_rows = [row for row in self.folder_scan_rows if not row.get("merge_ready")]
         if invalid_rows:
-            return False, "Step 5 / Step 9 / Step 10이 모두 있는 workspace만 머저할 수 있습니다."
+            return False, "Step 7 / Step 8 / Step 9가 모두 있는 workspace만 머저할 수 있습니다."
         labels = []
         seen = set()
         for row in self.folder_scan_rows:
@@ -853,7 +852,7 @@ class MultiNightMergerWindow(QMainWindow):
         out_dir = Path(self.merged_result_dir)
         self.merged_runtime_params = _MergedParamsProxy(self.params, out_dir)
         self.merged_runtime_params.P.file_path_map = dict(path_map)
-        idx = _read_step5_index(out_dir)
+        idx = _read_step7_index(out_dir)
         filenames = idx["file"].astype(str).tolist() if not idx.empty and "file" in idx.columns else []
         self.merged_runtime_file_manager = _MergedFileManagerProxy(filenames, night_assignments, path_map)
         self.merged_runtime_project_state = ProjectState(out_dir)

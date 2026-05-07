@@ -14,11 +14,9 @@ import shutil
 import numpy as np
 from astropy.io import fits
 from concurrent.futures import ThreadPoolExecutor, as_completed
-from matplotlib.backends.backend_qt5agg import FigureCanvasQTAgg as FigureCanvas
-from matplotlib.figure import Figure
-from matplotlib.patches import Rectangle
 
 from .step_window_base import StepWindowBase
+from apex.gui.widgets.fits_viewer import FITSViewerWidget
 from apex.utils.constants import get_parallel_workers
 from apex.utils.step_paths import crop_rect_path, step2_dir, step2_cropped_dir
 
@@ -44,21 +42,13 @@ class CropSelectorWindow(StepWindowBase):
         self.crop_x1 = None
         self.crop_y1 = None
 
-        # Matplotlib components
-        self.figure = None
-        self.canvas = None
-        self.ax = None
-        self.rect_patch = None  # Rectangle patch for visualization
+        # Viewer + state
+        self._viewer: FITSViewerWidget | None = None
         self.original_image_data = None  # Original uncropped image
         self.displayed_image_data = None  # Currently displayed (may be cropped)
         self.ref_filename = None
         self.is_cropped = False  # Track if images have been cropped
         self.crop_skipped = False
-
-        # Mouse tracking for rectangle drawing
-        self.drawing = False
-        self.start_x = None
-        self.start_y = None
 
         # Initialize base class
         super().__init__(
@@ -80,7 +70,8 @@ class CropSelectorWindow(StepWindowBase):
 
         # === Info Label ===
         info_label = QLabel(
-            "1. Draw rectangle by clicking and dragging\n"
+            "1. Left-click drag on the image to draw a crop rectangle\n"
+            "   (Right-click drag to pan, mouse wheel to zoom)\n"
             "2. Click 'Apply Crop' to save cropped images to 'result/step2_crop/cropped/' folder"
         )
         info_label.setStyleSheet("QLabel { background-color: #E3F2FD; padding: 10px; border-radius: 5px; }")
@@ -90,17 +81,10 @@ class CropSelectorWindow(StepWindowBase):
         viewer_group = QGroupBox("Reference Image Viewer")
         viewer_layout = QVBoxLayout(viewer_group)
 
-        # Create matplotlib figure
-        self.figure = Figure(figsize=(10, 8))
-        self.canvas = FigureCanvas(self.figure)
-        self.ax = self.figure.add_subplot(111)
-
-        # Connect mouse events
-        self.canvas.mpl_connect('button_press_event', self.on_mouse_press)
-        self.canvas.mpl_connect('motion_notify_event', self.on_mouse_move)
-        self.canvas.mpl_connect('button_release_event', self.on_mouse_release)
-
-        viewer_layout.addWidget(self.canvas)
+        self._viewer = FITSViewerWidget(self)
+        self._viewer.set_selection_mode(True)
+        self._viewer.selection_finished.connect(self._on_selection_finished)
+        viewer_layout.addWidget(self._viewer)
 
         # Controls below image
         image_controls_layout = QHBoxLayout()
@@ -214,134 +198,61 @@ class CropSelectorWindow(StepWindowBase):
             )
 
     def display_image(self):
-        """Display image with proper scaling"""
-        if self.displayed_image_data is None:
+        """Push current displayed_image_data to FITSViewerWidget."""
+        if self.displayed_image_data is None or self._viewer is None:
             return
+        data = np.asarray(self.displayed_image_data, dtype=np.float32)
+        self._viewer.set_data(data)
+        self._viewer.auto_stf()
+        self._viewer.fit_in_view()
 
-        self.ax.clear()
-
-        # Calculate percentile-based scaling for better visualization
-        vmin = np.percentile(self.displayed_image_data, 1)
-        vmax = np.percentile(self.displayed_image_data, 99)
-
-        # Display image
-        self.ax.imshow(
-            self.displayed_image_data,
-            cmap='gray',
-            origin='lower',
-            vmin=vmin,
-            vmax=vmax,
-            interpolation='nearest'
-        )
-
-        self.ax.set_xlabel("X (pixels)")
-        self.ax.set_ylabel("Y (pixels)")
-
-        status = "CROPPED" if self.is_cropped else "ORIGINAL"
-        self.ax.set_title(f"Reference: {self.ref_filename} [{status}]")
-
-        # Draw existing rectangle if coordinates are set
+        # Restore saved selection rectangle (only on uncropped image)
         if self.crop_x0 is not None and not self.is_cropped:
-            width = self.crop_x1 - self.crop_x0
-            height = self.crop_y1 - self.crop_y0
-            rect = Rectangle((self.crop_x0, self.crop_y0), width, height,
-                           linewidth=2, edgecolor='red', facecolor='none')
-            self.ax.add_patch(rect)
+            self._viewer.set_selection_rect(
+                self.crop_x0, self.crop_y0, self.crop_x1, self.crop_y1
+            )
+            self._viewer.set_selection_mode(True)
+        else:
+            self._viewer.clear_selection_rect()
+            # Disable selection drawing once cropped
+            self._viewer.set_selection_mode(not self.is_cropped)
 
-        self.canvas.draw()
-
-    def on_mouse_press(self, event):
-        """Handle mouse press event"""
+    def _on_selection_finished(self, x0: float, y0: float, x1: float, y1: float):
+        """Handle rectangle finalize from FITSViewerWidget."""
         if self.is_cropped or self.original_image_data is None:
             return
-        if event.inaxes != self.ax:
-            return
 
-        self.drawing = True
-        self.start_x = int(event.xdata)
-        self.start_y = int(event.ydata)
+        x0i, y0i = int(round(x0)), int(round(y0))
+        x1i, y1i = int(round(x1)), int(round(y1))
 
-        # Clear any existing rectangle patch
-        if self.rect_patch is not None:
-            self.rect_patch.remove()
-            self.rect_patch = None
+        # Clamp to image bounds
+        h, w = self.original_image_data.shape[:2]
+        x0i = max(0, min(w, x0i))
+        x1i = max(0, min(w, x1i))
+        y0i = max(0, min(h, y0i))
+        y1i = max(0, min(h, y1i))
 
-    def on_mouse_move(self, event):
-        """Handle mouse move event - optimized with patch update"""
-        if not self.drawing or self.is_cropped:
-            return
-        if event.inaxes != self.ax:
-            return
-
-        # Get current position
-        current_x = int(event.xdata)
-        current_y = int(event.ydata)
-
-        # Update rectangle coordinates
-        x0 = min(self.start_x, current_x)
-        x1 = max(self.start_x, current_x)
-        y0 = min(self.start_y, current_y)
-        y1 = max(self.start_y, current_y)
-
-        # Remove old rectangle patch if exists
-        if self.rect_patch is not None:
-            self.rect_patch.remove()
-
-        # Create and add new rectangle patch
-        width = x1 - x0
-        height = y1 - y0
-        self.rect_patch = Rectangle((x0, y0), width, height,
-                                    linewidth=2, edgecolor='red', facecolor='none',
-                                    animated=False)
-        self.ax.add_patch(self.rect_patch)
-
-        # Fast redraw (only canvas, not full figure)
-        self.canvas.draw_idle()
-
-    def on_mouse_release(self, event):
-        """Handle mouse release event"""
-        if not self.drawing:
-            return
-
-        self.drawing = False
-
-        if event.inaxes != self.ax:
-            return
-
-        # Get final coordinates
-        end_x = int(event.xdata)
-        end_y = int(event.ydata)
-
-        # Ensure x0 < x1 and y0 < y1
-        self.crop_x0 = min(self.start_x, end_x)
-        self.crop_x1 = max(self.start_x, end_x)
-        self.crop_y0 = min(self.start_y, end_y)
-        self.crop_y1 = max(self.start_y, end_y)
-
-        # Validate minimum size
-        if (self.crop_x1 - self.crop_x0) < 50 or (self.crop_y1 - self.crop_y0) < 50:
+        if (x1i - x0i) < 50 or (y1i - y0i) < 50:
             QMessageBox.warning(self, "Too Small", "Crop region must be at least 50×50 pixels")
             self.crop_x0 = None
             self.crop_y0 = None
             self.crop_x1 = None
             self.crop_y1 = None
-            self.display_image()
+            self._viewer.clear_selection_rect()
             return
 
-        # Update info label
-        width = self.crop_x1 - self.crop_x0
+        self.crop_x0, self.crop_y0 = x0i, y0i
+        self.crop_x1, self.crop_y1 = x1i, y1i
+
+        width  = self.crop_x1 - self.crop_x0
         height = self.crop_y1 - self.crop_y0
         self.crop_info_label.setText(
             f"Crop Region Selected: ({self.crop_x0}, {self.crop_y0}) → ({self.crop_x1}, {self.crop_y1})\n"
             f"Size: {width} × {height} pixels\n"
             f"Click 'Apply Crop' to crop all images"
         )
-
-        # Enable crop button
         self.btn_crop.setEnabled(True)
-
-        # Redraw final rectangle
-        self.display_image()
+        self._viewer.set_selection_rect(self.crop_x0, self.crop_y0, self.crop_x1, self.crop_y1)
 
     def apply_crop(self):
         """Apply crop to all FITS files"""
@@ -616,9 +527,8 @@ class CropSelectorWindow(StepWindowBase):
         self.crop_y0 = None
         self.crop_x1 = None
         self.crop_y1 = None
-        if self.rect_patch is not None:
-            self.rect_patch.remove()
-            self.rect_patch = None
+        if self._viewer is not None:
+            self._viewer.clear_selection_rect()
 
         if self.original_image_data is not None:
             self.displayed_image_data = self.original_image_data.copy()

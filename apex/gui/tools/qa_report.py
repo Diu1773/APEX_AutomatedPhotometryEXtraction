@@ -25,7 +25,8 @@ import numpy as np
 import pandas as pd
 
 from apex.utils.photometry_loader import load_frame_photometry
-from apex.utils.step_paths_lc import step5_photometry_dir, step10_dir
+from apex.utils.step_paths import step7_forced_phot_dir
+from apex.utils.step_paths_lc import step10_dir
 
 from matplotlib.backends.backend_qt5agg import FigureCanvasQTAgg as FigureCanvas
 from matplotlib.backends.backend_qt5agg import NavigationToolbar2QT as NavigationToolbar
@@ -121,7 +122,8 @@ class QAReportWorker(QThread):
 
             # 1. Load all photometry TSVs
             self._log("Loading photometry data...")
-            idx_path = step5_photometry_dir(self.result_dir) / "photometry_index.csv"
+            phot_dir = step7_forced_phot_dir(self.result_dir)
+            idx_path = phot_dir / "photometry_index.csv"
             frame_rows: list[tuple[str, str]] = []
             if idx_path.exists():
                 idx_df = pd.read_csv(idx_path)
@@ -134,10 +136,20 @@ class QAReportWorker(QThread):
                             )
                         )
             if not frame_rows:
-                tsvs = sorted(step5_photometry_dir(self.result_dir).glob("*_photometry.tsv"))
-                frame_rows = [(p.stem.replace("_photometry", ""), "") for p in tsvs]
+                tsvs = sorted(phot_dir.glob("photometry_*.tsv"))
+                if not tsvs:
+                    tsvs = sorted(phot_dir.glob("*_photometry.tsv"))
+                frame_rows = [
+                    (
+                        p.stem[len("photometry_"):]
+                        if p.stem.startswith("photometry_")
+                        else p.stem.replace("_photometry", ""),
+                        "",
+                    )
+                    for p in tsvs
+                ]
             if not frame_rows:
-                raise FileNotFoundError("No Step 5 photometry frames found")
+                raise FileNotFoundError("No Step 7 forced photometry frames found")
 
             all_rows = []
             for i, (fname, filt_hint) in enumerate(frame_rows):
@@ -152,7 +164,7 @@ class QAReportWorker(QThread):
                 self.progress.emit(i + 1, len(frame_rows), f"Loading {fname}")
 
             if not all_rows:
-                raise FileNotFoundError("No readable Step 5 photometry frames found")
+                raise FileNotFoundError("No readable Step 7 forced photometry frames found")
 
             big = pd.concat(all_rows, ignore_index=True)
             self._log(f"Loaded {len(all_rows)} frames, {len(big)} measurements")
@@ -441,7 +453,7 @@ class QAReportWorker(QThread):
         frame_stats["goodmag_fraction"] = frame_stats["n_goodmag"] / frame_stats["n_targets"]
 
         # Load aperture info if available
-        ap_path = step5_photometry_dir(self.result_dir) / "aperture_by_frame.csv"
+        ap_path = step7_forced_phot_dir(self.result_dir) / "aperture_by_frame.csv"
         if ap_path.exists():
             ap_df = pd.read_csv(ap_path)
             if "file" in ap_df.columns and "fwhm_used" in ap_df.columns:
@@ -581,7 +593,7 @@ class QAReportWorker(QThread):
         if "is_saturated" not in df.columns:
             return {
                 "error": "is_saturated column not found in photometry output",
-                "recommendation": "Add is_saturated to TSV output in Step 5 aperture photometry."
+                "recommendation": "Add is_saturated to Step 7 forced photometry TSV output."
             }
 
         n_total = len(df)
@@ -846,7 +858,8 @@ class QAReportWindow(QMainWindow):
         self.available_filters = []
         try:
             filters_found = set()
-            index_path = step5_photometry_dir(self.result_dir) / "photometry_index.csv"
+            phot_dir = step7_forced_phot_dir(self.result_dir)
+            index_path = phot_dir / "photometry_index.csv"
             if index_path.exists():
                 try:
                     idx = pd.read_csv(index_path)
@@ -857,7 +870,9 @@ class QAReportWindow(QMainWindow):
                 except Exception:
                     pass
             if not filters_found:
-                tsvs = sorted(step5_photometry_dir(self.result_dir).glob("*_photometry.tsv"))
+                tsvs = sorted(phot_dir.glob("photometry_*.tsv"))
+                if not tsvs:
+                    tsvs = sorted(phot_dir.glob("*_photometry.tsv"))
                 for tsv in tsvs[:20]:  # Sample first 20 files
                     try:
                         df = pd.read_csv(tsv, sep="\t", nrows=1)

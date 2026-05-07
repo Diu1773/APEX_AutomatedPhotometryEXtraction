@@ -27,7 +27,7 @@ from typing import Dict, List, Optional, Tuple
 import numpy as np
 import pandas as pd
 from astropy.io import fits
-from astropy.stats import sigma_clipped_stats
+from astropy.stats import SigmaClip, sigma_clipped_stats
 from astropy.wcs import WCS
 from scipy.spatial import cKDTree as KDTree
 
@@ -35,7 +35,7 @@ from PyQt5.QtWidgets import (
     QVBoxLayout, QHBoxLayout, QPushButton, QLabel, QGroupBox,
     QTextEdit, QProgressBar, QTableWidget, QTableWidgetItem,
     QHeaderView, QAbstractItemView, QWidget, QMessageBox,
-    QTabWidget, QSplitter,
+    QTabWidget, QSplitter, QFormLayout, QCheckBox, QDoubleSpinBox,
 )
 from PyQt5.QtCore import Qt, QThread, pyqtSignal
 
@@ -108,6 +108,236 @@ def _normalize_filter_value(value) -> str:
     return raw
 
 
+def _numeric_col(df: pd.DataFrame, col: str) -> pd.Series:
+    if col not in df.columns:
+        return pd.Series(np.nan, index=df.index, dtype=float)
+    return pd.to_numeric(df[col], errors="coerce")
+
+
+def _bool_col(df: pd.DataFrame, col: str) -> pd.Series:
+    if col not in df.columns:
+        return pd.Series(False, index=df.index, dtype=bool)
+    s = df[col]
+    if s.dtype == bool:
+        return s.fillna(False).astype(bool)
+    return s.astype(str).str.strip().str.lower().isin({"true", "1", "yes", "y", "on"})
+
+
+def _finite_values(values) -> np.ndarray:
+    arr = np.asarray(values, dtype=float)
+    return arr[np.isfinite(arr)]
+
+
+def _finite_median(values) -> float:
+    arr = _finite_values(values)
+    return float(np.median(arr)) if arr.size else float("nan")
+
+
+def _finite_percentile(values, q: float) -> float:
+    arr = _finite_values(values)
+    return float(np.percentile(arr, q)) if arr.size else float("nan")
+
+
+def _finite_max(values) -> float:
+    arr = _finite_values(values)
+    return float(np.max(arr)) if arr.size else float("nan")
+
+
+def _safe_rate(num: int, den: int) -> float:
+    return float(num) / float(den) if den > 0 else float("nan")
+
+
+def _step4_quality_check(row: pd.Series, P, sat_adu: float, datamax_adu: float) -> Tuple[bool, str, bool]:
+    """Reuse Step4 detection-quality columns when they are available."""
+    reasons: List[str] = []
+    used = False
+
+    def _finite_row_float(name: str) -> float:
+        nonlocal used
+        if name not in row.index:
+            return float("nan")
+        try:
+            v = float(row.get(name))
+        except Exception:
+            return float("nan")
+        if np.isfinite(v):
+            used = True
+        return v
+
+    elong = _finite_row_float("elongation")
+    elong_max = _to_float(getattr(P, "ref_cat_max_elong", 1.5), 1.5)
+    if np.isfinite(elong) and elong_max > 0 and elong > elong_max:
+        reasons.append("elongation")
+
+    roundness = _finite_row_float("roundness")
+    if not np.isfinite(roundness):
+        r1 = _finite_row_float("roundness1")
+        r2 = _finite_row_float("roundness2")
+        vals = [abs(v) for v in (r1, r2) if np.isfinite(v)]
+        roundness = max(vals) if vals else float("nan")
+    round_max = _to_float(getattr(P, "ref_cat_max_abs_round", 0.4), 0.4)
+    if np.isfinite(roundness) and round_max > 0 and abs(roundness) > round_max:
+        reasons.append("roundness")
+
+    sharp = _finite_row_float("sharpness")
+    sharp_min = _to_float(getattr(P, "ref_cat_sharp_min", 0.2), 0.2)
+    sharp_max = _to_float(getattr(P, "ref_cat_sharp_max", 1.0), 1.0)
+    if np.isfinite(sharp):
+        if np.isfinite(sharp_min) and sharp < sharp_min:
+            reasons.append("sharpness_low")
+        if np.isfinite(sharp_max) and sharp_max > 0 and sharp > sharp_max:
+            reasons.append("sharpness_high")
+
+    peak = _finite_row_float("peak_adu")
+    if np.isfinite(peak):
+        if np.isfinite(sat_adu) and sat_adu > 0 and peak >= sat_adu:
+            reasons.append("saturated_peak")
+        elif np.isfinite(datamax_adu) and datamax_adu > 0 and peak >= datamax_adu:
+            reasons.append("nonlinear_peak")
+
+    status = str(row.get("fwhm_status", "") or "").strip().lower()
+    if status:
+        used = True
+    if status in {"saturated", "edge"}:
+        reasons.append(status)
+
+    return (len(reasons) == 0), ";".join(reasons), used
+
+
+def _frame_centering_stats(
+    phot_df: pd.DataFrame,
+    *,
+    fname: str,
+    filt: str,
+    status: str,
+    fwhm_px: float,
+    wcs_ok: bool,
+    apcorr: float,
+    max_shift_px: float,
+    outlier_px: float,
+    out_path: str,
+) -> dict:
+    """Summarize forced-photometry centering reliability for one frame."""
+    n_master = int(len(phot_df))
+    if n_master == 0:
+        return {
+            "file": fname,
+            "filter": filt,
+            "status": status,
+            "centering_status": "NO_SOURCES",
+            "n_master": 0,
+            "path": out_path,
+        }
+
+    detected = _bool_col(phot_df, "detected_flag")
+    forced = _bool_col(phot_df, "forced_flag")
+    recentered = _bool_col(phot_df, "recentered_flag")
+    outlier = _bool_col(phot_df, "centroid_outlier")
+    off_frame = _bool_col(phot_df, "off_frame_flag")
+    x_pred = _numeric_col(phot_df, "x_pred")
+    y_pred = _numeric_col(phot_df, "y_pred")
+    on_frame = (~off_frame) & x_pred.notna() & y_pred.notna()
+
+    match_offset = _numeric_col(phot_df, "match_offset_px")
+    center_error = _numeric_col(phot_df, "center_error_px")
+    centroid_shift = _numeric_col(phot_df, "centroid_shift_px")
+    mag_err = _numeric_col(phot_df, "mag_err")
+    snr = _numeric_col(phot_df, "snr")
+
+    n_on_frame = int(on_frame.sum())
+    n_detected = int(detected.sum())
+    n_forced = int(forced.sum())
+    n_forced_on_frame = int((forced & on_frame).sum())
+    n_recentered = int(recentered.sum())
+    n_center_tested = int(center_error.notna().sum())
+    n_outlier = int(outlier.sum())
+
+    det_match_offset = match_offset[detected & match_offset.notna()]
+    cen_error = center_error[center_error.notna()]
+    cen_shift = centroid_shift[recentered & centroid_shift.notna()]
+
+    high_mag_err = mag_err[outlier & mag_err.notna()]
+    low_mag_err = mag_err[(~outlier) & detected & mag_err.notna()]
+    high_snr = snr[outlier & snr.notna()]
+    low_snr = snr[(~outlier) & detected & snr.notna()]
+    high_mag_med = _finite_median(high_mag_err)
+    low_mag_med = _finite_median(low_mag_err)
+    high_shift_delta = (
+        float(high_mag_med - low_mag_med)
+        if np.isfinite(high_mag_med) and np.isfinite(low_mag_med)
+        else float("nan")
+    )
+
+    center_p90 = _finite_percentile(cen_error, 90)
+    outlier_rate = _safe_rate(n_outlier, n_center_tested)
+    detected_rate = _safe_rate(n_detected, n_on_frame)
+    forced_rate = _safe_rate(n_forced_on_frame, n_on_frame)
+    recentered_rate = _safe_rate(n_recentered, n_detected)
+
+    centering_status = "OK"
+    advice = "centering stable"
+    if n_on_frame <= 0:
+        centering_status = "NO_ON_FRAME"
+        advice = "projected master positions are outside this frame"
+    elif n_center_tested < max(5, min(20, int(0.05 * n_on_frame))):
+        centering_status = "LOW_MATCH"
+        advice = "too few detected matches to verify centers"
+    elif np.isfinite(outlier_rate) and outlier_rate >= 0.20:
+        centering_status = "CHECK"
+        advice = "many centers exceed the outlier threshold"
+    elif np.isfinite(center_p90) and center_p90 >= max(max_shift_px * 0.85, outlier_px * 1.5):
+        centering_status = "CHECK"
+        advice = "p90 center error is close to the recenter limit"
+    elif np.isfinite(outlier_rate) and outlier_rate >= 0.05:
+        centering_status = "REVIEW"
+        advice = "some sources have large center shifts"
+    elif np.isfinite(forced_rate) and forced_rate >= 0.50:
+        centering_status = "REVIEW"
+        advice = "many sources are forced-only; inspect downstream scatter"
+
+    return {
+        "file": fname,
+        "filter": filt,
+        "status": status,
+        "centering_status": centering_status,
+        "advice": advice,
+        "wcs_ok": bool(wcs_ok),
+        "fwhm_px": float(fwhm_px) if np.isfinite(fwhm_px) else float("nan"),
+        "max_recenter_shift_px": float(max_shift_px),
+        "centroid_outlier_px": float(outlier_px),
+        "apcorr": float(apcorr) if np.isfinite(apcorr) else float("nan"),
+        "n_master": n_master,
+        "n_on_frame": n_on_frame,
+        "n_detected": n_detected,
+        "n_forced": n_forced,
+        "n_forced_on_frame": n_forced_on_frame,
+        "n_recentered": n_recentered,
+        "n_center_tested": n_center_tested,
+        "n_centroid_outlier": n_outlier,
+        "detected_rate": detected_rate,
+        "forced_rate": forced_rate,
+        "recentered_rate": recentered_rate,
+        "centroid_outlier_rate": outlier_rate,
+        "match_offset_med_px": _finite_median(det_match_offset),
+        "match_offset_p90_px": _finite_percentile(det_match_offset, 90),
+        "match_offset_max_px": _finite_max(det_match_offset),
+        "center_error_med_px": _finite_median(cen_error),
+        "center_error_p90_px": center_p90,
+        "center_error_max_px": _finite_max(cen_error),
+        "centroid_shift_med_px": _finite_median(cen_shift),
+        "centroid_shift_p90_px": _finite_percentile(cen_shift, 90),
+        "centroid_shift_max_px": _finite_max(cen_shift),
+        "mag_err_med": _finite_median(mag_err),
+        "mag_err_p90": _finite_percentile(mag_err, 90),
+        "mag_err_high_shift_med": high_mag_med,
+        "mag_err_low_shift_med": low_mag_med,
+        "mag_err_high_shift_delta": high_shift_delta,
+        "snr_high_shift_med": _finite_median(high_snr),
+        "snr_low_shift_med": _finite_median(low_snr),
+        "path": out_path,
+    }
+
+
 # ── ForcedPhotWorker ───────────────────────────────────────────────────────────
 
 class ForcedPhotWorker(QThread):
@@ -116,6 +346,7 @@ class ForcedPhotWorker(QThread):
     progress      = pyqtSignal(int, int, str)   # current, total, fname
     log           = pyqtSignal(str)
     apcorr_update = pyqtSignal(dict)            # emitted per-frame with gc_data
+    center_stats_update = pyqtSignal(dict)       # emitted per-frame with centering diagnostics
     worker_status = pyqtSignal(int, str, str, int)  # worker_id, fname, status, progress(0-100)
     finished      = pyqtSignal(dict)
     error         = pyqtSignal(str, str)
@@ -279,6 +510,16 @@ class ForcedPhotWorker(QThread):
                     "x": pd.to_numeric(df[xc], errors="coerce"),
                     "y": pd.to_numeric(df[yc], errors="coerce"),
                 })
+                for col in (
+                    "elongation", "roundness", "roundness1", "roundness2",
+                    "sharpness", "dao_peak", "dao_flux", "peak_adu",
+                    "fwhm_px", "sep_flag",
+                ):
+                    if col in df.columns:
+                        out[col] = pd.to_numeric(df[col], errors="coerce")
+                for col in ("fwhm_status", "source_type"):
+                    if col in df.columns:
+                        out[col] = df[col].astype(str).reset_index(drop=True)
                 return out.dropna(subset=["x", "y"]).reset_index(drop=True)
             except Exception:
                 continue
@@ -330,6 +571,7 @@ class ForcedPhotWorker(QThread):
         wcs: Optional[WCS],
         fwhm_px: float,
         P,
+        status_cb=None,
     ) -> Tuple[pd.DataFrame, float, dict]:
         """Measure forced aperture photometry + growth-curve apcorr for one frame.
 
@@ -337,6 +579,13 @@ class ForcedPhotWorker(QThread):
         -------
         (phot_df, apcorr, growth_curve_data)
         """
+        def _status(label: str, pct: int):
+            if callable(status_cb):
+                try:
+                    status_cb(label, int(pct))
+                except Exception:
+                    pass
+
         n = len(master_df)
         h, w = img.shape
 
@@ -348,6 +597,8 @@ class ForcedPhotWorker(QThread):
         dann_scale   = _to_float(getattr(P, "fitsky_dannulus_scale",  2.0), 2.0)
         ann_gap      = _to_float(getattr(P, "annulus_min_gap_px",     6.0), 6.0)
         max_shift    = _to_float(getattr(P, "max_recenter_shift",     2.0), 2.0)
+        outlier_px   = _to_float(getattr(P, "centroid_outlier_px",    1.0), 1.0)
+        recenter_enabled = bool(getattr(P, "recenter_aperture", True))
         gain         = _to_float(getattr(P, "gain_e_per_adu",         1.0), 1.0)
         rn_e         = _to_float(getattr(P, "rdnoise_e",              7.5), 7.5)
         sat_adu      = _to_float(getattr(P, "saturation_adu",     65000.0), 65000.0)
@@ -360,6 +611,7 @@ class ForcedPhotWorker(QThread):
         cbox_scale   = _to_float(getattr(P, "center_cbox_scale", 1.5), 1.5)
         apcorr_min_snr = _to_float(getattr(P, "apcorr_min_snr", 40.0), 40.0)
         apcorr_min_n   = _to_int(getattr(P, "apcorr_use_min_n", 12), 12)
+        apcorr_max_sources = _to_int(getattr(P, "apcorr_max_sources", 250), 250)
 
         r_ap  = max(min_r_ap, r_ap_scale * fwhm_px)
         r_ref = max(r_ap + 2.0, ref_ap_scale * fwhm_px)
@@ -376,6 +628,7 @@ class ForcedPhotWorker(QThread):
         x_pred = np.full(n, np.nan)
         y_pred = np.full(n, np.nan)
 
+        _status("Project centers", 28)
         if has_radec and wcs is not None:
             ra  = pd.to_numeric(master_df["ra_deg"],  errors="coerce").to_numpy(float)
             dec = pd.to_numeric(master_df["dec_deg"], errors="coerce").to_numpy(float)
@@ -398,9 +651,18 @@ class ForcedPhotWorker(QThread):
             y_pred[missing] = y_ref_col[missing]
 
         # --- Match to detections for recentering ---
+        _status("Match detections", 34)
         det_df = self._load_detect_positions(fname)
         detected_flag = np.zeros(n, dtype=bool)
         det_uid_arr   = np.full(n, -1, dtype=np.int64)
+        det_x_arr = np.full(n, np.nan)
+        det_y_arr = np.full(n, np.nan)
+        match_dx = np.full(n, np.nan)
+        match_dy = np.full(n, np.nan)
+        match_offset = np.full(n, np.nan)
+        step4_quality_ok = np.ones(n, dtype=bool)
+        step4_quality_used = np.zeros(n, dtype=bool)
+        step4_quality_reason = np.full(n, "", dtype=object)
 
         if det_df is not None and len(det_df) > 0:
             det_xy = det_df[["x", "y"]].to_numpy(float)
@@ -411,33 +673,91 @@ class ForcedPhotWorker(QThread):
                 dists, idxs = tree.query(master_xy_pred[valid_pred], k=1)
                 match_mask = dists <= max_shift
                 valid_indices = np.where(valid_pred)[0]
-                for k, (vi, matched, idx) in enumerate(zip(valid_indices, match_mask, idxs)):
+                for k, (vi, matched, idx, dist) in enumerate(zip(valid_indices, match_mask, idxs, dists)):
                     if matched:
                         detected_flag[vi] = True
                         det_uid_arr[vi] = int(det_df["det_uid"].iloc[idx])
+                        dx = float(det_df["x"].iloc[idx]) - float(x_pred[vi])
+                        dy = float(det_df["y"].iloc[idx]) - float(y_pred[vi])
+                        det_x_arr[vi] = float(det_df["x"].iloc[idx])
+                        det_y_arr[vi] = float(det_df["y"].iloc[idx])
+                        match_dx[vi] = dx
+                        match_dy[vi] = dy
+                        match_offset[vi] = float(dist)
+                        ok, reason, used = _step4_quality_check(
+                            det_df.iloc[idx], P, sat_adu, datamax_adu
+                        )
+                        step4_quality_ok[vi] = ok
+                        step4_quality_used[vi] = used
+                        step4_quality_reason[vi] = reason
 
         # --- Recenter detected sources ---
+        _status(f"Recenter {int(detected_flag.sum())}", 40)
         x_fit = x_pred.copy()
         y_fit = y_pred.copy()
         centroid_shift = np.full(n, np.nan)
+        recentered_flag = np.zeros(n, dtype=bool)
+        recenter_method = np.full(n, "forced_wcs", dtype=object)
 
-        for i in range(n):
-            if not detected_flag[i]:
-                continue
-            xi, yi = x_pred[i], y_pred[i]
-            if not (np.isfinite(xi) and np.isfinite(yi)):
-                continue
-            try:
-                xc, yc = refine_local_centroid(img, xi, yi, fwhm_px, cbox_scale)
-                shift = np.hypot(xc - xi, yc - yi)
-                if shift <= max_shift:
-                    x_fit[i] = xc
-                    y_fit[i] = yc
-                    centroid_shift[i] = shift
-            except Exception:
-                pass
+        if not recenter_enabled:
+            recenter_method[detected_flag] = "disabled"
+        else:
+            n_detected_total = int(detected_flag.sum())
+            recenter_seen = 0
+            for i in range(n):
+                if not detected_flag[i]:
+                    continue
+                recenter_seen += 1
+                if recenter_seen == 1 or recenter_seen % 250 == 0:
+                    pct = 40 + min(12, int(12 * recenter_seen / max(n_detected_total, 1)))
+                    _status(f"Recenter {recenter_seen}/{n_detected_total}", pct)
+                xi, yi = x_pred[i], y_pred[i]
+                if not (np.isfinite(xi) and np.isfinite(yi)):
+                    recenter_method[i] = "invalid_position"
+                    continue
+
+                seed_x = det_x_arr[i] if np.isfinite(det_x_arr[i]) else xi
+                seed_y = det_y_arr[i] if np.isfinite(det_y_arr[i]) else yi
+                accepted = False
+                try:
+                    xc, yc = refine_local_centroid(img, seed_x, seed_y, fwhm_px, cbox_scale)
+                    shift = np.hypot(xc - xi, yc - yi)
+                    if np.isfinite(shift) and shift <= max_shift:
+                        x_fit[i] = xc
+                        y_fit[i] = yc
+                        centroid_shift[i] = shift
+                        recentered_flag[i] = True
+                        recenter_method[i] = "local_centroid"
+                        accepted = True
+                except Exception:
+                    pass
+
+                if (
+                    not accepted
+                    and np.isfinite(det_x_arr[i])
+                    and np.isfinite(det_y_arr[i])
+                    and np.isfinite(match_offset[i])
+                    and match_offset[i] <= max_shift
+                ):
+                    x_fit[i] = det_x_arr[i]
+                    y_fit[i] = det_y_arr[i]
+                    centroid_shift[i] = match_offset[i]
+                    recentered_flag[i] = True
+                    recenter_method[i] = "detected_xy"
+                    accepted = True
+
+                if not accepted:
+                    recenter_method[i] = "failed"
+
+        center_error = np.where(np.isfinite(centroid_shift), centroid_shift, match_offset)
+        centroid_outlier = (
+            detected_flag &
+            np.isfinite(center_error) &
+            (center_error > outlier_px)
+        )
 
         # --- Vectorized photometry at r_ap ---
+        _status("Aperture photometry", 56)
         positions = np.column_stack([x_fit, y_fit])
         phot_kw = dict(
             gain=gain, rn_param_e=rn_e, sky_frame_e=sky_e,
@@ -445,8 +765,13 @@ class ForcedPhotWorker(QThread):
             min_n_sky_for_local=min_n_sky, sat_adu=sat_adu,
             datamax_adu=datamax_adu, sigma_clip_val=sigma_clip, maxiters=max_iter,
         )
-        flux_arr, flux_err_arr, snr_arr, sky_arr, is_sat_arr, is_nl_arr = phot_vectorized(
-            img, positions, r_ap, r_in, r_out, **phot_kw
+        (
+            flux_arr, flux_err_arr, snr_arr, sky_arr,
+            is_sat_arr, is_nl_arr, sky_std_arr, n_sky_arr,
+        ) = phot_vectorized(
+            img, positions, r_ap, r_in, r_out,
+            return_sky_stats=True,
+            **phot_kw,
         )
 
         # --- Growth-curve aperture correction (vectorized: N_radii calls, not N_stars×N_radii) ---
@@ -458,25 +783,48 @@ class ForcedPhotWorker(QThread):
         apcorr_mask = (
             detected_flag &
             ~crowding_flag &
+            step4_quality_ok &
+            ~centroid_outlier &
             np.isfinite(flux_arr) & (flux_arr > 0) &
             np.isfinite(snr_arr) & (snr_arr >= apcorr_min_snr) &
-            ~is_sat_arr
+            ~is_sat_arr &
+            ~is_nl_arr
         )
+        n_step4_quality_reject = int((detected_flag & ~step4_quality_ok).sum())
+        n_center_outlier_reject = int(centroid_outlier.sum())
+        n_apcorr_candidates = int(apcorr_mask.sum())
+        if apcorr_max_sources > 0 and n_apcorr_candidates > apcorr_max_sources:
+            candidate_idx = np.flatnonzero(apcorr_mask)
+            candidate_snr = np.asarray(snr_arr[candidate_idx], dtype=float)
+            rank = np.argsort(np.nan_to_num(candidate_snr, nan=-np.inf))[::-1]
+            keep_idx = candidate_idx[rank[:apcorr_max_sources]]
+            capped_mask = np.zeros(n, dtype=bool)
+            capped_mask[keep_idx] = True
+            apcorr_mask = capped_mask
+            self._log(
+                f"[FORCED][{fname}] apcorr refs capped "
+                f"{n_apcorr_candidates}->{int(apcorr_mask.sum())} "
+                f"(apcorr_max_sources={apcorr_max_sources})"
+            )
         gc_positions = positions[apcorr_mask]
         n_gc_stars = int(apcorr_mask.sum())
+        _status(f"Apcorr refs {n_gc_stars}/{n_apcorr_candidates}", 68)
 
         apcorr = 1.0
         growth_curve_data: dict = {}
 
         if n_gc_stars >= apcorr_min_n:
-            # One phot_vectorized call per radius — vectorized over all gc stars
             gc_radii = np.linspace(max(2.0, r_ap * 0.4), r_ref * 1.15, _GC_N_STEPS)
-            gc_flux_matrix = np.empty((_GC_N_STEPS, n_gc_stars), dtype=float)
-            gc_ferr_matrix = np.empty((_GC_N_STEPS, n_gc_stars), dtype=float)
-            for ri, r_gc in enumerate(gc_radii):
-                f_gc, fe_gc, *_ = phot_vectorized(img, gc_positions, r_gc, r_in, r_out, **phot_kw)
-                gc_flux_matrix[ri, :] = f_gc
-                gc_ferr_matrix[ri, :] = fe_gc
+            gc_flux_matrix, gc_ferr_matrix = _growth_curve_fixed_sky(
+                img, gc_positions, gc_radii, r_in, r_out, phot_kw,
+                sky_median=sky_arr[apcorr_mask],
+                sky_std=sky_std_arr[apcorr_mask],
+                n_sky=n_sky_arr[apcorr_mask],
+                status_cb=lambda ri, total: _status(
+                    f"Apcorr radius {ri}/{total}",
+                    70 + int(10 * ri / max(total, 1)),
+                ),
+            )
 
             # Normalize each star by its flux at the outermost radius
             f_outer = gc_flux_matrix[-1, :]
@@ -511,6 +859,11 @@ class ForcedPhotWorker(QThread):
                     "enclosed_frac":  [float(v) for v in gc_curve],
                     "mag_err":        [float(v) for v in med_mag_err],
                     "n_stars":        int(valid_ref.sum()),
+                    "n_apcorr_candidates": int(n_apcorr_candidates),
+                    "n_apcorr_used":  int(n_gc_stars),
+                    "n_step4_quality_reject": int(n_step4_quality_reject),
+                    "n_center_outlier_reject": int(n_center_outlier_reject),
+                    "apcorr_max_sources": int(apcorr_max_sources),
                     "r_ap_px":        float(r_ap),
                     "r_ref_px":       float(r_ref),
                     "r_opt_px":       r_opt_px,
@@ -520,11 +873,14 @@ class ForcedPhotWorker(QThread):
                 }
             else:
                 # Too few valid reference stars — fall back to simple ratio
+                _status("Apcorr fallback", 80)
                 apcorr = _simple_apcorr(flux_arr, apcorr_mask, img, positions, r_ref, r_in, r_out, phot_kw)
         elif n_gc_stars > 0:
+            _status("Apcorr fallback", 80)
             apcorr = _simple_apcorr(flux_arr, apcorr_mask, img, positions, r_ref, r_in, r_out, phot_kw)
 
         # --- Apply apcorr ---
+        _status("Finalize photometry", 84)
         flux_corr     = flux_arr * apcorr
         flux_err_corr = flux_err_arr * apcorr
 
@@ -540,6 +896,16 @@ class ForcedPhotWorker(QThread):
             np.nan,
         )
         bad_phot = is_sat_arr | is_nl_arr | ~np.isfinite(flux_corr)
+        off_frame = (
+            ~np.isfinite(x_pred) | ~np.isfinite(y_pred) |
+            (x_pred < 0) | (x_pred >= w) |
+            (y_pred < 0) | (y_pred >= h)
+        )
+        centering_quality = np.full(n, "forced_only", dtype=object)
+        centering_quality[off_frame] = "off_frame"
+        centering_quality[detected_flag & ~centroid_outlier] = "ok"
+        centering_quality[centroid_outlier] = "warn_shift"
+        centering_quality[detected_flag & ~recenter_enabled] = "matched_no_recenter"
 
         master_id  = _catalog_series(master_df, "master_id", np.arange(1, n + 1))
         source_id  = _catalog_series(master_df, "source_id", master_id)
@@ -556,9 +922,23 @@ class ForcedPhotWorker(QThread):
             "y_pred":            y_pred,
             "x_fit":             x_fit,
             "y_fit":             y_fit,
+            "det_x":             det_x_arr,
+            "det_y":             det_y_arr,
+            "match_dx_px":       match_dx,
+            "match_dy_px":       match_dy,
+            "match_offset_px":   match_offset,
             "detected_flag":     detected_flag,
             "forced_flag":       ~detected_flag,
             "centroid_shift_px": centroid_shift,
+            "center_error_px":   center_error,
+            "recentered_flag":   recentered_flag,
+            "recenter_method":   recenter_method,
+            "step4_quality_ok":  step4_quality_ok,
+            "step4_quality_used": step4_quality_used,
+            "step4_quality_reason": step4_quality_reason,
+            "centroid_outlier":  centroid_outlier,
+            "centering_quality": centering_quality,
+            "off_frame_flag":    off_frame,
             "flux":              flux_corr,
             "flux_e":            flux_corr,
             "flux_net_adu":      flux_corr / max(gain, 1e-12),
@@ -616,11 +996,11 @@ class ForcedPhotWorker(QThread):
             filter_map.setdefault(filt, []).append(fname)
 
         try:
-            (out_dir / "step8_filter_frames.json").write_text(
+            (out_dir / "filter_frames.json").write_text(
                 json.dumps(filter_map, indent=2, ensure_ascii=False), encoding="utf-8"
             )
         except Exception as exc:
-            self._log(f"[FORCED] step8_filter_frames write failed: {exc}")
+            self._log(f"[FORCED] filter_frames write failed: {exc}")
 
         master_catalogs: Dict[str, Optional[pd.DataFrame]] = {}
         for filt in filter_map:
@@ -644,13 +1024,14 @@ class ForcedPhotWorker(QThread):
             if master_rows:
                 pd.concat(master_rows, ignore_index=True).drop_duplicates(
                     subset=[c for c in ("filter", "source_id") if c in master_rows[0].columns]
-                ).to_csv(out_dir / "step8_master_sources.csv", index=False)
+                ).to_csv(out_dir / "master_sources.csv", index=False)
         except Exception as exc:
-            self._log(f"[FORCED] step8_master_sources write failed: {exc}")
+            self._log(f"[FORCED] master_sources write failed: {exc}")
 
         total = len(self.file_list)
         index_rows: List[dict] = []
         apcorr_rows: List[dict] = []
+        center_stats_rows: List[dict] = []
         n_done = [0]
 
         max_workers = max(1, int(self.max_workers))
@@ -677,8 +1058,11 @@ class ForcedPhotWorker(QThread):
 
                 self.worker_status.emit(slot, fname, "Photometry", 45)
                 try:
+                    def _status(label: str, pct: int):
+                        self.worker_status.emit(slot, fname, label, pct)
+
                     phot_df, apcorr_val, gc_data = self._phot_frame(
-                        fname, master_df, img, wcs, fwhm_px, P
+                        fname, master_df, img, wcs, fwhm_px, P, status_cb=_status
                     )
                 except Exception as exc:
                     tb = traceback.format_exc()
@@ -689,6 +1073,18 @@ class ForcedPhotWorker(QThread):
 
                 self.worker_status.emit(slot, fname, "Saving", 85)
                 out_path = out_dir / f"photometry_{fname}.tsv"
+                center_stats = _frame_centering_stats(
+                    phot_df,
+                    fname=fname,
+                    filt=filt,
+                    status="ok",
+                    fwhm_px=fwhm_px,
+                    wcs_ok=wcs is not None,
+                    apcorr=apcorr_val,
+                    max_shift_px=_to_float(getattr(P, "max_recenter_shift", 2.0), 2.0),
+                    outlier_px=_to_float(getattr(P, "centroid_outlier_px", 1.0), 1.0),
+                    out_path=str(out_path),
+                )
                 try:
                     phot_df.insert(0, "file", fname)
                     phot_df.insert(1, "filter", filt)
@@ -700,7 +1096,8 @@ class ForcedPhotWorker(QThread):
                 self.worker_status.emit(slot, fname, "Done", 100)
                 return ("ok", fname, filt, phot_df, apcorr_val, gc_data,
                         {"wcs_ok": wcs is not None, "fwhm_px": fwhm_px,
-                         "n_master": len(master_df), "out_path": str(out_path)})
+                         "n_master": len(master_df), "out_path": str(out_path),
+                         "center_stats": center_stats})
             finally:
                 slot_queue.put(slot)
 
@@ -769,6 +1166,7 @@ class ForcedPhotWorker(QThread):
                 n_forced = int(phot_df["forced_flag"].sum())
                 n_valid  = int(np.isfinite(phot_df["flux"]).sum())
                 fwhm_px  = info["fwhm_px"]
+                center_stats = info.get("center_stats") or {}
 
                 self._log(
                     f"[FORCED] [{cur}/{total}] {fname_r} fwhm={fwhm_px:.1f}px  "
@@ -783,7 +1181,7 @@ class ForcedPhotWorker(QThread):
                     self.apcorr_update.emit(gc_data)
 
                 with self._results_lock:
-                    index_rows.append({
+                    index_row = {
                         "file":         fname_r,
                         "filter":       filt_r,
                         "status":       "ok",
@@ -795,26 +1193,52 @@ class ForcedPhotWorker(QThread):
                         "wcs_ok":       info["wcs_ok"],
                         "apcorr":       apcorr_val,
                         "path":         info["out_path"],
-                    })
+                    }
+                    for key, value in center_stats.items():
+                        if key not in index_row:
+                            index_row[key] = value
+                    index_rows.append(index_row)
                     apcorr_rows.append({
                         "file":         fname_r,
                         "filter":       filt_r,
                         "apcorr":       apcorr_val,
-                        "n_apcorr_stars": n_det,
+                        "n_apcorr_stars": (
+                            int(gc_data.get("n_apcorr_used", gc_data.get("n_stars", n_det)))
+                            if isinstance(gc_data, dict) else n_det
+                        ),
+                        "n_apcorr_candidates": (
+                            int(gc_data.get("n_apcorr_candidates", n_det))
+                            if isinstance(gc_data, dict) else n_det
+                        ),
+                        "n_step4_quality_reject": (
+                            int(gc_data.get("n_step4_quality_reject", 0))
+                            if isinstance(gc_data, dict) else 0
+                        ),
+                        "n_center_outlier_reject": (
+                            int(gc_data.get("n_center_outlier_reject", 0))
+                            if isinstance(gc_data, dict) else 0
+                        ),
                     })
+                    if center_stats:
+                        center_stats_rows.append(center_stats)
+                        self.center_stats_update.emit(center_stats)
         finally:
             executor.shutdown(wait=not self._stop_requested, cancel_futures=True)
 
         if self._stop_requested:
             self._log("[FORCED] Stopped by user.")
-            self.finished.emit({"index_rows": index_rows, "apcorr_rows": apcorr_rows})
+            self.finished.emit({
+                "index_rows": index_rows,
+                "apcorr_rows": apcorr_rows,
+                "center_stats_rows": center_stats_rows,
+            })
             return
 
         if index_rows:
             idx_df = pd.DataFrame(index_rows)
             try:
                 idx_df.to_csv(out_dir / "photometry_index.csv",  index=False, float_format="%.6f")
-                idx_df.to_csv(out_dir / "step8_frame_stats.csv", index=False, float_format="%.6f")
+                idx_df.to_csv(out_dir / "frame_stats.csv", index=False, float_format="%.6f")
             except Exception as exc:
                 self._log(f"[FORCED] photometry_index write failed: {exc}")
 
@@ -826,6 +1250,14 @@ class ForcedPhotWorker(QThread):
             except Exception as exc:
                 self._log(f"[FORCED] apcorr_summary write failed: {exc}")
 
+        if center_stats_rows:
+            try:
+                pd.DataFrame(center_stats_rows).to_csv(
+                    out_dir / "centering_stats.csv", index=False, float_format="%.6f"
+                )
+            except Exception as exc:
+                self._log(f"[FORCED] centering_stats write failed: {exc}")
+
         n_ok    = sum(1 for r in index_rows if r.get("status") == "ok")
         n_det_t = sum(r.get("n_detected", 0) for r in index_rows)
         n_frc_t = sum(r.get("n_forced",   0) for r in index_rows)
@@ -833,10 +1265,117 @@ class ForcedPhotWorker(QThread):
             f"[FORCED] Done. {n_ok}/{total} frames OK. "
             f"Total detected={n_det_t} forced={n_frc_t}"
         )
-        self.finished.emit({"index_rows": index_rows, "apcorr_rows": apcorr_rows})
+        self.finished.emit({
+            "index_rows": index_rows,
+            "apcorr_rows": apcorr_rows,
+            "center_stats_rows": center_stats_rows,
+        })
 
 
 # ── Module-level helper (keeps _phot_frame readable) ───────────────────────────
+
+def _growth_curve_fixed_sky(
+    img: np.ndarray,
+    positions: np.ndarray,
+    radii: np.ndarray,
+    r_in: float,
+    r_out: float,
+    phot_kw: dict,
+    sky_median: Optional[np.ndarray] = None,
+    sky_std: Optional[np.ndarray] = None,
+    n_sky: Optional[np.ndarray] = None,
+    status_cb=None,
+) -> Tuple[np.ndarray, np.ndarray]:
+    """Growth-curve aperture fluxes with one annulus-stat pass.
+
+    The annulus does not change while scanning aperture radii, so recomputing
+    sigma-clipped sky statistics for every radius is the dominant Step7 cost.
+    """
+    from photutils.aperture import CircularAperture, CircularAnnulus, ApertureStats, aperture_photometry
+
+    positions = np.asarray(positions, dtype=float)
+    radii = np.asarray(radii, dtype=float)
+    n_r = len(radii)
+    n_s = len(positions)
+    flux_matrix = np.full((n_r, n_s), np.nan, dtype=float)
+    ferr_matrix = np.full((n_r, n_s), np.nan, dtype=float)
+    if n_r == 0 or n_s == 0:
+        return flux_matrix, ferr_matrix
+
+    gain = _to_float(phot_kw.get("gain"), 1.0)
+    rn_e = _to_float(phot_kw.get("rn_param_e"), 7.5)
+    sky_frame_e = _to_float(phot_kw.get("sky_frame_e"), np.nan)
+    sigma_clip_val = _to_float(phot_kw.get("sigma_clip_val"), 3.0)
+    maxiters = _to_int(phot_kw.get("maxiters"), 5)
+    sky_mode = str(phot_kw.get("sky_sigma_mode", "local") or "local").strip().lower()
+    sky_incl_rn = bool(phot_kw.get("sky_sigma_includes_rn", True))
+    min_n_sky = _to_int(phot_kw.get("min_n_sky_for_local"), 50)
+
+    ann_area = float(np.pi * max(r_out * r_out - r_in * r_in, 1.0))
+    reuse_sky = (
+        sky_median is not None
+        and len(np.asarray(sky_median)) == n_s
+    )
+    if reuse_sky:
+        bkg_med = np.asarray(sky_median, dtype=float)
+        bkg_std = (
+            np.asarray(sky_std, dtype=float)
+            if sky_std is not None and len(np.asarray(sky_std)) == n_s
+            else np.full(n_s, np.nan, dtype=float)
+        )
+        n_sky_arr = (
+            np.asarray(n_sky, dtype=float)
+            if n_sky is not None and len(np.asarray(n_sky)) == n_s
+            else np.full(n_s, ann_area, dtype=float)
+        )
+    else:
+        sc = SigmaClip(sigma=sigma_clip_val, maxiters=maxiters)
+        ann = CircularAnnulus(positions, r_in=r_in, r_out=r_out)
+        ann_stats = ApertureStats(img, ann, sigma_clip=sc)
+        bkg_med = np.asarray(ann_stats.median, dtype=float)
+        bkg_std = np.asarray(ann_stats.std, dtype=float)
+        n_sky_arr = np.asarray(ann_stats.sum_aper_area, dtype=float)
+
+    bkg_med = np.where(np.isfinite(bkg_med), bkg_med, 0.0)
+    bkg_std = np.where(np.isfinite(bkg_std), bkg_std, np.nan)
+    n_sky_arr = np.where(np.isfinite(n_sky_arr) & (n_sky_arr > 0), n_sky_arr, ann_area)
+
+    sigma_local_e2 = (np.maximum(bkg_std, 0.0) * gain) ** 2
+    sigma_frame_e2 = float(sky_frame_e) ** 2 if np.isfinite(sky_frame_e) else np.nan
+    use_local = np.isfinite(sigma_local_e2) & (bkg_std > 0) & (n_sky_arr >= min_n_sky)
+    if sky_mode == "frame":
+        sigma_pix_e2 = np.where(np.isfinite(sigma_frame_e2), sigma_frame_e2, sigma_local_e2)
+    elif sky_mode == "max":
+        sigma_pix_e2 = np.fmax(sigma_local_e2, sigma_frame_e2)
+    else:
+        sigma_pix_e2 = np.where(use_local, sigma_local_e2, sigma_frame_e2)
+    sigma_pix_e2 = np.where(np.isfinite(sigma_pix_e2), sigma_pix_e2, 0.0)
+    if sky_incl_rn:
+        sigma_pix_e2 = np.maximum(sigma_pix_e2 - rn_e ** 2, 0.0)
+
+    for ri, radius in enumerate(radii):
+        if callable(status_cb):
+            try:
+                status_cb(ri + 1, n_r)
+            except Exception:
+                pass
+        ap = CircularAperture(positions, r=float(radius))
+        phot_tbl = aperture_photometry(img, ap, method="exact")
+        ap_sum = np.asarray(phot_tbl["aperture_sum"], dtype=float)
+        ap_area = float(ap.area)
+        flux_net_adu = ap_sum - bkg_med * ap_area
+        flux_e = flux_net_adu * gain
+
+        var_source = np.maximum(flux_e, 0.0)
+        var_bkg_ap = ap_area * sigma_pix_e2
+        var_bkg_est = (ap_area ** 2 / np.maximum(n_sky_arr, 1)) * sigma_pix_e2
+        var_rn = ap_area * rn_e ** 2 if sky_incl_rn else 0.0
+        ferr_e = np.sqrt(np.maximum(var_source + var_bkg_ap + var_bkg_est + var_rn, 0.0))
+        flux_matrix[ri, :] = flux_e
+        ferr_matrix[ri, :] = ferr_e
+
+    return flux_matrix, ferr_matrix
+
 
 def _simple_apcorr(
     flux_arr: np.ndarray,
@@ -869,6 +1408,8 @@ class ForcedPhotWindow(StepWindowBase):
         self.results: dict = {}
         self._gc_accumulator: List[dict] = []   # growth curves collected across frames
         self._gc_per_frame: Dict[str, dict] = {}   # fname → growth curve dict
+        self._center_stats_rows: List[dict] = []
+        self._stats_seen = False
 
         super().__init__(
             step_index=6,
@@ -912,6 +1453,49 @@ class ForcedPhotWindow(StepWindowBase):
         self.btn_stop = self.run_bar.btn_stop
         self.content_layout.addLayout(ctrl_layout)
 
+        center_group = QGroupBox("Centering / Recenter")
+        center_form = QFormLayout(center_group)
+        self.chk_recenter = QCheckBox("Use detected-source recentering")
+        self.chk_recenter.setChecked(bool(getattr(self.params.P, "recenter_aperture", True)))
+        self.chk_recenter.setToolTip(
+            "When a projected master position matches a Step4 detection, seed local centroiding "
+            "from that detection before aperture photometry."
+        )
+        center_form.addRow("Mode", self.chk_recenter)
+
+        self.spin_max_shift = QDoubleSpinBox()
+        self.spin_max_shift.setRange(0.10, 20.0)
+        self.spin_max_shift.setDecimals(2)
+        self.spin_max_shift.setSingleStep(0.10)
+        self.spin_max_shift.setSuffix(" px")
+        self.spin_max_shift.setValue(float(getattr(self.params.P, "max_recenter_shift", 2.0)))
+        self.spin_max_shift.setToolTip(
+            "Maximum allowed distance between projected master position and matched detection. "
+            "Too large can jump to a neighbor in crowded fields."
+        )
+        center_form.addRow("Match / recenter limit", self.spin_max_shift)
+
+        self.spin_outlier_px = QDoubleSpinBox()
+        self.spin_outlier_px.setRange(0.05, 10.0)
+        self.spin_outlier_px.setDecimals(2)
+        self.spin_outlier_px.setSingleStep(0.05)
+        self.spin_outlier_px.setSuffix(" px")
+        self.spin_outlier_px.setValue(float(getattr(self.params.P, "centroid_outlier_px", 1.0)))
+        self.spin_outlier_px.setToolTip(
+            "Stats warning threshold for center_error_px. Sources above this value are "
+            "marked centroid_outlier in the forced photometry TSV."
+        )
+        center_form.addRow("Outlier threshold", self.spin_outlier_px)
+
+        self.center_param_label = QLabel()
+        self.center_param_label.setWordWrap(True)
+        center_form.addRow("Current", self.center_param_label)
+        self.chk_recenter.stateChanged.connect(self._on_center_params_changed)
+        self.spin_max_shift.valueChanged.connect(self._on_center_params_changed)
+        self.spin_outlier_px.valueChanged.connect(self._on_center_params_changed)
+        self._update_center_param_label()
+        self.content_layout.addWidget(center_group)
+
         # ── Progress bar — placed ABOVE the tabs so it is always visible ──────
         prog_layout = QHBoxLayout()
         self.progress_bar = QProgressBar()
@@ -927,7 +1511,76 @@ class ForcedPhotWindow(StepWindowBase):
         self.tabs = QTabWidget()
         self.content_layout.addWidget(self.tabs)
 
-        # ── Tab 0: Apcorr / Growth Curve ──────────────────────────────────────
+        # ── Tab 0: Centering Stats ─────────────────────────────────────────────
+        tab_stats = QWidget()
+        tab_stats_layout = QVBoxLayout(tab_stats)
+
+        self.center_summary_label = QLabel("Run forced photometry to populate centering stats.")
+        self.center_summary_label.setWordWrap(True)
+        self.center_summary_label.setStyleSheet(
+            "QLabel { background-color: #F5F5F5; padding: 8px; border-radius: 4px; }"
+        )
+        tab_stats_layout.addWidget(self.center_summary_label)
+
+        center_plot_group = QGroupBox("Selected Frame Center Error")
+        center_plot_layout = QVBoxLayout(center_plot_group)
+        if _HAVE_MPL:
+            self._center_fig = Figure(figsize=(5, 3.5), tight_layout=True)
+            self._center_ax_hist = self._center_fig.add_subplot(121)
+            self._center_ax_scatter = self._center_fig.add_subplot(122)
+            self._center_canvas = FigureCanvasQTAgg(self._center_fig)
+            self._center_canvas.setMinimumHeight(260)
+            center_plot_layout.addWidget(self._center_canvas)
+            self._init_center_axes()
+        else:
+            center_plot_layout.addWidget(QLabel("matplotlib not available — install it for center-error plots"))
+            self._center_canvas = None
+        tab_stats_layout.addWidget(center_plot_group)
+
+        center_table_group = QGroupBox("Per-frame Centering Diagnostics")
+        center_table_layout = QVBoxLayout(center_table_group)
+        self.center_stats_table = QTableWidget()
+        _center_headers = [
+            "File", "Filter", "Status", "Centering",
+            "Detected %", "Forced %", "Recentered %",
+            "Match p50", "Match p90", "Center p50", "Center p90",
+            "Outlier %", "Med mag_err", "High-shift Δmag_err", "Advice",
+        ]
+        self.center_stats_table.setColumnCount(len(_center_headers))
+        self.center_stats_table.setHorizontalHeaderLabels(_center_headers)
+        _center_tooltips = [
+            "FITS 파일명",
+            "필터명",
+            "처리 상태",
+            "Centering health: OK / REVIEW / CHECK / LOW_MATCH",
+            "Projected master positions matched to Step4 detections, divided by on-frame sources",
+            "On-frame sources without a matched detection; their center remains WCS/master-driven",
+            "Matched detections that actually moved to a refined/detected center",
+            "Median projected-position to detection offset (px)",
+            "90th percentile projected-position to detection offset (px)",
+            "Median final center error proxy (px)",
+            "90th percentile final center error proxy (px)",
+            "Fraction of tested centers above centroid_outlier_px",
+            "Median reported photometric magnitude error",
+            "Median mag_err(outliers) - median mag_err(non-outlier detections)",
+            "Suggested inspection target",
+        ]
+        for col, tip in enumerate(_center_tooltips):
+            item = self.center_stats_table.horizontalHeaderItem(col)
+            if item is not None:
+                item.setToolTip(tip)
+        self.center_stats_table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeToContents)
+        self.center_stats_table.horizontalHeader().setStretchLastSection(True)
+        self.center_stats_table.setEditTriggers(QAbstractItemView.NoEditTriggers)
+        self.center_stats_table.setSelectionBehavior(QAbstractItemView.SelectRows)
+        self.center_stats_table.setSelectionMode(QAbstractItemView.SingleSelection)
+        self.center_stats_table.itemSelectionChanged.connect(self._on_center_stats_row_selected)
+        center_table_layout.addWidget(self.center_stats_table)
+        tab_stats_layout.addWidget(center_table_group)
+
+        self._stats_tab_index = self.tabs.addTab(tab_stats, "Stats")
+
+        # ── Tab 1: Apcorr / Growth Curve ──────────────────────────────────────
         tab0 = QWidget()
         tab0_layout = QVBoxLayout(tab0)
 
@@ -951,9 +1604,10 @@ class ForcedPhotWindow(StepWindowBase):
         ap_group = QGroupBox("Per-frame Aperture Correction")
         ap_layout = QVBoxLayout(ap_group)
         self.apcorr_table = QTableWidget()
-        self.apcorr_table.setColumnCount(7)
+        self.apcorr_table.setColumnCount(10)
         _ap_headers = [
             "File", "Filter", "Apcorr", "N stars",
+            "Candidates", "Step4 reject", "Center reject",
             "r_opt (px)", "r_opt/FWHM", "min mag_err",
         ]
         self.apcorr_table.setHorizontalHeaderLabels(_ap_headers)
@@ -963,6 +1617,9 @@ class ForcedPhotWindow(StepWindowBase):
             "Aperture Correction = 1 / enclosed_fraction(at r_ap).\n"
             "측정 flux에 곱하는 무차원 보정 계수 (보통 1.05~1.3).",
             "Apcorr 산정에 사용된 isolated bright star 개수",
+            "Apcorr 조건을 통과한 후보 개수. 계산은 apcorr_max_sources까지만 사용.",
+            "Step4 detect 품질 컬럼(shape/peak/status)으로 제외된 검출 source 수",
+            "centroid_outlier_px보다 중심 오차가 커서 apcorr reference에서 제외된 source 수",
             "Optimal aperture 반지름 (px): U-shape mag_err 곡선의 최저점 = SNR 최대 구경.",
             "최적 구경 배수 = r_opt / FWHM. 현재 r_ap/FWHM과 다르면 forced_r_ap_scale 튜닝 고려.",
             "최저점 median mag_err.",
@@ -981,9 +1638,9 @@ class ForcedPhotWindow(StepWindowBase):
         ap_layout.addWidget(self.apcorr_table)
         tab0_layout.addWidget(ap_group)
 
-        self.tabs.addTab(tab0, "Apcorr")
+        self._apcorr_tab_index = self.tabs.addTab(tab0, "Apcorr")
 
-        # ── Tab 1: Photometry Results ──────────────────────────────────────────
+        # ── Tab 2: Photometry Results ──────────────────────────────────────────
         tab1 = QWidget()
         tab1_layout = QVBoxLayout(tab1)
 
@@ -1034,8 +1691,6 @@ class ForcedPhotWindow(StepWindowBase):
         )
         self.log_text = self._log_win.log_text
 
-        self._try_load_existing_results()
-
     # ── Prerequisites ──────────────────────────────────────────────────────────
 
     def _check_prerequisites(self):
@@ -1054,6 +1709,29 @@ class ForcedPhotWindow(StepWindowBase):
         else:
             self.status_label.setText("Prerequisites OK — ready to run")
             self.status_label.setStyleSheet("QLabel { color: #4CAF50; }")
+
+    # ── Centering controls ─────────────────────────────────────────────────────
+
+    def _sync_centering_params(self):
+        if not hasattr(self, "chk_recenter"):
+            return
+        self.params.P.recenter_aperture = bool(self.chk_recenter.isChecked())
+        self.params.P.max_recenter_shift = float(self.spin_max_shift.value())
+        self.params.P.centroid_outlier_px = float(self.spin_outlier_px.value())
+
+    def _update_center_param_label(self):
+        if not hasattr(self, "center_param_label"):
+            return
+        mode = "enabled" if self.chk_recenter.isChecked() else "disabled"
+        self.center_param_label.setText(
+            f"recenter={mode}  |  match_limit={self.spin_max_shift.value():.2f}px  "
+            f"|  outlier={self.spin_outlier_px.value():.2f}px"
+        )
+
+    def _on_center_params_changed(self, *_):
+        self._sync_centering_params()
+        self._update_center_param_label()
+        self.persist_params()
 
     # ── Load existing results ──────────────────────────────────────────────────
 
@@ -1081,11 +1759,24 @@ class ForcedPhotWindow(StepWindowBase):
                         str(row.get("filter", "")),
                         f"{row.get('apcorr', float('nan')):.4f}" if pd.notna(row.get("apcorr")) else "—",
                         str(row.get("n_apcorr_stars", "")),
+                        str(row.get("n_apcorr_candidates", "")),
+                        str(row.get("n_step4_quality_reject", "")),
+                        str(row.get("n_center_outlier_reject", "")),
                         "—", "—", "—",
                     ]):
                         item = QTableWidgetItem(val)
                         item.setTextAlignment(Qt.AlignCenter)
                         self.apcorr_table.setItem(ri, ci, item)
+            except Exception:
+                pass
+
+        stats_path = step7_forced_phot_dir(self.params.P.result_dir) / "centering_stats.csv"
+        if stats_path.exists():
+            try:
+                stats_df = pd.read_csv(stats_path)
+                rows = stats_df.to_dict(orient="records")
+                self._populate_center_stats_table(rows)
+                self._refresh_center_summary()
             except Exception:
                 pass
 
@@ -1127,6 +1818,165 @@ class ForcedPhotWindow(StepWindowBase):
                 item = QTableWidgetItem(val)
                 item.setTextAlignment(Qt.AlignCenter)
                 self.results_table.setItem(ri, ci, item)
+
+    def _fmt_table_float(self, v, fmt="{:.2f}") -> str:
+        try:
+            f = float(v)
+            if not np.isfinite(f):
+                return "—"
+            return fmt.format(f)
+        except (TypeError, ValueError):
+            return "—"
+
+    def _fmt_pct(self, v) -> str:
+        try:
+            f = float(v)
+            if not np.isfinite(f):
+                return "—"
+            return f"{100.0 * f:.1f}%"
+        except (TypeError, ValueError):
+            return "—"
+
+    def _populate_center_stats_table(self, rows: list):
+        self._center_stats_rows = list(rows or [])
+        self.center_stats_table.setRowCount(len(self._center_stats_rows))
+        for ri, row in enumerate(self._center_stats_rows):
+            self._set_center_stats_row(ri, row)
+        if self._center_stats_rows and self.center_stats_table.rowCount() > 0:
+            self.center_stats_table.selectRow(0)
+
+    def _append_center_stats_row(self, row: dict):
+        self._center_stats_rows.append(row)
+        ri = self.center_stats_table.rowCount()
+        self.center_stats_table.insertRow(ri)
+        self._set_center_stats_row(ri, row)
+        self.center_stats_table.scrollToBottom()
+
+    def _set_center_stats_row(self, ri: int, row: dict):
+        vals = [
+            str(row.get("file", "")),
+            str(row.get("filter", "")),
+            str(row.get("status", "")),
+            str(row.get("centering_status", "")),
+            self._fmt_pct(row.get("detected_rate")),
+            self._fmt_pct(row.get("forced_rate")),
+            self._fmt_pct(row.get("recentered_rate")),
+            self._fmt_table_float(row.get("match_offset_med_px"), "{:.3f}"),
+            self._fmt_table_float(row.get("match_offset_p90_px"), "{:.3f}"),
+            self._fmt_table_float(row.get("center_error_med_px"), "{:.3f}"),
+            self._fmt_table_float(row.get("center_error_p90_px"), "{:.3f}"),
+            self._fmt_pct(row.get("centroid_outlier_rate")),
+            self._fmt_table_float(row.get("mag_err_med"), "{:.4f}"),
+            self._fmt_table_float(row.get("mag_err_high_shift_delta"), "{:+.4f}"),
+            str(row.get("advice", "")),
+        ]
+        for ci, val in enumerate(vals):
+            item = QTableWidgetItem(val)
+            item.setTextAlignment(Qt.AlignCenter if ci < len(vals) - 1 else Qt.AlignLeft | Qt.AlignVCenter)
+            if ci == len(vals) - 1:
+                item.setToolTip(str(row.get("advice", "")))
+            self.center_stats_table.setItem(ri, ci, item)
+
+    def _refresh_center_summary(self):
+        rows = self._center_stats_rows
+        if not rows:
+            self.center_summary_label.setText("Run forced photometry to populate centering stats.")
+            return
+        statuses: Dict[str, int] = {}
+        for row in rows:
+            key = str(row.get("centering_status", "") or "UNKNOWN")
+            statuses[key] = statuses.get(key, 0) + 1
+        center_p90 = _finite_median([r.get("center_error_p90_px", np.nan) for r in rows])
+        forced_med = _finite_median([r.get("forced_rate", np.nan) for r in rows])
+        outlier_max = _finite_max([r.get("centroid_outlier_rate", np.nan) for r in rows])
+        status_text = ", ".join(f"{k}:{v}" for k, v in sorted(statuses.items()))
+        self.center_summary_label.setText(
+            f"Frames={len(rows)}  |  {status_text}  |  "
+            f"median center p90={self._fmt_table_float(center_p90, '{:.3f}')} px  |  "
+            f"median forced={self._fmt_pct(forced_med)}  |  "
+            f"max outlier={self._fmt_pct(outlier_max)}"
+        )
+
+    def _init_center_axes(self):
+        ax_hist = self._center_ax_hist
+        ax_scatter = self._center_ax_scatter
+        ax_hist.set_title("Center error", fontsize=9)
+        ax_hist.set_xlabel("center_error_px", fontsize=9)
+        ax_hist.set_ylabel("N", fontsize=9)
+        ax_hist.grid(True, alpha=0.3)
+        ax_scatter.set_title("Error vs mag_err", fontsize=9)
+        ax_scatter.set_xlabel("center_error_px", fontsize=9)
+        ax_scatter.set_ylabel("mag_err", fontsize=9)
+        ax_scatter.grid(True, alpha=0.3)
+
+    def _update_center_plot(self, fname: str, row: Optional[dict] = None):
+        if not _HAVE_MPL or self._center_canvas is None:
+            return
+        ax_hist = self._center_ax_hist
+        ax_scatter = self._center_ax_scatter
+        ax_hist.cla()
+        ax_scatter.cla()
+        self._init_center_axes()
+        if not fname:
+            self._center_canvas.draw_idle()
+            return
+
+        path = step7_forced_phot_dir(self.params.P.result_dir) / f"photometry_{fname}.tsv"
+        if not path.exists():
+            ax_hist.set_title(f"{fname} not found", fontsize=9)
+            self._center_canvas.draw_idle()
+            return
+
+        try:
+            df = pd.read_csv(path, sep="\t")
+        except Exception as exc:
+            ax_hist.set_title(f"Read failed: {exc}", fontsize=9)
+            self._center_canvas.draw_idle()
+            return
+
+        center_error = _numeric_col(df, "center_error_px")
+        mag_err = _numeric_col(df, "mag_err")
+        outlier = _bool_col(df, "centroid_outlier")
+        finite_center = center_error[np.isfinite(center_error)]
+        if len(finite_center) > 0:
+            ax_hist.hist(finite_center.to_numpy(float), bins=30, color="#1565C0", alpha=0.78)
+        outlier_default = float(getattr(self.params.P, "centroid_outlier_px", 1.0))
+        outlier_px = _to_float(row.get("centroid_outlier_px") if row else None, outlier_default)
+        if np.isfinite(outlier_px):
+            ax_hist.axvline(outlier_px, color="#E53935", ls="--", lw=1.2, label=f"outlier={outlier_px:.2f}px")
+            ax_hist.legend(fontsize=7, frameon=False)
+
+        finite_scatter = center_error.notna() & mag_err.notna()
+        if finite_scatter.any():
+            idx = np.where(finite_scatter.to_numpy())[0]
+            if len(idx) > 5000:
+                idx = np.linspace(0, len(idx) - 1, 5000).astype(int)
+                idx = np.where(finite_scatter.to_numpy())[0][idx]
+            x = center_error.iloc[idx].to_numpy(float)
+            y = mag_err.iloc[idx].to_numpy(float)
+            colors = np.where(outlier.iloc[idx].to_numpy(bool), "#E53935", "#2E7D32")
+            ax_scatter.scatter(x, y, s=8, c=colors, alpha=0.55, linewidths=0)
+
+        title = str(fname)
+        if row:
+            title += (
+                f" | p90={self._fmt_table_float(row.get('center_error_p90_px'), '{:.3f}')}px"
+                f" | outliers={self._fmt_pct(row.get('centroid_outlier_rate'))}"
+            )
+        ax_hist.set_title(title, fontsize=9)
+        self._center_canvas.draw_idle()
+
+    def _on_center_stats_row_selected(self):
+        rows = self.center_stats_table.selectionModel().selectedRows() if self.center_stats_table.selectionModel() else []
+        if not rows:
+            return
+        ri = rows[0].row()
+        if ri < 0 or ri >= len(self._center_stats_rows):
+            return
+        row = self._center_stats_rows[ri]
+        fname = str(row.get("file", ""))
+        if fname:
+            self._update_center_plot(fname, row)
 
     def _init_gc_axes(self):
         ax_mag = self._gc_ax_mag
@@ -1220,6 +2070,7 @@ class ForcedPhotWindow(StepWindowBase):
     # ── Worker control ─────────────────────────────────────────────────────────
 
     def run_forced_phot(self):
+        self._sync_centering_params()
         P = self.params.P
         try:
             result_dir = Path(P.result_dir)
@@ -1249,8 +2100,13 @@ class ForcedPhotWindow(StepWindowBase):
         self.log_text.clear()
         self._gc_accumulator.clear()
         self._gc_per_frame.clear()
+        self._center_stats_rows.clear()
+        self._stats_seen = False
         self.apcorr_table.setRowCount(0)
+        self.center_stats_table.setRowCount(0)
         self._update_gc_plot({})
+        self._update_center_plot("")
+        self._refresh_center_summary()
         if hasattr(self, "_worker_panel"):
             self._worker_panel.clear()
 
@@ -1264,6 +2120,7 @@ class ForcedPhotWindow(StepWindowBase):
         self.worker.progress.connect(self._on_progress)
         self.worker.log.connect(self._on_log)
         self.worker.apcorr_update.connect(self._on_apcorr_update)
+        self.worker.center_stats_update.connect(self._on_center_stats_update)
         self.worker.worker_status.connect(self._worker_panel.update_worker)
         self.worker.finished.connect(self._on_finished)
         self.worker.error.connect(self._on_error)
@@ -1309,6 +2166,9 @@ class ForcedPhotWindow(StepWindowBase):
             str(gc_data.get("filter", "")),
             f"{apcorr_val:.4f}" if np.isfinite(apcorr_val) else "—",
             str(gc_data.get("n_stars", "")),
+            str(gc_data.get("n_apcorr_candidates", "")),
+            str(gc_data.get("n_step4_quality_reject", "")),
+            str(gc_data.get("n_center_outlier_reject", "")),
             f"{r_opt:.1f}" if r_opt > 0 else "—",
             f"{r_opt_scale:.2f}" if np.isfinite(r_opt_scale) else "—",
             f"{err_opt:.4f}" if np.isfinite(err_opt) else "—",
@@ -1322,14 +2182,23 @@ class ForcedPhotWindow(StepWindowBase):
         if not self.apcorr_table.selectionModel().hasSelection():
             self._update_gc_plot(gc_data)
 
-        # Switch to Apcorr tab so user sees it
-        if self.tabs.currentIndex() != 0:
-            self.tabs.setCurrentIndex(0)
+    def _on_center_stats_update(self, row: dict):
+        self._append_center_stats_row(row)
+        self._refresh_center_summary()
+        if not self._stats_seen:
+            self._stats_seen = True
+            self.tabs.setCurrentIndex(self._stats_tab_index)
+            if self.center_stats_table.rowCount() > 0:
+                self.center_stats_table.selectRow(0)
 
     def _on_finished(self, results: dict):
         self.results = results
         rows = results.get("index_rows", [])
         self._populate_results_table(rows)
+        center_rows = results.get("center_stats_rows", [])
+        if center_rows:
+            self._populate_center_stats_table(center_rows)
+            self._refresh_center_summary()
         self.run_bar.set_running(False)
         n_ok = sum(1 for r in rows if r.get("status") == "ok")
         self.progress_label.setText(f"Done — {n_ok}/{len(rows)} frames OK")
@@ -1341,6 +2210,9 @@ class ForcedPhotWindow(StepWindowBase):
         self.progress_label.setText("Error — see log")
 
     # ── StepWindowBase overrides ───────────────────────────────────────────────
+
+    def save_state(self):
+        self._sync_centering_params()
 
     def validate_step(self) -> bool:
         idx_path = step7_forced_phot_dir(self.params.P.result_dir) / "photometry_index.csv"

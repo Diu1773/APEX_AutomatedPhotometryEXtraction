@@ -31,7 +31,6 @@ from apex.utils.photometry_loader import load_frame_photometry
 from apex.utils.step_paths_lc import (
     step1_dir,
     step2_cropped_dir,
-    step5_photometry_dir,
     step6_refbuild_dir,
     step7_forced_phot_dir,
 )
@@ -39,7 +38,7 @@ from apex.utils.qc_utils import filter_files_by_qc
 
 
 class ApertureOverlayWindow(StepWindowBase):
-    """Step 10: Aperture Overlay (also used within Step 5)"""
+    """Aperture overlay for Step 7 forced photometry outputs."""
 
     def __init__(
         self,
@@ -110,7 +109,7 @@ class ApertureOverlayWindow(StepWindowBase):
             self.btn_previous.hide()
             self.btn_complete.hide()
             self.btn_next.hide()
-            self.title_label.setText("Aperture Overlay (from Step 5)")
+            self.title_label.setText("Aperture Overlay (from Step 7 Forced Phot)")
         self.restore_state()
 
     def setup_step_ui(self):
@@ -323,7 +322,7 @@ class ApertureOverlayWindow(StepWindowBase):
             self.log(f"Master catalog: {n} rows")
 
     def load_aperture_by_frame(self):
-        ap_path = step5_photometry_dir(self.params.P.result_dir) / "aperture_by_frame.csv"
+        ap_path = step7_forced_phot_dir(self.params.P.result_dir) / "aperture_by_frame.csv"
         if ap_path.exists():
             try:
                 self.ap_df = pd.read_csv(ap_path)
@@ -1190,8 +1189,8 @@ class ApertureOverlayWindow(StepWindowBase):
             except Exception:
                 pass
 
-        # 2) photometry_index.csv에서 보충 (Step 5 이후)
-        idx_path = step5_photometry_dir(self.params.P.result_dir) / "photometry_index.csv"
+        # 2) photometry_index.csv에서 보충 (Step 7 forced phot 이후)
+        idx_path = step7_forced_phot_dir(self.params.P.result_dir) / "photometry_index.csv"
         if not idx_path.exists():
             return
         try:
@@ -1307,7 +1306,7 @@ class ApertureOverlayWindow(StepWindowBase):
         dialog.accept()
 
     def validate_step(self) -> bool:
-        ap_path = step5_photometry_dir(self.params.P.result_dir) / "aperture_by_frame.csv"
+        ap_path = step7_forced_phot_dir(self.params.P.result_dir) / "aperture_by_frame.csv"
         master_path = step6_refbuild_dir(self.params.P.result_dir) / "ref_catalog.tsv"
         return ap_path.exists() and master_path.exists()
 

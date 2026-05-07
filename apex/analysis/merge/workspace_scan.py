@@ -14,7 +14,7 @@ from apex.utils.run_workspace import (
     infer_workspace_label,
     load_run_manifest,
 )
-from apex.utils.step_paths_lc import step5_photometry_dir, step9_selection_dir, step10_dir
+from apex.utils.step_paths_lc import step7_forced_phot_dir, step8_selection_dir, step9_lc_dir
 
 
 def normalize_filter_key(value) -> str:
@@ -45,8 +45,8 @@ def run_meta(result_dir: Path) -> dict:
     }
 
 
-def read_step5_index(result_dir: Path) -> pd.DataFrame:
-    idx_path = step5_photometry_dir(result_dir) / "photometry_index.csv"
+def read_step7_index(result_dir: Path) -> pd.DataFrame:
+    idx_path = step7_forced_phot_dir(result_dir) / "photometry_index.csv"
     if not idx_path.exists():
         return pd.DataFrame()
     try:
@@ -57,7 +57,7 @@ def read_step5_index(result_dir: Path) -> pd.DataFrame:
 
 def load_selection_payloads(result_dir: Path) -> dict[str, dict]:
     out: dict[str, dict] = {}
-    s9 = step9_selection_dir(result_dir)
+    s9 = step8_selection_dir(result_dir)
     if not s9.exists():
         return out
     for path in sorted(s9.glob("selection_*.json")):
@@ -72,7 +72,7 @@ def load_selection_payloads(result_dir: Path) -> dict[str, dict]:
 
 def load_master_catalogs_by_filter(result_dir: Path) -> dict[str, pd.DataFrame]:
     catalogs: dict[str, pd.DataFrame] = {}
-    s9 = step9_selection_dir(result_dir)
+    s9 = step8_selection_dir(result_dir)
     if not s9.exists():
         return catalogs
     for path in sorted(s9.glob("master_catalog_*.tsv")):
@@ -96,14 +96,14 @@ def load_master_catalogs_by_filter(result_dir: Path) -> dict[str, pd.DataFrame]:
 
 def workspace_scan_signature(result_dir: Path) -> tuple:
     """Cheap signature for cache invalidation during folder scan."""
-    s5_idx = step5_photometry_dir(result_dir) / "photometry_index.csv"
-    s9 = step9_selection_dir(result_dir)
-    s10 = step10_dir(result_dir)
+    s7_idx = step7_forced_phot_dir(result_dir) / "photometry_index.csv"
+    s9 = step8_selection_dir(result_dir)
+    s10 = step9_lc_dir(result_dir)
     manifest = result_dir / "run_manifest.json"
     return (
         str(result_dir),
         manifest.stat().st_mtime if manifest.exists() else None,
-        s5_idx.stat().st_mtime if s5_idx.exists() else None,
+        s7_idx.stat().st_mtime if s7_idx.exists() else None,
         max((p.stat().st_mtime for p in s9.glob("master_catalog_*.tsv")), default=None),
         max((p.stat().st_mtime for p in s9.glob("selection_*.json")), default=None),
         max((p.stat().st_mtime for p in s10.glob("lightcurve_*.csv")), default=None),
@@ -112,7 +112,7 @@ def workspace_scan_signature(result_dir: Path) -> tuple:
 
 def _scan_filter_names(result_dir: Path) -> list[str]:
     filters: set[str] = set()
-    s9 = step9_selection_dir(result_dir)
+    s9 = step8_selection_dir(result_dir)
     if s9.exists():
         for path in s9.glob("master_catalog_*.tsv"):
             filters.add(normalize_filter_key(path.stem.replace("master_catalog_", "")))
@@ -124,24 +124,24 @@ def _scan_filter_names(result_dir: Path) -> list[str]:
 def scan_merge_input_workspace(result_dir: Path) -> dict:
     """Fast scan for Step 1 merger input validation without loading large TSVs."""
     meta = run_meta(result_dir)
-    s5_idx = step5_photometry_dir(result_dir) / "photometry_index.csv"
+    s7_idx = step7_forced_phot_dir(result_dir) / "photometry_index.csv"
     filters = _scan_filter_names(result_dir)
-    s10 = step10_dir(result_dir)
-    has_step10 = any(s10.glob("lightcurve_*.csv"))
-    has_step5 = s5_idx.exists()
-    has_master = any(step9_selection_dir(result_dir).glob("master_catalog_*.tsv"))
-    has_sel = any(step9_selection_dir(result_dir).glob("selection_*.json"))
-    has_step9 = bool(has_master and has_sel)
-    merge_ready = bool(has_step5 and has_step9 and has_step10)
+    s9_lc = step9_lc_dir(result_dir)
+    has_step9_lc = any(s9_lc.glob("lightcurve_*.csv"))
+    has_step7_forced = s7_idx.exists()
+    has_master = any(step8_selection_dir(result_dir).glob("master_catalog_*.tsv"))
+    has_sel = any(step8_selection_dir(result_dir).glob("selection_*.json"))
+    has_step8_selection = bool(has_master and has_sel)
+    merge_ready = bool(has_step7_forced and has_step8_selection and has_step9_lc)
     return {
         "folder": Path(result_dir),
         "label": str(meta.get("label") or Path(result_dir).name),
         "run_type": str(meta.get("run_type", "result")),
         "date_start": meta.get("date_start") or "—",
         "date_end": meta.get("date_end") or "—",
-        "has_step5": has_step5,
-        "has_step9": has_step9,
-        "has_step10": has_step10,
+        "has_step7": has_step7_forced,
+        "has_step8": has_step8_selection,
+        "has_step9": has_step9_lc,
         "filters": filters,
         "merge_ready": merge_ready,
     }

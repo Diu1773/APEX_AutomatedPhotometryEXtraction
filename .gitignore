@@ -4,7 +4,10 @@ __pycache__/
 .env
 .codex
 .claude/
+.venv-deploy/
 build/
 dist/
 *.egg-info/
+release/Setup/*.exe
+release/Setup/*.zip
 .DS_Store

@@ -16,7 +16,7 @@ The README references `requirements.txt`, but this checkout does not currently i
 
 ## Coding Style & Naming Conventions
 
-Use 4-space indentation and standard Python naming: `snake_case` for functions, methods, and modules; `PascalCase` for classes; uppercase for constants such as `_CMD_MAIN`. Prefer `pathlib.Path` for filesystem work and keep workflow step files named by step and purpose, for example `step5_aperture_photometry.py`. Keep GUI changes consistent with the existing PyQt5 patterns in `apex/gui/main_window.py` and `apex/gui/workflow/step_window_base.py`.
+Use 4-space indentation and standard Python naming: `snake_case` for functions, methods, and modules; `PascalCase` for classes; uppercase for constants such as `_CMD_MAIN`. Prefer `pathlib.Path` for filesystem work and keep workflow step files named by step and purpose, for example `step7_forced_aperture_phot.py`. Keep GUI changes consistent with the existing PyQt5 patterns in `apex/gui/main_window.py` and `apex/gui/workflow/step_window_base.py`.
 
 ## Testing Guidelines
 
@@ -25,4 +25,3 @@ There is no committed test suite yet. For new logic, add focused pytest tests un
 ## Commit & Pull Request Guidelines
 
 Recent history uses concise lowercase prefixes such as `feat:`, `fix:`, and `remove:`. Keep commits scoped and imperative, for example `fix: preserve lc parameter cache path`. Pull requests should summarize the mode affected, list validation commands, note dependency or `parameters.toml` changes, and include screenshots for visible GUI updates.
-

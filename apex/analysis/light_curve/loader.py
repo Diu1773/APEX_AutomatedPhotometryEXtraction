@@ -5,7 +5,7 @@ from typing import List
 
 import pandas as pd
 
-from apex.utils.step_paths_lc import step10_dir, step11_dir
+from apex.utils.step_paths_lc import step9_lc_dir, step10_detrend_dir
 
 
 def find_lightcurve_files(result_dir: Path) -> List[Path]:
@@ -13,9 +13,8 @@ def find_lightcurve_files(result_dir: Path) -> List[Path]:
     if not isinstance(result_dir, Path):
         result_dir = Path(result_dir)
     search_dirs = [
-        step11_dir(result_dir),
-        step10_dir(result_dir),
-        result_dir / "step12_isochrone",
+        step10_detrend_dir(result_dir),
+        step9_lc_dir(result_dir),
         result_dir,
     ]
     for out_dir in search_dirs:

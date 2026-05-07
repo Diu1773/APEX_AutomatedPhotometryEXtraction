@@ -182,12 +182,14 @@ def phot_vectorized(
     datamax_adu: float | None = None,
     sigma_clip_val: float = 3.0,
     maxiters: int = 5,
+    return_sky_stats: bool = False,
 ) -> tuple[np.ndarray, ...]:
     """Vectorized aperture photometry for N sources using photutils.
 
     Returns
     -------
     flux_e, flux_err_e, snr, sky_med, is_sat, is_nonlinear  — each shape (N,)
+    If return_sky_stats is true, also returns sky_std and n_sky arrays.
     Invalid positions produce NaN / False.
     """
     from photutils.aperture import CircularAperture, CircularAnnulus, ApertureStats, aperture_photometry
@@ -198,6 +200,8 @@ def phot_vectorized(
     false = np.zeros(N, dtype=bool)
 
     if N == 0:
+        if return_sky_stats:
+            return nan, nan, nan, nan, false, false, nan, nan
         return nan, nan, nan, nan, false, false
 
     # Filter out-of-bounds / non-finite positions (photutils raises on these)
@@ -208,6 +212,11 @@ def phot_vectorized(
         (positions[:, 1] >= 0) & (positions[:, 1] < h)
     )
     if not valid.any():
+        if return_sky_stats:
+            return (
+                nan.copy(), nan.copy(), nan.copy(), nan.copy(),
+                false.copy(), false.copy(), nan.copy(), nan.copy()
+            )
         return nan.copy(), nan.copy(), nan.copy(), nan.copy(), false.copy(), false.copy()
 
     pos_valid = positions[valid]
@@ -274,6 +283,11 @@ def phot_vectorized(
     sky_med  = nan.copy();  sky_med[valid]  = bkg_med
     is_sat   = false.copy(); is_sat[valid]  = is_sat_valid
     is_nl    = false.copy(); is_nl[valid]   = is_nl_valid
+
+    if return_sky_stats:
+        sky_std = nan.copy(); sky_std[valid] = bkg_std
+        n_sky = nan.copy(); n_sky[valid] = n_sky_arr
+        return flux_e, sigma_e, snr, sky_med, is_sat, is_nl, sky_std, n_sky
 
     return flux_e, sigma_e, snr, sky_med, is_sat, is_nl
 

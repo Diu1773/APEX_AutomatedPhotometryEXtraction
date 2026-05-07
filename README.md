@@ -2,10 +2,12 @@
 
 APEX is a PyQt5-based GUI toolkit for aperture and PSF photometry of astronomical images. It supports two operational modes:
 
-- **CMD mode** (`apex/cmd/`): Cluster photometry pipeline — detection through CMD diagram and isochrone fitting (13 steps).
-- **LC mode** (`apex/lightcurve/`): Light curve analysis pipeline — multi-night photometry, detrending, and period analysis (12 steps).
+- **CMD mode** (`apex/cmd/`): Cluster photometry pipeline — detection through CMD diagram and isochrone fitting (12 steps).
+- **LC mode** (`apex/lightcurve/`): Light curve analysis pipeline — multi-night photometry, detrending, and period analysis (11 steps).
 
-Both modes share a common core (steps 1–8: file selection, crop, sky preview, source detection, aperture photometry, WCS plate solving, reference catalog build, star ID matching) and diverge at step 9.
+Both modes share a common core through Step 7: file selection, crop, sky
+preview, source detection, WCS plate solving, master catalog build, and forced
+aperture photometry. CMD and LC then branch into mode-specific steps.
 
 ## Requirements
 

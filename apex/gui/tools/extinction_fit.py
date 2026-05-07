@@ -40,11 +40,10 @@ from apex.utils.photometry_loader import load_frame_photometry
 from apex.utils.qc_utils import load_frame_excludes as _load_frame_excludes
 from apex.utils.step_paths_lc import (
     step2_cropped_dir,
-    step5_photometry_dir,
     step5_wcs_dir,
     step6_refbuild_dir,
     step7_forced_phot_dir,
-    step9_selection_dir,
+    step8_selection_dir,
     tool_extinction_dir,
 )
 
@@ -219,7 +218,7 @@ class ExtinctionFitWorker(QThread):
         out_dir = tool_extinction_dir(self.result_dir)
         out_dir.mkdir(parents=True, exist_ok=True)
         return (
-            out_dir / "step5_extinction_input.csv",
+            out_dir / "step7_extinction_input.csv",
             out_dir / "ensemble_allstar_phot.csv",
         )
 
@@ -600,15 +599,15 @@ class ExtinctionFitWorker(QThread):
         return (float(k_prime), float(k_double_prime), float(zp), scatter, int(len(X)), outlier_frac, k_double_significant)
 
     # ------------------------------------------------------------------
-    # Shared input build: Step 5 photometry + frame airmass
+    # Shared input build: Step 7 forced photometry + frame airmass
     # ------------------------------------------------------------------
 
-    def _run_step5_source_load(self) -> pd.DataFrame:
-        """Load Step 5 photometry tables and enrich them for extinction fitting."""
+    def _run_step7_source_load(self) -> pd.DataFrame:
+        """Load Step 7 forced photometry tables and enrich them for extinction fitting."""
         result_dir = self.source_result_dir
-        idx_path = step5_photometry_dir(result_dir) / "photometry_index.csv"
+        idx_path = step7_forced_phot_dir(result_dir) / "photometry_index.csv"
         if not idx_path.exists():
-            raise FileNotFoundError("Step 5 photometry_index.csv not found. Run Step 5 first.")
+            raise FileNotFoundError("Step 7 forced photometry_index.csv not found. Run Step 7 forced photometry first.")
 
         idx = pd.read_csv(idx_path)
         if "file" not in idx.columns:
@@ -629,7 +628,7 @@ class ExtinctionFitWorker(QThread):
             idx["filter"] = ""
 
         qc_exclude: set[str] = set()
-        for qp in [step5_photometry_dir(result_dir) / "frame_quality.csv", result_dir / "frame_quality.csv"]:
+        for qp in [step7_forced_phot_dir(result_dir) / "frame_quality.csv", result_dir / "frame_quality.csv"]:
             if not qp.exists():
                 continue
             try:
@@ -644,7 +643,7 @@ class ExtinctionFitWorker(QThread):
         if qc_exclude:
             before = len(idx)
             idx = idx[~idx["file"].isin(qc_exclude)].reset_index(drop=True)
-            self._log(f"Frame QC: excluded {before - len(idx)} frame(s) from Step 5 quality flags")
+            self._log(f"Frame QC: excluded {before - len(idx)} frame(s) from Step 7 quality flags")
 
         step10_excludes = _load_frame_excludes(result_dir)
         if step10_excludes:
@@ -653,11 +652,11 @@ class ExtinctionFitWorker(QThread):
             self._log(f"Frame QC: excluded {before - len(idx)} frame(s) from manual frame exclusion")
 
         if idx.empty:
-            raise RuntimeError("No Step 5 frames remain after exclusions")
+            raise RuntimeError("No Step 7 frames remain after exclusions")
 
         frame_airmass = self._build_frame_airmass(idx)
         if frame_airmass is None or frame_airmass.empty:
-            raise RuntimeError("No usable airmass could be resolved from Step 5 frames")
+            raise RuntimeError("No usable airmass could be resolved from Step 7 frames")
 
         frame_airmass = frame_airmass.drop_duplicates(subset=["file"], keep="last").reset_index(drop=True)
         airmass_map = dict(zip(frame_airmass["file"].astype(str), pd.to_numeric(frame_airmass["airmass"], errors="coerce")))
@@ -698,7 +697,7 @@ class ExtinctionFitWorker(QThread):
             mag_col = self._pick_first_column(dfp.columns, ("mag_inst", "mag", "mag_ap", "mag_apcorr"))
             if mag_col is None:
                 missing_mag_column += 1
-                self._log(f"[WARN] {fname}: no usable magnitude column in Step 5 photometry")
+                self._log(f"[WARN] {fname}: no usable magnitude column in Step 7 forced photometry")
                 self.progress.emit(i + 1, total, fname)
                 continue
 
@@ -760,7 +759,7 @@ class ExtinctionFitWorker(QThread):
             return pd.DataFrame()
 
         if not rows:
-            raise RuntimeError("No usable Step 5 photometry rows were loaded")
+            raise RuntimeError("No usable Step 7 forced photometry rows were loaded")
 
         phot_df = pd.concat(rows, ignore_index=True)
         phot_df["source_workspace"] = self._normalize_path(result_dir)
@@ -768,22 +767,22 @@ class ExtinctionFitWorker(QThread):
         source_rows = int(phot_df["source_id"].notna().sum()) if "source_id" in phot_df.columns else 0
 
         self._log(
-            "Step 5 source load complete: "
+            "Step 7 source load complete: "
             f"{len(phot_df)} rows, {phot_df['file'].nunique()} frames, "
             f"{source_rows} matched-source rows"
         )
         if missing_tables:
-            self._log(f"Skipped {missing_tables} frame(s) with missing/empty Step 5 photometry tables")
+            self._log(f"Skipped {missing_tables} frame(s) with missing/empty Step 7 forced photometry tables")
         if missing_mag_column:
             self._log(f"Skipped {missing_mag_column} frame(s) without a usable magnitude column")
         if dropped_bad_mag:
             self._log(f"Dropped {dropped_bad_mag} row(s) with NaN instrumental magnitude")
         if dropped_saturated:
-            self._log(f"Dropped {dropped_saturated} saturated/nonlinear row(s) from Step 5")
+            self._log(f"Dropped {dropped_saturated} saturated/nonlinear row(s) from Step 7")
         if missing_source_frames:
             self._log(f"Warning: {missing_source_frames} frame(s) had no resolved source_id values")
         if finite_airmass == 0:
-            raise RuntimeError("All loaded Step 5 rows have NaN airmass")
+            raise RuntimeError("All loaded Step 7 rows have NaN airmass")
 
         return phot_df
 
@@ -982,7 +981,7 @@ class ExtinctionFitWorker(QThread):
         except Exception:
             self._log("Warning: failed to write extinction_fit_by_filter.csv")
 
-        # Also refresh the cached Step 5 extinction input table
+        # Also refresh the cached Step 7 extinction input table
         self._save_photometry(phot_df)
 
         self.finished.emit({
@@ -1487,14 +1486,14 @@ class ExtinctionFitWorker(QThread):
                         if cached and expected not in cached:
                             cached_label = sorted(cached)[0]
                             raise FileNotFoundError(
-                                f"Cached Step 5 input belongs to a different workspace: {cached_label}"
+                                f"Cached Step 7 input belongs to a different workspace: {cached_label}"
                             )
                     elif expected != self._normalize_path(self.result_dir):
                         raise FileNotFoundError(
-                            "Cached Step 5 input has no source workspace metadata. Load Step 5 again."
+                            "Cached Step 7 input has no source workspace metadata. Load Step 7 again."
                         )
                 return phot_df
-        raise FileNotFoundError("Step 5 extinction input cache not found. Load Step 5 first.")
+        raise FileNotFoundError("Step 7 extinction input cache not found. Load Step 7 first.")
 
     def _extract_date_from_file(self, fname: str, hdr=None) -> str:
         """파일명/폴더명 또는 헤더에서 날짜 추출 (YYYY-MM-DD or YYYYMMDD)"""
@@ -1571,7 +1570,7 @@ class ExtinctionFitWorker(QThread):
         try:
             if self.mode == "ensemble":
                 if self.task == "photometry":
-                    phot_df = self.phot_df if isinstance(self.phot_df, pd.DataFrame) and not self.phot_df.empty else self._run_step5_source_load()
+                    phot_df = self.phot_df if isinstance(self.phot_df, pd.DataFrame) and not self.phot_df.empty else self._run_step7_source_load()
                     self._save_photometry(phot_df)
                     self.finished.emit({
                         "phot": phot_df,
@@ -1585,17 +1584,17 @@ class ExtinctionFitWorker(QThread):
                         try:
                             phot_df = self._load_photometry(expected_source_dir=self.source_result_dir)
                         except FileNotFoundError as e:
-                            self._log(f"{e}. Rebuilding from Step 5 photometry.")
-                            phot_df = self._run_step5_source_load()
+                            self._log(f"{e}. Rebuilding from Step 7 forced photometry.")
+                            phot_df = self._run_step7_source_load()
                             self._save_photometry(phot_df)
                     self._run_ensemble_fit(phot_df)
                 else:
-                    phot_df = self._run_step5_source_load()
+                    phot_df = self._run_step7_source_load()
                     self._save_photometry(phot_df)
                     self._run_ensemble_fit(phot_df)
             elif self.mode == "per_star":
                 if self.task == "photometry":
-                    phot_df = self.phot_df if isinstance(self.phot_df, pd.DataFrame) and not self.phot_df.empty else self._run_step5_source_load()
+                    phot_df = self.phot_df if isinstance(self.phot_df, pd.DataFrame) and not self.phot_df.empty else self._run_step7_source_load()
                     self._save_photometry(phot_df)
                     self.finished.emit({
                         "phot": phot_df,
@@ -1609,17 +1608,17 @@ class ExtinctionFitWorker(QThread):
                         try:
                             phot_df = self._load_photometry(expected_source_dir=self.source_result_dir)
                         except FileNotFoundError as e:
-                            self._log(f"{e}. Rebuilding from Step 5 photometry.")
-                            phot_df = self._run_step5_source_load()
+                            self._log(f"{e}. Rebuilding from Step 7 forced photometry.")
+                            phot_df = self._run_step7_source_load()
                             self._save_photometry(phot_df)
                     self._run_per_star_fit(phot_df)
                 else:
-                    phot_df = self._run_step5_source_load()
+                    phot_df = self._run_step7_source_load()
                     self._save_photometry(phot_df)
                     self._run_per_star_fit(phot_df)
             elif self.mode == "median":
                 if self.task == "photometry":
-                    phot_df = self.phot_df if isinstance(self.phot_df, pd.DataFrame) and not self.phot_df.empty else self._run_step5_source_load()
+                    phot_df = self.phot_df if isinstance(self.phot_df, pd.DataFrame) and not self.phot_df.empty else self._run_step7_source_load()
                     self._save_photometry(phot_df)
                     self.finished.emit({
                         "phot": phot_df,
@@ -1633,12 +1632,12 @@ class ExtinctionFitWorker(QThread):
                         try:
                             phot_df = self._load_photometry(expected_source_dir=self.source_result_dir)
                         except FileNotFoundError as e:
-                            self._log(f"{e}. Rebuilding from Step 5 photometry.")
-                            phot_df = self._run_step5_source_load()
+                            self._log(f"{e}. Rebuilding from Step 7 forced photometry.")
+                            phot_df = self._run_step7_source_load()
                             self._save_photometry(phot_df)
                     self._run_median_fit(phot_df)
                 else:
-                    phot_df = self._run_step5_source_load()
+                    phot_df = self._run_step7_source_load()
                     self._save_photometry(phot_df)
                     self._run_median_fit(phot_df)
             else:
@@ -1652,7 +1651,7 @@ class ExtinctionFitWorker(QThread):
             P = self.params.P
             result_dir = self.result_dir
 
-            idx_path = step5_photometry_dir(result_dir) / "photometry_index.csv"
+            idx_path = step7_forced_phot_dir(result_dir) / "photometry_index.csv"
             if not idx_path.exists():
                 raise FileNotFoundError("photometry index csv not found")
             idx = pd.read_csv(idx_path)
@@ -1669,7 +1668,7 @@ class ExtinctionFitWorker(QThread):
                 idx["filter"] = ""
 
             qc_exclude: set[str] = set()
-            for qp in [step5_photometry_dir(result_dir) / "frame_quality.csv", result_dir / "frame_quality.csv"]:
+            for qp in [step7_forced_phot_dir(result_dir) / "frame_quality.csv", result_dir / "frame_quality.csv"]:
                 if not qp.exists():
                     continue
                 try:
@@ -1683,7 +1682,7 @@ class ExtinctionFitWorker(QThread):
             if qc_exclude:
                 before = len(idx)
                 idx = idx[~idx["file"].astype(str).isin(qc_exclude)].reset_index(drop=True)
-                self._log(f"Frame QC: {before - len(idx)} frame(s) excluded by Step 5 quality flags")
+                self._log(f"Frame QC: {before - len(idx)} frame(s) excluded by Step 7 quality flags")
 
             # Apply step10 manual frame exclusions
             step10_excl = _load_frame_excludes(result_dir)
@@ -1773,7 +1772,7 @@ class ExtinctionFitWorker(QThread):
                 None,
             )
             if master_path is None:
-                raise FileNotFoundError("ref_catalog.tsv not found in step7_refbuild/")
+                raise FileNotFoundError("ref_catalog.tsv not found in step6_refbuild/")
             master = pd.read_csv(master_path, sep="\t")
             if "ID" not in master.columns:
                 raise RuntimeError("ref_catalog.tsv missing ID column")
@@ -2106,7 +2105,7 @@ class ExtinctionFitWindow(QWidget):
         self.selection_stats_df = pd.DataFrame()
         self.selection_state: dict[str, dict[str, set[int]]] = {}
         self._selection_meta_df = pd.DataFrame()
-        self._step9_target_by_filter: dict[str, int] = {}
+        self._step8_target_by_filter: dict[str, int] = {}
         self._source_file_path_map: dict[str, str] | None = None
         self._source_file_path_map_dir: str | None = None
 
@@ -2130,7 +2129,7 @@ class ExtinctionFitWindow(QWidget):
 
         info = QLabel(
             "Atmospheric extinction coefficient tool.\n"
-            "Load Step 5 photometry, choose stable stars per date/filter on the image, "
+            "Load Step 7 forced photometry, choose stable stars per date/filter on the image, "
             "and run per-star Bouguer fits to measure k1."
         )
         info.setStyleSheet("QLabel { background-color: #E3F2FD; padding: 8px; border-radius: 5px; }")
@@ -2154,7 +2153,7 @@ class ExtinctionFitWindow(QWidget):
         self.tabs = QTabWidget()
         layout.addWidget(self.tabs)
 
-        self.tabs.addTab(self._build_source_tab(), "Step 5 Source")
+        self.tabs.addTab(self._build_source_tab(), "Step 7 Source")
         self.selection_tab = self._build_selection_tab()
         self.tabs.addTab(self.selection_tab, "Selection")
         self.tabs.addTab(self._build_fit_tab(), "Extinction Fit")
@@ -2172,7 +2171,7 @@ class ExtinctionFitWindow(QWidget):
         layout = QVBoxLayout(tab)
 
         info = QLabel(
-            "Load and cache Step 5 photometry + frame airmass from the selected workspace.\n"
+            "Load and cache Step 7 forced photometry + frame airmass from the selected workspace.\n"
             "The cached table is reused by the selection tab and the Bouguer fit."
         )
         info.setStyleSheet("QLabel { background-color: #E3F2FD; padding: 8px; border-radius: 5px; }")
@@ -2181,7 +2180,7 @@ class ExtinctionFitWindow(QWidget):
         source_layout = QHBoxLayout()
         source_layout.addWidget(QLabel("Source workspace:"))
         self.source_workspace_edit = QLineEdit(str(self.result_dir))
-        self.source_workspace_edit.setPlaceholderText("result folder containing step5_photometry")
+        self.source_workspace_edit.setPlaceholderText("result folder containing step7_forced_phot")
         self.source_workspace_edit.textChanged.connect(self._on_source_workspace_changed)
         source_layout.addWidget(self.source_workspace_edit, 1)
 
@@ -2195,7 +2194,7 @@ class ExtinctionFitWindow(QWidget):
         layout.addLayout(source_layout)
 
         phot_controls = QHBoxLayout()
-        self.btn_run_phot = QPushButton("Load Step 5")
+        self.btn_run_phot = QPushButton("Load Step 7")
         self.btn_run_phot.setStyleSheet(
             "QPushButton { background-color: #4CAF50; color: white; "
             "font-weight: bold; padding: 6px 12px; }"
@@ -2260,9 +2259,9 @@ class ExtinctionFitWindow(QWidget):
         self.chk_exclude_gaia_var.setChecked(True)
         group_layout.addWidget(self.chk_exclude_gaia_var)
 
-        self.chk_exclude_step9_target = QCheckBox("Exclude Step9 Target")
-        self.chk_exclude_step9_target.setChecked(True)
-        group_layout.addWidget(self.chk_exclude_step9_target)
+        self.chk_exclude_step8_target = QCheckBox("Exclude Step 8 Target")
+        self.chk_exclude_step8_target.setChecked(True)
+        group_layout.addWidget(self.chk_exclude_step8_target)
 
         self.chk_show_selection_ids = QCheckBox("Show IDs")
         self.chk_show_selection_ids.setChecked(True)
@@ -2303,7 +2302,7 @@ class ExtinctionFitWindow(QWidget):
         action_layout.addStretch()
         layout.addLayout(action_layout)
 
-        self.selection_summary_label = QLabel("No Step 5 source table loaded.")
+        self.selection_summary_label = QLabel("No Step 7 source table loaded.")
         self.selection_summary_label.setStyleSheet("QLabel { color: #333; font-weight: bold; }")
         layout.addWidget(self.selection_summary_label)
 
@@ -2381,7 +2380,7 @@ class ExtinctionFitWindow(QWidget):
         layout = QVBoxLayout(tab)
 
         info = QLabel(
-            "Run per-star Bouguer extinction fitting on the cached Step 5 source table.\n"
+            "Run per-star Bouguer extinction fitting on the cached Step 7 source table.\n"
             "If Selection tab states exist, rejected stars are dropped and selected stars are preferred."
         )
         info.setStyleSheet("QLabel { background-color: #E3F2FD; padding: 8px; border-radius: 5px; }")
@@ -2550,7 +2549,7 @@ class ExtinctionFitWindow(QWidget):
         self.selection_stats_df = pd.DataFrame()
         self.selection_state = {}
         self._selection_meta_df = pd.DataFrame()
-        self._step9_target_by_filter = {}
+        self._step8_target_by_filter = {}
         self.selection_frame_df = pd.DataFrame()
         self.selection_image_data = None
         self.selection_header = None
@@ -2566,7 +2565,7 @@ class ExtinctionFitWindow(QWidget):
         self.sel_filter_combo.blockSignals(False)
         self.sel_frame_combo.blockSignals(False)
         self.selection_table.setRowCount(0)
-        self.selection_summary_label.setText("No Step 5 source table loaded.")
+        self.selection_summary_label.setText("No Step 7 source table loaded.")
         self.selection_selected_label.setText("Selected: (none)")
         self.selection_figure.clear()
         self.selection_canvas.draw()
@@ -2658,9 +2657,9 @@ class ExtinctionFitWindow(QWidget):
         except Exception as e:
             self.log(f"[WARN] Failed to save extinction-star selection: {e}")
 
-    def _load_step9_target_hints(self, source_dir: Path):
-        self._step9_target_by_filter = {}
-        selection_dir = step9_selection_dir(source_dir)
+    def _load_step8_target_hints(self, source_dir: Path):
+        self._step8_target_by_filter = {}
+        selection_dir = step8_selection_dir(source_dir)
         if not selection_dir.exists():
             return
         for sel_path in sorted(selection_dir.glob("selection_*.json")):
@@ -2672,11 +2671,11 @@ class ExtinctionFitWindow(QWidget):
                 sid = payload.get("target_source_id")
                 if sid is None:
                     continue
-                self._step9_target_by_filter[filt] = int(sid)
+                self._step8_target_by_filter[filt] = int(sid)
             except Exception:
                 continue
-        if self._step9_target_by_filter:
-            self.log(f"Step9 target hints loaded: {sorted(self._step9_target_by_filter.keys())}")
+        if self._step8_target_by_filter:
+            self.log(f"Step 8 target hints loaded: {sorted(self._step8_target_by_filter.keys())}")
 
     def _merge_meta_columns(self, base: pd.DataFrame, extra: pd.DataFrame) -> pd.DataFrame:
         if extra is None or extra.empty:
@@ -2868,8 +2867,8 @@ class ExtinctionFitWindow(QWidget):
             stats_df["gaia_BP_RP"] = np.nan
         if "gaia_variable_flag" not in stats_df.columns:
             stats_df["gaia_variable_flag"] = ""
-        stats_df["step9_target"] = stats_df.apply(
-            lambda r: self._step9_target_by_filter.get(str(r["filter"]).strip().lower()) == int(r["source_id"]),
+        stats_df["step8_target"] = stats_df.apply(
+            lambda r: self._step8_target_by_filter.get(str(r["filter"]).strip().lower()) == int(r["source_id"]),
             axis=1,
         )
         self.selection_stats_df = stats_df
@@ -2985,7 +2984,7 @@ class ExtinctionFitWindow(QWidget):
         sub["rms_sort"] = pd.to_numeric(sub["rms_i"], errors="coerce").fillna(np.inf)
         sub["snr_sort"] = pd.to_numeric(sub["snr_med"], errors="coerce").fillna(-np.inf)
         sub = sub.sort_values(
-            ["status_rank", "step9_target", "rms_sort", "snr_sort", "source_id"],
+            ["status_rank", "step8_target", "rms_sort", "snr_sort", "source_id"],
             ascending=[True, True, True, False, True],
         ).reset_index(drop=True)
 
@@ -3018,8 +3017,8 @@ class ExtinctionFitWindow(QWidget):
                         item.setBackground(QColor("#ECEFF1"))
                 if col_idx == 5 and item.text() == "VAR":
                     item.setForeground(QColor("#C62828"))
-                if bool(row.get("step9_target", False)):
-                    item.setToolTip("Step9 target hint")
+                if bool(row.get("step8_target", False)):
+                    item.setToolTip("Step 8 target hint")
                 self.selection_table.setItem(row_idx, col_idx, item)
             self._selection_sid_to_row[sid] = row_idx
 
@@ -3185,8 +3184,8 @@ class ExtinctionFitWindow(QWidget):
         if self.chk_exclude_gaia_var.isChecked():
             mask &= sub["gaia_variable_flag"].astype(str).str.upper().ne("VARIABLE")
         n_after_var = int(mask.sum())
-        if self.chk_exclude_step9_target.isChecked():
-            target_sid = self._step9_target_by_filter.get(filt)
+        if self.chk_exclude_step8_target.isChecked():
+            target_sid = self._step8_target_by_filter.get(filt)
             if target_sid is not None:
                 mask &= sub["source_id"] != int(target_sid)
         n_after_target = int(mask.sum())
@@ -3576,9 +3575,9 @@ class ExtinctionFitWindow(QWidget):
         if not source_dir.exists():
             QMessageBox.warning(self, "Missing Source Workspace", f"Source workspace not found:\n{source_dir}")
             return
-        idx_path = step5_photometry_dir(source_dir) / "photometry_index.csv"
+        idx_path = step7_forced_phot_dir(source_dir) / "photometry_index.csv"
         if not idx_path.exists():
-            QMessageBox.warning(self, "Missing Step 5", f"Step 5 photometry_index.csv not found in:\n{source_dir}")
+            QMessageBox.warning(self, "Missing Step 7", f"Step 7 forced photometry_index.csv not found in:\n{source_dir}")
             return
 
         self.log_text.clear()
@@ -3587,7 +3586,7 @@ class ExtinctionFitWindow(QWidget):
         self.btn_stop.setEnabled(True)
         self.btn_save.setEnabled(False)
         self.progress_bar.setValue(0)
-        self.progress_label.setText("Loading Step 5 source table...")
+        self.progress_label.setText("Loading Step 7 source table...")
         self.log(f"Source workspace: {source_dir}")
 
         self.worker = ExtinctionFitWorker(
@@ -3609,7 +3608,7 @@ class ExtinctionFitWindow(QWidget):
         self.btn_stop.setEnabled(False)
         if results.get("stopped"):
             self.progress_label.setText("Stopped")
-            self.log("Step 5 source load stopped")
+            self.log("Step 7 source load stopped")
             self.btn_run_fit.setEnabled(True)
             return
 
@@ -3621,12 +3620,12 @@ class ExtinctionFitWindow(QWidget):
         self._source_file_path_map = None
         self._source_file_path_map_dir = None
         self._load_saved_selection_state(self.loaded_source_result_dir)
-        self._load_step9_target_hints(self.loaded_source_result_dir)
+        self._load_step8_target_hints(self.loaded_source_result_dir)
         self._selection_meta_df = self._load_selection_metadata(self.loaded_source_result_dir, self.phot_df)
         self._rebuild_selection_catalog()
         self.btn_run_fit.setEnabled(True)
-        self.progress_label.setText("Step 5 source table ready")
-        self.log("Step 5 source load complete")
+        self.progress_label.setText("Step 7 source table ready")
+        self.log("Step 7 source load complete")
         self.tabs.setCurrentWidget(self.selection_tab)
 
     def open_parameters_dialog(self):
@@ -3790,9 +3789,9 @@ class ExtinctionFitWindow(QWidget):
         if not source_dir.exists():
             QMessageBox.warning(self, "Missing Source Workspace", f"Source workspace not found:\n{source_dir}")
             return
-        idx_path = step5_photometry_dir(source_dir) / "photometry_index.csv"
+        idx_path = step7_forced_phot_dir(source_dir) / "photometry_index.csv"
         if not idx_path.exists():
-            QMessageBox.warning(self, "Missing Step 5", f"Step 5 photometry_index.csv not found in:\n{source_dir}")
+            QMessageBox.warning(self, "Missing Step 7", f"Step 7 forced photometry_index.csv not found in:\n{source_dir}")
             return
 
         self.log_text.clear()

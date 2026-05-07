@@ -1,5 +1,5 @@
 """
-Step 7: Reference Build (WCS-based ref catalog)
+Step 6: Master Catalog Build (WCS-based reference catalog)
 
 - Select reference frame using detection-based quality metrics
 - Build a fixed master star list from the reference frame detections
@@ -1383,7 +1383,7 @@ _STEP6_SPECS: tuple[ParamSpec, ...] = (
 
 
 class RefBuildWindow(StepWindowBase):
-    """Step 7: Reference Build (WCS-based)"""
+    """Step 6: Master Catalog Build (WCS-based)."""
 
     def __init__(self, params, file_manager, project_state, main_window):
         self.file_manager = file_manager
@@ -1393,7 +1393,7 @@ class RefBuildWindow(StepWindowBase):
 
         super().__init__(
             step_index=5,
-            step_name="Reference Build",
+            step_name="Master Catalog Build",
             params=params,
             project_state=project_state,
             main_window=main_window,
@@ -1404,7 +1404,7 @@ class RefBuildWindow(StepWindowBase):
 
     def setup_step_ui(self):
         info = QLabel(
-            "Build a fixed reference catalog using WCS-solved frames.\n"
+            "Build a fixed master catalog using WCS-solved frames.\n"
             "Selection prefers good WCS match stats, then saturation/elongation/FWHM."
         )
         info.setStyleSheet("QLabel { background-color: #E3F2FD; padding: 10px; border-radius: 5px; }")
@@ -1419,7 +1419,7 @@ class RefBuildWindow(StepWindowBase):
 
         control_layout = QHBoxLayout()
 
-        btn_params = QPushButton("Reference Parameters")
+        btn_params = QPushButton("Master Catalog Parameters")
         btn_params.setStyleSheet(
             "QPushButton { background-color: #2196F3; color: white; font-weight: bold; padding: 8px 15px; }"
         )
@@ -1427,7 +1427,7 @@ class RefBuildWindow(StepWindowBase):
         control_layout.addWidget(btn_params)
 
         self.run_bar = RunControlBar(
-            "Run Reference Build", "Show Log",
+            "Run Master Catalog Build", "Show Log",
             run_cb=self.run_ref_build,
             stop_cb=self.stop_ref_build,
             log_cb=self.show_log_window,
@@ -1499,7 +1499,7 @@ class RefBuildWindow(StepWindowBase):
         _wg_layout.addWidget(self.worker_panel)
 
         self.log_window = WorkflowLogWindow(
-            self, "Reference Build Log", width=900, height=500,
+            self, "Master Catalog Build Log", width=900, height=500,
             side_widget=_worker_group,
         )
         self.log_text = self.log_window.log_text
@@ -1521,7 +1521,7 @@ class RefBuildWindow(StepWindowBase):
 
     def open_parameters_dialog(self):
         run_param_dialog(
-            self, "Reference Build Parameters", _STEP6_SPECS,
+            self, "Master Catalog Build Parameters", _STEP6_SPECS,
             on_save=self.persist_params,
             overrides={"idmatch_gaia_g_limit": getattr(self.params.P, "idmatch_gaia_g_limit",
                         getattr(self.params.P, "gaia_mag_max", 18.0))},

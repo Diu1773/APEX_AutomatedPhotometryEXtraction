@@ -1,4 +1,4 @@
-"""Reusable save/output helpers for Step 10 raw light curves."""
+"""Reusable save/output helpers for Step 9 raw light curves."""
 
 from __future__ import annotations
 
@@ -10,7 +10,7 @@ import numpy as np
 import pandas as pd
 
 from apex.utils.common_helpers import normalize_filter_key
-from apex.utils.step_paths_lc import step10_dir
+from apex.utils.step_paths_lc import step9_lc_dir
 
 
 def _auto_detect_color_index(available_filters: set[str]) -> tuple[str, str] | None:
@@ -94,7 +94,7 @@ def save_dataset_raw_outputs(
     check_df: pd.DataFrame | None = None,
     logger: Callable[[str], None] | None = None,
 ) -> None:
-    out_dir = step10_dir(result_dir)
+    out_dir = step9_lc_dir(result_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
 
     out_path = out_dir / f"lightcurve_ID{target_id}_raw.csv"
@@ -143,7 +143,7 @@ def save_combined_raw_outputs(
     if not combined_raw:
         return
 
-    base_dir = step10_dir(base_result_dir)
+    base_dir = step9_lc_dir(base_result_dir)
     base_dir.mkdir(parents=True, exist_ok=True)
 
     comb = pd.concat(combined_raw, ignore_index=True).sort_values("JD")

@@ -26,7 +26,7 @@ from PyQt5.QtWidgets import (
 )
 
 from apex.utils.step_paths import step5_wcs_dir, step6_refbuild_dir
-from apex.utils.step_paths_cmd import step10_selection_dir, step11_zp_dir
+from apex.utils.step_paths_cmd import step9_selection_dir, step10_zp_dir
 from apex.utils.io_utils import parse_int64_series, read_ecsv_int64_source_id
 
 
@@ -481,10 +481,10 @@ class Gaia3DViewerWindow(QWidget):
             step5_wcs_dir(result_dir) / "gaia_derived.csv",
             result_dir / "gaia_derived.csv",
             result_dir / "cmd_with_gaia_membership.csv",
-            step10_selection_dir(result_dir) / "cmd_with_gaia_membership.csv",
-            step11_zp_dir(result_dir) / "cmd_with_gaia_membership.csv",
+            step9_selection_dir(result_dir) / "cmd_with_gaia_membership.csv",
+            step10_zp_dir(result_dir) / "cmd_with_gaia_membership.csv",
             result_dir / "median_by_ID_filter_wide_cmd.csv",
-            step11_zp_dir(result_dir) / "median_by_ID_filter_wide_cmd.csv",
+            step10_zp_dir(result_dir) / "median_by_ID_filter_wide_cmd.csv",
         ]
         for p in cands:
             if not p.exists():
@@ -510,9 +510,9 @@ class Gaia3DViewerWindow(QWidget):
         result_dir = self.result_dir
         cands = [
             result_dir / "median_by_ID_filter_wide_cmd.csv",
-            step11_zp_dir(result_dir) / "median_by_ID_filter_wide_cmd.csv",
+            step10_zp_dir(result_dir) / "median_by_ID_filter_wide_cmd.csv",
             result_dir / "median_by_ID_filter_wide.csv",
-            step11_zp_dir(result_dir) / "median_by_ID_filter_wide.csv",
+            step10_zp_dir(result_dir) / "median_by_ID_filter_wide.csv",
         ]
         value_cols = ("mag_std_g", "mag_std_r", "mag_inst_g", "mag_inst_r", "color_gr", "color_ri")
         for p in cands:

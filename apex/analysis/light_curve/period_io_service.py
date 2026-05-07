@@ -1,4 +1,4 @@
-"""I/O helpers for Step 12 period analysis."""
+"""I/O helpers for Step 11 period analysis."""
 
 from __future__ import annotations
 
@@ -8,7 +8,7 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 
-from apex.utils.step_paths_lc import step12_period_dir
+from apex.utils.step_paths_lc import step11_period_dir
 
 
 _CORR_MODE_LABELS = {
@@ -112,7 +112,7 @@ def save_period_analysis_outputs(
     min_period: float,
     max_period: float,
 ) -> Path:
-    out_dir = step12_period_dir(result_dir)
+    out_dir = step11_period_dir(result_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
 
     flt = lc_data.get("filter", "unknown")

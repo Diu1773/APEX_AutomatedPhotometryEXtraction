@@ -1,4 +1,4 @@
-"""Reusable output helpers for Step 11 detrend results."""
+"""Reusable output helpers for Step 10 detrend results."""
 
 from __future__ import annotations
 
@@ -10,10 +10,10 @@ import numpy as np
 import pandas as pd
 
 from apex.utils.common_helpers import normalize_filter_key
-from apex.utils.step_paths_lc import step11_current_meta_path
+from apex.utils.step_paths_lc import step10_current_meta_path
 
 
-def annotate_step11_output(df: pd.DataFrame, mode_tag: str, formula: str) -> pd.DataFrame:
+def annotate_step10_output(df: pd.DataFrame, mode_tag: str, formula: str) -> pd.DataFrame:
     out = df.copy()
     if "JD" in out.columns and "jd" in out.columns:
         out = out.drop(columns=["jd"])
@@ -23,7 +23,7 @@ def annotate_step11_output(df: pd.DataFrame, mode_tag: str, formula: str) -> pd.
     return out
 
 
-def write_step11_current_meta(
+def write_step10_current_meta(
     result_dir: Path,
     target_id: int,
     mode_tag: str,
@@ -46,7 +46,7 @@ def write_step11_current_meta(
         "plot_file": plot_path.name if plot_path is not None else "",
         "extra_files": [p.name for p in (extra_files or [])],
     }
-    meta_path = meta_path or step11_current_meta_path(result_dir, target_id)
+    meta_path = meta_path or step10_current_meta_path(result_dir, target_id)
     meta_path.write_text(json.dumps(meta, indent=2, ensure_ascii=False), encoding="utf-8")
     return meta_path
 

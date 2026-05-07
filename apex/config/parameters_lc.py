@@ -724,7 +724,7 @@ class Parameters:
             overlay_shift_max_vectors=_geti(raw, "overlay_shift_max_vectors", 300),
             overlay_shift_min_px=_getf(raw, "overlay_shift_min_px", 1.5),
 
-            # CMD/analysis (Step 13)
+            # CMD/analysis (CMD Step 12)
             pixel_scale_arcsec=_as_float_or_none(raw.get("pixel_scale_arcsec", "")),
             match_tol_px=_getf(raw, "match_tol_px", 1.0),
             min_master_gaia_matches=_geti(raw, "min_master_gaia_matches", 10),

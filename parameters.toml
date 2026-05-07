@@ -1,7 +1,9 @@
+schema_version = 1
+
 [io]
-data_dir = "E:\\observed_Analysis\\M13\\light"
-filename_prefix = "pp"
-result_dir = "E:\\observed_Analysis\\M13\\light\\result"
+data_dir = "E:\\observed_Analysis\\M5\\light"
+filename_prefix = ""
+result_dir = "E:\\observed_Analysis\\M5\\light\\result"
 cache_dir = "cache"
 
 [target]
@@ -51,6 +53,9 @@ qc_max_sources = 40
 iso_min_sep_pix = 10.0
 measure_max = 25
 dr = 0.5
+min_sources = 15
+candidate_max = 200
+measure_all_sources = false
 
 [clip]
 
@@ -61,7 +66,7 @@ nsrc_min = 0
 keep_positions_if_fail = true
 
 [detection]
-engine = "segm"
+engine = "sep"
 sigma = 3.2
 sigma_g = 3.2
 sigma_r = 3.2
@@ -95,7 +100,7 @@ sharp_lo = 0.12
 skip_if_nsrc_ge = 4500
 
 [detection.dao]
-enable = true
+enable = false
 fwhm_px = 5.5
 sharp_lo = 0.1
 sharp_hi = 2.0
@@ -103,10 +108,12 @@ round_lo = -1.5
 round_hi = 1.5
 match_tol_px = 2.0
 
+[detection.sigma_by_filter]
+
 [background]
 enable = true
 in_detect = true
-box = 64
+box = 61
 filter_size = 3
 edge_method = "pad"
 method = "median"
@@ -118,6 +125,11 @@ recenter = true
 use_segm_mask = true
 min_snr_for_mag = 3.0
 use_qc_pass_only = false
+max_recenter_shift = 2.0
+centroid_outlier_px = 1.0
+sky_sigma_mode = "local"
+sky_sigma_includes_rn = true
+sky_sigma_min_n_sky = 50
 
 [photometry.scales]
 aperture_scale = 1.0
@@ -151,6 +163,9 @@ scale_step = 0.2
 min_gap_fwhm = 1.0
 max_pairs = 24
 max_sources = 250
+scale_min = 0.5
+scale_max = 5.0
+isolation_factor = 2.0
 
 [tools.iraf.filters.default]
 seeing = 2.5
@@ -315,6 +330,9 @@ astnet_local_max_objs = 2000
 astnet_local_cpulimit_s = 30.0
 header_coord_warn_sep_deg = 0.5
 header_coord_max_sep_deg = 5.0
+astnet_blind_retry_on_fail = true
+astnet_blind_cpulimit_s = 120.0
+platesolve_gaia_radius_scale = 1.35
 
 [wcs_refine]
 enable = true
@@ -340,7 +358,7 @@ max_center_offset_arcsec = 0.0
 radius_fudge = 1.35
 mag_max = 25.0
 match_tol_arcsec = 2.0
-g_limit = 18.0
+g_limit = 25.0
 retry = 2
 backoff_s = 6.0
 allow_no_cache = true
@@ -360,7 +378,7 @@ pmem_min_fit = 25
 tol_px = 1.0
 force = false
 use_qc_pass_only = true
-gaia_g_limit = 18.0
+gaia_g_limit = 25.0
 tol_arcsec = 0.0
 use_gaia_refs_only = false
 use_wcs_qc_gate = true
@@ -401,6 +419,7 @@ membership_threshold = 0.5
 tol_px = 1.0
 wcs_radius_arcsec = 1.0
 min_gaia_matches = 10
+pixel_scale_arcsec = 0.3929852546237649
 
 [cmd]
 snr_calib_min = 50.0
@@ -408,8 +427,8 @@ max_sources = 5000
 apply_extinction = false
 extinction_mode = "absorb"
 frame_zp_min_n = 5
-membership_mode = "normal"
-membership_compare = true
+membership_mode = "strict"
+membership_compare = false
 
 [cmd.zp]
 clip_sigma = 3.0
@@ -423,11 +442,11 @@ fit_iters = 5
 slope_absmax = 2.0
 
 [isochrone]
-file_path = ""
-age_init = 9.7
-mh_init = -0.1
-eg_r_init = 0.0033
-dm_init = 9.46
+file_path = "C:/Users/bmffr/Desktop/Result/Aperture_Photometry_KNUEMAO/AAPKC_GUI_project/isochrone/PARSEC/iso_data_cmd39.dat"
+age_init = 10.2
+mh_init = -1.2
+eg_r_init = 0.0532
+dm_init = 14.83
 col_mh = 1
 col_age = 2
 col_g = 29
@@ -514,6 +533,12 @@ epsf_round_abs_max = 0.5
 epsf_elong_max = 1.3
 parallel_workers = 6
 use_error_image = false
+field_mode = "crowded"
+duplicate_radius_px = nan
+fit_init_max_sources = 3000
+substar_neighbor_r_fwhm_mult = 5.0
+substar_max_sources = 1000
+use_grouper = true
 
 [cross_frame]
 ransac_tol_px = 2.0
