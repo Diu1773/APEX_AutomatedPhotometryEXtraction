@@ -2682,12 +2682,12 @@ class SourceDetectionWindow(StepWindowBase):
         skipped_incompatible = 0
         mgr = self._get_detect_cache_mgr()
         for filename in self.file_list:
+            manifest_invalid = False
             # manifest validation (supplemental — missing manifest is OK for backward compat)
             try:
                 vr = mgr.validate_key(filename, required_payloads=["detect_json"])
                 if vr.manifest is not None and not vr.valid:
-                    skipped_incompatible += 1
-                    continue
+                    manifest_invalid = True
             except Exception:
                 pass
 
@@ -2698,7 +2698,7 @@ class SourceDetectionWindow(StepWindowBase):
                     cache_dir / f"detect_{filename}.json",
                     step4_out / f"detect_{filename}.json",
                 ]
-                if any(p.exists() for p in maybe_meta):
+                if manifest_invalid or any(p.exists() for p in maybe_meta):
                     skipped_incompatible += 1
                 continue
             try:
