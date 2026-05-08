@@ -45,6 +45,7 @@ from apex.utils.step_paths import (
 )
 from apex.utils.step_paths_cmd import step8_psf_dir, step9_selection_dir, step10_zp_dir
 from apex.utils.io_utils import parse_int64_series, read_ecsv_int64_source_id
+from apex.utils.qc_utils import filter_frame_df_by_qc
 
 
 def _first_existing_col(cols, candidates):
@@ -499,16 +500,15 @@ class ZeropointCalibrationWorker(QThread):
             else:
                 idx["filter"] = "unknown"
 
-            fq_path = step7_forced_phot_dir(result_dir) / "frame_quality.csv"
-            if not fq_path.exists():
-                fq_path = result_dir / "frame_quality.csv"
-            if fq_path.exists() and ("file" in idx.columns):
-                fq = pd.read_csv(fq_path)
-                if ("file" in fq.columns) and ("passed" in fq.columns):
-                    idx = idx.merge(fq[["file", "passed"]], on="file", how="left")
-                    before = len(idx)
-                    idx = idx[idx["passed"] != False].copy()
-                    self._log(f"QC passed only: {before} -> {len(idx)}")
+            use_qc = bool(getattr(P, "phot_use_qc_pass_only", False))
+            idx, qc_info = filter_frame_df_by_qc(result_dir, idx, file_col="file", require_qc=use_qc)
+            if use_qc:
+                if qc_info.get("applied"):
+                    self._log(f"Step4 QC passed only: {qc_info['total']} -> {qc_info['kept']}")
+                elif qc_info.get("path") is None:
+                    self._log("Step4 QC: frame_quality.csv not found; using all frames.")
+                else:
+                    self._log(f"Step4 QC: frame_quality.csv ignored ({qc_info['reason']}); using all frames.")
 
             min_snr_for_mag = float(getattr(P, "min_snr_for_mag", 0.0))
 

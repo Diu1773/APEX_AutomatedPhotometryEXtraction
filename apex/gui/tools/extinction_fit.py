@@ -37,7 +37,10 @@ from apex.utils.photometry_utils import (
 )
 from apex.utils.io_utils import coerce_int64_source_id, load_file_path_map, read_csv_int64_source_id
 from apex.utils.photometry_loader import load_frame_photometry
-from apex.utils.qc_utils import load_frame_excludes as _load_frame_excludes
+from apex.utils.qc_utils import (
+    filter_frame_df_by_qc,
+    load_frame_excludes as _load_frame_excludes,
+)
 from apex.utils.step_paths_lc import (
     step2_cropped_dir,
     step5_wcs_dir,
@@ -627,23 +630,15 @@ class ExtinctionFitWorker(QThread):
         else:
             idx["filter"] = ""
 
-        qc_exclude: set[str] = set()
-        for qp in [step7_forced_phot_dir(result_dir) / "frame_quality.csv", result_dir / "frame_quality.csv"]:
-            if not qp.exists():
-                continue
-            try:
-                dfq = pd.read_csv(qp)
-            except Exception:
-                continue
-            if {"file", "passed"} <= set(dfq.columns):
-                bad = dfq.loc[dfq["passed"] == False, "file"].astype(str)
-                qc_exclude |= set(bad.tolist())
-            break
-
-        if qc_exclude:
-            before = len(idx)
-            idx = idx[~idx["file"].isin(qc_exclude)].reset_index(drop=True)
-            self._log(f"Frame QC: excluded {before - len(idx)} frame(s) from Step 7 quality flags")
+        use_qc = bool(getattr(self.params.P, "phot_use_qc_pass_only", False))
+        idx, qc_info = filter_frame_df_by_qc(result_dir, idx, file_col="file", require_qc=use_qc)
+        if use_qc:
+            if qc_info.get("applied"):
+                self._log(f"Step4 QC: {qc_info['total']} -> {qc_info['kept']} frame(s)")
+            elif qc_info.get("path") is None:
+                self._log("Step4 QC: frame_quality.csv not found; using all frames.")
+            else:
+                self._log(f"Step4 QC: frame_quality.csv ignored ({qc_info['reason']}); using all frames.")
 
         step10_excludes = _load_frame_excludes(result_dir)
         if step10_excludes:
@@ -1667,22 +1662,15 @@ class ExtinctionFitWorker(QThread):
             else:
                 idx["filter"] = ""
 
-            qc_exclude: set[str] = set()
-            for qp in [step7_forced_phot_dir(result_dir) / "frame_quality.csv", result_dir / "frame_quality.csv"]:
-                if not qp.exists():
-                    continue
-                try:
-                    dfq = pd.read_csv(qp)
-                except Exception:
-                    continue
-                if {"file", "passed"} <= set(dfq.columns):
-                    bad = dfq.loc[dfq["passed"] == False, "file"].astype(str)
-                    qc_exclude |= set(bad.tolist())
-                break
-            if qc_exclude:
-                before = len(idx)
-                idx = idx[~idx["file"].astype(str).isin(qc_exclude)].reset_index(drop=True)
-                self._log(f"Frame QC: {before - len(idx)} frame(s) excluded by Step 7 quality flags")
+            use_qc = bool(getattr(P, "phot_use_qc_pass_only", False))
+            idx, qc_info = filter_frame_df_by_qc(result_dir, idx, file_col="file", require_qc=use_qc)
+            if use_qc:
+                if qc_info.get("applied"):
+                    self._log(f"Step4 QC: {qc_info['total']} -> {qc_info['kept']} frame(s)")
+                elif qc_info.get("path") is None:
+                    self._log("Step4 QC: frame_quality.csv not found; using all frames.")
+                else:
+                    self._log(f"Step4 QC: frame_quality.csv ignored ({qc_info['reason']}); using all frames.")
 
             # Apply step10 manual frame exclusions
             step10_excl = _load_frame_excludes(result_dir)

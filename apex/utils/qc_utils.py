@@ -4,7 +4,7 @@ Helpers for frame-level QC filtering (frame_quality.csv).
 
 from __future__ import annotations
 
-from pathlib import Path
+from pathlib import Path, PureWindowsPath
 from typing import Iterable, Optional, Tuple, Dict, List
 
 import numpy as np
@@ -26,11 +26,42 @@ def resolve_frame_quality_path(result_dir: Path) -> Optional[Path]:
     return None
 
 
+_TRUE_VALUES = {"true", "1", "1.0", "yes", "y", "on"}
+_FALSE_VALUES = {"false", "0", "0.0", "no", "n", "off"}
+
+
+def frame_name(value: object) -> str:
+    """Return the FITS frame basename from a bare name or POSIX/Windows path."""
+    text = str(value or "").strip()
+    if not text:
+        return ""
+    if "\\" in text:
+        return PureWindowsPath(text).name
+    return Path(text).name
+
+
+def is_passed_value(value: object, default: bool = True) -> bool:
+    """Parse a frame-quality pass value from bool/string/numeric CSV data."""
+    if isinstance(value, (bool, np.bool_)):
+        return bool(value)
+    try:
+        if pd.isna(value):
+            return bool(default)
+    except Exception:
+        pass
+    text = str(value).strip().lower()
+    if text in _TRUE_VALUES:
+        return True
+    if text in _FALSE_VALUES:
+        return False
+    return bool(default)
+
+
 def _passed_mask(series: pd.Series) -> pd.Series:
     if series.dtype == bool:
         return series
     values = series.astype(str).str.strip().str.lower()
-    return values.isin({"true", "1", "yes", "y", "on"})
+    return values.isin(_TRUE_VALUES)
 
 
 def filter_files_by_qc(
@@ -69,19 +100,59 @@ def filter_files_by_qc(
 
     if "passed" in dfq.columns:
         mask = _passed_mask(dfq["passed"])
-        good = set(dfq.loc[mask, "file"].astype(str).tolist())
+        good = {frame_name(v) for v in dfq.loc[mask, "file"].astype(str).tolist()}
     elif "exclude_reason" in dfq.columns:
         reasons = dfq["exclude_reason"].fillna("").astype(str)
-        good = set(dfq.loc[reasons.str.strip() == "", "file"].astype(str).tolist())
+        good = {frame_name(v) for v in dfq.loc[reasons.str.strip() == "", "file"].astype(str).tolist()}
     else:
         info["reason"] = "missing_passed_column"
         return file_list, info
 
-    filtered = [f for f in file_list if f in good]
+    filtered = [f for f in file_list if frame_name(f) in good]
     info["applied"] = True
     info["reason"] = "ok"
     info["kept"] = len(filtered)
     info["dropped"] = len(file_list) - len(filtered)
+    return filtered, info
+
+
+def filter_frame_df_by_qc(
+    result_dir: Path,
+    df: pd.DataFrame,
+    *,
+    file_col: str = "file",
+    require_qc: bool = True,
+) -> Tuple[pd.DataFrame, Dict[str, object]]:
+    """Filter a frame-index DataFrame using the canonical frame QC pass list."""
+    info: Dict[str, object] = {
+        "applied": False,
+        "reason": "disabled" if not require_qc else "missing",
+        "path": None,
+        "total": len(df),
+        "kept": len(df),
+        "dropped": 0,
+    }
+    if not require_qc:
+        return df, info
+    if file_col not in df.columns:
+        info["reason"] = "missing_file_column"
+        return df, info
+
+    files = df[file_col].astype(str).tolist()
+    kept_files, file_info = filter_files_by_qc(result_dir, files, require_qc=True)
+    info.update(file_info)
+    if not file_info.get("applied"):
+        info["total"] = len(df)
+        info["kept"] = len(df)
+        info["dropped"] = 0
+        return df, info
+
+    kept_names = {frame_name(v) for v in kept_files}
+    mask = df[file_col].map(frame_name).isin(kept_names)
+    filtered = df.loc[mask].copy()
+    info["total"] = len(df)
+    info["kept"] = len(filtered)
+    info["dropped"] = len(df) - len(filtered)
     return filtered, info
 
 
@@ -227,7 +298,7 @@ def load_frame_excludes(
         fname = str(row.get("file", "")).strip()
         if not fname:
             continue
-        if "passed" in df.columns and bool(row.get("passed", True)):
+        if "passed" in df.columns and is_passed_value(row.get("passed", True), default=True):
             continue
         reasons: set = set()
         reason_str = row.get("exclude_reason", "")

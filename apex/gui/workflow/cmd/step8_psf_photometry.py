@@ -69,6 +69,7 @@ from apex.utils.step_paths_cmd import (
 from apex.utils.step_paths import step7_forced_phot_dir
 from apex.utils.astro_utils import normalize_filter_name
 from apex.utils.constants import get_parallel_workers
+from apex.utils.qc_utils import filter_files_by_qc
 
 
 # ── Scalar helpers ────────────────────────────────────────────────────────────
@@ -495,25 +496,17 @@ class Step6PSFWorker(QThread):
 
             frames = list(self.file_list)
 
-            # Skip frames that Step 4 QC excluded (passed=False in frame_quality.csv)
-            fq_path = step4_dir(self.result_dir) / "frame_quality.csv"
-            _qc_excluded: set[str] = set()
-            if fq_path.exists():
-                try:
-                    _fq_df = pd.read_csv(fq_path)
-                    if "file" in _fq_df.columns and "passed" in _fq_df.columns:
-                        _qc_excluded = set(
-                            str(r["file"]) for _, r in _fq_df.iterrows()
-                            if not bool(r.get("passed", True))
-                        )
-                except Exception as _e:
-                    self._log(f"[WARN] Could not read frame_quality.csv: {_e}")
-            if _qc_excluded:
-                frames = [f for f in frames if f not in _qc_excluded]
-                self._log(
-                    f"Step4 QC: skipping {len(_qc_excluded)} excluded frame(s) — "
-                    + ", ".join(sorted(_qc_excluded))
-                )
+            use_qc = bool(getattr(self.params.P, "phot_use_qc_pass_only", False))
+            frames, qc_info = filter_files_by_qc(self.result_dir, frames, require_qc=use_qc)
+            if use_qc:
+                if qc_info.get("applied"):
+                    self._log(f"Step4 QC: {qc_info['kept']}/{qc_info['total']} frame(s) kept.")
+                elif qc_info.get("path") is None:
+                    self._log("Step4 QC: frame_quality.csv not found; using all frames.")
+                else:
+                    self._log(f"Step4 QC: frame_quality.csv ignored ({qc_info['reason']}); using all frames.")
+            if not frames:
+                raise RuntimeError("No frames remain after Step 4 QC filtering.")
 
             total = len(frames)
             index_rows = []

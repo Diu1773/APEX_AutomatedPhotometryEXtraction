@@ -52,6 +52,7 @@ from apex.utils.cache_utils import (
     normalize_detect_engine as _normalize_detect_engine_util,
 )
 from apex.utils.astro_utils import compute_airmass_from_header
+from apex.utils.qc_utils import is_passed_value
 from apex.utils.source_quality import compute_source_quality
 
 _DETECT_MODE_PRESETS = {
@@ -1825,7 +1826,7 @@ class QCInspectionPanel(QWidget):
             return
         for _, row in dfq.iterrows():
             fname = str(row.get("file", ""))
-            passed = bool(row.get("passed", True))
+            passed = is_passed_value(row.get("passed", True), default=True)
             if not fname:
                 continue
             if passed:
@@ -1898,24 +1899,34 @@ class QCInspectionPanel(QWidget):
         df["passed"] = passed
         return df
 
-    def save_frame_quality(self):
+    def write_frame_quality_csv(self):
         df = self._build_quality_df()
         if df.empty:
-            return
+            return None
         out_dir = step4_dir(self.params.P.result_dir)
         out_dir.mkdir(parents=True, exist_ok=True)
         gain = self._safe_float(getattr(self.params.P, "gain_e_per_adu", np.nan), np.nan)
-        if np.isfinite(gain):
+        if np.isfinite(gain) and "sky_sigma" in df.columns:
             df["sky_sigma_med_e"] = df["sky_sigma"] * gain
-        df.rename(columns={
-            "sky_sigma": "sky_sigma_med_adu",
-        }, inplace=True)
-        df.to_csv(out_dir / "frame_quality.csv", index=False)
+        if "sky_sigma" in df.columns:
+            df.rename(columns={
+                "sky_sigma": "sky_sigma_med_adu",
+            }, inplace=True)
+        out_path = out_dir / "frame_quality.csv"
+        df.to_csv(out_path, index=False)
+        return out_path
+
+    def save_frame_quality(self):
+        if self.write_frame_quality_csv() is None:
+            return
         self._apply_pipeline_flags()
         self.warning_label.setText("QC saved and applied.")
         self.update_summary()
 
     def apply_to_pipeline(self):
+        if self.write_frame_quality_csv() is not None:
+            self.warning_label.setText("QC saved and applied.")
+            self.update_summary()
         self._apply_pipeline_flags()
 
     def _apply_pipeline_flags(self):
@@ -3814,6 +3825,7 @@ class SourceDetectionWindow(StepWindowBase):
         }
         if hasattr(self, "qc_panel") and self.qc_panel is not None:
             state_data["qc_state"] = self.qc_panel.export_state()
+            self.qc_panel.write_frame_quality_csv()
         self.project_state.store_step_data("source_detection", state_data)
 
     def restore_state(self):

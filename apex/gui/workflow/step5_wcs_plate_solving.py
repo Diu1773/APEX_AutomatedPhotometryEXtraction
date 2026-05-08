@@ -53,11 +53,11 @@ from apex.utils.step_paths import (
     crop_is_active,
     crop_rect_path,
     step4_dir,
-    step7_forced_phot_dir,
     step5_wcs_dir,
 )
 from apex.utils.constants import get_parallel_workers
 from apex.utils.io_utils import coerce_int64_source_id
+from apex.utils.qc_utils import filter_files_by_qc
 from apex.utils.cache_utils import (
     norm_path_key,
     build_file_signature,
@@ -1444,18 +1444,6 @@ WHERE 1=CONTAINS(
             pix_arc = float(getattr(self.params.P, "pixel_scale_arcsec", np.nan))
             if not np.isfinite(pix_arc) or pix_arc <= 0:
                 raise RuntimeError("pixel_scale_arcsec is not set; run instrument setup first.")
-
-            # Optional QC filtering
-            require_qc = bool(getattr(self.params.P, "wcs_require_qc_pass", True))
-            if require_qc:
-                qpath = step7_forced_phot_dir(self.result_dir) / "frame_quality.csv"
-                if qpath.exists():
-                    try:
-                        dfq = pd.read_csv(qpath)
-                        good = set(dfq.loc[dfq["passed"] == True, "file"].astype(str).tolist())
-                        files = [f for f in files if f in good]
-                    except Exception:
-                        pass
 
             if not files:
                 raise RuntimeError("No files to process (QC filter removed all files).")
@@ -3829,6 +3817,22 @@ class WcsPlateSolvingWindow(StepWindowBase):
             QMessageBox.warning(self, "Warning", "No frames found to solve")
             return
         file_list = list(self.file_list)
+        require_qc = bool(getattr(self.params.P, "wcs_require_qc_pass", True))
+        file_list, qc_info = filter_files_by_qc(
+            Path(self.params.P.result_dir),
+            file_list,
+            require_qc=require_qc,
+        )
+        if require_qc:
+            if qc_info.get("applied"):
+                self.log(f"[WCS][QC] Frame QC filter: {qc_info['kept']}/{qc_info['total']} kept.")
+            elif qc_info.get("path") is None:
+                self.log("[WCS][QC] frame_quality.csv not found; using all frames.")
+            else:
+                self.log(f"[WCS][QC] frame_quality.csv ignored ({qc_info['reason']}); using all frames.")
+        if not file_list:
+            QMessageBox.warning(self, "Warning", "No frames remain after Step 4 QC filtering.")
+            return
 
         target_coord = None
         ra = getattr(self.params.P, "target_ra_deg", None)
@@ -4284,10 +4288,30 @@ class WcsPlateSolvingWindow(StepWindowBase):
             return
         if self.worker and self.worker.isRunning():
             return
+        file_list = list(self.file_list)
+        require_qc = bool(getattr(self.params.P, "wcs_require_qc_pass", True))
+        file_list, qc_info = filter_files_by_qc(
+            Path(self.params.P.result_dir),
+            file_list,
+            require_qc=require_qc,
+        )
+        qc_log = None
+        if require_qc:
+            if qc_info.get("applied"):
+                qc_log = f"[WCS][QC] Frame QC filter: {qc_info['kept']}/{qc_info['total']} kept."
+            elif qc_info.get("path") is None:
+                qc_log = "[WCS][QC] frame_quality.csv not found; using all frames."
+            else:
+                qc_log = f"[WCS][QC] frame_quality.csv ignored ({qc_info['reason']}); using all frames."
+        if not file_list:
+            QMessageBox.warning(self, "Warning", "No frames remain after Step 4 QC filtering.")
+            return
 
         self.results = {}
         self.results_table.setRowCount(0)
         self.log_text.clear()
+        if qc_log:
+            self.log(qc_log)
         self.stop_requested = False
 
         # Get target from params.P (loaded from TOML)
@@ -4301,7 +4325,7 @@ class WcsPlateSolvingWindow(StepWindowBase):
                 target_coord = None
 
         self.worker = WcsWorker(
-            self.file_list,
+            file_list,
             self.params,
             self.params.P.data_dir,
             self.params.P.result_dir,
