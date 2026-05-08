@@ -1,5 +1,5 @@
 """
-Step 6: WCS Plate Solving (ASTAP)
+Step 5: WCS Plate Solving (ASTAP)
 WCS solving window and workers.
 """
 
@@ -3620,7 +3620,7 @@ WHERE 1=CONTAINS(
 
 
 class WcsPlateSolvingWindow(StepWindowBase):
-    """Step 6: WCS Plate Solving"""
+    """Step 5: WCS Plate Solving"""
 
     def __init__(self, params, file_manager, project_state, main_window):
         self.file_manager = file_manager

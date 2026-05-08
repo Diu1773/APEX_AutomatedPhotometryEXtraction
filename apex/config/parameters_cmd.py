@@ -304,7 +304,7 @@ TOML_KEY_MAP: list[tuple[Iterable[str], str]] = [
     (("site", "lon_deg"), "site_lon_deg"),
     (("site", "alt_m"), "site_alt_m"),
     (("site", "tz_offset_hours"), "site_tz_offset_hours"),
-    # PSF photometry (Step 6)
+    # PSF photometry (CMD Step 8)
     (("psf", "epsf_oversampling"), "psf_epsf_oversampling"),
     (("psf", "epsf_size_px"), "psf_epsf_size_px"),
     (("psf", "epsf_size_fwhm_mult"), "psf_epsf_size_fwhm_mult"),
@@ -597,6 +597,8 @@ class Parameters:
             min_snr_for_mag=_getf(raw, "min_snr_for_mag", 3.0),
             max_recenter_shift=_getf(raw, "max_recenter_shift", 2.0),
             centroid_outlier_px=_getf(raw, "centroid_outlier_px", 1.0),
+            registration_match_radius_px=_getf(raw, "registration_match_radius_px", 4.0),
+            registration_min_anchors=_geti(raw, "registration_min_anchors", 6),
             sky_sigma_mode=raw.get("sky_sigma_mode", "local"),
             sky_sigma_includes_rn=_as_bool(raw.get("sky_sigma_includes_rn", "true"), True),
             sky_sigma_min_n_sky=_geti(raw, "sky_sigma_min_n_sky", 50),
@@ -628,14 +630,22 @@ class Parameters:
             apcorr_apply=_as_bool(raw.get("apcorr_apply", "true"), True),
             apcorr_use_min_n=_geti(raw, "apcorr_use_min_n", 20),
             apcorr_scatter_max=_getf(raw, "apcorr_scatter_max", 0.05),
+            apcorr_min_snr=_getf(raw, "apcorr_min_snr", 40.0),
             apcorr_max_sources=_geti(raw, "apcorr_max_sources", 250),
             apcorr_scale_min=_getf(raw, "apcorr_scale_min", 0.5),
             apcorr_scale_max=_getf(raw, "apcorr_scale_max", 5.0),
             apcorr_scale_step=_getf(raw, "apcorr_scale_step", 0.25),
             apcorr_large_scale=_getf(raw, "apcorr_large_scale", _getf(raw, "apcorr_large_ref_scale", 5.0)),
             apcorr_large_ref_scale=_getf(raw, "apcorr_large_scale", _getf(raw, "apcorr_large_ref_scale", 5.0)),
-            apcorr_isolation_factor=_getf(raw, "apcorr_isolation_factor", 2.0),
+            apcorr_isolation_factor=_getf(raw, "apcorr_isolation_factor", 2.5),
             phot_use_qc_pass_only=_as_bool(raw.get("phot_use_qc_pass_only", "false"), False),
+            source_quality_fwhm_ratio_lo=_getf(raw, "source_quality_fwhm_ratio_lo", 0.6),
+            source_quality_fwhm_ratio_hi=_getf(raw, "source_quality_fwhm_ratio_hi", 1.6),
+            source_quality_anchor_neighbor_fwhm_mult=_getf(raw, "source_quality_anchor_neighbor_fwhm_mult", 2.0),
+            source_quality_anchor_flux_pct=_getf(raw, "source_quality_anchor_flux_pct", 60.0),
+            source_quality_apcorr_flux_pct=_getf(raw, "source_quality_apcorr_flux_pct", 60.0),
+            source_quality_psf_seed_flux_pct=_getf(raw, "source_quality_psf_seed_flux_pct", 30.0),
+            source_quality_edge_fwhm_mult=_getf(raw, "source_quality_edge_fwhm_mult", 1.0),
 
             # Master ID editor
             search_radius_px=_getf(raw, "search_radius_px", 7.0),
@@ -763,7 +773,7 @@ class Parameters:
             iso_eg_r_init=_getf(raw, "iso_eg_r_init", 0.0033),
             iso_dm_init=_getf(raw, "iso_dm_init", 9.46),
 
-            # PSF photometry (Step 6)
+            # PSF photometry (CMD Step 8)
             psf_mode=str(raw.get("psf_mode", "normal")).strip().lower() or "normal",
             psf_model_mode="per_frame",
             psf_parallel_workers=_geti(raw, "psf_parallel_workers", 0),

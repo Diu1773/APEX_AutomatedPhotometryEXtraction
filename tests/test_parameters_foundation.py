@@ -71,6 +71,23 @@ def _write_minimal_toml(tmp_path):
             [background]
             in_detect = true
             box = 64
+
+            [photometry.registration]
+            match_radius_px = 6.5
+            min_anchors = 4
+
+            [photometry.apcorr]
+            min_snr = 55.0
+            isolation_factor = 2.8
+
+            [source_quality]
+            fwhm_ratio_lo = 0.7
+            fwhm_ratio_hi = 1.5
+            anchor_neighbor_fwhm_mult = 2.1
+            anchor_flux_pct = 65.0
+            apcorr_flux_pct = 70.0
+            psf_seed_flux_pct = 35.0
+            edge_fwhm_mult = 1.2
             """
         ).strip()
         + "\n",
@@ -145,6 +162,18 @@ def test_cmd_and_lc_load_top_level_schema_version(tmp_path):
     assert lc.P.detect_engine == "sep"
     assert cmd.P.cache_dir.name == "cache"
     assert lc.P.cache_dir.name == "cache"
+    assert cmd.P.registration_match_radius_px == 6.5
+    assert lc.P.registration_match_radius_px == 6.5
+    assert cmd.P.registration_min_anchors == 4
+    assert lc.P.registration_min_anchors == 4
+    assert cmd.P.apcorr_min_snr == 55.0
+    assert lc.P.apcorr_min_snr == 55.0
+    assert cmd.P.apcorr_isolation_factor == 2.8
+    assert lc.P.apcorr_isolation_factor == 2.8
+    assert cmd.P.source_quality_anchor_neighbor_fwhm_mult == 2.1
+    assert lc.P.source_quality_anchor_neighbor_fwhm_mult == 2.1
+    assert cmd.P.source_quality_apcorr_flux_pct == 70.0
+    assert lc.P.source_quality_apcorr_flux_pct == 70.0
 
 
 def test_save_toml_writes_canonical_schema_version(tmp_path):
@@ -158,6 +187,23 @@ def test_save_toml_writes_canonical_schema_version(tmp_path):
         data = tomllib.load(fh)
     assert data["schema_version"] == CANONICAL_SCHEMA_VERSION
     assert data["detection"]["engine"] == "sep"
+
+
+def test_save_toml_preserves_forced_phot_quality_knobs(tmp_path):
+    pytest.importorskip("tomli_w")
+    param_path = _write_minimal_toml(tmp_path)
+    params = CmdParameters(param_path)
+
+    assert params.save_toml()
+
+    with param_path.open("rb") as fh:
+        data = tomllib.load(fh)
+    assert data["photometry"]["registration"]["match_radius_px"] == 6.5
+    assert data["photometry"]["registration"]["min_anchors"] == 4
+    assert data["photometry"]["apcorr"]["min_snr"] == 55.0
+    assert data["photometry"]["apcorr"]["isolation_factor"] == 2.8
+    assert data["source_quality"]["anchor_neighbor_fwhm_mult"] == 2.1
+    assert data["source_quality"]["apcorr_flux_pct"] == 70.0
 
 
 def test_pydantic_schema_accepts_schema_version(tmp_path):

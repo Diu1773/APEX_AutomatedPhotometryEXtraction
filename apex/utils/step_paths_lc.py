@@ -7,9 +7,9 @@ LC pipeline layout:
   step2_crop/             Image crop
   step3_sky_preview/      Sky preview QC
   step4_detection/        Source detection + frame QC
-  step5_wcs/              WCS plate solving       } shared
-  step6_refbuild/         Reference catalog build  }
-  step7_forced_phot/       Forced aperture photometry }
+  step5_wcs/              WCS plate solving
+  step6_refbuild/         Reference catalog build
+  step7_forced_phot/      Forced aperture photometry
   lc_selection/           Step 8 target/comparison selection
   lc_lightcurve/          Step 9 light curve builder
   lc_detrend/             Step 10 detrend & night merge

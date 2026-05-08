@@ -86,6 +86,15 @@ def _to_int(val, default: int) -> int:
         return int(default)
 
 
+def _fmt_duration(seconds: float) -> str:
+    s = int(max(0, round(float(seconds))))
+    h, rem = divmod(s, 3600)
+    m, ss = divmod(rem, 60)
+    if h > 0:
+        return f"{h:d}:{m:02d}:{ss:02d}"
+    return f"{m:02d}:{ss:02d}"
+
+
 def _catalog_series(df: pd.DataFrame, col: str, fallback) -> pd.Series:
     if col in df.columns:
         return df[col].reset_index(drop=True)
@@ -1161,6 +1170,7 @@ class ForcedPhotWorker(QThread):
             self.finished.emit({})
 
     def _run_impl(self):  # noqa: C901
+        run_t0 = time.time()
         P = self.params.P
         out_dir = self.output_dir
         out_dir.mkdir(parents=True, exist_ok=True)
@@ -1406,6 +1416,10 @@ class ForcedPhotWorker(QThread):
                             int(gc_data.get("n_step4_quality_reject", 0))
                             if isinstance(gc_data, dict) else 0
                         ),
+                        "n_step4_apcorr_reject": (
+                            int(gc_data.get("n_step4_apcorr_reject", 0))
+                            if isinstance(gc_data, dict) else 0
+                        ),
                         "n_center_outlier_reject": (
                             int(gc_data.get("n_center_outlier_reject", 0))
                             if isinstance(gc_data, dict) else 0
@@ -1455,7 +1469,8 @@ class ForcedPhotWorker(QThread):
         n_frc_t = sum(r.get("n_forced",   0) for r in index_rows)
         self._log(
             f"[FORCED] Done. {n_ok}/{total} frames OK. "
-            f"Total detected={n_det_t} forced={n_frc_t}"
+            f"Total detected={n_det_t} forced={n_frc_t} "
+            f"elapsed={_fmt_duration(time.time() - run_t0)}"
         )
         self.finished.emit({
             "index_rows": index_rows,
@@ -1602,6 +1617,7 @@ class ForcedPhotWindow(StepWindowBase):
         self._gc_per_frame: Dict[str, dict] = {}   # fname → growth curve dict
         self._center_stats_rows: List[dict] = []
         self._stats_seen = False
+        self._run_started_ts: Optional[float] = None
 
         super().__init__(
             step_index=6,
@@ -1796,10 +1812,10 @@ class ForcedPhotWindow(StepWindowBase):
         ap_group = QGroupBox("Per-frame Aperture Correction")
         ap_layout = QVBoxLayout(ap_group)
         self.apcorr_table = QTableWidget()
-        self.apcorr_table.setColumnCount(10)
+        self.apcorr_table.setColumnCount(11)
         _ap_headers = [
             "File", "Filter", "Apcorr", "N stars",
-            "Candidates", "Step4 reject", "Center reject",
+            "Candidates", "Step4 reject", "Apcorr reject", "Center reject",
             "r_opt (px)", "r_opt/FWHM", "min mag_err",
         ]
         self.apcorr_table.setHorizontalHeaderLabels(_ap_headers)
@@ -1810,7 +1826,8 @@ class ForcedPhotWindow(StepWindowBase):
             "측정 flux에 곱하는 무차원 보정 계수 (보통 1.05~1.3).",
             "Apcorr 산정에 사용된 isolated bright star 개수",
             "Apcorr 조건을 통과한 후보 개수. 계산은 apcorr_max_sources까지만 사용.",
-            "Step4 detect 품질 컬럼(shape/peak/status)으로 제외된 검출 source 수",
+            "Step4 anchor 품질 컬럼(shape/peak/status)으로 제외된 검출 source 수",
+            "Step4 apcorr_candidate=false라서 aperture correction reference에서 제외된 source 수",
             "centroid_outlier_px보다 중심 오차가 커서 apcorr reference에서 제외된 source 수",
             "Optimal aperture 반지름 (px): U-shape mag_err 곡선의 최저점 = SNR 최대 구경.",
             "최적 구경 배수 = r_opt / FWHM. 현재 r_ap/FWHM과 다르면 forced_r_ap_scale 튜닝 고려.",
@@ -1953,6 +1970,7 @@ class ForcedPhotWindow(StepWindowBase):
                         str(row.get("n_apcorr_stars", "")),
                         str(row.get("n_apcorr_candidates", "")),
                         str(row.get("n_step4_quality_reject", "")),
+                        str(row.get("n_step4_apcorr_reject", "")),
                         str(row.get("n_center_outlier_reject", "")),
                         "—", "—", "—",
                     ]):
@@ -2319,22 +2337,31 @@ class ForcedPhotWindow(StepWindowBase):
         self.worker.start()
 
         self.run_bar.set_running(True)
+        self._run_started_ts = time.time()
         self.progress_bar.setValue(0)
-        self.progress_label.setText("Running…")
+        self.progress_label.setText(f"0/{len(file_list)} | ETA --:-- | Starting...")
 
     def stop_forced_phot(self):
         if self.worker and self.worker.isRunning():
             self.worker.stop()
             self.worker.wait(5000)
         self.run_bar.set_running(False)
-        self.progress_label.setText("Stopped")
+        elapsed_txt = ""
+        if self._run_started_ts is not None:
+            elapsed_txt = f" | elapsed {_fmt_duration(time.time() - float(self._run_started_ts))}"
+        self.progress_label.setText(f"Stopped{elapsed_txt}")
 
     # ── Slots ──────────────────────────────────────────────────────────────────
 
     def _on_progress(self, current: int, total: int, fname: str):
         self.progress_bar.setMaximum(total)
         self.progress_bar.setValue(current)
-        self.progress_label.setText(f"[{current}/{total}] {fname}")
+        eta_txt = "--:--"
+        if self._run_started_ts is not None and current > 0 and total > current:
+            elapsed = max(0.0, time.time() - float(self._run_started_ts))
+            per_frame = elapsed / float(current)
+            eta_txt = _fmt_duration(per_frame * float(total - current))
+        self.progress_label.setText(f"{current}/{total} | ETA {eta_txt} | {fname}")
 
     def _on_log(self, msg: str):
         append_timestamped_log(self.log_text, msg)
@@ -2360,6 +2387,7 @@ class ForcedPhotWindow(StepWindowBase):
             str(gc_data.get("n_stars", "")),
             str(gc_data.get("n_apcorr_candidates", "")),
             str(gc_data.get("n_step4_quality_reject", "")),
+            str(gc_data.get("n_step4_apcorr_reject", "")),
             str(gc_data.get("n_center_outlier_reject", "")),
             f"{r_opt:.1f}" if r_opt > 0 else "—",
             f"{r_opt_scale:.2f}" if np.isfinite(r_opt_scale) else "—",
@@ -2393,13 +2421,19 @@ class ForcedPhotWindow(StepWindowBase):
             self._refresh_center_summary()
         self.run_bar.set_running(False)
         n_ok = sum(1 for r in rows if r.get("status") == "ok")
-        self.progress_label.setText(f"Done — {n_ok}/{len(rows)} frames OK")
+        elapsed_txt = ""
+        if self._run_started_ts is not None:
+            elapsed_txt = f" | elapsed {_fmt_duration(time.time() - float(self._run_started_ts))}"
+        self.progress_label.setText(f"Done — {n_ok}/{len(rows)} frames OK{elapsed_txt}")
         self.update_navigation_buttons()
 
     def _on_error(self, error_type: str, msg: str):
         QMessageBox.critical(self, error_type, msg)
         self.run_bar.set_running(False)
-        self.progress_label.setText("Error — see log")
+        elapsed_txt = ""
+        if self._run_started_ts is not None:
+            elapsed_txt = f" | elapsed {_fmt_duration(time.time() - float(self._run_started_ts))}"
+        self.progress_label.setText(f"Error — see log{elapsed_txt}")
 
     # ── StepWindowBase overrides ───────────────────────────────────────────────
 

@@ -91,7 +91,7 @@ def _load_master_table(result_dir: Path) -> tuple[pd.DataFrame, str, Path]:
     # Collect per-filter catalogs written by step6_ref_build
     per_filter = sorted(refbuild.glob("ref_catalog_*.tsv")) if refbuild.exists() else []
     candidates = [
-        # step7 writes ref_catalog.tsv (no-filter copy) and ref_catalog_{filter}.tsv
+        # Step 6 ref-build writes ref_catalog.tsv and ref_catalog_{filter}.tsv.
         ("ref_catalog",    refbuild / "ref_catalog.tsv",      "\t"),
     ] + [
         ("ref_catalog",    p,                                   "\t") for p in per_filter
