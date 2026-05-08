@@ -69,6 +69,7 @@ def test_compute_source_quality_rejects_saturated_and_close_neighbor():
 
     assert "close_neighbor" in out.loc[0, "quality_flags"]
     assert not bool(out.loc[0, "anchor_candidate"])
+    assert bool(out.loc[0, "psf_seed_candidate"])
     assert "saturated" in out.loc[2, "quality_flags"]
     assert out.loc[2, "quality_score"] == 0.0
     assert not bool(out.loc[2, "apcorr_candidate"])
@@ -93,6 +94,53 @@ def test_unmeasured_fwhm_uses_frame_median_for_candidates():
 
     assert "fwhm_missing" in out.loc[2, "quality_flags"]
     assert out.loc[2, "fwhm_ratio_to_frame"] == 1.0
+    assert out.loc[2, "quality_score"] == 95.0
     assert bool(out.loc[2, "anchor_candidate"])
     assert bool(out.loc[2, "apcorr_candidate"])
     assert bool(out.loc[2, "epsf_candidate"])
+
+
+def test_anchor_candidate_can_be_less_isolated_than_apcorr_candidate():
+    df = pd.DataFrame(
+        {
+            "x": [50.0, 58.8, 140.0],
+            "y": [50.0, 50.0, 140.0],
+            "dao_flux": [9000.0, 8000.0, 1000.0],
+            "peak_adu": [9000.0, 8000.0, 1000.0],
+            "fwhm_px": [4.0, 4.0, 4.0],
+            "fwhm_status": ["ok", "ok", "ok"],
+            "sharpness": [0.5, 0.5, 0.5],
+            "roundness": [0.1, 0.1, 0.1],
+            "elongation": [1.1, 1.1, 1.1],
+        }
+    )
+
+    out = compute_source_quality(df, frame_fwhm_px=4.0, image_shape=(180, 180), params=_params())
+
+    assert 2.0 <= out.loc[0, "nearest_neighbor_fwhm"] < 2.5
+    assert bool(out.loc[0, "anchor_candidate"])
+    assert not bool(out.loc[0, "apcorr_candidate"])
+    assert "close_neighbor" not in out.loc[0, "quality_flags"]
+
+
+def test_epsf_candidate_requires_finite_morphology_metrics():
+    df = pd.DataFrame(
+        {
+            "x": [20.0, 80.0, 140.0],
+            "y": [20.0, 80.0, 140.0],
+            "dao_flux": [1000.0, 5000.0, 9000.0],
+            "peak_adu": [1000.0, 5000.0, 9000.0],
+            "fwhm_px": [4.0, 4.0, 4.0],
+            "fwhm_status": ["ok", "ok", "ok"],
+            "sharpness": [0.5, 0.5, float("nan")],
+            "roundness": [0.1, 0.1, float("nan")],
+            "elongation": [1.1, 1.1, float("nan")],
+        }
+    )
+
+    out = compute_source_quality(df, frame_fwhm_px=4.0, image_shape=(180, 180), params=_params())
+
+    assert bool(out.loc[2, "anchor_candidate"])
+    assert bool(out.loc[2, "apcorr_candidate"])
+    assert not bool(out.loc[2, "epsf_candidate"])
+    assert bool(out.loc[2, "psf_seed_candidate"])

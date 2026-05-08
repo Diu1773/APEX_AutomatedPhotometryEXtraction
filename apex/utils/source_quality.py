@@ -209,9 +209,9 @@ def compute_source_quality(
     epsf_round_max = _get_float(params, "psf_epsf_round_abs_max", 0.5)
     epsf_elong_max = _get_float(params, "psf_epsf_elong_max", 1.3)
     epsf_shape_ok = np.ones(n, dtype=bool)
-    epsf_shape_ok &= ~np.isfinite(sharp) | ((sharp >= epsf_sharp_lo) & (sharp <= epsf_sharp_hi))
-    epsf_shape_ok &= ~np.isfinite(roundness) | (np.abs(roundness) <= epsf_round_max)
-    epsf_shape_ok &= ~np.isfinite(elong) | (elong <= epsf_elong_max)
+    epsf_shape_ok &= np.isfinite(sharp) & (sharp >= epsf_sharp_lo) & (sharp <= epsf_sharp_hi)
+    epsf_shape_ok &= np.isfinite(roundness) & (np.abs(roundness) <= epsf_round_max)
+    epsf_shape_ok &= np.isfinite(elong) & (elong <= epsf_elong_max)
     epsf_candidate = (
         base_ok
         & epsf_shape_ok

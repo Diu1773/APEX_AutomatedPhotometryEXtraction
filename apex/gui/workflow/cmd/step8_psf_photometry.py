@@ -253,7 +253,7 @@ def _load_detect_positions(fname: str, cache_dir: Path, result_dir: Path):
                         out["det_uid"] = np.arange(len(df), dtype=np.int64)
                 else:
                     out["det_uid"] = np.arange(len(df), dtype=np.int64)
-                for flux_col in ("flux", "peak", "amplitude"):
+                for flux_col in ("flux_for_quality", "dao_flux", "peak_adu", "dao_peak", "flux", "peak", "amplitude"):
                     if flux_col in df.columns:
                         out["flux_init"] = pd.to_numeric(df[flux_col], errors="coerce")
                         break
@@ -287,7 +287,7 @@ def _load_detect_positions(fname: str, cache_dir: Path, result_dir: Path):
                             .isin({"1", "true", "t", "yes", "y"})
                             .reset_index(drop=True)
                         )
-                out = out.dropna(subset=["x", "y"])
+                out = out.dropna(subset=["x", "y"]).reset_index(drop=True)
                 return out
             except Exception:
                 continue
@@ -670,7 +670,7 @@ class Step6PSFWorker(QThread):
                             cand_range = in_range & epsf_candidate
                             n_before = int(np.sum(in_range))
                             n_after = int(np.sum(cand_range))
-                            if n_after >= 5:
+                            if n_after >= min_epsf_stars:
                                 in_range = cand_range
                                 self._log(
                                     f"[EPSF] Step4 epsf_candidate filter: {n_before} -> {n_after}"

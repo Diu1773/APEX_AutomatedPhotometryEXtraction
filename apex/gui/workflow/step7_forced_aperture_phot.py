@@ -194,12 +194,12 @@ def _step4_quality_check(row: pd.Series, P, sat_adu: float, datamax_adu: float) 
     reasons: List[str] = []
     used = False
 
-    if "apcorr_candidate" in row.index:
+    if "anchor_candidate" in row.index:
         used = True
-        apcorr_ok = str(row.get("apcorr_candidate")).strip().lower() in {"1", "true", "t", "yes", "y"}
-        if not apcorr_ok:
+        anchor_ok = str(row.get("anchor_candidate")).strip().lower() in {"1", "true", "t", "yes", "y"}
+        if not anchor_ok:
             qflags = str(row.get("quality_flags", "") or "").strip()
-            reasons.append(f"apcorr_candidate_false:{qflags}" if qflags else "apcorr_candidate_false")
+            reasons.append(f"anchor_candidate_false:{qflags}" if qflags else "anchor_candidate_false")
 
     def _finite_row_float(name: str) -> float:
         nonlocal used
@@ -789,6 +789,7 @@ class ForcedPhotWorker(QThread):
             else np.zeros(n, dtype=bool)
         )
         has_step4_anchor = det_df is not None and "anchor_candidate" in det_df.columns
+        has_step4_apcorr = det_df is not None and "apcorr_candidate" in det_df.columns
         matched_for_registration = np.isfinite(match_dx) & np.isfinite(match_dy)
         registration_anchor = (
             matched_for_registration
@@ -959,6 +960,7 @@ class ForcedPhotWorker(QThread):
             detected_flag &
             ~crowding_flag &
             step4_quality_ok &
+            ((not has_step4_apcorr) | step4_apcorr_candidate) &
             ~centroid_outlier &
             np.isfinite(flux_arr) & (flux_arr > 0) &
             np.isfinite(snr_arr) & (snr_arr >= apcorr_min_snr) &
@@ -966,6 +968,7 @@ class ForcedPhotWorker(QThread):
             ~is_nl_arr
         )
         n_step4_quality_reject = int((detected_flag & ~step4_quality_ok).sum())
+        n_step4_apcorr_reject = int((detected_flag & ~step4_apcorr_candidate).sum()) if has_step4_apcorr else 0
         n_center_outlier_reject = int(centroid_outlier.sum())
         n_apcorr_candidates = int(apcorr_mask.sum())
         if apcorr_max_sources > 0 and n_apcorr_candidates > apcorr_max_sources:
@@ -1037,6 +1040,7 @@ class ForcedPhotWorker(QThread):
                     "n_apcorr_candidates": int(n_apcorr_candidates),
                     "n_apcorr_used":  int(n_gc_stars),
                     "n_step4_quality_reject": int(n_step4_quality_reject),
+                    "n_step4_apcorr_reject": int(n_step4_apcorr_reject),
                     "n_center_outlier_reject": int(n_center_outlier_reject),
                     "apcorr_max_sources": int(apcorr_max_sources),
                     "r_ap_px":        float(r_ap),
