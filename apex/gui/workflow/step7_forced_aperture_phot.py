@@ -143,6 +143,48 @@ def _finite_max(values) -> float:
     return float(np.max(arr)) if arr.size else float("nan")
 
 
+def _robust_frame_shift(dx, dy, *, sigma: float = 3.0, max_iter: int = 3) -> dict:
+    """Robust shift-only registration from anchor residuals."""
+    dx_arr = np.asarray(dx, dtype=float)
+    dy_arr = np.asarray(dy, dtype=float)
+    keep = np.isfinite(dx_arr) & np.isfinite(dy_arr)
+    if int(keep.sum()) == 0:
+        return {
+            "dx": float("nan"),
+            "dy": float("nan"),
+            "rms": float("nan"),
+            "p95": float("nan"),
+            "keep": keep,
+        }
+
+    for _ in range(max(1, int(max_iter))):
+        if int(keep.sum()) < 3:
+            break
+        med_dx = float(np.median(dx_arr[keep]))
+        med_dy = float(np.median(dy_arr[keep]))
+        resid = np.hypot(dx_arr - med_dx, dy_arr - med_dy)
+        resid_keep = resid[keep]
+        med_resid = float(np.median(resid_keep))
+        mad = float(np.median(np.abs(resid_keep - med_resid)))
+        scale = 1.4826 * mad
+        if not np.isfinite(scale) or scale <= 0:
+            scale = float(np.percentile(resid_keep, 68)) if resid_keep.size else float("nan")
+        if not np.isfinite(scale) or scale <= 0:
+            break
+        new_keep = keep & (resid <= max(0.25, sigma * scale))
+        if np.array_equal(new_keep, keep):
+            break
+        keep = new_keep
+
+    med_dx = float(np.median(dx_arr[keep]))
+    med_dy = float(np.median(dy_arr[keep]))
+    resid = np.hypot(dx_arr - med_dx, dy_arr - med_dy)
+    resid_keep = resid[keep]
+    rms = float(np.sqrt(np.mean(resid_keep * resid_keep))) if resid_keep.size else float("nan")
+    p95 = float(np.percentile(resid_keep, 95)) if resid_keep.size else float("nan")
+    return {"dx": med_dx, "dy": med_dy, "rms": rms, "p95": p95, "keep": keep}
+
+
 def _safe_rate(num: int, den: int) -> float:
     return float(num) / float(den) if den > 0 else float("nan")
 
@@ -151,6 +193,13 @@ def _step4_quality_check(row: pd.Series, P, sat_adu: float, datamax_adu: float) 
     """Reuse Step4 detection-quality columns when they are available."""
     reasons: List[str] = []
     used = False
+
+    if "apcorr_candidate" in row.index:
+        used = True
+        apcorr_ok = str(row.get("apcorr_candidate")).strip().lower() in {"1", "true", "t", "yes", "y"}
+        if not apcorr_ok:
+            qflags = str(row.get("quality_flags", "") or "").strip()
+            reasons.append(f"apcorr_candidate_false:{qflags}" if qflags else "apcorr_candidate_false")
 
     def _finite_row_float(name: str) -> float:
         nonlocal used
@@ -234,11 +283,15 @@ def _frame_centering_stats(
     recentered = _bool_col(phot_df, "recentered_flag")
     outlier = _bool_col(phot_df, "centroid_outlier")
     off_frame = _bool_col(phot_df, "off_frame_flag")
-    x_pred = _numeric_col(phot_df, "x_pred")
-    y_pred = _numeric_col(phot_df, "y_pred")
-    on_frame = (~off_frame) & x_pred.notna() & y_pred.notna()
+    x_fit = _numeric_col(phot_df, "x_fit")
+    y_fit = _numeric_col(phot_df, "y_fit")
+    on_frame = (~off_frame) & x_fit.notna() & y_fit.notna()
 
     match_offset = _numeric_col(phot_df, "match_offset_px")
+    reg_resid = _numeric_col(phot_df, "registration_resid_px")
+    reg_anchor = _bool_col(phot_df, "registration_anchor")
+    frame_dx = _numeric_col(phot_df, "frame_dx_px")
+    frame_dy = _numeric_col(phot_df, "frame_dy_px")
     center_error = _numeric_col(phot_df, "center_error_px")
     centroid_shift = _numeric_col(phot_df, "centroid_shift_px")
     mag_err = _numeric_col(phot_df, "mag_err")
@@ -251,8 +304,10 @@ def _frame_centering_stats(
     n_recentered = int(recentered.sum())
     n_center_tested = int(center_error.notna().sum())
     n_outlier = int(outlier.sum())
+    n_registration_anchor = int(reg_anchor.sum())
 
     det_match_offset = match_offset[detected & match_offset.notna()]
+    reg_anchor_resid = reg_resid[reg_anchor & reg_resid.notna()]
     cen_error = center_error[center_error.notna()]
     cen_shift = centroid_shift[recentered & centroid_shift.notna()]
 
@@ -314,10 +369,15 @@ def _frame_centering_stats(
         "n_recentered": n_recentered,
         "n_center_tested": n_center_tested,
         "n_centroid_outlier": n_outlier,
+        "n_registration_anchor": n_registration_anchor,
         "detected_rate": detected_rate,
         "forced_rate": forced_rate,
         "recentered_rate": recentered_rate,
         "centroid_outlier_rate": outlier_rate,
+        "frame_dx_px": _finite_median(frame_dx),
+        "frame_dy_px": _finite_median(frame_dy),
+        "registration_resid_med_px": _finite_median(reg_anchor_resid),
+        "registration_resid_p95_px": _finite_percentile(reg_anchor_resid, 95),
         "match_offset_med_px": _finite_median(det_match_offset),
         "match_offset_p90_px": _finite_percentile(det_match_offset, 90),
         "match_offset_max_px": _finite_max(det_match_offset),
@@ -513,13 +573,27 @@ class ForcedPhotWorker(QThread):
                 for col in (
                     "elongation", "roundness", "roundness1", "roundness2",
                     "sharpness", "dao_peak", "dao_flux", "peak_adu",
-                    "fwhm_px", "sep_flag",
+                    "fwhm_px", "sep_flag", "nearest_neighbor_px",
+                    "nearest_neighbor_fwhm", "edge_margin_px",
+                    "fwhm_ratio_to_frame", "flux_for_quality",
+                    "flux_percentile", "peak_fraction_to_sat",
+                    "quality_score",
                 ):
                     if col in df.columns:
                         out[col] = pd.to_numeric(df[col], errors="coerce")
-                for col in ("fwhm_status", "source_type"):
+                for col in ("fwhm_status", "source_type", "quality_flags"):
                     if col in df.columns:
                         out[col] = df[col].astype(str).reset_index(drop=True)
+                for col in ("anchor_candidate", "apcorr_candidate", "epsf_candidate", "psf_seed_candidate"):
+                    if col in df.columns:
+                        out[col] = (
+                            df[col]
+                            .astype(str)
+                            .str.strip()
+                            .str.lower()
+                            .isin({"1", "true", "t", "yes", "y"})
+                            .reset_index(drop=True)
+                        )
                 return out.dropna(subset=["x", "y"]).reset_index(drop=True)
             except Exception:
                 continue
@@ -663,6 +737,10 @@ class ForcedPhotWorker(QThread):
         step4_quality_ok = np.ones(n, dtype=bool)
         step4_quality_used = np.zeros(n, dtype=bool)
         step4_quality_reason = np.full(n, "", dtype=object)
+        step4_quality_score = np.full(n, np.nan)
+        step4_quality_flags = np.full(n, "", dtype=object)
+        step4_anchor_candidate = np.zeros(n, dtype=bool)
+        step4_apcorr_candidate = np.zeros(n, dtype=bool)
 
         if det_df is not None and len(det_df) > 0:
             det_xy = det_df[["x", "y"]].to_numpy(float)
@@ -690,14 +768,96 @@ class ForcedPhotWorker(QThread):
                         step4_quality_ok[vi] = ok
                         step4_quality_used[vi] = used
                         step4_quality_reason[vi] = reason
+                        if "quality_score" in det_df.columns:
+                            step4_quality_score[vi] = float(det_df["quality_score"].iloc[idx])
+                        if "quality_flags" in det_df.columns:
+                            step4_quality_flags[vi] = str(det_df["quality_flags"].iloc[idx])
+                        if "anchor_candidate" in det_df.columns:
+                            step4_anchor_candidate[vi] = bool(det_df["anchor_candidate"].iloc[idx])
+                        if "apcorr_candidate" in det_df.columns:
+                            step4_apcorr_candidate[vi] = bool(det_df["apcorr_candidate"].iloc[idx])
+
+        # --- Frame-level registration from good anchor stars ---
+        crowding_flag = (
+            master_df["crowding_flag"].to_numpy(bool)
+            if "crowding_flag" in master_df.columns
+            else np.zeros(n, dtype=bool)
+        )
+        has_step4_anchor = det_df is not None and "anchor_candidate" in det_df.columns
+        registration_anchor = (
+            detected_flag
+            & ~crowding_flag
+            & step4_quality_ok
+            & np.isfinite(match_dx)
+            & np.isfinite(match_dy)
+        )
+        if has_step4_anchor:
+            registration_anchor &= step4_anchor_candidate
+        n_anchor_initial = int(registration_anchor.sum())
+        registration_method = "wcs_only"
+        frame_dx = float("nan")
+        frame_dy = float("nan")
+        registration_rms = float("nan")
+        registration_p95 = float("nan")
+        registration_resid = np.full(n, np.nan)
+        min_reg_anchors = max(3, _to_int(getattr(P, "registration_min_anchors", 6), 6))
+
+        if n_anchor_initial >= min_reg_anchors:
+            reg = _robust_frame_shift(match_dx[registration_anchor], match_dy[registration_anchor])
+            anchor_indices = np.flatnonzero(registration_anchor)
+            keep_local = np.asarray(reg["keep"], dtype=bool)
+            kept_indices = anchor_indices[keep_local]
+            registration_anchor[:] = False
+            registration_anchor[kept_indices] = True
+            frame_dx = float(reg["dx"])
+            frame_dy = float(reg["dy"])
+            registration_rms = float(reg["rms"])
+            registration_p95 = float(reg["p95"])
+            registration_method = "anchor_shift"
+            self._log(
+                f"[FORCED][{fname}] registration shift "
+                f"dx={frame_dx:.3f} dy={frame_dy:.3f} px | "
+                f"anchors={len(kept_indices)}/{n_anchor_initial} | rms={registration_rms:.3f}"
+            )
+        elif has_step4_anchor and int((detected_flag & ~crowding_flag & step4_quality_ok).sum()) >= min_reg_anchors:
+            fallback_anchor = (
+                detected_flag
+                & ~crowding_flag
+                & step4_quality_ok
+                & np.isfinite(match_dx)
+                & np.isfinite(match_dy)
+            )
+            reg = _robust_frame_shift(match_dx[fallback_anchor], match_dy[fallback_anchor])
+            anchor_indices = np.flatnonzero(fallback_anchor)
+            keep_local = np.asarray(reg["keep"], dtype=bool)
+            kept_indices = anchor_indices[keep_local]
+            registration_anchor[:] = False
+            registration_anchor[kept_indices] = True
+            frame_dx = float(reg["dx"])
+            frame_dy = float(reg["dy"])
+            registration_rms = float(reg["rms"])
+            registration_p95 = float(reg["p95"])
+            registration_method = "quality_shift"
+            self._log(
+                f"[WARN][FORCED][{fname}] too few Step4 anchors ({n_anchor_initial}); "
+                f"using quality-filtered shift anchors={len(kept_indices)}"
+            )
+
+        x_reg = x_pred.copy()
+        y_reg = y_pred.copy()
+        if np.isfinite(frame_dx) and np.isfinite(frame_dy):
+            x_reg = x_pred + frame_dx
+            y_reg = y_pred + frame_dy
+            registration_resid = np.hypot(det_x_arr - x_reg, det_y_arr - y_reg)
+        registration_match_offset = np.where(np.isfinite(registration_resid), registration_resid, match_offset)
 
         # --- Recenter detected sources ---
         _status(f"Recenter {int(detected_flag.sum())}", 40)
-        x_fit = x_pred.copy()
-        y_fit = y_pred.copy()
+        x_fit = x_reg.copy()
+        y_fit = y_reg.copy()
         centroid_shift = np.full(n, np.nan)
         recentered_flag = np.zeros(n, dtype=bool)
-        recenter_method = np.full(n, "forced_wcs", dtype=object)
+        recenter_method = np.full(n, registration_method, dtype=object)
 
         if not recenter_enabled:
             recenter_method[detected_flag] = "disabled"
@@ -711,7 +871,7 @@ class ForcedPhotWorker(QThread):
                 if recenter_seen == 1 or recenter_seen % 250 == 0:
                     pct = 40 + min(12, int(12 * recenter_seen / max(n_detected_total, 1)))
                     _status(f"Recenter {recenter_seen}/{n_detected_total}", pct)
-                xi, yi = x_pred[i], y_pred[i]
+                xi, yi = x_reg[i], y_reg[i]
                 if not (np.isfinite(xi) and np.isfinite(yi)):
                     recenter_method[i] = "invalid_position"
                     continue
@@ -736,12 +896,12 @@ class ForcedPhotWorker(QThread):
                     not accepted
                     and np.isfinite(det_x_arr[i])
                     and np.isfinite(det_y_arr[i])
-                    and np.isfinite(match_offset[i])
-                    and match_offset[i] <= max_shift
+                    and np.isfinite(registration_match_offset[i])
+                    and registration_match_offset[i] <= max_shift
                 ):
                     x_fit[i] = det_x_arr[i]
                     y_fit[i] = det_y_arr[i]
-                    centroid_shift[i] = match_offset[i]
+                    centroid_shift[i] = registration_match_offset[i]
                     recentered_flag[i] = True
                     recenter_method[i] = "detected_xy"
                     accepted = True
@@ -749,7 +909,7 @@ class ForcedPhotWorker(QThread):
                 if not accepted:
                     recenter_method[i] = "failed"
 
-        center_error = np.where(np.isfinite(centroid_shift), centroid_shift, match_offset)
+        center_error = np.where(np.isfinite(centroid_shift), centroid_shift, registration_match_offset)
         centroid_outlier = (
             detected_flag &
             np.isfinite(center_error) &
@@ -775,11 +935,6 @@ class ForcedPhotWorker(QThread):
         )
 
         # --- Growth-curve aperture correction (vectorized: N_radii calls, not N_stars×N_radii) ---
-        crowding_flag = (
-            master_df["crowding_flag"].to_numpy(bool)
-            if "crowding_flag" in master_df.columns
-            else np.zeros(n, dtype=bool)
-        )
         apcorr_mask = (
             detected_flag &
             ~crowding_flag &
@@ -897,9 +1052,9 @@ class ForcedPhotWorker(QThread):
         )
         bad_phot = is_sat_arr | is_nl_arr | ~np.isfinite(flux_corr)
         off_frame = (
-            ~np.isfinite(x_pred) | ~np.isfinite(y_pred) |
-            (x_pred < 0) | (x_pred >= w) |
-            (y_pred < 0) | (y_pred >= h)
+            ~np.isfinite(x_fit) | ~np.isfinite(y_fit) |
+            (x_fit < 0) | (x_fit >= w) |
+            (y_fit < 0) | (y_fit >= h)
         )
         centering_quality = np.full(n, "forced_only", dtype=object)
         centering_quality[off_frame] = "off_frame"
@@ -920,6 +1075,8 @@ class ForcedPhotWorker(QThread):
             "y":                 y_fit,
             "x_pred":            x_pred,
             "y_pred":            y_pred,
+            "x_reg":             x_reg,
+            "y_reg":             y_reg,
             "x_fit":             x_fit,
             "y_fit":             y_fit,
             "det_x":             det_x_arr,
@@ -927,6 +1084,13 @@ class ForcedPhotWorker(QThread):
             "match_dx_px":       match_dx,
             "match_dy_px":       match_dy,
             "match_offset_px":   match_offset,
+            "frame_dx_px":       frame_dx,
+            "frame_dy_px":       frame_dy,
+            "registration_method": registration_method,
+            "registration_anchor": registration_anchor,
+            "registration_resid_px": registration_resid,
+            "registration_rms_px": registration_rms,
+            "registration_p95_px": registration_p95,
             "detected_flag":     detected_flag,
             "forced_flag":       ~detected_flag,
             "centroid_shift_px": centroid_shift,
@@ -936,6 +1100,10 @@ class ForcedPhotWorker(QThread):
             "step4_quality_ok":  step4_quality_ok,
             "step4_quality_used": step4_quality_used,
             "step4_quality_reason": step4_quality_reason,
+            "step4_quality_score": step4_quality_score,
+            "step4_quality_flags": step4_quality_flags,
+            "step4_anchor_candidate": step4_anchor_candidate,
+            "step4_apcorr_candidate": step4_apcorr_candidate,
             "centroid_outlier":  centroid_outlier,
             "centering_quality": centering_quality,
             "off_frame_flag":    off_frame,

@@ -267,6 +267,26 @@ def _load_detect_positions(fname: str, cache_dir: Path, result_dir: Path):
                 ):
                     if _src in df.columns and _dst not in out.columns:
                         out[_dst] = pd.to_numeric(df[_src], errors="coerce")
+                for col in (
+                    "quality_score", "nearest_neighbor_px", "nearest_neighbor_fwhm",
+                    "edge_margin_px", "fwhm_ratio_to_frame", "flux_percentile",
+                    "peak_fraction_to_sat",
+                ):
+                    if col in df.columns:
+                        out[col] = pd.to_numeric(df[col], errors="coerce")
+                for col in ("quality_flags",):
+                    if col in df.columns:
+                        out[col] = df[col].astype(str).reset_index(drop=True)
+                for col in ("anchor_candidate", "apcorr_candidate", "epsf_candidate", "psf_seed_candidate"):
+                    if col in df.columns:
+                        out[col] = (
+                            df[col]
+                            .astype(str)
+                            .str.strip()
+                            .str.lower()
+                            .isin({"1", "true", "t", "yes", "y"})
+                            .reset_index(drop=True)
+                        )
                 out = out.dropna(subset=["x", "y"])
                 return out
             except Exception:
@@ -644,6 +664,22 @@ class Step6PSFWorker(QThread):
                             (xy_all[:, 1] >= epsf_half) & (xy_all[:, 1] <= h - 1 - epsf_half)
                         )
                         in_range = in_range & not_edge
+
+                        if "epsf_candidate" in det_df.columns:
+                            epsf_candidate = det_df["epsf_candidate"].to_numpy(bool)[finite_xy]
+                            cand_range = in_range & epsf_candidate
+                            n_before = int(np.sum(in_range))
+                            n_after = int(np.sum(cand_range))
+                            if n_after >= 5:
+                                in_range = cand_range
+                                self._log(
+                                    f"[EPSF] Step4 epsf_candidate filter: {n_before} -> {n_after}"
+                                )
+                            else:
+                                self._log(
+                                    f"[WARN][EPSF] Step4 epsf_candidate left {n_after} stars; "
+                                    f"fallback to local EPSF cuts ({n_before})"
+                                )
 
                         # Morphology quality filter — only well-behaved stars in EPSF
                         # Falls back to pre-morph selection if filter is too aggressive.

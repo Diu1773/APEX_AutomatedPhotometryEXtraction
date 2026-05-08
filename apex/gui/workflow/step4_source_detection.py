@@ -52,6 +52,7 @@ from apex.utils.cache_utils import (
     normalize_detect_engine as _normalize_detect_engine_util,
 )
 from apex.utils.astro_utils import compute_airmass_from_header
+from apex.utils.source_quality import compute_source_quality
 
 _DETECT_MODE_PRESETS = {
     "normal": {
@@ -1173,7 +1174,27 @@ class DetectionWorker(QThread):
                             record['source_type'] = 'peak' if (x, y) in peak_set else base_source_type
                             source_records.append(record)
 
-                        df_sources = pd.DataFrame(source_records)
+                        df_sources = compute_source_quality(
+                            pd.DataFrame(source_records),
+                            frame_fwhm_px=fwhm_median,
+                            image_shape=data.shape,
+                            params=P,
+                        )
+                        quality_summary = {
+                            'n_anchor_candidates': int(df_sources.get('anchor_candidate', pd.Series(dtype=bool)).sum()),
+                            'n_apcorr_candidates': int(df_sources.get('apcorr_candidate', pd.Series(dtype=bool)).sum()),
+                            'n_epsf_candidates': int(df_sources.get('epsf_candidate', pd.Series(dtype=bool)).sum()),
+                            'n_psf_seed_candidates': int(df_sources.get('psf_seed_candidate', pd.Series(dtype=bool)).sum()),
+                            'quality_score_median': finite_nanmedian(
+                                pd.to_numeric(df_sources.get('quality_score', pd.Series(dtype=float)), errors='coerce').to_numpy(float),
+                                default=np.nan,
+                            ),
+                        }
+                        result.update(quality_summary)
+                        payload.update(quality_summary)
+                        with open(cache_file, 'w') as f:
+                            json.dump(payload, f)
+                        copy_if_different(cache_file, step4_file)
                         df_sources.to_csv(pos_file, index=False)
                         copy_if_different(pos_file, step4_pos)
                     if peak_positions:
