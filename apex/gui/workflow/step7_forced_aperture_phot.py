@@ -57,6 +57,7 @@ from apex.utils.step_paths import (
     step7_forced_phot_dir,
     crop_is_active,
 )
+from apex.utils.qc_utils import filter_files_by_qc
 from apex.utils.photometry_utils import (
     phot_vectorized,
     refine_local_centroid,
@@ -2307,7 +2308,27 @@ class ForcedPhotWindow(StepWindowBase):
             )
             return
 
+        qc_info = None
+        use_qc = bool(getattr(P, "phot_use_qc_pass_only", False))
+        file_list, qc_info = filter_files_by_qc(result_dir, file_list, require_qc=use_qc)
+        if use_qc and not file_list:
+            QMessageBox.warning(self, "No Frames", "No frames remain after Step 4 QC filtering.")
+            return
+
         self.log_text.clear()
+        if use_qc and qc_info is not None:
+            if qc_info.get("applied"):
+                append_timestamped_log(
+                    self.log_text,
+                    f"[FORCED][QC] Frame QC filter: {qc_info['kept']}/{qc_info['total']} kept."
+                )
+            elif qc_info.get("path") is None:
+                append_timestamped_log(self.log_text, "[FORCED][QC] frame_quality.csv not found; using all frames.")
+            else:
+                append_timestamped_log(
+                    self.log_text,
+                    f"[FORCED][QC] frame_quality.csv ignored ({qc_info['reason']}); using all frames."
+                )
         self._gc_accumulator.clear()
         self._gc_per_frame.clear()
         self._center_stats_rows.clear()
