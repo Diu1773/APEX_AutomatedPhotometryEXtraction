@@ -1542,6 +1542,12 @@ class QCInspectionPanel(QWidget):
             meta = detection_results.get(fname)
             if meta is None:
                 meta = self._load_detect_meta(fname)
+            elif "median_elongation" not in meta or "median_roundness" not in meta:
+                disk_meta = self._load_detect_meta(fname)
+                if disk_meta:
+                    merged = dict(disk_meta)
+                    merged.update(meta)
+                    meta = merged
             if not meta:
                 continue
             hmeta = self._load_header_meta(fname, use_cropped)
@@ -2725,7 +2731,8 @@ class SourceDetectionWindow(StepWindowBase):
                     except Exception:
                         peak_positions = []
 
-                result = {
+                result = dict(data)
+                result.update({
                     'n_sources': data.get('n_sources', 0),
                     'positions': positions,
                     'peak_positions': peak_positions,
@@ -2737,7 +2744,7 @@ class SourceDetectionWindow(StepWindowBase):
                     'threshold': data.get('threshold', 0.0),
                     'sigma_used': data.get('sigma_used', 0.0),
                     'detect_method': data.get('detect_method', 'segm'),
-                }
+                })
                 results[filename] = result
             except Exception:
                 continue
