@@ -741,6 +741,11 @@ class ForcedPhotWorker(QThread):
         step4_quality_flags = np.full(n, "", dtype=object)
         step4_anchor_candidate = np.zeros(n, dtype=bool)
         step4_apcorr_candidate = np.zeros(n, dtype=bool)
+        registration_match_radius = _to_float(
+            getattr(P, "registration_match_radius_px", max(max_shift * 2.0, 4.0)),
+            max(max_shift * 2.0, 4.0),
+        )
+        registration_match_radius = max(registration_match_radius, max_shift)
 
         if det_df is not None and len(det_df) > 0:
             det_xy = det_df[["x", "y"]].to_numpy(float)
@@ -749,11 +754,11 @@ class ForcedPhotWorker(QThread):
             if valid_pred.any():
                 tree = KDTree(det_xy)
                 dists, idxs = tree.query(master_xy_pred[valid_pred], k=1)
-                match_mask = dists <= max_shift
+                match_mask = dists <= registration_match_radius
                 valid_indices = np.where(valid_pred)[0]
                 for k, (vi, matched, idx, dist) in enumerate(zip(valid_indices, match_mask, idxs, dists)):
                     if matched:
-                        detected_flag[vi] = True
+                        detected_flag[vi] = bool(dist <= max_shift)
                         det_uid_arr[vi] = int(det_df["det_uid"].iloc[idx])
                         dx = float(det_df["x"].iloc[idx]) - float(x_pred[vi])
                         dy = float(det_df["y"].iloc[idx]) - float(y_pred[vi])
@@ -784,12 +789,11 @@ class ForcedPhotWorker(QThread):
             else np.zeros(n, dtype=bool)
         )
         has_step4_anchor = det_df is not None and "anchor_candidate" in det_df.columns
+        matched_for_registration = np.isfinite(match_dx) & np.isfinite(match_dy)
         registration_anchor = (
-            detected_flag
+            matched_for_registration
             & ~crowding_flag
             & step4_quality_ok
-            & np.isfinite(match_dx)
-            & np.isfinite(match_dy)
         )
         if has_step4_anchor:
             registration_anchor &= step4_anchor_candidate
@@ -807,41 +811,53 @@ class ForcedPhotWorker(QThread):
             anchor_indices = np.flatnonzero(registration_anchor)
             keep_local = np.asarray(reg["keep"], dtype=bool)
             kept_indices = anchor_indices[keep_local]
-            registration_anchor[:] = False
-            registration_anchor[kept_indices] = True
-            frame_dx = float(reg["dx"])
-            frame_dy = float(reg["dy"])
-            registration_rms = float(reg["rms"])
-            registration_p95 = float(reg["p95"])
-            registration_method = "anchor_shift"
-            self._log(
-                f"[FORCED][{fname}] registration shift "
-                f"dx={frame_dx:.3f} dy={frame_dy:.3f} px | "
-                f"anchors={len(kept_indices)}/{n_anchor_initial} | rms={registration_rms:.3f}"
-            )
-        elif has_step4_anchor and int((detected_flag & ~crowding_flag & step4_quality_ok).sum()) >= min_reg_anchors:
+            if len(kept_indices) >= min_reg_anchors:
+                registration_anchor[:] = False
+                registration_anchor[kept_indices] = True
+                frame_dx = float(reg["dx"])
+                frame_dy = float(reg["dy"])
+                registration_rms = float(reg["rms"])
+                registration_p95 = float(reg["p95"])
+                registration_method = "anchor_shift"
+                self._log(
+                    f"[FORCED][{fname}] registration shift "
+                    f"dx={frame_dx:.3f} dy={frame_dy:.3f} px | "
+                    f"anchors={len(kept_indices)}/{n_anchor_initial} | rms={registration_rms:.3f}"
+                )
+            else:
+                registration_anchor[:] = False
+                self._log(
+                    f"[WARN][FORCED][{fname}] registration rejected after clipping: "
+                    f"anchors={len(kept_indices)}/{n_anchor_initial} < {min_reg_anchors}"
+                )
+        elif has_step4_anchor and int((matched_for_registration & ~crowding_flag & step4_quality_ok).sum()) >= min_reg_anchors:
             fallback_anchor = (
-                detected_flag
+                matched_for_registration
                 & ~crowding_flag
                 & step4_quality_ok
-                & np.isfinite(match_dx)
-                & np.isfinite(match_dy)
             )
             reg = _robust_frame_shift(match_dx[fallback_anchor], match_dy[fallback_anchor])
             anchor_indices = np.flatnonzero(fallback_anchor)
             keep_local = np.asarray(reg["keep"], dtype=bool)
             kept_indices = anchor_indices[keep_local]
-            registration_anchor[:] = False
-            registration_anchor[kept_indices] = True
-            frame_dx = float(reg["dx"])
-            frame_dy = float(reg["dy"])
-            registration_rms = float(reg["rms"])
-            registration_p95 = float(reg["p95"])
-            registration_method = "quality_shift"
-            self._log(
-                f"[WARN][FORCED][{fname}] too few Step4 anchors ({n_anchor_initial}); "
-                f"using quality-filtered shift anchors={len(kept_indices)}"
-            )
+            if len(kept_indices) >= min_reg_anchors:
+                registration_anchor[:] = False
+                registration_anchor[kept_indices] = True
+                frame_dx = float(reg["dx"])
+                frame_dy = float(reg["dy"])
+                registration_rms = float(reg["rms"])
+                registration_p95 = float(reg["p95"])
+                registration_method = "quality_shift"
+                self._log(
+                    f"[WARN][FORCED][{fname}] too few Step4 anchors ({n_anchor_initial}); "
+                    f"using quality-filtered shift anchors={len(kept_indices)}"
+                )
+            else:
+                registration_anchor[:] = False
+                self._log(
+                    f"[WARN][FORCED][{fname}] quality registration rejected after clipping: "
+                    f"anchors={len(kept_indices)} < {min_reg_anchors}"
+                )
 
         x_reg = x_pred.copy()
         y_reg = y_pred.copy()
@@ -850,6 +866,10 @@ class ForcedPhotWorker(QThread):
             y_reg = y_pred + frame_dy
             registration_resid = np.hypot(det_x_arr - x_reg, det_y_arr - y_reg)
         registration_match_offset = np.where(np.isfinite(registration_resid), registration_resid, match_offset)
+        detected_flag = detected_flag | (
+            np.isfinite(registration_match_offset)
+            & (registration_match_offset <= max_shift)
+        )
 
         # --- Recenter detected sources ---
         _status(f"Recenter {int(detected_flag.sum())}", 40)

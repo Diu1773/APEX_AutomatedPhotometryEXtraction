@@ -72,3 +72,27 @@ def test_compute_source_quality_rejects_saturated_and_close_neighbor():
     assert "saturated" in out.loc[2, "quality_flags"]
     assert out.loc[2, "quality_score"] == 0.0
     assert not bool(out.loc[2, "apcorr_candidate"])
+
+
+def test_unmeasured_fwhm_uses_frame_median_for_candidates():
+    df = pd.DataFrame(
+        {
+            "x": [20.0, 80.0, 120.0],
+            "y": [20.0, 80.0, 120.0],
+            "dao_flux": [1000.0, 5000.0, 9000.0],
+            "peak_adu": [1000.0, 5000.0, 9000.0],
+            "fwhm_px": [float("nan"), float("nan"), float("nan")],
+            "fwhm_status": ["not_measured", "not_measured", "not_measured"],
+            "sharpness": [0.5, 0.5, 0.5],
+            "roundness": [0.1, 0.1, 0.1],
+            "elongation": [1.1, 1.1, 1.1],
+        }
+    )
+
+    out = compute_source_quality(df, frame_fwhm_px=4.0, image_shape=(160, 160), params=_params())
+
+    assert "fwhm_missing" in out.loc[2, "quality_flags"]
+    assert out.loc[2, "fwhm_ratio_to_frame"] == 1.0
+    assert bool(out.loc[2, "anchor_candidate"])
+    assert bool(out.loc[2, "apcorr_candidate"])
+    assert bool(out.loc[2, "epsf_candidate"])

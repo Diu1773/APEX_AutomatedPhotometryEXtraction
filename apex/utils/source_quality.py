@@ -147,7 +147,11 @@ def compute_source_quality(
     nn_px = _nearest_neighbor_px(x, y)
     nn_fwhm = nn_px / frame_fwhm
     edge_margin = _edge_margin_px(x, y, image_shape)
-    fwhm_ratio = fwhm_src / frame_fwhm
+    measured_fwhm = np.isfinite(fwhm_src) & (fwhm_src > 0)
+    # Most Step4 runs measure FWHM only for QC candidates. For unmeasured
+    # sources, use the frame median for role selection instead of rejecting
+    # otherwise good isolated stars.
+    fwhm_ratio = np.where(measured_fwhm, fwhm_src / frame_fwhm, 1.0)
 
     invalid_xy = ~(np.isfinite(x) & np.isfinite(y))
     near_edge = _bool_status(out, "fwhm_status", "edge")
@@ -158,7 +162,8 @@ def compute_source_quality(
     nonlinear = np.isfinite(peak) & (datamax_adu > 0) & (peak >= datamax_adu)
     fwhm_missing = _bool_status(out, "fwhm_status", "not_measured") | _bool_status(out, "fwhm_status", "failed")
     fwhm_outlier = (
-        np.isfinite(fwhm_ratio)
+        measured_fwhm
+        & np.isfinite(fwhm_ratio)
         & ((fwhm_ratio < fwhm_ratio_lo) | (fwhm_ratio > fwhm_ratio_hi))
     )
     bad_elong = np.isfinite(elong) & (elong_max > 0) & (elong > elong_max)
@@ -176,7 +181,6 @@ def compute_source_quality(
         & ~near_edge
         & ~saturated
         & ~nonlinear
-        & ~fwhm_missing
         & ~fwhm_outlier
         & ~bad_elong
         & ~bad_round
@@ -230,7 +234,7 @@ def compute_source_quality(
         (invalid_xy, 100.0),
         (saturated | nonlinear, 100.0),
         (near_edge, 35.0),
-        (fwhm_missing, 25.0),
+        (fwhm_missing, 5.0),
         (fwhm_outlier, 25.0),
         (bad_elong, 20.0),
         (bad_round, 20.0),
