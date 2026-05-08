@@ -1248,9 +1248,11 @@ class ForcedPhotWorker(QThread):
                 return None
 
             slot = slot_queue.get()
+            t0 = time.time()
             try:
                 self.worker_status.emit(slot, fname, "Loading", 5)
                 img = self._load_image(fname)
+                t_load = time.time()
                 if img is None:
                     self.worker_status.emit(slot, fname, "No image", 100)
                     return ("no_image", fname, filt, None, None, None, None)
@@ -1258,6 +1260,7 @@ class ForcedPhotWorker(QThread):
                 self.worker_status.emit(slot, fname, "WCS / FWHM", 20)
                 wcs = self._load_wcs_for_frame(fname)
                 fwhm_px = self._load_fwhm(fname, fallback=fwhm_guess)
+                t_wcs = time.time()
 
                 self.worker_status.emit(slot, fname, "Photometry", 45)
                 try:
@@ -1267,12 +1270,14 @@ class ForcedPhotWorker(QThread):
                     phot_df, apcorr_val, gc_data = self._phot_frame(
                         fname, master_df, img, wcs, fwhm_px, P, status_cb=_status
                     )
+                    t_phot = time.time()
                 except Exception as exc:
                     tb = traceback.format_exc()
                     self.worker_status.emit(slot, fname, "Error", 100)
                     return ("error", fname, filt, None, None, None,
                             {"wcs_ok": wcs is not None, "exc": str(exc), "tb": tb,
-                             "n_master": len(master_df)})
+                             "n_master": len(master_df),
+                             "elapsed_s": time.time() - t0})
 
                 self.worker_status.emit(slot, fname, "Saving", 85)
                 out_path = out_dir / f"photometry_{fname}.tsv"
@@ -1295,12 +1300,20 @@ class ForcedPhotWorker(QThread):
                     phot_df.to_csv(out_path, sep="\t", index=False, float_format="%.6f")
                 except Exception as exc:
                     self._log(f"[FORCED] [{fname}] write failed: {exc}")
+                t_save = time.time()
 
                 self.worker_status.emit(slot, fname, "Done", 100)
                 return ("ok", fname, filt, phot_df, apcorr_val, gc_data,
                         {"wcs_ok": wcs is not None, "fwhm_px": fwhm_px,
                          "n_master": len(master_df), "out_path": str(out_path),
-                         "center_stats": center_stats})
+                         "center_stats": center_stats,
+                         "elapsed_s": t_save - t0,
+                         "timing": {
+                             "load_s": t_load - t0,
+                             "wcs_fwhm_s": t_wcs - t_load,
+                             "phot_apcorr_s": t_phot - t_wcs,
+                             "save_s": t_save - t_phot,
+                         }})
             finally:
                 slot_queue.put(slot)
 
@@ -1370,11 +1383,21 @@ class ForcedPhotWorker(QThread):
                 n_valid  = int(np.isfinite(phot_df["flux"]).sum())
                 fwhm_px  = info["fwhm_px"]
                 center_stats = info.get("center_stats") or {}
+                elapsed = max(0.0, time.time() - run_t0)
+                eta = ""
+                if cur > 0 and total > cur:
+                    eta = f"  ETA={_fmt_duration((elapsed / float(cur)) * float(total - cur))}"
+                timing = info.get("timing") or {}
+                frame_dt = _fmt_duration(float(info.get("elapsed_s", 0.0) or 0.0))
+                phot_dt = _fmt_duration(float(timing.get("phot_apcorr_s", 0.0) or 0.0))
+                save_dt = _fmt_duration(float(timing.get("save_s", 0.0) or 0.0))
 
                 self._log(
                     f"[FORCED] [{cur}/{total}] {fname_r} fwhm={fwhm_px:.1f}px  "
                     f"det={n_det}  forced={n_forced}  "
-                    f"valid={n_valid}  apcorr={apcorr_val:.4f}"
+                    f"valid={n_valid}  apcorr={apcorr_val:.4f}  "
+                    f"dt={frame_dt} phot={phot_dt} save={save_dt}  "
+                    f"elapsed={_fmt_duration(elapsed)}{eta}"
                 )
 
                 if gc_data:
