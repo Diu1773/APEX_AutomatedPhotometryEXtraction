@@ -1782,15 +1782,19 @@ class QCInspectionPanel(QWidget):
                 f"No frames with elong > {thresh:.2f} "
                 f"(max elong = {np.nanmax(elong_vals):.3f}, n={n_finite}/{len(df)})."
             )
+        self.update_plots(force_draw=True)
+        self.update_summary()
 
     def apply_candidates(self):
         if not self.pending_candidates:
             return
+        n_candidates = len(self.pending_candidates)
         for fname, info in self.pending_candidates.items():
             self.exclude_reasons.setdefault(fname, set()).update(info.get("reasons", []))
         self.pending_candidates = {}
         self.cand_table.setRowCount(0)
-        self.update_plots()
+        self.warning_label.setText(f"Excluded {n_candidates} candidate frame(s). Click Save to persist.")
+        self.update_plots(force_draw=True)
         self.update_summary()
 
     def _on_candidate_clicked(self, row: int, col: int) -> None:
@@ -1939,13 +1943,16 @@ class QCInspectionPanel(QWidget):
         if hasattr(self.parent_window, "save_state"):
             self.parent_window.save_state()
 
-    def update_plots(self):
+    def update_plots(self, force_draw: bool = False):
         if self.frame_df.empty:
             self.plot_status.setText("No data loaded.")
             self.fig.clear()
             self.ax_sky = self.fig.add_subplot(2, 1, 1)
             self.ax_fwhm = self.fig.add_subplot(2, 1, 2)
-            self.canvas.draw_idle()
+            if force_draw:
+                self.canvas.draw()
+            else:
+                self.canvas.draw_idle()
             return
         df = self._subset_df()
         if df.empty:
@@ -2075,7 +2082,11 @@ class QCInspectionPanel(QWidget):
             f"outlier=red dot, selected=red circle, excluded=gray x{hidden_note}"
         )
         self.fig.tight_layout()
-        self.canvas.draw_idle()
+        if force_draw:
+            self.canvas.draw()
+            QApplication.processEvents()
+        else:
+            self.canvas.draw_idle()
 
     def _ensure_visible_x(self, fname: str) -> None:
         if self.frame_df.empty or not fname:
