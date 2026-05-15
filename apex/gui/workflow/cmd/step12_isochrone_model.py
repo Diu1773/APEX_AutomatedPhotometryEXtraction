@@ -35,15 +35,40 @@ from apex.gui.workflow.step_window_base import StepWindowBase
 from apex.utils.step_paths_cmd import step9_selection_dir, step10_zp_dir, step12_iso_dir
 from apex.analysis.cmd.isochrone_fitter_v2 import IsochroneFitterV2, FitMode, FitResult, FitBounds, GridScanResult
 
-# SDSS extinction coefficients: R = A / E(B-V)
-SDSS_R = {"g": 3.303, "r": 2.285, "i": 1.698, "z": 1.263}
+# Extinction coefficients R = A/E(B-V) (Cardelli+1989 / Fitzpatrick+1999)
+EXTINCTION_R: dict[str, float] = {
+    # Johnson-Cousins
+    "U": 4.902, "B": 4.035, "V": 3.116, "R": 2.634, "I": 1.903,
+    # SDSS
+    "g": 3.303, "r": 2.285, "i": 1.698, "z": 1.263,
+}
+# Backwards compat alias
+SDSS_R = EXTINCTION_R
 
-# Default PARSEC isochrone column indices for each band
-SDSS_ISO_COL = {"g": 29, "r": 30, "i": 31, "z": 32}
+# PARSEC isochrone column indices per photometric system.
+# SDSS indices are for standard PARSEC CMD 3.7 SDSS output.
+# Johnson indices are for PARSEC CMD 3.7 Johnson-Cousins output — verify against your file header.
+PARSEC_ISO_COL: dict[str, dict[str, int]] = {
+    "SDSS":    {"g": 29, "r": 30, "i": 31, "z": 32},
+    "Johnson": {"U":  9, "B": 10, "V": 11, "R": 12, "I": 13},
+}
+# Flat lookup: searches SDSS first, then Johnson
+SDSS_ISO_COL: dict[str, int] = {**PARSEC_ISO_COL["Johnson"], **PARSEC_ISO_COL["SDSS"]}
 
-# Allowed color pairs and magnitude bands
-ALLOWED_COLOR_PAIRS = [("g", "r"), ("g", "i"), ("r", "i")]
-ALLOWED_MAG_BANDS = ["g", "r", "i"]
+# Default color pairs/bands (overridden dynamically from loaded data at runtime)
+_DEFAULT_COLOR_PAIRS = [("g", "r"), ("g", "i"), ("r", "i"),
+                        ("B", "V"), ("V", "R"), ("V", "I"), ("B", "R")]
+_DEFAULT_MAG_BANDS   = ["g", "r", "i", "V", "B", "R", "I"]
+
+
+def _bands_from_df(df: "pd.DataFrame") -> tuple[list[tuple[str, str]], list[str]]:
+    """Return (color_pairs, mag_bands) derived from mag_std_* columns in df."""
+    import pandas as _pd
+    bands = sorted({c[len("mag_std_"):] for c in df.columns if c.startswith("mag_std_")})
+    if not bands:
+        return _DEFAULT_COLOR_PAIRS[:3], _DEFAULT_MAG_BANDS[:3]
+    pairs = [(a, b) for i, a in enumerate(bands) for b in bands[i+1:]]
+    return pairs, bands
 
 
 class FitWorker(QThread):
@@ -460,14 +485,14 @@ class IsochroneModelWindow(StepWindowBase):
         filter_layout = QHBoxLayout(filter_group)
         filter_layout.addWidget(QLabel("Color (X):"))
         self.color_combo = QComboBox()
-        self.color_combo.addItems([f"{a}-{b}" for a, b in ALLOWED_COLOR_PAIRS])
-        self.color_combo.setCurrentIndex(0)  # g-r default
+        self.color_combo.addItems([f"{a}-{b}" for a, b in _DEFAULT_COLOR_PAIRS[:3]])
+        self.color_combo.setCurrentIndex(0)
         self.color_combo.currentIndexChanged.connect(self._on_band_changed)
         filter_layout.addWidget(self.color_combo)
         filter_layout.addWidget(QLabel("Mag (Y):"))
         self.mag_combo = QComboBox()
-        self.mag_combo.addItems(ALLOWED_MAG_BANDS)
-        self.mag_combo.setCurrentIndex(0)  # g default
+        self.mag_combo.addItems(_DEFAULT_MAG_BANDS[:3])
+        self.mag_combo.setCurrentIndex(0)
         self.mag_combo.currentIndexChanged.connect(self._on_band_changed)
         filter_layout.addWidget(self.mag_combo)
         filter_layout.addStretch()
@@ -911,15 +936,13 @@ class IsochroneModelWindow(StepWindowBase):
                 dist    = np.sqrt(d_ra**2 + d_dec**2)
                 mask &= np.isfinite(dist) & (dist <= roi_r_arcsec)
 
-        # SNR display filter
+        # SNR display filter (applies to all available snr_* columns)
         if self.snr_display_check.isChecked():
             snr_cut = float(self.snr_display_spin.value())
             if snr_cut > 0:
-                for band in ["g", "r", "i"]:
-                    sc = f"snr_{band}"
-                    if sc in df.columns:
-                        sv = pd.to_numeric(df[sc], errors="coerce").to_numpy(float)
-                        mask &= ~(np.isfinite(sv) & (sv < snr_cut))
+                for sc in [c for c in df.columns if c.startswith("snr_")]:
+                    sv = pd.to_numeric(df[sc], errors="coerce").to_numpy(float)
+                    mask &= ~(np.isfinite(sv) & (sv < snr_cut))
 
         if not mask.all():
             df = df[mask].reset_index(drop=True)
@@ -951,9 +974,9 @@ class IsochroneModelWindow(StepWindowBase):
             "iso_col_1": SDSS_ISO_COL.get(b1, 29),
             "iso_col_2": SDSS_ISO_COL.get(b2, 30),
             "iso_col_mag": SDSS_ISO_COL.get(bm, SDSS_ISO_COL.get(b1, 29)),
-            "R_band1": SDSS_R.get(b1, 3.303),
-            "R_band2": SDSS_R.get(b2, 2.285),
-            "R_mag": SDSS_R.get(bm, SDSS_R.get(b1, 3.303)),
+            "R_band1": EXTINCTION_R.get(b1, EXTINCTION_R.get(b1.upper(), 3.116)),
+            "R_band2": EXTINCTION_R.get(b2, EXTINCTION_R.get(b2.upper(), 3.116)),
+            "R_mag":   EXTINCTION_R.get(bm, EXTINCTION_R.get(bm.upper(), 3.116)),
         }
 
     def _default_iso_dir(self) -> Path:
@@ -1170,6 +1193,26 @@ class IsochroneModelWindow(StepWindowBase):
                 widget.deleteLater()
         self.viewer = None
 
+    def _repopulate_band_combos(self, df: "pd.DataFrame") -> None:
+        """Repopulate color/mag combos from mag_std_* columns in df."""
+        pairs, bands = _bands_from_df(df)
+        prev_color = self.color_combo.currentText()
+        prev_mag   = self.mag_combo.currentText()
+
+        self.color_combo.blockSignals(True)
+        self.mag_combo.blockSignals(True)
+        self.color_combo.clear()
+        self.mag_combo.clear()
+        self.color_combo.addItems([f"{a}-{b}" for a, b in pairs])
+        self.mag_combo.addItems(bands)
+
+        idx_c = self.color_combo.findText(prev_color)
+        idx_m = self.mag_combo.findText(prev_mag)
+        self.color_combo.setCurrentIndex(max(idx_c, 0))
+        self.mag_combo.setCurrentIndex(max(idx_m, 0))
+        self.color_combo.blockSignals(False)
+        self.mag_combo.blockSignals(False)
+
     def refresh_cmd_viewer(self, show_error=True) -> bool:
         df, iso_raw, iso_file = self._load_cmd_and_iso_data(show_error=show_error)
         if df is None or iso_raw is None:
@@ -1178,6 +1221,7 @@ class IsochroneModelWindow(StepWindowBase):
             )
             return False
 
+        self._repopulate_band_combos(df)
         df = self._apply_source_filters(df)
         self._clear_viewer_widget()
         bc = self._get_band_config()

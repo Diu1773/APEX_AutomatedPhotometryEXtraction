@@ -33,6 +33,7 @@ from PyQt5.QtCore import Qt, QPoint
 from apex.gui.widgets.fits_viewer import FITSViewerWidget, OverlayMarker
 
 from apex.gui.workflow.step_window_base import StepWindowBase
+from apex.gui.workflow.ui_helpers import create_parameter_button, build_scroll_param_dialog
 from apex.utils.step_paths import (
     crop_is_active,
     step2_cropped_dir,
@@ -62,7 +63,10 @@ class MasterIdEditorWindow(StepWindowBase):
         self._file_filter_map = {}
         self.phot_df = None
         self.master_ids = set()
+        self._master_ids_persisted = False
         self.selected_source_id = None
+        self.selected_phot_row = None
+        self.selected_phot_file = None
         self.last_click_xy = None
         self.gaia_df = None  # Gaia catalog cache
         self._gaia_gmag_map = {}
@@ -94,15 +98,16 @@ class MasterIdEditorWindow(StepWindowBase):
 
         # Overlay color customization (simplified: 3 categories + selected)
         self._overlay_colors: dict = {
-            "gaia":     "#00FF00",   # forced phot + Gaia + in master
-            "local":    "#FFC107",   # forced phot + non-Gaia + in master
-            "removed":  "#9E9E9E",   # forced phot but not in master
+            "gaia":     "#00FF00",   # step4 detected + Gaia + in master
+            "local":    "#FFC107",   # step4 detected + non-Gaia + in master
+            "forced":   "#00BFFF",   # forced phot only (step4 미검출) + in master
+            "removed":  "#9E9E9E",   # not in master
             "selected": "#FF0000",
         }
         self._color_window: "QWidget | None" = None
         self._color_btns: dict = {}
         self._overlay_visible: dict = {k: True for k in (
-            "gaia", "local", "removed", "selected"
+            "gaia", "local", "forced", "removed", "selected"
         )}
         self._show_members: bool = False  # toggle for member center dot
 
@@ -132,14 +137,13 @@ class MasterIdEditorWindow(StepWindowBase):
         info = QLabel(
             "Inspect forced-photometry results from step7. Click a star to see info.\n"
             "Shortcuts: G=Radial profile (at cursor), [ / ]=Prev/Next frame\n"
-            "Green=Gaia in master, Yellow=Local in master. Members ● = Gaia member dot."
+            "Green=Gaia in master, Yellow=Local, Cyan=forced-only. Members ● = Gaia member dot."
         )
         info.setStyleSheet("QLabel { background-color: #E3F2FD; padding: 10px; border-radius: 5px; }")
         self.content_layout.addWidget(info)
 
         control_layout = QHBoxLayout()
-        btn_params = QPushButton("Editor Parameters")
-        btn_params.setStyleSheet("QPushButton { background-color: #9C27B0; color: white; font-weight: bold; padding: 8px 15px; }")
+        btn_params = create_parameter_button("Editor Parameters")
         btn_params.clicked.connect(self.open_parameters_dialog)
         control_layout.addWidget(btn_params)
 
@@ -391,8 +395,10 @@ class MasterIdEditorWindow(StepWindowBase):
         master_path = step9_selection_dir(self.params.P.result_dir) / "master_star_ids.csv"
         self.internal_id_map = {}
         self.source_id_from_internal = {}
+        self._master_ids_persisted = False
         self._load_global_id_map()
         if master_path.exists():
+            self._master_ids_persisted = True
             try:
                 df = pd.read_csv(master_path)
                 if "source_id" in df.columns:
@@ -1057,6 +1063,8 @@ class MasterIdEditorWindow(StepWindowBase):
             if sid_item:
                 try:
                     self.selected_source_id = int(sid_item.text())
+                    self.selected_phot_row = None
+                    self.selected_phot_file = None
                     in_master = "✓ IN MASTER"
                     internal_id = self.internal_id_map.get(self.selected_source_id, "?")
                     self.selected_label.setText(
@@ -1197,6 +1205,41 @@ class MasterIdEditorWindow(StepWindowBase):
             pass
         super().closeEvent(event)
 
+    @staticmethod
+    def _truthy_series(series: pd.Series, default: bool = False) -> pd.Series:
+        if series is None:
+            return pd.Series([], dtype=bool)
+        if pd.api.types.is_bool_dtype(series):
+            return series.fillna(default).astype(bool)
+        num = pd.to_numeric(series, errors="coerce")
+        if pd.api.types.is_numeric_dtype(series) or num.notna().any():
+            return num.fillna(1 if default else 0).astype(float) != 0.0
+        text = series.astype(str).str.strip().str.lower()
+        true_values = {"1", "true", "t", "yes", "y", "on", "forced", "forced_only"}
+        false_values = {"0", "false", "f", "no", "n", "off", "detected", "matched", ""}
+        out = pd.Series(default, index=series.index, dtype=bool)
+        out.loc[text.isin(true_values)] = True
+        out.loc[text.isin(false_values)] = False
+        return out
+
+    @classmethod
+    def _forced_mask_from_photometry(cls, df: pd.DataFrame) -> np.ndarray:
+        forced = np.zeros(len(df), dtype=bool)
+        if "forced_flag" in df.columns:
+            forced |= cls._truthy_series(df["forced_flag"], default=False).to_numpy(bool, copy=False)
+        if "detected_flag" in df.columns:
+            detected = cls._truthy_series(df["detected_flag"], default=True).to_numpy(bool, copy=False)
+            forced |= ~detected
+        if "det_uid" in df.columns:
+            det_uid = pd.to_numeric(df["det_uid"], errors="coerce").to_numpy(float)
+            forced |= np.isfinite(det_uid) & (det_uid < 0)
+        for col in ("centering_quality", "source_type", "source_role", "match_status", "phot_status"):
+            if col not in df.columns:
+                continue
+            text = df[col].astype(str).str.strip().str.lower()
+            forced |= text.str.contains("forced", na=False).to_numpy(bool, copy=False)
+        return forced
+
     def load_photometry_for_file(self, filename):
         # Check cache first
         if filename in self._phot_cache:
@@ -1216,7 +1259,15 @@ class MasterIdEditorWindow(StepWindowBase):
                 if {"x_fit", "y_fit"} <= set(df.columns) and not {"x", "y"} <= set(df.columns):
                     df = df.rename(columns={"x_fit": "x", "y_fit": "y"})
                 if {"x", "y", "source_id"} <= set(df.columns):
-                    clean = df[["x", "y", "source_id"]].copy()
+                    extra_cols = [
+                        c for c in (
+                            "forced_flag", "detected_flag", "det_uid",
+                            "centering_quality", "source_type", "source_role",
+                            "match_status", "phot_status",
+                        )
+                        if c in df.columns
+                    ]
+                    clean = df[["x", "y", "source_id"] + extra_cols].copy()
                     clean["x"] = pd.to_numeric(clean["x"], errors="coerce")
                     clean["y"] = pd.to_numeric(clean["y"], errors="coerce")
                     valid = (
@@ -1237,8 +1288,10 @@ class MasterIdEditorWindow(StepWindowBase):
                     x_arr = result["x"].to_numpy(float, copy=False)
                     y_arr = result["y"].to_numpy(float, copy=False)
                     sid_arr = result["source_id"].to_numpy(np.int64, copy=False)
+                    # forced=True means forced-photometry-only, regardless of master inclusion.
+                    forced_arr = self._forced_mask_from_photometry(result)
                     self._phot_cache[filename] = result
-                    self._phot_arr_cache[filename] = (x_arr, y_arr, sid_arr)
+                    self._phot_arr_cache[filename] = (x_arr, y_arr, sid_arr, forced_arr)
                     self.phot_df = result
                     self._auto_add_detections_to_master(self.phot_df, sid_arr)
                     return
@@ -1254,6 +1307,8 @@ class MasterIdEditorWindow(StepWindowBase):
         self.phot_df = empty
 
     def _auto_add_detections_to_master(self, df: pd.DataFrame, sid_arr: np.ndarray | None = None):
+        if self._master_ids_persisted:
+            return
         if sid_arr is None:
             try:
                 sid_arr = parse_int64_series(df["source_id"]).dropna().astype("int64").to_numpy(np.int64, copy=False)
@@ -1272,8 +1327,8 @@ class MasterIdEditorWindow(StepWindowBase):
         if self._viewer is None or self.image_data is None:
             return
         self._viewer.set_data(self.image_data)
+        self._viewer.auto_stf()
         if not keep_view:
-            self._viewer.auto_stf()
             self._viewer.fit_in_view()
 
     def update_overlay(self):
@@ -1288,17 +1343,22 @@ class MasterIdEditorWindow(StepWindowBase):
         if arr is None and self.phot_df is not None and not self.phot_df.empty:
             x_f = pd.to_numeric(self.phot_df["x"], errors="coerce").to_numpy(float)
             y_f = pd.to_numeric(self.phot_df["y"], errors="coerce").to_numpy(float)
-            sid_f = np.asarray(pd.to_numeric(self.phot_df["source_id"], errors="coerce"), dtype=float)
-            valid = np.isfinite(x_f) & np.isfinite(y_f) & np.isfinite(sid_f)
+            sid_f = parse_int64_series(self.phot_df["source_id"])
+            valid = np.isfinite(x_f) & np.isfinite(y_f) & sid_f.notna().to_numpy(bool)
             if np.any(valid):
                 x_f = x_f[valid]
                 y_f = y_f[valid]
-                sids_f = sid_f[valid].astype(np.int64, copy=False)
-                self._phot_arr_cache[self.current_filename or ""] = (x_f, y_f, sids_f)
-                arr = (x_f, y_f, sids_f)
+                sids_f = sid_f.loc[valid].astype("int64").to_numpy(np.int64, copy=False)
+                forced_f = self._forced_mask_from_photometry(self.phot_df).astype(bool, copy=False)[valid]
+                self._phot_arr_cache[self.current_filename or ""] = (x_f, y_f, sids_f, forced_f)
+                arr = (x_f, y_f, sids_f, forced_f)
 
         if arr is not None:
-            x, y, sids = arr
+            if len(arr) == 4:
+                x, y, sids, forced = arr
+            else:
+                x, y, sids = arr
+                forced = np.zeros(len(sids), dtype=bool)
             if sids.size > 0:
                 if self.master_ids:
                     master_vals = np.fromiter((int(v) for v in self.master_ids), dtype=np.int64, count=len(self.master_ids))
@@ -1308,9 +1368,10 @@ class MasterIdEditorWindow(StepWindowBase):
                 is_matched   = sids != 0
                 is_gaia_sid  = sids > 0
                 is_local_sid = sids < 0
-                is_removed   = is_matched & ~in_master
-                is_gaia      = is_matched & in_master & is_gaia_sid
-                is_local     = is_matched & in_master & is_local_sid
+                is_forced    = is_matched & forced                     # step4 미검출 forced
+                is_removed   = is_matched & ~in_master & ~forced
+                is_gaia      = is_matched & in_master & is_gaia_sid & ~forced
+                is_local     = is_matched & in_master & is_local_sid & ~forced
 
                 is_member = np.zeros(len(sids), dtype=bool)
                 if self._show_members:
@@ -1325,6 +1386,8 @@ class MasterIdEditorWindow(StepWindowBase):
                         is_member[idx_g] = np.isfinite(pmem) & (pmem >= thr)
 
                 sel_id  = self.selected_source_id
+                sel_row = self.selected_phot_row
+                sel_file = self.selected_phot_file
                 sel_vis = vis.get("selected", True)
                 sel_col = QColor(c["selected"])
 
@@ -1332,18 +1395,32 @@ class MasterIdEditorWindow(StepWindowBase):
                     if not vis.get(key, True):
                         return
                     cat_col = QColor(c[key])
-                    for xi, yi, sid, mem in zip(x[mask], y[mask], sids[mask], is_member[mask]):
-                        is_sel = sel_vis and sel_id is not None and int(sid) == int(sel_id)
+                    for idx in np.flatnonzero(mask):
+                        sid = int(sids[idx])
+                        row_selected = (
+                            sel_vis
+                            and sel_row is not None
+                            and sel_file == self.current_filename
+                            and int(idx) == int(sel_row)
+                        )
+                        sid_selected = (
+                            sel_vis
+                            and sel_id is not None
+                            and sid == int(sel_id)
+                            and not row_selected
+                        )
+                        is_sel = row_selected or sid_selected
                         col = sel_col if is_sel else cat_col
                         markers.append(OverlayMarker(
-                            col=float(xi), row=float(yi),
+                            col=float(x[idx]), row=float(y[idx]),
                             radius=radius, color=col,
-                            member=bool(mem),
+                            member=bool(is_member[idx]),
                         ))
 
                 _add_markers(is_removed, "removed", 5.0)
-                _add_markers(is_local,   "local",   5.5)
-                _add_markers(is_gaia,    "gaia",    6.5)
+                _add_markers(is_forced,  "forced",  5.5)
+                _add_markers(is_local,     "local",   5.5)
+                _add_markers(is_gaia,      "gaia",    6.5)
 
         # ROI circle (saved, projected to current frame pixel coords)
         pix = self._sky_roi_to_pixels()
@@ -1377,6 +1454,8 @@ class MasterIdEditorWindow(StepWindowBase):
                     sid = int(self.phot_df.iloc[i]["source_id"])
                     if sid == 0:
                         self.selected_source_id = None
+                        self.selected_phot_row = int(i)
+                        self.selected_phot_file = self.current_filename
                         frame = self.current_filename or "?"
                         px_x = float(self.phot_df.iloc[i]["x"])
                         px_y = float(self.phot_df.iloc[i]["y"])
@@ -1387,6 +1466,8 @@ class MasterIdEditorWindow(StepWindowBase):
                         self.update_overlay()
                         return
                     self.selected_source_id = sid
+                    self.selected_phot_row = int(i)
+                    self.selected_phot_file = self.current_filename
                     in_master = "✓ IN MASTER" if self.selected_source_id in self.master_ids else "✗ not in master"
                     internal_id = self.internal_id_map.get(
                         self.selected_source_id,
@@ -1414,6 +1495,8 @@ class MasterIdEditorWindow(StepWindowBase):
         if not found_detected:
             # No detected source nearby
             self.selected_source_id = None
+            self.selected_phot_row = None
+            self.selected_phot_file = None
             self.selected_label.setText(f"No detection at ({x:.1f}, {y:.1f}) - click on a circled star")
             self.update_overlay()
 
@@ -1483,6 +1566,7 @@ class MasterIdEditorWindow(StepWindowBase):
         df.to_csv(master_path, index=False)
         if len(df):
             df[["source_id", "ID"]].to_csv(sid2id_path, index=False)
+        self._master_ids_persisted = True
 
         # Only log save summary if no specific action (e.g., on load or undo)
         if log_action is None:
@@ -1534,10 +1618,12 @@ class MasterIdEditorWindow(StepWindowBase):
 
 
     def open_parameters_dialog(self):
-        dialog = QDialog(self)
-        dialog.setWindowTitle("Editor Parameters")
-        dialog.resize(420, 280)
-        layout = QVBoxLayout(dialog)
+        dialog, layout, buttons = build_scroll_param_dialog(
+            self, "Editor Parameters",
+            info_text="Adjust star editor interaction parameters. Changes apply immediately.",
+            size=(460, 420),
+        )
+
         form = QFormLayout()
 
         self.param_search = QDoubleSpinBox()
@@ -1568,10 +1654,9 @@ class MasterIdEditorWindow(StepWindowBase):
         form.addRow("Membership P threshold:", self.param_mem_thr)
 
         layout.addLayout(form)
-        buttons = QDialogButtonBox(QDialogButtonBox.Save | QDialogButtonBox.Cancel)
+        layout.addStretch(1)
         buttons.accepted.connect(lambda: self.save_parameters(dialog))
         buttons.rejected.connect(dialog.reject)
-        layout.addWidget(buttons)
         dialog.exec_()
 
     def save_parameters(self, dialog):
@@ -1610,6 +1695,7 @@ class MasterIdEditorWindow(StepWindowBase):
         entries = [
             ("gaia",     "In master · Gaia"),
             ("local",    "In master · Local"),
+            ("forced",   "In master · Forced"),
             ("removed",  "Removed by D-key (press A to restore)"),
             ("selected", "Selected"),
         ]
@@ -1970,4 +2056,3 @@ class MasterIdEditorWindow(StepWindowBase):
 
         except Exception as e:
             self.log(f"[{frame}] Radial profile error: {e}")
-

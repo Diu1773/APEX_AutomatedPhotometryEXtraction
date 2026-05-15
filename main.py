@@ -6,9 +6,10 @@ Launcher: choose between Cluster CMD photometry or Light Curve analysis.
 
 import sys
 import os
-import subprocess
 import warnings
 from pathlib import Path
+
+from apex.utils.ssl_certificates import configure_ssl_certificates
 
 warnings.filterwarnings("ignore", message=".*datfix.*MJD-OBS.*", category=UserWarning)
 warnings.filterwarnings("ignore", category=FutureWarning, module="astropy")
@@ -26,8 +27,28 @@ from PyQt5.QtWidgets import (
 from PyQt5.QtCore import Qt
 from PyQt5.QtGui import QFont, QFontDatabase, QIcon, QPixmap, QPainter
 
-_HERE = Path(__file__).parent
-_RESOURCES = _HERE / "apex" / "resources"
+_FROZEN = getattr(sys, "frozen", False)
+_SSL_CERT_OK, _SSL_CERT_DETAIL = configure_ssl_certificates()
+
+if _FROZEN:
+    _APP_DIR = Path(sys.executable).parent
+    _RESOURCES = Path(sys._MEIPASS) / "apex" / "resources"
+else:
+    _APP_DIR = Path(__file__).parent
+    _RESOURCES = _APP_DIR / "apex" / "resources"
+
+
+_SMOKE_IMPORTS = (
+    "apex.gui.workflow.ui_helpers",
+    "apex.gui.main_window",
+    "apex.gui.workflow.step6_ref_build",
+    "apex.gui.workflow.step7_forced_aperture_phot",
+    "apex.gui.workflow.cmd.step8_psf_photometry",
+    "astroquery.gaia",
+    "astroquery.simbad",
+    "astroquery.utils.tap.core",
+    "certifi",
+)
 
 
 def _svg_to_pixmap(svg_path: Path, size: int) -> QPixmap:
@@ -54,14 +75,50 @@ def _make_app_icon() -> QIcon:
         icon.addPixmap(px.scaled(s, s, Qt.KeepAspectRatio, Qt.SmoothTransformation))
     return icon
 
-# APEX mode entry points
-_CMD_MAIN = _HERE / "apex" / "cmd" / "main.py"
-_LC_MAIN  = _HERE / "apex" / "lightcurve" / "main.py"
 
-_SUBPROC_KWARGS: dict = {}
-if sys.platform == "win32":
-    _SUBPROC_KWARGS["creationflags"] = subprocess.CREATE_NO_WINDOW
-    _SUBPROC_KWARGS["stdin"] = subprocess.DEVNULL
+def _ensure_parameters() -> str | None:
+    """Copy parameters.example.toml → parameters.toml on first run."""
+    params = _APP_DIR / "parameters.toml"
+    if params.exists():
+        return None
+    if _FROZEN:
+        example = Path(sys._MEIPASS) / "parameters.example.toml"
+    else:
+        example = _APP_DIR / "parameters.example.toml"
+    if not example.exists():
+        return f"Default parameter file is missing:\n{example}"
+    if example.exists():
+        import shutil
+        try:
+            shutil.copy(example, params)
+        except Exception as exc:
+            return (
+                "Could not create runtime parameters.toml.\n\n"
+                f"Target: {params}\n"
+                f"Source: {example}\n\n"
+                f"{exc}"
+            )
+    return None
+
+
+def _run_smoke() -> int:
+    """Import the build-critical modules and exit without opening the GUI."""
+    import importlib
+    import traceback
+
+    failures = []
+    for module_name in _SMOKE_IMPORTS:
+        try:
+            importlib.import_module(module_name)
+        except Exception:
+            failures.append((module_name, traceback.format_exc()))
+    if failures:
+        for module_name, tb in failures:
+            print(f"[ERROR] Smoke import failed: {module_name}")
+            print(tb)
+        return 1
+    print("[OK] APEX smoke imports passed.")
+    return 0
 
 
 def _configure_app_fonts(app: QApplication) -> None:
@@ -117,19 +174,24 @@ def _configure_app_fonts(app: QApplication) -> None:
         pass
 
 
-def _launch(apex_script: Path) -> None:
-    if not apex_script.exists():
+def _launch(launcher: "LauncherWindow", mode: str) -> None:
+    launcher.hide()
+    try:
+        from apex.gui.main_window import MainWindowWorkflow
+        window = MainWindowWorkflow(mode=mode)
+        window.setAttribute(Qt.WA_DeleteOnClose)
+        window.destroyed.connect(launcher.show)
+        launcher._mode_window = window
+        window.show()
+    except Exception as e:
+        import traceback
+        tb = traceback.format_exc()
         QMessageBox.critical(
-            None, "실행 오류",
-            f"APEX 실행 파일을 찾을 수 없습니다:\n{apex_script}\n\n"
-            "경로가 변경된 경우 main.py의 경로 설정을 확인하세요."
+            launcher,
+            f"APEX {mode.upper()} — 실행 오류",
+            f"모드 실행 중 오류가 발생했습니다:\n{e}\n\n{tb}",
         )
-        return
-    subprocess.Popen(
-        [sys.executable, str(apex_script)],
-        cwd=str(apex_script.parent),
-        **_SUBPROC_KWARGS,
-    )
+        launcher.show()
 
 
 class ModeButton(QPushButton):
@@ -158,6 +220,7 @@ class LauncherWindow(QWidget):
         self.setWindowTitle("APEX — Automated Photometry EXtraction")
         self.setMinimumSize(560, 380)
         self.setMaximumSize(700, 460)
+        self._mode_window = None
         self._setup_ui()
 
     def _setup_ui(self):
@@ -165,7 +228,6 @@ class LauncherWindow(QWidget):
         root.setSpacing(14)
         root.setContentsMargins(48, 28, 48, 28)
 
-        # ── Header: logo image ───────────────────────────────────────────────
         svg = _RESOURCES / "logo_base.svg"
         if svg.exists():
             logo_px = _svg_to_pixmap(svg, 160)
@@ -187,18 +249,17 @@ class LauncherWindow(QWidget):
         root.addWidget(sep)
         root.addSpacing(4)
 
-        # ── Mode buttons ────────────────────────────────────────────────────
         btn_cmd = ModeButton(
             "성단측광", "Cluster CMD Photometry",
             "#1565C0", "#1976D2", "#0D47A1",
         )
-        btn_cmd.clicked.connect(lambda: _launch(_CMD_MAIN))
+        btn_cmd.clicked.connect(lambda: _launch(self, "cmd"))
 
         btn_lc = ModeButton(
             "시계열분석", "Light Curve Analysis",
             "#2E7D32", "#388E3C", "#1B5E20",
         )
-        btn_lc.clicked.connect(lambda: _launch(_LC_MAIN))
+        btn_lc.clicked.connect(lambda: _launch(self, "lc"))
 
         btn_row = QHBoxLayout()
         btn_row.setSpacing(20)
@@ -206,21 +267,34 @@ class LauncherWindow(QWidget):
         btn_row.addWidget(btn_lc)
         root.addLayout(btn_row)
 
-        # ── Footer ──────────────────────────────────────────────────────────
         footer = QLabel("APEX v0.1.0")
         footer.setAlignment(Qt.AlignCenter)
         footer.setStyleSheet("color: #aaaaaa; font-size: 9px;")
         root.addSpacing(4)
         root.addWidget(footer)
 
+    def closeEvent(self, event):
+        app = QApplication.instance()
+        if app is not None:
+            app.quit()
+        event.accept()
+
 
 def main() -> int:
+    os.chdir(_APP_DIR)
+    if "--smoke" in sys.argv:
+        return _run_smoke()
+
     app = QApplication(sys.argv)
+    app.setQuitOnLastWindowClosed(False)
     app.setApplicationName("APEX")
     app.setOrganizationName("APEX Project")
+    param_error = _ensure_parameters()
+    if param_error:
+        QMessageBox.critical(None, "Startup Error", param_error)
+        return 1
     _configure_app_fonts(app)
     app.setWindowIcon(_make_app_icon())
-    os.chdir(_HERE)
 
     try:
         window = LauncherWindow()

@@ -19,11 +19,57 @@ import pandas as pd
 df_headers = None
 
 
+# ---------------------------------------------------------------------------
+# Canonical filter name mapping.
+# Lookup key: stripped + lowercased header value.
+# Canonical convention:
+#   SDSS / Sloan     → lowercase single letter  (g, r, i, z, u)
+#   Johnson-Cousins  → uppercase first letter   (B, V, R, I, U)
+#   Narrow-band      → title-case abbrev        (Ha, Hb, OIII, SII)
+#   No filter        → "Clear" or "L"
+# ---------------------------------------------------------------------------
+_FILTER_ALIAS_MAP: dict[str, str] = {
+    # ── SDSS / Sloan ────────────────────────────────────────────────────────
+    "sdss-g": "g", "sdss_g": "g", "g'": "g", "gprime": "g",
+    "sdss-r": "r", "sdss_r": "r", "r'": "r", "rprime": "r",
+    "sdss-i": "i", "sdss_i": "i", "i'": "i", "iprime": "i",
+    "sdss-z": "z", "sdss_z": "z", "z'": "z", "zprime": "z",
+    "sdss-u": "u", "sdss_u": "u", "u'": "u", "uprime": "u",
+    # ── Johnson-Cousins — explicit variants ─────────────────────────────────
+    "rc":  "R", "r_c": "R", "r_cousins": "R", "rc_j": "R", "rj": "R", "r_j": "R",
+    "ic":  "I", "i_c": "I", "i_cousins": "I", "ic_j": "I", "ij": "I", "i_j": "I",
+    "bj":  "B", "b_j": "B", "b_john": "B",
+    "vj":  "V", "v_j": "V", "v_john": "V",
+    "uj":  "U", "u_j": "U", "u_john": "U",
+    # B and V have no SDSS equivalent → always Johnson
+    "b": "B", "v": "V",
+    # Uppercase single Johnson letters handled by case-preservation below
+    # ── Narrow-band ─────────────────────────────────────────────────────────
+    "halpha": "Ha", "h-alpha": "Ha", "h_alpha": "Ha",
+    "hbeta":  "Hb", "h-beta":  "Hb", "h_beta":  "Hb",
+    "oiii": "OIII", "[oiii]": "OIII",
+    "sii":  "SII",  "[sii]":  "SII",
+    "nii":  "NII",  "[nii]":  "NII",
+    # ── Clear / no filter ────────────────────────────────────────────────────
+    "clear": "Clear", "clr": "Clear", "open": "Clear", "white": "Clear",
+    "luminance": "L", "lum": "L",
+}
+
+
 def normalize_filter_name(value: str | None) -> str:
-    """Normalize a FITS filter value to the lowercase APEX filter key."""
+    """Map a raw FITS FILTER header value to the canonical APEX filter key.
+
+    Tries the alias table first (case-insensitive).  If no alias is found the
+    value is returned as-is (case preserved), so unknown filters like "Ha" or
+    custom names pass through unchanged.
+    """
     if value is None:
         return ""
-    return str(value).strip().lower()
+    v = str(value).strip()
+    if not v:
+        return ""
+    alias = _FILTER_ALIAS_MAP.get(v.lower())
+    return alias if alias is not None else v
 
 
 def _to_plain(a):

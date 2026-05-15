@@ -79,7 +79,7 @@ if not exist "%RELEASE_ROOT%" mkdir "%RELEASE_ROOT%"
 if exist "%SETUP_DIR%" rmdir /s /q "%SETUP_DIR%"
 mkdir "%SETUP_DIR%"
 
-echo [1/7] Preparing isolated build environment...
+echo [1/10] Preparing isolated build environment...
 if not exist "%VENV_PY%" (
     %PYTHON_CMD% -m venv "%VENV_DIR%"
     if errorlevel 1 exit /b 1
@@ -89,17 +89,21 @@ if errorlevel 1 exit /b 1
 "%VENV_PY%" -m pip install -r "%ROOT_DIR%\requirements.txt" -r "%ROOT_DIR%\requirements-build.txt"
 if errorlevel 1 exit /b 1
 
-echo [2/8] Preparing Windows icon...
+echo [2/10] Running release source preflight...
+"%VENV_PY%" "%DEPLOY_DIR%\verify_release.py" --project-root "%ROOT_DIR%" --source-only
+if errorlevel 1 exit /b 1
+
+echo [3/10] Preparing Windows icon...
 "%VENV_PY%" "%DEPLOY_DIR%\make_icon.py" --svg "%ROOT_DIR%\apex\resources\logo_base.svg" --output "%ROOT_DIR%\apex\resources\apex.ico"
 if errorlevel 1 exit /b 1
 
-echo [3/8] Cleaning old build outputs...
+echo [4/10] Cleaning old build outputs...
 if exist "%BUILD_DIR%" rmdir /s /q "%BUILD_DIR%"
 if exist "%DIST_DIR%" rmdir /s /q "%DIST_DIR%"
 mkdir "%BUILD_DIR%"
 mkdir "%DIST_DIR%"
 
-echo [4/8] Validating Python sources...
+echo [5/10] Validating Python sources...
 pushd "%ROOT_DIR%"
 "%VENV_PY%" -m compileall apex main.py scripts deploy
 if errorlevel 1 (
@@ -112,7 +116,7 @@ if errorlevel 1 (
     exit /b 1
 )
 
-echo [5/8] Building PyInstaller app bundle...
+echo [6/10] Building PyInstaller app bundle...
 "%VENV_PY%" -m PyInstaller --noconfirm --clean "%SPEC_FILE%"
 if errorlevel 1 (
     popd
@@ -125,11 +129,15 @@ if not exist "%DIST_DIR%\APEX\APEX.exe" (
     exit /b 1
 )
 
-echo [6/8] Creating portable ZIP...
+echo [7/10] Smoke testing PyInstaller app bundle...
+start "" /wait "%DIST_DIR%\APEX\APEX.exe" --smoke
+if errorlevel 1 exit /b 1
+
+echo [8/10] Creating portable ZIP...
 "%VENV_PY%" "%DEPLOY_DIR%\make_portable_zip.py" --source "%DIST_DIR%\APEX" --output "%SETUP_DIR%\APEX-Portable-%APP_VERSION%-x64.zip"
 if errorlevel 1 exit /b 1
 
-echo [7/8] Building setup installer...
+echo [9/10] Building setup installer...
 "%ISCC_EXE%" ^
   "/DMyAppVersion=%APP_VERSION%" ^
   "/DSourceDir=%DIST_DIR%\APEX" ^
@@ -138,7 +146,7 @@ echo [7/8] Building setup installer...
   "%ISS_FILE%"
 if errorlevel 1 exit /b 1
 
-echo [8/8] Verifying release bundle...
+echo [10/10] Verifying release bundle...
 "%VENV_PY%" "%DEPLOY_DIR%\verify_release.py" --project-root "%ROOT_DIR%"
 if errorlevel 1 exit /b 1
 

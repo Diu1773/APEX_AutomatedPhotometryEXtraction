@@ -171,7 +171,11 @@ class FileSelectionWindow(StepWindowBase):
             inst.resolve_targets([name])
             if inst.primary_coord is None:
                 self.target_result.setText("(not resolved)")
-                QMessageBox.warning(self, "SIMBAD", f"Target not found: {name}")
+                tried = getattr(inst, "last_target_attempts", [])
+                errors = getattr(inst, "last_target_errors", [])
+                tried_text = f"\nTried: {', '.join(tried[:8])}" if tried else ""
+                error_text = f"\nLast error: {errors[-1]}" if errors else ""
+                QMessageBox.warning(self, "SIMBAD", f"Target not resolved: {name}{tried_text}{error_text}")
                 return
 
             ra_deg = float(inst.primary_coord.ra.deg)

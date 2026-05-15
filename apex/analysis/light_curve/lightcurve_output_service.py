@@ -14,17 +14,21 @@ from apex.utils.step_paths_lc import step9_lc_dir
 
 
 def _auto_detect_color_index(available_filters: set[str]) -> tuple[str, str] | None:
+    """Return the best available color index pair from the detected filter set."""
     filters_lower = {normalize_filter_key(f) for f in available_filters}
-    if {"g", "r"} <= filters_lower:
-        return ("g", "r")
-    if {"g", "i"} <= filters_lower:
-        return ("g", "i")
-    if {"r", "i"} <= filters_lower:
-        return ("r", "i")
-    if {"b", "v"} <= filters_lower:
-        return ("b", "v")
-    if {"v", "r"} <= filters_lower:
-        return ("v", "r")
+    # Preference order: SDSS gri first, then Johnson BVR, then any adjacent pair
+    _PREF = [
+        ("g", "r"), ("g", "i"), ("r", "i"),
+        ("b", "v"), ("v", "r"), ("v", "i"), ("b", "r"),
+        ("u", "g"), ("r", "z"), ("i", "z"),
+    ]
+    for a, b in _PREF:
+        if {a, b} <= filters_lower:
+            return (a, b)
+    # Fallback: first two filters alphabetically
+    sorted_f = sorted(filters_lower)
+    if len(sorted_f) >= 2:
+        return (sorted_f[0], sorted_f[1])
     return None
 
 

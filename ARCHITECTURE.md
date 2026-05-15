@@ -10,9 +10,9 @@ apex/
     parameters_lc.py       Parameters class for LC mode (TOML-backed)
     schema.py              TOML schema validators
   utils/
-    step_paths.py          Shared step dir helpers (steps 1-8)
-    step_paths_cmd.py      CMD-specific step dir helpers (steps 9-13)
-    step_paths_lc.py       LC-specific step dir helpers (steps 9-12)
+    step_paths.py          Shared step dir helpers (steps 1-7)
+    step_paths_cmd.py      CMD-specific step dir helpers (steps 8-12)
+    step_paths_lc.py       LC-specific step dir helpers (steps 8-11)
     photometry_utils.py    Aperture photometry utilities
     astro_utils.py         Airmass, BJD, filter normalization
     io_utils.py            CSV/ECSV int64 safe readers
@@ -31,27 +31,26 @@ apex/
       image_viewer.py      Zoomable FITS image viewer
     workflow/
       step_window_base.py  Base class for all step windows
+      step1_file_selection_common.py  Shared file-intake base
       step2_crop_selector.py   }
-      step3_sky_preview.py     }  Shared steps 2-8
+      step3_sky_preview.py     }  Shared steps 2-7
       step4_source_detection.py}  (same window for both modes)
-      step5_aperture_worker.py }
-      step5_aperture_photometry.py}
-      step6_wcs_plate_solving.py }
-      step7_ref_build.py        }
-      step8_star_id_matching.py }
+      step5_wcs_plate_solving.py }
+      step6_ref_build.py        }
+      step7_forced_aperture_phot.py}
       cmd/
         step1_file_selection.py   CMD file selection
-        step6_psf_photometry.py   PSF photometry (CMD step 5, index 5)
-        step10_master_id_editor.py
-        step11_zeropoint_calibration.py
-        step12_cmd_plot.py
-        step13_isochrone_model.py
+        step8_psf_photometry.py   PSF photometry (optional)
+        step9_master_id_editor.py
+        step10_zeropoint_calibration.py
+        step11_cmd_plot.py
+        step12_isochrone_model.py
       lc/
         step1_file_selection.py   LC file selection (multi-night aware)
-        step9_target_selection.py
-        step10_lightcurve_builder.py
-        step11_detrend_merge.py
-        step12_period_analysis.py
+        step8_target_selection.py
+        step9_lightcurve_builder.py
+        step10_detrend_merge.py
+        step11_period_analysis.py
     tools/
       extinction_fit.py     Bouguer extinction / zeropoint fitting
       iraf_photometry.py    IRAF/DAOPHOT integration
@@ -72,9 +71,9 @@ apex/
 
 Both modes launch from `MainWindowWorkflow(mode=...)`:
 
-- **Shared steps (1-8)** use the same window classes regardless of mode.
-- **CMD-only steps**: PSF photometry (step 5), master ID editor, zeropoint, CMD plot, isochrone.
-- **LC-only steps**: target/comparison selection, light curve builder, detrend/merge, period analysis.
+- **Shared steps (1-7)** use the same workflow classes regardless of mode after the mode-specific Step 1 wrapper.
+- **CMD-only steps (8-12)**: optional PSF photometry, master ID editor, zeropoint, CMD plot, isochrone.
+- **LC-only steps (8-11)**: target/comparison selection, light curve builder, detrend/merge, period analysis.
 
 Step index → file dispatch is in `_open_step_window(step_index)` of `main_window.py`.
 
@@ -99,10 +98,9 @@ params.P.result_dir/
   step2_crop/               Crop region + cropped images
   step3_sky_preview/        Sky QC metadata
   step4_detection/          Source catalogs + frame QC
-  step5_aperture/           Aperture photometry CSVs
-  step6_wcs/                WCS-solved FITS headers
-  step7_refbuild/           Master star catalog, Gaia IDs
-  step8_idmatch/            Per-frame star ID matches
+  step5_wcs/                WCS solve summaries + WCS products
+  step6_refbuild/           Master/reference catalog, Gaia IDs
+  step7_forced_phot/        Forced aperture photometry, frame/apcorr stats
   [cmd_*/ or lc_*/]         Mode-specific outputs
   cache/                    Intermediate caches (header scan, detect, WCS)
 ```
@@ -110,6 +108,6 @@ params.P.result_dir/
 ## Step Directory Conventions
 
 Each step writes to a named subdirectory of `result_dir`, defined in `step_paths*.py`.
-- Shared names (step1-8): defined in `step_paths.py`.
+- Shared names (step1-7): defined in `step_paths.py`.
 - CMD names (cmd_psf, cmd_selection, cmd_zeropoint, cmd_plot, cmd_isochrone): in `step_paths_cmd.py`.
 - LC names (lc_selection, lc_lightcurve, lc_detrend, lc_period): in `step_paths_lc.py`.

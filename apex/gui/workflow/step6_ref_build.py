@@ -9,6 +9,7 @@ Step 6: Master Catalog Build (WCS-based reference catalog)
 from __future__ import annotations
 
 import json
+import hashlib
 import re
 import time
 from pathlib import Path
@@ -34,9 +35,10 @@ from matplotlib.backends.backend_qt5agg import FigureCanvasQTAgg as FigureCanvas
 from matplotlib.figure import Figure
 
 from .step_window_base import StepWindowBase
-from .run_control import RunControlBar
+from .run_control import RunControlBar, format_duration, progress_status_text
 from .param_dialog import ParamSpec, run_param_dialog
 from .log_panel import WorkflowLogWindow, WorkerStatusPanel, append_timestamped_log, show_raised
+from .ui_helpers import create_output_reuse_checkbox, create_parameter_button
 from apex.utils.step_paths import (
     step5_wcs_dir,
     step6_refbuild_dir,
@@ -62,6 +64,41 @@ from apex.utils.cache_utils import (
 
 _FILTER_RE = re.compile(r"[-_]([ugrizbvUGRIZBV])[-_.]", re.IGNORECASE)
 _DATE_RE = re.compile(r"(20\d{6})")
+_GAIA_REF_EXTRA_COLS = (
+    "pmra",
+    "pmdec",
+    "pmra_error",
+    "pmdec_error",
+    "parallax",
+    "parallax_error",
+    "ruwe",
+    "visibility_periods_used",
+)
+_REF_SIGNATURE_FILE = "ref_build_signature.json"
+_REF_SIGNATURE_VERSION = 2
+_REF_SIGNATURE_PARAMS = (
+    "wcs_require_qc_pass",
+    "global_ref_filter",
+    "ref_select_sat_pct",
+    "ref_select_elong_pct",
+    "ref_cat_max_sources",
+    "ref_cat_min_sources",
+    "ref_cat_max_elong",
+    "ref_cat_max_abs_round",
+    "ref_cat_sharp_min",
+    "ref_cat_sharp_max",
+    "ref_cat_min_peak_adu",
+    "ref_wcs_match_radius_arcsec",
+    "ref_wcs_min_match_rate",
+    "ref_wcs_min_match_n",
+    "ref_wcs_max_sep_med_arcsec",
+    "ref_wcs_max_sep_p90_arcsec",
+    "ref_wcs_max_dup_rate",
+    "ref_per_date",
+    "ref_build_mode",
+    "idmatch_gaia_g_limit",
+    "gaia_mag_max",
+)
 
 
 def _get_filter_from_filename(filename: str) -> Optional[str]:
@@ -497,6 +534,9 @@ class RefBuildWorker(QThread):
         out["phot_g_mean_mag"] = np.nan
         out["phot_bp_mean_mag"] = np.nan
         out["phot_rp_mean_mag"] = np.nan
+        for col in _GAIA_REF_EXTRA_COLS:
+            if col in gaia_df.columns:
+                out[col] = np.nan
 
         src_idx = np.where(src_mask)[0]
         match_idx = src_idx[ok]
@@ -521,6 +561,10 @@ class RefBuildWorker(QThread):
         if "phot_rp_mean_mag" in gaia_df.columns:
             rp = pd.to_numeric(gaia_df["phot_rp_mean_mag"], errors="coerce").to_numpy()
             out.loc[match_idx, "phot_rp_mean_mag"] = rp[gaia_idx]
+        for col in _GAIA_REF_EXTRA_COLS:
+            if col in gaia_df.columns:
+                vals = pd.to_numeric(gaia_df[col], errors="coerce").to_numpy()
+                out.loc[match_idx, col] = vals[gaia_idx]
 
         out["gaia_G"] = out["phot_g_mean_mag"]
         out["gaia_BP"] = out["phot_bp_mean_mag"]
@@ -669,6 +713,44 @@ class RefBuildWorker(QThread):
             return json.loads(meta_path.read_text(encoding="utf-8"))
         except Exception:
             return {}
+
+    def _combined_wcs_meta(self, fname: str) -> dict:
+        summary_row = self._load_wcs_summary_row(fname)
+        cache_meta = self._load_wcs_meta(fname)
+        merged = {}
+        if summary_row:
+            merged.update(summary_row)
+        if cache_meta:
+            merged.update(cache_meta)
+        return merged
+
+    @staticmethod
+    def _wcs_meta_match_stats(meta: dict) -> dict:
+        def _num(key: str, default=np.nan):
+            return _safe_float(meta.get(key), default)
+
+        n_match = meta.get("n_match", meta.get("match_n", 0))
+        try:
+            n_match = int(float(n_match)) if pd.notna(n_match) else 0
+        except Exception:
+            n_match = 0
+
+        n_cat = meta.get("n_catalog_in_fov", 0)
+        try:
+            n_cat = int(float(n_cat)) if pd.notna(n_cat) else 0
+        except Exception:
+            n_cat = 0
+
+        return {
+            "n_match": n_match,
+            "n_catalog_in_fov": n_cat,
+            "match_rate": _num("match_rate"),
+            "match_rate_cat": _num("match_rate_cat"),
+            "match_rate_eff": _num("match_rate_eff"),
+            "sep_med_arcsec": np.nan,
+            "sep_p90_arcsec": np.nan,
+            "dup_rate": np.nan,
+        }
 
     def _compute_match_stats(self, det_xy: np.ndarray, wcs: WCS, gaia_sky: SkyCoord) -> dict:
         n_det = len(det_xy)
@@ -1103,23 +1185,23 @@ class RefBuildWorker(QThread):
 
             wcs = self._load_wcs_for_frame(fname)
             row["wcs_ok"] = bool(wcs is not None)
-            wcs_meta = self._load_wcs_meta(fname)
+            wcs_meta = self._combined_wcs_meta(fname)
             row["wcs_resid_med"] = _safe_float(wcs_meta.get("resid_med"), np.nan)
             row["wcs_resid_max"] = _safe_float(wcs_meta.get("resid_max"), np.nan)
-            row["wcs_match_n"] = int(wcs_meta.get("match_n", 0) or 0)
+            row["wcs_resid_med_px"] = _safe_float(wcs_meta.get("resid_med_px"), np.nan)
+            row["wcs_rms_px"] = _safe_float(wcs_meta.get("rms_px"), np.nan)
+            row["wcs_center_offset_arcsec"] = _safe_float(wcs_meta.get("center_offset_arcsec"), np.nan)
+            qc_pass_raw = wcs_meta.get("wcs_qc_pass", False)
+            if isinstance(qc_pass_raw, str):
+                row["wcs_qc_pass"] = qc_pass_raw.strip().lower() in {"1", "true", "t", "yes", "y", "pass"}
+            else:
+                row["wcs_qc_pass"] = bool(qc_pass_raw) if not pd.isna(qc_pass_raw) else False
+            row["wcs_qc_reason"] = str(wcs_meta.get("wcs_qc_reason", "") or "")
+            row["gaia_source"] = str(wcs_meta.get("gaia_source", "") or "")
+            row["wcs_match_n"] = int(wcs_meta.get("match_n", wcs_meta.get("n_match", 0)) or 0)
 
             if wcs is None or gaia_sky is None:
-                row.update(
-                    dict(
-                        n_match=0,
-                        match_rate=np.nan,
-                        match_rate_cat=np.nan,
-                        match_rate_eff=np.nan,
-                        sep_med_arcsec=np.nan,
-                        sep_p90_arcsec=np.nan,
-                        dup_rate=np.nan,
-                    )
-                )
+                row.update(self._wcs_meta_match_stats(wcs_meta))
             else:
                 row.update(self._compute_match_stats(det_xy, wcs, gaia_sky))
 
@@ -1390,6 +1472,7 @@ class RefBuildWindow(StepWindowBase):
         self.worker = None
         self.log_window = None
         self.results = {}
+        self._current_ref_signature: dict | None = None
 
         super().__init__(
             step_index=5,
@@ -1419,12 +1502,16 @@ class RefBuildWindow(StepWindowBase):
 
         control_layout = QHBoxLayout()
 
-        btn_params = QPushButton("Master Catalog Parameters")
-        btn_params.setStyleSheet(
-            "QPushButton { background-color: #2196F3; color: white; font-weight: bold; padding: 8px 15px; }"
-        )
+        btn_params = create_parameter_button("Master Catalog Parameters")
         btn_params.clicked.connect(self.open_parameters_dialog)
         control_layout.addWidget(btn_params)
+
+        self.chk_use_existing_output = create_output_reuse_checkbox(
+            not bool(getattr(self.params.P, "force_master_build", False)),
+            "When enabled, Step 6 loads the existing reference-build summary and master catalogs "
+            "if they are complete. Disable to rebuild the master catalog.",
+        )
+        control_layout.addWidget(self.chk_use_existing_output)
 
         self.run_bar = RunControlBar(
             "Run Master Catalog Build", "Show Log",
@@ -1525,16 +1612,148 @@ class RefBuildWindow(StepWindowBase):
             on_save=self.persist_params,
             overrides={"idmatch_gaia_g_limit": getattr(self.params.P, "idmatch_gaia_g_limit",
                         getattr(self.params.P, "gaia_mag_max", 18.0))},
-            resize=(460, 350),
+            resize=(460, 560),
+            info_text="Adjust reference catalog and WCS quality filter parameters. Changes apply to the next build run.",
         )
+
+    @staticmethod
+    def _signature_value(value):
+        if isinstance(value, np.generic):
+            value = value.item()
+        if isinstance(value, Path):
+            return str(value)
+        if isinstance(value, float):
+            return float(value) if np.isfinite(value) else None
+        if isinstance(value, (bool, int, str)) or value is None:
+            return value
+        if isinstance(value, (list, tuple, set)):
+            return [RefBuildWindow._signature_value(v) for v in value]
+        if isinstance(value, dict):
+            return {
+                str(k): RefBuildWindow._signature_value(v)
+                for k, v in sorted(value.items(), key=lambda item: str(item[0]))
+            }
+        try:
+            if pd.isna(value):
+                return None
+        except Exception:
+            pass
+        return str(value)
+
+    @staticmethod
+    def _file_signature(path: Path | None) -> dict | None:
+        if path is None:
+            return None
+        try:
+            p = Path(path)
+            if not p.exists():
+                return None
+            st = p.stat()
+            try:
+                path_text = str(p.resolve())
+            except Exception:
+                path_text = str(p)
+            return {
+                "path": path_text,
+                "size": int(st.st_size),
+                "mtime_ns": int(st.st_mtime_ns),
+            }
+        except Exception:
+            return None
+
+    @staticmethod
+    def _first_existing(candidates: list[Path]) -> Path | None:
+        for path in candidates:
+            try:
+                if path.exists() and path.stat().st_size > 0:
+                    return path
+            except Exception:
+                continue
+        return None
+
+    def _build_ref_output_signature(self, files: list[str]) -> dict:
+        result_dir = Path(self.params.P.result_dir)
+        cache_dir = Path(self.params.P.cache_dir)
+        s4_dir = step4_dir(result_dir)
+        s5_dir = step5_wcs_dir(result_dir)
+
+        frame_inputs = []
+        for fname in files:
+            detect_json = self._first_existing([
+                cache_dir / f"detect_{fname}.json",
+                s4_dir / f"detect_{fname}.json",
+            ])
+            detect_csv = self._first_existing([
+                cache_dir / f"detect_{fname}.csv",
+                s4_dir / f"detect_{fname}.csv",
+            ])
+            frame_inputs.append({
+                "file": str(fname),
+                "detect_json": self._file_signature(detect_json),
+                "detect_csv": self._file_signature(detect_csv),
+            })
+
+        payload = {
+            "signature_version": _REF_SIGNATURE_VERSION,
+            "step": "step6_ref_build",
+            "frames": [str(f) for f in files],
+            "params": {
+                k: self._signature_value(getattr(self.params.P, k, None))
+                for k in _REF_SIGNATURE_PARAMS
+            },
+            "inputs": {
+                "frame_quality": self._file_signature(s4_dir / "frame_quality.csv"),
+                "wcs_summary": self._file_signature(s5_dir / "wcs_solve_summary.csv"),
+                "gaia_fov": self._file_signature(s5_dir / "gaia_fov.ecsv"),
+                "frames": frame_inputs,
+            },
+        }
+        encoded = json.dumps(payload, sort_keys=True, ensure_ascii=False, allow_nan=False)
+        payload["signature_hash"] = hashlib.sha1(encoded.encode("utf-8")).hexdigest()
+        return payload
+
+    def _stored_ref_signature(self) -> dict | None:
+        sig_path = step6_refbuild_dir(self.params.P.result_dir) / _REF_SIGNATURE_FILE
+        if not sig_path.exists():
+            return None
+        try:
+            data = json.loads(sig_path.read_text(encoding="utf-8"))
+            return data if isinstance(data, dict) else None
+        except Exception:
+            return None
+
+    def _write_ref_signature(self, signature: dict) -> None:
+        out_dir = step6_refbuild_dir(self.params.P.result_dir)
+        out_dir.mkdir(parents=True, exist_ok=True)
+        (out_dir / _REF_SIGNATURE_FILE).write_text(
+            json.dumps(signature, ensure_ascii=False, indent=2, sort_keys=True, allow_nan=False),
+            encoding="utf-8",
+        )
+
+    def _ref_signature_matches(self, signature: dict) -> tuple[bool, str]:
+        stored = self._stored_ref_signature()
+        if not stored:
+            return False, "missing signature"
+        if stored.get("signature_version") != _REF_SIGNATURE_VERSION:
+            return False, "signature version mismatch"
+        if stored.get("signature_hash") != signature.get("signature_hash"):
+            return False, "signature hash mismatch"
+        return True, "ok"
+
+    def _sync_cache_params(self) -> None:
+        use_existing = bool(
+            getattr(self, "chk_use_existing_output", None)
+            and self.chk_use_existing_output.isChecked()
+        )
+        self.params.P.force_master_build = not use_existing
+        if hasattr(self, "persist_params"):
+            self.persist_params()
 
     def run_ref_build(self):
         if self.worker and self.worker.isRunning():
             return
+        self._sync_cache_params()
         files = self.file_manager.get_file_list() if self.file_manager else []
-        if not files:
-            QMessageBox.warning(self, "Warning", "No frames found")
-            return
         if not files:
             QMessageBox.warning(self, "Warning", "No frames found")
             return
@@ -1569,6 +1788,25 @@ class RefBuildWindow(StepWindowBase):
         self.params.P.ref_wcs_max_sep_p90_arcsec = float(getattr(self.params.P, "ref_wcs_max_sep_p90_arcsec", 2.5))
         self.params.P.ref_wcs_max_dup_rate = float(getattr(self.params.P, "ref_wcs_max_dup_rate", 0.1))
         self.params.P.ref_per_date = bool(getattr(self.params.P, "ref_per_date", True))
+
+        signature = self._build_ref_output_signature(files)
+        self._current_ref_signature = signature
+        if not bool(getattr(self.params.P, "force_master_build", False)):
+            sig_ok, sig_reason = self._ref_signature_matches(signature)
+            if sig_ok:
+                cached_summary = self._load_existing_summary()
+                if cached_summary:
+                    self.log("[REF][CACHE] Existing Step 6 reference build matches current inputs; using cached output.")
+                    self.results = cached_summary
+                    self._update_results_table(cached_summary)
+                    self._update_stats_table()
+                    self._update_plot_tab(cached_summary)
+                    self.save_state(cached_summary)
+                    self.progress_label.setText("Cached Step 6 output loaded")
+                    self.update_navigation_buttons()
+                    self._current_ref_signature = None
+                    return
+            self.log(f"[REF][CACHE] Existing Step 6 output not reusable ({sig_reason}); rebuilding.")
 
         self.worker = RefBuildWorker(
             params=self.params,
@@ -1610,8 +1848,10 @@ class RefBuildWindow(StepWindowBase):
         self.run_bar.set_running(True)
         self.progress_bar.setValue(0)
         self.progress_bar.setMaximum(len(files))
-        self.progress_label.setText(f"0/{len(files)} | Starting...")
         self._ref_start_time = time.monotonic()
+        self.progress_label.setText(
+            progress_status_text(0, len(files), self._ref_start_time, message="Starting...")
+        )
         self.worker.start()
         self.show_log_window()
 
@@ -1624,25 +1864,29 @@ class RefBuildWindow(StepWindowBase):
         if hasattr(self, "worker_panel"):
             pct = int(100 * current / max(1, total))
             self.worker_panel.update_worker(0, filename, f"{current}/{total}", pct)
-        eta_str = ""
-        if current > 0 and total > 0 and hasattr(self, "_ref_start_time"):
-            elapsed = time.monotonic() - self._ref_start_time
-            remaining = elapsed / current * (total - current)
-            if remaining < 60:
-                eta_str = f" | ETA {int(remaining)}s"
-            else:
-                eta_str = f" | ETA {int(remaining // 60)}m{int(remaining % 60):02d}s"
-        self.progress_label.setText(f"{current}/{total}{eta_str} | {filename}")
+        self.progress_label.setText(
+            progress_status_text(current, total, getattr(self, "_ref_start_time", None), message=filename)
+        )
 
     def on_finished(self, summary: dict):
         self.run_bar.set_running(False)
-        self.progress_label.setText("Done")
+        elapsed_txt = ""
+        if hasattr(self, "_ref_start_time"):
+            elapsed_txt = f" | elapsed {format_duration(time.monotonic() - self._ref_start_time)}"
+        self.progress_label.setText(f"Done{elapsed_txt}")
         if summary:
             self.results = summary
             self._update_results_table(summary)
             self._update_stats_table()
             self._update_plot_tab(summary)
             self.save_state(summary)
+            if self._current_ref_signature:
+                try:
+                    self._write_ref_signature(self._current_ref_signature)
+                    self.log("[REF][CACHE] Output signature saved for future reuse.")
+                except Exception as exc:
+                    self.log(f"[REF][CACHE] Signature write failed: {exc}")
+        self._current_ref_signature = None
         self.update_navigation_buttons()
 
     def on_error(self, filename, error):
@@ -1721,7 +1965,13 @@ class RefBuildWindow(StepWindowBase):
             "sep_p90_arcsec",
             "dup_rate",
             "wcs_resid_med",
+            "wcs_resid_med_px",
+            "wcs_rms_px",
+            "wcs_center_offset_arcsec",
             "wcs_match_n",
+            "wcs_qc_pass",
+            "wcs_qc_reason",
+            "gaia_source",
             "fwhm_px",
             "sat_star_count",
             "n_sources",
@@ -1801,14 +2051,34 @@ class RefBuildWindow(StepWindowBase):
             df["match_rate"] = pd.to_numeric(df["match_rate"], errors="coerce")
         else:
             df["match_rate"] = np.nan
+        if "match_rate_eff" in df.columns:
+            df["match_rate_eff"] = pd.to_numeric(df["match_rate_eff"], errors="coerce")
+        else:
+            df["match_rate_eff"] = np.nan
+        if "n_match" in df.columns:
+            df["n_match"] = pd.to_numeric(df["n_match"], errors="coerce")
+        else:
+            df["n_match"] = np.nan
         if "sep_med_arcsec" in df.columns:
             df["sep_med_arcsec"] = pd.to_numeric(df["sep_med_arcsec"], errors="coerce")
         else:
             df["sep_med_arcsec"] = np.nan
+        if "wcs_resid_med_px" in df.columns:
+            df["wcs_resid_med_px"] = pd.to_numeric(df["wcs_resid_med_px"], errors="coerce")
+        else:
+            df["wcs_resid_med_px"] = np.nan
+        if "wcs_rms_px" in df.columns:
+            df["wcs_rms_px"] = pd.to_numeric(df["wcs_rms_px"], errors="coerce")
+        else:
+            df["wcs_rms_px"] = np.nan
         if "fwhm_px" in df.columns:
             df["fwhm_px"] = pd.to_numeric(df["fwhm_px"], errors="coerce")
         else:
             df["fwhm_px"] = np.nan
+        if "n_sources" in df.columns:
+            df["n_sources"] = pd.to_numeric(df["n_sources"], errors="coerce")
+        else:
+            df["n_sources"] = np.nan
         if "sat_star_count" in df.columns:
             df["sat_star_count"] = pd.to_numeric(df["sat_star_count"], errors="coerce")
         else:
@@ -1827,11 +2097,43 @@ class RefBuildWindow(StepWindowBase):
             if df_plot.empty:
                 df_plot = df
 
+        def _finite_any(col: str) -> bool:
+            return col in df_plot.columns and pd.to_numeric(df_plot[col], errors="coerce").notna().any()
+
+        x_col = "sep_med_arcsec"
+        y_col = "match_rate"
+        title1 = "Match Rate vs Sep (arcsec)"
+        xlabel1 = "Sep med (arcsec)"
+        ylabel1 = "Match rate"
+        if not _finite_any(x_col):
+            if _finite_any("wcs_resid_med_px"):
+                x_col = "wcs_resid_med_px"
+                xlabel1 = "WCS resid med (px)"
+                title1 = "WCS QC Residual vs Match"
+            elif _finite_any("wcs_rms_px"):
+                x_col = "wcs_rms_px"
+                xlabel1 = "WCS RMS (px)"
+                title1 = "WCS QC RMS vs Match"
+            else:
+                x_col = "fwhm_px"
+                xlabel1 = "FWHM (px)"
+                title1 = "Detection Stats (Gaia match unavailable)"
+        if not _finite_any(y_col):
+            if _finite_any("match_rate_eff"):
+                y_col = "match_rate_eff"
+                ylabel1 = "Effective match rate"
+            elif _finite_any("n_match"):
+                y_col = "n_match"
+                ylabel1 = "Matched stars"
+            else:
+                y_col = "n_sources"
+                ylabel1 = "Detected sources"
+
         for flt in filters:
             sub = df_plot[df_plot["filter"] == flt] if "filter" in df_plot.columns else df_plot
             ax1.scatter(
-                sub["sep_med_arcsec"],
-                sub["match_rate"],
+                sub[x_col],
+                sub[y_col],
                 s=28,
                 alpha=0.75,
                 color=color_map.get(flt, "#90A4AE"),
@@ -1879,7 +2181,7 @@ class RefBuildWindow(StepWindowBase):
                 continue
             r = row.iloc[0]
             ax1.scatter(
-                r["sep_med_arcsec"], r["match_rate"],
+                r[x_col], r[y_col],
                 s=140, marker="*", color="#FF5252", edgecolors="#212121", linewidths=0.8, zorder=5
             )
             ax2.scatter(
@@ -1887,9 +2189,9 @@ class RefBuildWindow(StepWindowBase):
                 s=140, marker="*", color="#FF5252", edgecolors="#212121", linewidths=0.8, zorder=5
             )
 
-        ax1.set_title("Match Rate vs Sep (arcsec)")
-        ax1.set_xlabel("Sep med (arcsec)")
-        ax1.set_ylabel("Match rate")
+        ax1.set_title(title1)
+        ax1.set_xlabel(xlabel1)
+        ax1.set_ylabel(ylabel1)
         ax1.grid(True, alpha=0.2)
         ax1.legend(fontsize=7, loc="best")
 
@@ -1906,6 +2208,43 @@ class RefBuildWindow(StepWindowBase):
             return
         summary = self.results if isinstance(self.results, dict) else None
         self._update_plot_tab(summary)
+
+    def _load_existing_summary(self) -> Optional[dict]:
+        out_dir = step6_refbuild_dir(self.params.P.result_dir)
+        meta_path = out_dir / "ref_build_meta.json"
+        if not meta_path.exists():
+            return None
+        try:
+            meta = json.loads(meta_path.read_text(encoding="utf-8"))
+        except Exception as exc:
+            self.log(f"[REF][CACHE] Existing ref_build_meta.json ignored: {exc}")
+            return None
+
+        ref_filter = str(meta.get("ref_filter", "") or "")
+        catalog_candidates = [out_dir / "master_catalog.tsv"]
+        if ref_filter:
+            catalog_candidates.append(out_dir / f"ref_catalog_{ref_filter}.tsv")
+        catalog_candidates.append(out_dir / "ref_catalog.tsv")
+        catalog_path = next((p for p in catalog_candidates if p.exists()), None)
+        if catalog_path is None:
+            self.log("[REF][CACHE] ref_build_meta.json exists but no reference catalog was found; rebuilding.")
+            return None
+
+        n_sources = int(meta.get("n_ref_used") or 0)
+        if n_sources <= 0:
+            try:
+                n_sources = len(pd.read_csv(catalog_path, sep="\t"))
+            except Exception:
+                n_sources = 0
+
+        return {
+            "ref_frame": meta.get("ref_frame", ""),
+            "ref_filter": ref_filter,
+            "n_sources": n_sources,
+            "filters": meta.get("filters", []),
+            "ref_per_date": bool(meta.get("ref_per_date", False)),
+            "ref_frames_by_date": meta.get("ref_frames_by_date", {}) or {},
+        }
 
     def validate_step(self) -> bool:
         out_dir = step6_refbuild_dir(self.params.P.result_dir)

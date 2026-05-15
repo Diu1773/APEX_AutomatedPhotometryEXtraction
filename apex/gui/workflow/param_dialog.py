@@ -11,20 +11,19 @@ Usage (multi-section with QGroupBox):
 """
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import Any, Callable, Sequence
 
 from PyQt5.QtWidgets import (
     QCheckBox,
-    QDialog,
-    QDialogButtonBox,
     QDoubleSpinBox,
     QFormLayout,
     QLabel,
     QMessageBox,
     QSpinBox,
-    QVBoxLayout,
 )
+
+from apex.gui.workflow.ui_helpers import build_scroll_param_dialog
 
 
 @dataclass
@@ -139,6 +138,7 @@ def run_param_dialog(
     on_save: Callable[[], bool | None],
     overrides: dict[str, Any] | None = None,
     resize: tuple[int, int] = (460, 400),
+    info_text: str = "",
 ) -> None:
     """Build and exec a single-section modal parameter dialog.
 
@@ -146,16 +146,13 @@ def run_param_dialog(
     Return True/False to show a save-result message; return None to skip it.
     """
     params_P = parent.params.P
-    dialog = QDialog(parent)
-    dialog.setWindowTitle(title)
-    dialog.resize(*resize)
-    layout = QVBoxLayout(dialog)
+    dialog, layout, buttons = build_scroll_param_dialog(
+        parent, title, info_text=info_text, size=resize
+    )
 
     form, widgets = build_param_form(params_P, specs, overrides)
     layout.addLayout(form)
-
-    buttons = QDialogButtonBox(QDialogButtonBox.Save | QDialogButtonBox.Cancel)
-    layout.addWidget(buttons)
+    layout.addStretch(1)
 
     def _save() -> None:
         read_param_form(widgets, params_P, specs)

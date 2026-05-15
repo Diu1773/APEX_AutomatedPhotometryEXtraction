@@ -153,8 +153,10 @@ class IsochroneFitterV2:
     Improved Isochrone Fitter with interpolation and perpendicular distance.
     """
 
-    # SDSS extinction coefficients: R_band = A_band / E(B-V)
-    SDSS_R = {"g": 3.303, "r": 2.285, "i": 1.698, "z": 1.263}
+    # Extinction coefficients R_band = A_band / E(B-V) (Cardelli+1989)
+    # Shared with step12 via EXTINCTION_R; kept here for internal use.
+    SDSS_R = {"U": 4.902, "B": 4.035, "V": 3.116, "R": 2.634, "I": 1.903,
+              "g": 3.303, "r": 2.285, "i": 1.698, "z": 1.263}
 
     def __init__(
         self,

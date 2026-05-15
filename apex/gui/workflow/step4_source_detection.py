@@ -34,7 +34,14 @@ from scipy.ndimage import gaussian_filter, median_filter
 from scipy.spatial import cKDTree as KDTree
 
 from .step_window_base import StepWindowBase
-from .run_control import RunControlBar
+from .run_control import RunControlBar, format_duration, progress_status_text
+from .ui_helpers import (
+    create_cache_action_button,
+    create_collapsible_section,
+    create_detection_cache_checkbox,
+    create_parameter_button,
+    configure_parameter_dialog,
+)
 from apex.core.cache_manager import StepCacheManager
 from .log_panel import WorkflowLogWindow, WorkerStatusPanel, append_timestamped_log, show_raised
 from apex.utils.constants import get_parallel_workers
@@ -137,42 +144,6 @@ def _get_detect_mode_from_params(params_obj) -> str:
 
 def _normalize_detect_engine(value) -> str:
     return _normalize_detect_engine_util(value)
-
-
-_COLLAPSE_BTN_STYLE = (
-    "QPushButton { border: none; text-align: left; color: #555; font-size: 8pt; padding: 0px; }"
-    "QPushButton:checked { color: #1565C0; }"
-)
-
-
-def _make_collapsible_group(
-    title: str, *, initial_expanded: bool = False
-) -> tuple[QGroupBox, QWidget]:
-    """Return (group_box, inner_container) for a toggle-collapsible section."""
-    group = QGroupBox(title)
-    group.setCheckable(False)
-    group.setStyleSheet("QGroupBox { font-weight: bold; }")
-    vbox = QVBoxLayout(group)
-    vbox.setContentsMargins(4, 4, 4, 4)
-    vbox.setSpacing(2)
-
-    btn = QPushButton("▼ 접기" if initial_expanded else "▶ 펼치기")
-    btn.setCheckable(True)
-    btn.setChecked(initial_expanded)
-    btn.setStyleSheet(_COLLAPSE_BTN_STYLE)
-    vbox.addWidget(btn)
-
-    container = QWidget()
-    container.setVisible(initial_expanded)
-    vbox.addWidget(container)
-
-    btn.toggled.connect(
-        lambda checked, b=btn, c=container: (
-            b.setText("▼ 접기" if checked else "▶ 펼치기"),
-            c.setVisible(checked),
-        )
-    )
-    return group, container
 
 
 class DetectionWorker(QThread):
@@ -1600,8 +1571,7 @@ class QCInspectionPanel(QWidget):
         self.pending_candidates = {}
         self.cand_table.setRowCount(0)
         self.warning_label.setText("")
-        self.update_plots()
-        self.update_summary()
+        self._refresh_qc_views(force_draw=True)
 
     def _toggle_exclusion(self, fname: str) -> None:
         reasons = set(self.exclude_reasons.get(fname, set()))
@@ -1609,8 +1579,7 @@ class QCInspectionPanel(QWidget):
             self.exclude_reasons[fname] = set()
         else:
             self.exclude_reasons[fname] = {"manual"}
-        self.update_plots()
-        self.update_summary()
+        self._refresh_qc_views(force_draw=True)
 
     def _on_pick(self, event):
         artist = event.artist
@@ -1639,8 +1608,7 @@ class QCInspectionPanel(QWidget):
         else:  # key == "a"
             self.exclude_reasons[fname] = set()
             self.warning_label.setText(f"Included: {fname}")
-        self.update_plots()
-        self.update_summary()
+        self._refresh_qc_views(force_draw=True)
 
     def _show_frame_info(self, fname: str) -> None:
         if self.frame_df.empty:
@@ -1755,7 +1723,7 @@ class QCInspectionPanel(QWidget):
         else:
             first_candidate = next(iter(self.pending_candidates.keys()))
             self._show_frame_info(first_candidate)
-        self.update_plots()
+        self._refresh_qc_views(force_draw=True)
 
     def auto_filter_elong(self):
         """Exclude frames whose median elongation exceeds the absolute threshold."""
@@ -1788,8 +1756,7 @@ class QCInspectionPanel(QWidget):
                 f"No frames with elong > {thresh:.2f} "
                 f"(max elong = {np.nanmax(elong_vals):.3f}, n={n_finite}/{len(df)})."
             )
-        self.update_plots(force_draw=True)
-        self.update_summary()
+        self._refresh_qc_views(force_draw=True)
 
     def apply_candidates(self):
         if not self.pending_candidates:
@@ -1800,8 +1767,7 @@ class QCInspectionPanel(QWidget):
         self.pending_candidates = {}
         self.cand_table.setRowCount(0)
         self.warning_label.setText(f"Excluded {n_candidates} candidate frame(s). Click Save to persist.")
-        self.update_plots(force_draw=True)
-        self.update_summary()
+        self._refresh_qc_views(force_draw=True)
 
     def _on_candidate_clicked(self, row: int, col: int) -> None:
         if row < 0:
@@ -1820,8 +1786,7 @@ class QCInspectionPanel(QWidget):
         df = self._subset_df()
         for fname in df["file"].tolist():
             self.exclude_reasons[fname] = set()
-        self.update_plots()
-        self.update_summary()
+        self._refresh_qc_views(force_draw=True)
 
     def _apply_exclusions_from_file(self):
         _rd = self.params.P.result_dir
@@ -1948,6 +1913,18 @@ class QCInspectionPanel(QWidget):
             self.parent_window.persist_params()
         if hasattr(self.parent_window, "save_state"):
             self.parent_window.save_state()
+
+    def _refresh_qc_views(self, force_draw: bool = False) -> None:
+        """Refresh all QC views after in-memory inclusion/exclusion changes."""
+        self.update_summary()
+        self.update_plots(force_draw=force_draw)
+        self.cand_table.viewport().update()
+        self.summary_text.viewport().update()
+        self.plot_status.repaint()
+        if force_draw:
+            self.canvas.flush_events()
+            self.canvas.repaint()
+            QApplication.processEvents()
 
     def update_plots(self, force_draw: bool = False):
         if self.frame_df.empty:
@@ -2501,19 +2478,20 @@ class SourceDetectionWindow(StepWindowBase):
         # === Control Bar ===
         control_layout = QHBoxLayout()
 
-        btn_params = QPushButton("Detection Parameters")
-        btn_params.setStyleSheet("QPushButton { background-color: #9C27B0; color: white; font-weight: bold; padding: 8px 15px; }")
+        btn_params = create_parameter_button("Detection Parameters")
         btn_params.clicked.connect(self.open_parameters_dialog)
         control_layout.addWidget(btn_params)
 
-        btn_clear_cache = QPushButton("Clear Detection Cache")
-        btn_clear_cache.setStyleSheet("QPushButton { background-color: #455A64; color: white; font-weight: bold; padding: 8px 12px; }")
+        btn_clear_cache = create_cache_action_button("Clear Detection Cache")
         btn_clear_cache.clicked.connect(self.clear_detection_cache)
         control_layout.addWidget(btn_clear_cache)
 
-        self.chk_resume_cache = QCheckBox("Resume from cache")
-        self.chk_resume_cache.setChecked(True)
-        self.chk_resume_cache.setToolTip("Skip files that already have detect_*.json in cache")
+        self.chk_resume_cache = create_detection_cache_checkbox(
+            bool(getattr(self.params.P, "resume_mode", True))
+            and not bool(getattr(self.params.P, "force_redetect", False)),
+            "When enabled, skip frames with compatible Step 4 detect_*.json cache. "
+            "Disable to force source detection for every frame.",
+        )
         control_layout.addWidget(self.chk_resume_cache)
 
         control_layout.addStretch()
@@ -2845,8 +2823,8 @@ class SourceDetectionWindow(StepWindowBase):
         if self._viewer is None or self.image_data is None:
             return
         self._viewer.set_data(self.image_data)
+        self._viewer.auto_stf()
         if not keep_view:
-            self._viewer.auto_stf()
             self._viewer.fit_in_view()
 
     def _on_viewer_click(self, x, y, btn):
@@ -3130,6 +3108,10 @@ class SourceDetectionWindow(StepWindowBase):
         # Prepare
         use_cache = bool(getattr(self, "chk_resume_cache", None) and self.chk_resume_cache.isChecked())
         self._resume_cache_active = use_cache
+        self.params.P.resume_mode = use_cache
+        self.params.P.force_redetect = not use_cache
+        if hasattr(self, "persist_params"):
+            self.persist_params()
 
         if use_cache:
             self.load_cached_results()
@@ -3187,10 +3169,12 @@ class SourceDetectionWindow(StepWindowBase):
         self.run_bar.set_running(True)
         self.progress_bar.setValue(0)
         self.progress_bar.setMaximum(len(pending_files))
-        self.progress_label.setText(f"0/{len(pending_files)} | Starting...")
+        self._detect_start_time = time.monotonic()
+        self.progress_label.setText(
+            progress_status_text(0, len(pending_files), self._detect_start_time, message="Starting...")
+        )
 
         # Start
-        self._detect_start_time = time.monotonic()
         self.log("Starting worker thread...")
         self.detection_worker.start()
         self.log("Worker thread started")
@@ -3210,15 +3194,12 @@ class SourceDetectionWindow(StepWindowBase):
     def on_progress(self, current, total, filename, active_workers):
         """Handle progress update"""
         self.progress_bar.setValue(current)
-        eta_str = ""
-        if current > 0 and total > 0 and hasattr(self, "_detect_start_time"):
-            elapsed = time.monotonic() - self._detect_start_time
-            remaining = elapsed / current * (total - current)
-            if remaining < 60:
-                eta_str = f" | ETA {int(remaining)}s"
-            else:
-                eta_str = f" | ETA {int(remaining // 60)}m{int(remaining % 60):02d}s"
-        self.progress_label.setText(f"{current}/{total}{eta_str} | W:{active_workers} | {filename}")
+        self.progress_label.setText(
+            progress_status_text(
+                current, total, getattr(self, "_detect_start_time", None),
+                workers=active_workers, message=filename,
+            )
+        )
 
     def on_worker_status(self, worker_id, filename, status, progress):
         """Update worker status panel + log meaningful state changes."""
@@ -3308,6 +3289,9 @@ class SourceDetectionWindow(StepWindowBase):
             self.detection_worker = None
 
         if summary and summary.get('stopped'):
+            elapsed_txt = ""
+            if hasattr(self, "_detect_start_time"):
+                elapsed_txt = f" | elapsed {format_duration(time.monotonic() - self._detect_start_time)}"
             self.summary_label.setText(
                 f"Detection Stopped\n"
                 f"{'─' * 30}\n"
@@ -3315,7 +3299,7 @@ class SourceDetectionWindow(StepWindowBase):
                 f"Total sources: {summary.get('total_sources', 0)}"
             )
             self.log("Detection stopped by user")
-            self.progress_label.setText("Stopped")
+            self.progress_label.setText(f"Stopped{elapsed_txt}")
         elif summary and not resume_mode:
             median_arc = float(summary.get("median_fwhm_arcsec", np.nan))
             median_px = float(summary.get("median_fwhm_px", np.nan))
@@ -3357,7 +3341,10 @@ class SourceDetectionWindow(StepWindowBase):
                     self.tabs.setCurrentIndex(1)
 
         if not summary or not summary.get('stopped'):
-            self.progress_label.setText("Done")
+            elapsed_txt = ""
+            if hasattr(self, "_detect_start_time"):
+                elapsed_txt = f" | elapsed {format_duration(time.monotonic() - self._detect_start_time)}"
+            self.progress_label.setText(f"Done{elapsed_txt}")
 
     def closeEvent(self, event):
         """Ensure worker thread is stopped before closing window"""
@@ -3454,8 +3441,7 @@ class SourceDetectionWindow(StepWindowBase):
     def open_parameters_dialog(self):
         """Open detection parameters dialog"""
         dialog = QDialog(self)
-        dialog.setWindowTitle("Detection Parameters")
-        dialog.resize(500, 640)
+        configure_parameter_dialog(dialog, "Detection Parameters", 540, 680)
 
         outer_layout = QVBoxLayout(dialog)
 
@@ -3516,7 +3502,7 @@ class SourceDetectionWindow(StepWindowBase):
         layout.addLayout(form)
 
         # === Per-Filter Sigma (collapsible) ===
-        filter_group, filter_container = _make_collapsible_group("Per-Filter Sigma (overrides base)")
+        filter_group, filter_container = create_collapsible_section("Per-Filter Sigma (overrides base)")
         filter_layout = QGridLayout(filter_container)
 
         detected_filters = self.scan_filters_from_files()
@@ -3565,7 +3551,10 @@ class SourceDetectionWindow(StepWindowBase):
         layout.addWidget(filter_group)
 
         # === Detection Options (collapsible) ===
-        detect_opts_group, detect_opts_container = _make_collapsible_group("Detection Options")
+        detect_opts_group, detect_opts_container = create_collapsible_section(
+            "Detection Options",
+            initial_expanded=True,
+        )
         detect_opts_form = QFormLayout(detect_opts_container)
         detect_opts_form.setContentsMargins(0, 0, 0, 0)
 
@@ -3618,7 +3607,7 @@ class SourceDetectionWindow(StepWindowBase):
         layout.addWidget(detect_opts_group)
 
         # === DAO Refine (collapsible) ===
-        dao_group, dao_container = _make_collapsible_group("DAO Refine (hot pixel filter)")
+        dao_group, dao_container = create_collapsible_section("DAO Refine (hot pixel filter)")
         dao_layout = QFormLayout(dao_container)
         dao_layout.setContentsMargins(0, 0, 0, 0)
 
@@ -3665,7 +3654,7 @@ class SourceDetectionWindow(StepWindowBase):
         layout.addWidget(dao_group)
 
         # === Peak Assist (collapsible) ===
-        peak_group, peak_container = _make_collapsible_group("Peak Assist (segm supplement)")
+        peak_group, peak_container = create_collapsible_section("Peak Assist (segm supplement)")
         peak_layout = QFormLayout(peak_container)
         peak_layout.setContentsMargins(0, 0, 0, 0)
         peak_layout.setSpacing(4)

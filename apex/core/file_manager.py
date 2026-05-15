@@ -411,9 +411,9 @@ class FileManager:
         # Start with all candidates
         ref_candidates = self.df_headers
 
-        # Filter by global_ref_filter if specified
-        grf = str(getattr(self.params.P, "global_ref_filter", "")).lower()
-        if grf in ("g", "r", "i"):
+        # Filter by global_ref_filter if specified (any non-empty filter name)
+        grf = str(getattr(self.params.P, "global_ref_filter", "")).strip().lower()
+        if grf:
             filtered = self.df_headers[
                 self.df_headers["FILTER"].astype(str).str.lower() == grf
             ]

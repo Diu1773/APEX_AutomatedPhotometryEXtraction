@@ -27,6 +27,7 @@ from PyQt5.QtGui import QColor
 from apex.gui.widgets.fits_viewer import FITSViewerWidget, OverlayMarker
 
 from .step_window_base import StepWindowBase
+from .ui_helpers import create_parameter_button, build_scroll_param_dialog
 from apex.utils.step_paths import (
     step1_dir,
     step2_cropped_dir,
@@ -146,8 +147,7 @@ class SkyPreviewWindow(StepWindowBase):
         self.file_combo.currentIndexChanged.connect(self.on_file_changed)
         file_layout.addWidget(self.file_combo)
 
-        btn_params = QPushButton("⚙ Photometry Parameters")
-        btn_params.setStyleSheet("QPushButton { background-color: #9C27B0; color: white; font-weight: bold; padding: 5px 10px; }")
+        btn_params = create_parameter_button("Photometry Parameters")
         btn_params.clicked.connect(self.open_parameters_dialog)
         file_layout.addWidget(btn_params)
 
@@ -300,12 +300,12 @@ class SkyPreviewWindow(StepWindowBase):
         return data, header
 
     def _update_viewer_image(self, keep_view: bool = False):
-        """Upload raw data to GPU viewer. First load: auto-STF + fit. Keep_view: just refresh data."""
+        """Upload raw data and refresh auto-STF. keep_view preserves zoom/pan only."""
         if self.image_data is None or self._viewer is None:
             return
         self._viewer.set_data(self.image_data)
+        self._viewer.auto_stf()
         if not keep_view:
-            self._viewer.auto_stf()
             self._viewer.fit_in_view()
 
     def _on_viewer_hover(self, x: float, y: float, val: float):
@@ -994,78 +994,97 @@ Mag:  {mag_str} ± {mag_err_str}
     # ========== Parameter Dialog ==========
 
     def open_parameters_dialog(self):
-        """Open photometry parameters adjustment dialog"""
-        dialog = QDialog(self)
-        dialog.setWindowTitle("Photometry Parameters")
-        dialog.resize(400, 350)
+        dialog, layout, buttons = build_scroll_param_dialog(
+            self, "Photometry Parameters",
+            info_text="Adjust aperture photometry parameters. Changes apply immediately to measurements.",
+            size=(440, 400),
+        )
 
-        layout = QVBoxLayout(dialog)
+        form = QFormLayout()
 
-        # Info label
-        info = QLabel("Adjust aperture photometry parameters.\nChanges apply immediately to measurements.")
-        info.setStyleSheet("QLabel { background-color: #E3F2FD; padding: 10px; margin-bottom: 10px; }")
-        layout.addWidget(info)
+        spin_fwhm = QDoubleSpinBox()
+        spin_fwhm.setRange(0.1, 20.0)
+        spin_fwhm.setSingleStep(0.1)
+        spin_fwhm.setDecimals(2)
+        spin_fwhm.setValue(self.fwhm_seed_arcsec)
+        form.addRow("FWHM Seed (arcsec):", spin_fwhm)
 
-        # Form layout
-        form_layout = QFormLayout()
+        spin_ap = QDoubleSpinBox()
+        spin_ap.setRange(0.5, 10.0)
+        spin_ap.setSingleStep(0.1)
+        spin_ap.setDecimals(2)
+        spin_ap.setValue(self.aperture_scale)
+        form.addRow("Aperture Scale (× FWHM):", spin_ap)
 
-        # Create input fields - scale based parameters
-        fwhm_seed_edit = QLineEdit(str(self.fwhm_seed_arcsec))
-        ap_scale_edit = QLineEdit(str(self.aperture_scale))
-        ann_in_scale_edit = QLineEdit(str(self.annulus_in_scale))
-        ann_out_scale_edit = QLineEdit(str(self.annulus_out_scale))
-        min_r_ap_edit = QLineEdit(str(self.min_r_ap_px))
-        min_r_in_edit = QLineEdit(str(self.min_r_in_px))
-        min_r_out_edit = QLineEdit(str(self.min_r_out_px))
-        sigma_clip_edit = QLineEdit(str(self.sigma_clip_value))
+        spin_ann_in = QDoubleSpinBox()
+        spin_ann_in.setRange(1.0, 20.0)
+        spin_ann_in.setSingleStep(0.1)
+        spin_ann_in.setDecimals(2)
+        spin_ann_in.setValue(self.annulus_in_scale)
+        form.addRow("Annulus Inner Scale (× FWHM):", spin_ann_in)
 
-        form_layout.addRow("FWHM Seed (arcsec):", fwhm_seed_edit)
-        form_layout.addRow("Aperture Scale (× FWHM):", ap_scale_edit)
-        form_layout.addRow("Annulus Inner Scale (× FWHM):", ann_in_scale_edit)
-        form_layout.addRow("Annulus Outer Width (× FWHM):", ann_out_scale_edit)
-        form_layout.addRow("Min Aperture Radius (px):", min_r_ap_edit)
-        form_layout.addRow("Min Annulus Inner (px):", min_r_in_edit)
-        form_layout.addRow("Min Annulus Outer (px):", min_r_out_edit)
-        form_layout.addRow("Sigma Clipping (σ):", sigma_clip_edit)
+        spin_ann_out = QDoubleSpinBox()
+        spin_ann_out.setRange(0.5, 20.0)
+        spin_ann_out.setSingleStep(0.1)
+        spin_ann_out.setDecimals(2)
+        spin_ann_out.setValue(self.annulus_out_scale)
+        form.addRow("Annulus Outer Width (× FWHM):", spin_ann_out)
 
-        layout.addLayout(form_layout)
+        spin_min_ap = QDoubleSpinBox()
+        spin_min_ap.setRange(1.0, 200.0)
+        spin_min_ap.setSingleStep(0.5)
+        spin_min_ap.setDecimals(1)
+        spin_min_ap.setValue(self.min_r_ap_px)
+        form.addRow("Min Aperture Radius (px):", spin_min_ap)
 
-        # Buttons
-        button_box = QDialogButtonBox(QDialogButtonBox.Save | QDialogButtonBox.Cancel)
+        spin_min_in = QDoubleSpinBox()
+        spin_min_in.setRange(1.0, 500.0)
+        spin_min_in.setSingleStep(0.5)
+        spin_min_in.setDecimals(1)
+        spin_min_in.setValue(self.min_r_in_px)
+        form.addRow("Min Annulus Inner (px):", spin_min_in)
 
-        def save_parameters():
-            try:
-                self.fwhm_seed_arcsec = float(fwhm_seed_edit.text())
-                self.aperture_scale = float(ap_scale_edit.text())
-                self.annulus_in_scale = float(ann_in_scale_edit.text())
-                self.annulus_out_scale = float(ann_out_scale_edit.text())
-                self.min_r_ap_px = float(min_r_ap_edit.text())
-                self.min_r_in_px = float(min_r_in_edit.text())
-                self.min_r_out_px = float(min_r_out_edit.text())
-                self.sigma_clip_value = float(sigma_clip_edit.text())
+        spin_min_out = QDoubleSpinBox()
+        spin_min_out.setRange(1.0, 500.0)
+        spin_min_out.setSingleStep(0.5)
+        spin_min_out.setDecimals(1)
+        spin_min_out.setValue(self.min_r_out_px)
+        form.addRow("Min Annulus Outer (px):", spin_min_out)
 
-                self.params.P.fwhm_guess_arcsec = self.fwhm_seed_arcsec
-                self.params.P.phot_aperture_scale = self.aperture_scale
-                self.params.P.fitsky_annulus_scale = self.annulus_in_scale
-                self.params.P.fitsky_dannulus_scale = self.annulus_out_scale
-                self.params.P.min_r_ap_px = self.min_r_ap_px
-                self.params.P.min_r_in_px = self.min_r_in_px
-                self.params.P.min_r_out_px = self.min_r_out_px
-                self.params.P.annulus_sigma_clip = self.sigma_clip_value
-                self.persist_params()
+        spin_sigma = QDoubleSpinBox()
+        spin_sigma.setRange(1.0, 10.0)
+        spin_sigma.setSingleStep(0.1)
+        spin_sigma.setDecimals(1)
+        spin_sigma.setValue(self.sigma_clip_value)
+        form.addRow("Sigma Clipping (σ):", spin_sigma)
 
-                # Save to project state for persistence
-                self.save_state()
+        layout.addLayout(form)
+        layout.addStretch(1)
 
-                QMessageBox.information(dialog, "Success", "Parameters updated and saved!")
-                dialog.accept()
-            except ValueError as e:
-                QMessageBox.critical(dialog, "Error", f"Invalid parameter value:\n{str(e)}")
+        def _save():
+            self.fwhm_seed_arcsec = spin_fwhm.value()
+            self.aperture_scale = spin_ap.value()
+            self.annulus_in_scale = spin_ann_in.value()
+            self.annulus_out_scale = spin_ann_out.value()
+            self.min_r_ap_px = spin_min_ap.value()
+            self.min_r_in_px = spin_min_in.value()
+            self.min_r_out_px = spin_min_out.value()
+            self.sigma_clip_value = spin_sigma.value()
+            self.params.P.fwhm_guess_arcsec = self.fwhm_seed_arcsec
+            self.params.P.phot_aperture_scale = self.aperture_scale
+            self.params.P.fitsky_annulus_scale = self.annulus_in_scale
+            self.params.P.fitsky_dannulus_scale = self.annulus_out_scale
+            self.params.P.min_r_ap_px = self.min_r_ap_px
+            self.params.P.min_r_in_px = self.min_r_in_px
+            self.params.P.min_r_out_px = self.min_r_out_px
+            self.params.P.annulus_sigma_clip = self.sigma_clip_value
+            self.persist_params()
+            self.save_state()
+            QMessageBox.information(dialog, "Saved", "Parameters updated and saved!")
+            dialog.accept()
 
-        button_box.accepted.connect(save_parameters)
-        button_box.rejected.connect(dialog.reject)
-        layout.addWidget(button_box)
-
+        buttons.accepted.connect(_save)
+        buttons.rejected.connect(dialog.reject)
         dialog.exec_()
 
     def open_stretch_plot(self):

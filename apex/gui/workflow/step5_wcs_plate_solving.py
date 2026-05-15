@@ -26,6 +26,10 @@ from astropy.coordinates import SkyCoord
 import astropy.units as u
 from astropy.table import Table
 
+from apex.utils.ssl_certificates import configure_ssl_certificates, ssl_error_reason
+
+_SSL_CERT_OK, _SSL_CERT_DETAIL = configure_ssl_certificates()
+
 try:
     from astroquery.gaia import Gaia
     _HAS_GAIA = True
@@ -39,14 +43,20 @@ from PyQt5.QtWidgets import (
     QTextEdit, QComboBox, QDialog, QFormLayout, QLineEdit, QDialogButtonBox,
     QProgressBar, QCheckBox, QSpinBox, QDoubleSpinBox, QTableWidget,
     QTableWidgetItem, QHeaderView, QAbstractItemView, QWidget, QTabWidget,
-    QListWidget, QListWidgetItem
+    QListWidget, QListWidgetItem, QScrollArea, QFileDialog
 )
 
 from PyQt5.QtCore import Qt, QThread, pyqtSignal
 
 from .step_window_base import StepWindowBase
-from .run_control import RunControlBar
+from .run_control import RunControlBar, format_duration, progress_status_text
 from .log_panel import WorkflowLogWindow, WorkerStatusPanel, append_timestamped_log, show_raised
+from .ui_helpers import (
+    create_cache_checkbox,
+    create_collapsible_section,
+    create_parameter_button,
+    configure_parameter_dialog,
+)
 from apex.core.cache_manager import StepCacheManager
 from apex.utils.step_paths import (
     step2_cropped_dir,
@@ -121,6 +131,182 @@ def _format_coord_hint(coord: SkyCoord | None) -> str:
         return f"{coord.ra.deg:.6f},{coord.dec.deg:.6f}"
     except Exception:
         return "invalid"
+
+
+def _strip_outer_quotes(value: str) -> str:
+    value = str(value or "").strip()
+    if len(value) >= 2 and value[0] == value[-1] and value[0] in {"'", '"'}:
+        return value[1:-1]
+    return value
+
+
+def _split_command(value: str) -> list[str]:
+    value = str(value or "").strip()
+    if not value:
+        return []
+    try:
+        return shlex.split(value)
+    except Exception:
+        return [value]
+
+
+def _local_executable_available(exe: str) -> tuple[bool, str]:
+    exe = _strip_outer_quotes(exe)
+    if not exe:
+        return False, "empty command"
+    path = Path(exe)
+    if path.exists():
+        return True, f"found at {path}"
+    found = shutil.which(exe)
+    if found:
+        return True, f"found on PATH: {found}"
+    return False, f"not found: {exe}"
+
+
+def _check_astap_available(params) -> tuple[bool, str]:
+    exe = str(getattr(params.P, "astap_exe", "astap_cli.exe") or "astap_cli.exe").strip()
+    ok, detail = _local_executable_available(exe)
+    if ok:
+        db = str(getattr(params.P, "astap_database", "") or "").strip()
+        suffix = f"; selected ASTAP DB={db}" if db else ""
+        return True, f"ASTAP executable {detail}{suffix}"
+    return (
+        False,
+        f"ASTAP executable {detail}. Install ASTAP and set Step 5 > ASTAP Parameters > ASTAP CLI Path.",
+    )
+
+
+def _classify_astap_failure(rc: int, stdout: str | None, stderr: str | None) -> str:
+    text = f"{stdout or ''}\n{stderr or ''}".lower()
+    if rc == -996:
+        return "astap_not_found"
+    if rc == -999 or "timeout" in text:
+        return "astap_timeout"
+    if rc == -997 or _is_explicit_stopped_message(stderr):
+        return "astap_stopped"
+    if any(token in text for token in (
+        "star database",
+        "database not found",
+        "no database",
+        "could not find database",
+        "error reading database",
+        "d50",
+        "d80",
+    )):
+        return "astap_database_missing_or_mismatch"
+    if any(token in text for token in (
+        "no solution",
+        "not solved",
+        "solution not found",
+        "solving failed",
+        "not enough stars",
+    )):
+        return "astap_no_solution"
+    if any(token in text for token in (
+        "fov",
+        "field of view",
+        "pixel scale",
+        "search radius",
+    )):
+        return "astap_fov_or_scale"
+    return f"astap_rc_{rc}"
+
+
+def _gaia_failure_reason(exc: Exception | None) -> str:
+    if exc is None:
+        return "unknown"
+    ssl_reason = ssl_error_reason(exc)
+    if ssl_reason:
+        return ssl_reason
+    text = _exc_brief(exc, limit=180)
+    low = text.lower()
+    if "timeout" in low or "timed out" in low:
+        return "timeout"
+    if "connection" in low or "unreachable" in low or "refused" in low:
+        return "network_error"
+    if "server_down" in low or "503" in low or "502" in low or "500" in low:
+        return "server_down"
+    if "vizier fallback" in low:
+        return "vizier_fallback_failed"
+    return text or "unknown"
+
+
+def _tap_launch_job_async(service, adql: str, *, timeout_s: float | None = None, **kwargs):
+    if timeout_s is not None and np.isfinite(timeout_s) and timeout_s > 0:
+        try:
+            setattr(service, "TIMEOUT", float(timeout_s))
+        except Exception:
+            pass
+        try:
+            return service.launch_job_async(adql, timeout=float(timeout_s), **kwargs)
+        except TypeError as exc:
+            if "timeout" not in str(exc).lower():
+                raise
+    return service.launch_job_async(adql, **kwargs)
+
+
+def _check_astnet_available(params) -> tuple[bool, str]:
+    cmd_text = str(getattr(params.P, "astnet_local_command", "solve-field") or "solve-field").strip()
+    cmd_base = _split_command(cmd_text)
+    if not cmd_base:
+        return False, "astrometry.net command is empty; set Step 5 > Astrometry.net Parameters > solve-field Command."
+
+    use_wsl = bool(getattr(params.P, "astnet_local_use_wsl", True))
+    if use_wsl:
+        wsl_ok, wsl_detail = _local_executable_available("wsl")
+        if not wsl_ok:
+            return False, f"WSL executable {wsl_detail}. Install WSL/Ubuntu or disable Use WSL."
+
+        inner_cmd = cmd_base[1:] if cmd_base[0].lower() == "wsl" else cmd_base
+        if not inner_cmd:
+            return False, "WSL command has no solve-field executable."
+        inner_exe = inner_cmd[0]
+        probe = f"command -v {shlex.quote(inner_exe)} >/dev/null 2>&1 || test -x {shlex.quote(inner_exe)}"
+        try:
+            cp = subprocess.run(
+                ["wsl", "bash", "-lc", probe],
+                capture_output=True,
+                timeout=8.0,
+                **_SUBPROCESS_TEXT_KWARGS,
+            )
+            if cp.returncode == 0:
+                return True, f"WSL available ({wsl_detail}); {inner_exe} found inside WSL"
+            err = _tail_text((cp.stderr or "") + "\n" + (cp.stdout or ""), limit=500, max_lines=4)
+            extra = f" Details: {err}" if err else ""
+            return (
+                False,
+                f"WSL is available, but {inner_exe} was not found inside WSL. "
+                f"Install astrometry.net/index files in WSL or update solve-field Command.{extra}",
+            )
+        except Exception as exc:
+            return False, f"Could not probe WSL astrometry.net command: {_exc_brief(exc)}"
+
+    exe = cmd_base[0]
+    ok, detail = _local_executable_available(exe)
+    if ok:
+        return True, f"astrometry.net command {detail}"
+    return (
+        False,
+        f"astrometry.net command {detail}. Install solve-field or update Step 5 > Astrometry.net Parameters.",
+    )
+
+
+def _check_gaia_runtime_available() -> tuple[bool, str]:
+    ssl_detail = f" SSL: {_SSL_CERT_DETAIL}"
+    if not _HAS_GAIA:
+        return (
+            False,
+            "astroquery.gaia is not importable. Gaia catalog attach, WCS refine, "
+            f"resid_med, and Step 6 Gaia stats require astroquery in the packaged build.{ssl_detail}",
+        )
+    try:
+        from astroquery.utils.tap.core import TapPlus  # noqa: F401
+    except Exception as exc:
+        return (
+            True,
+            f"astroquery.gaia is importable, but VizieR TAP fallback is unavailable: {_exc_brief(exc)}.{ssl_detail}",
+        )
+    return True, f"astroquery.gaia and TAP fallback imports are available.{ssl_detail}"
 
 
 def _astnet_center_candidates(
@@ -227,6 +413,7 @@ class WcsWorker(QThread):
     progress = pyqtSignal(int, int, str)
     file_done = pyqtSignal(str, dict)
     worker_status = pyqtSignal(int, str, str, int)
+    log_message = pyqtSignal(str)
     finished = pyqtSignal(dict)
     error = pyqtSignal(str, str)
 
@@ -757,6 +944,7 @@ class WcsWorker(QThread):
             "pix_scale_input_arcsec": np.nan,
             "pix_scale_fit_arcsec": np.nan,
             "scale_delta_pct": np.nan,
+            "gaia_available": False,
         }
 
     def _compute_wcs_qc_metrics(
@@ -773,6 +961,7 @@ class WcsWorker(QThread):
         center_coord: SkyCoord | None,
     ) -> dict:
         out = self._empty_wcs_qc_metrics(n_detect=len(det_xy))
+        out["gaia_available"] = bool(len(gaia_ra_deg) > 0 and len(gaia_dec_deg) > 0)
         if np.isfinite(pix_input_arcsec):
             out["pix_scale_input_arcsec"] = float(pix_input_arcsec)
         if np.isfinite(pix_fit_arcsec):
@@ -944,7 +1133,9 @@ class WcsWorker(QThread):
         if n_detect <= 0:
             reasons.append("no_detect_data")
 
-        if gaia_available:
+        if not gaia_available:
+            reasons.append("gaia_unavailable")
+        else:
             min_match_n = int(getattr(self.params.P, "wcs_qc_min_match_n", 20))
             if min_match_n > 0 and n_match < min_match_n:
                 reasons.append("low_match_n")
@@ -1012,7 +1203,7 @@ class WcsWorker(QThread):
         except Exception:
             return None
 
-    def _query_gaia_vizier(self, center: SkyCoord, radius_deg: float, mag_max: float):
+    def _query_gaia_vizier(self, center: SkyCoord, radius_deg: float, mag_max: float, timeout_s: float):
         """VizieR mirror fallback (Strasbourg CDS). Used when ESA server is unavailable/blocked."""
         try:
             from astroquery.utils.tap.core import TapPlus
@@ -1044,7 +1235,7 @@ WHERE 1=CONTAINS(
         tap = TapPlus(url="https://tapvizier.cds.unistra.fr/TAPVizieR/tap")
         try:
             # async mode: no MAXREC=2000 server-side cap (sync mode silently truncates)
-            job = tap.launch_job_async(adql)
+            job = _tap_launch_job_async(tap, adql, timeout_s=timeout_s)
             tab = job.get_results()
         except Exception as e:
             raise RuntimeError(f"VizieR fallback query failed: {_exc_brief(e)}") from e
@@ -1066,6 +1257,8 @@ WHERE 1=CONTAINS(
             raise RuntimeError("astroquery.gaia not available")
         if self._stop_requested:
             raise RuntimeError("stopped")
+        timeout_s = float(getattr(self.params.P, "gaia_timeout_s", 30.0))
+        mag_where = f"AND phot_g_mean_mag <= {mag_max:.4f}" if np.isfinite(mag_max) and mag_max > 0 else ""
         adql = f"""
     SELECT
       source_id, ra, dec,
@@ -1078,12 +1271,13 @@ WHERE 1=CONTAINS(
         POINT('ICRS', ra, dec),
         CIRCLE('ICRS', {center.ra.deg:.8f}, {center.dec.deg:.8f}, {radius_deg:.8f})
     )
+    {mag_where}
         """.strip()
         Gaia.ROW_LIMIT = -1
         if self._stop_requested:
             raise RuntimeError("stopped")
         try:
-            job = Gaia.launch_job_async(adql, dump_to_file=False)
+            job = _tap_launch_job_async(Gaia, adql, timeout_s=timeout_s, dump_to_file=False)
             tab = job.get_results()
         except Exception as e:
             err_str = str(e).lower()
@@ -1097,12 +1291,15 @@ WHERE 1=CONTAINS(
                 cause = "TIMEOUT"
             elif any(w in err_str for w in ("connection", "refused", "unreachable")):
                 cause = "NETWORK_ERROR"
+            elif ssl_error_reason(e):
+                cause = "SSL_CERTIFICATE_VERIFY_FAILED"
             else:
                 cause = "UNKNOWN"
             # ESA down/blocked: auto-fallback to VizieR mirror
-            if cause in ("IP_BANNED", "SERVER_JOB_LOST", "SERVER_DOWN"):
+            if cause in ("IP_BANNED", "SERVER_JOB_LOST", "SERVER_DOWN", "TIMEOUT", "NETWORK_ERROR"):
+                self.log_message.emit(f"[Gaia][WARN] ESA TAP failed [{cause}], trying VizieR fallback.")
                 try:
-                    df_viz = self._query_gaia_vizier(center, radius_deg, mag_max)
+                    df_viz = self._query_gaia_vizier(center, radius_deg, mag_max, timeout_s)
                     self.log_message.emit(
                         f"[Gaia][WARN] ESA TAP failed [{cause}] → VizieR fallback 사용 (N={len(df_viz)}). "
                         f"N이 2000 이하면 catalog truncation — Step 5(WCS) 재실행 권장."
@@ -1110,6 +1307,7 @@ WHERE 1=CONTAINS(
                     df_viz.attrs["gaia_source"] = "vizier_fallback"
                     return df_viz
                 except Exception as e2:
+                    self.log_message.emit(f"[Gaia][WARN] VizieR fallback failed: {_gaia_failure_reason(e2)}")
                     raise RuntimeError(
                         f"Gaia TAP async query failed [{cause}]: {_exc_brief(e)}; "
                         f"VizieR fallback also failed: {_exc_brief(e2)}"
@@ -1126,7 +1324,12 @@ WHERE 1=CONTAINS(
         meta_path = step5_out / "gaia_fov_meta.json"
         retry = int(getattr(self.params.P, "gaia_retry", 2))
         backoff_s = float(getattr(self.params.P, "gaia_backoff_s", 6.0))
-        mag_max = float(getattr(self.params.P, "gaia_mag_max", 18.0))
+        mag_max_cfg = float(getattr(self.params.P, "gaia_mag_max", 18.0))
+        wcs_mag_max = float(getattr(self.params.P, "gaia_wcs_mag_max", 18.0))
+        if np.isfinite(mag_max_cfg) and np.isfinite(wcs_mag_max) and wcs_mag_max > 0:
+            mag_max = float(min(mag_max_cfg, wcs_mag_max))
+        else:
+            mag_max = mag_max_cfg
         allow_no_cache = bool(getattr(self.params.P, "gaia_allow_no_cache", True))
 
         def _cache_mag_max(df_in: pd.DataFrame, meta_in) -> float:
@@ -1279,7 +1482,7 @@ WHERE 1=CONTAINS(
         if allow_no_cache:
             if last_err is None:
                 return pd.DataFrame(), "fail_no_cache:unknown"
-            return pd.DataFrame(), f"fail_no_cache:{_exc_brief(last_err, limit=180)}"
+            return pd.DataFrame(), f"fail_no_cache:{_gaia_failure_reason(last_err)}"
         raise RuntimeError(f"Gaia query failed: {last_err}")
 
     def _refine_crpix_by_match(self, w: WCS, hdr: fits.Header, det_xy: np.ndarray,
@@ -1450,7 +1653,7 @@ WHERE 1=CONTAINS(
 
             astap_timeout = float(getattr(self.params.P, "astap_timeout_s", 120.0))
             astap_radius = float(getattr(self.params.P, "astap_search_radius_deg", 8.0))
-            astap_db = str(getattr(self.params.P, "astap_database", "D50") or "").strip()
+            astap_db = str(getattr(self.params.P, "astap_database", "D80") or "").strip()
             astap_fov_fudge = float(getattr(self.params.P, "astap_fov_fudge", 1.0))
             astnet_local_enable = bool(getattr(self.params.P, "astnet_local_enable", False))
             astnet_use_wsl = bool(getattr(self.params.P, "astnet_local_use_wsl", True))
@@ -1465,11 +1668,23 @@ WHERE 1=CONTAINS(
             astnet_cpulimit_s = float(getattr(self.params.P, "astnet_local_cpulimit_s", 30.0))
             astnet_blind_retry = bool(getattr(self.params.P, "astnet_blind_retry_on_fail", True))
             astnet_blind_cpulimit_s = float(getattr(self.params.P, "astnet_blind_cpulimit_s", 120.0))
+            astap_available, astap_preflight = _check_astap_available(self.params)
+            astnet_available = False
+            astnet_preflight = (
+                "local astrometry.net fallback deferred until ASTAP fails"
+                if astnet_local_enable
+                else "local astrometry.net fallback disabled"
+            )
+            astnet_preflight_checked = False
+            astnet_preflight_lock = threading.Lock()
+            if astnet_local_enable and not astap_available:
+                astnet_available, astnet_preflight = _check_astnet_available(self.params)
+                astnet_preflight_checked = True
             meta_dir = self.cache_dir / "wcs_solve"
             meta_dir.mkdir(parents=True, exist_ok=True)
             log_path = self.cache_dir / "wcs_solve.log"
 
-            def L(msg):
+            def L(msg, *, gui: bool = False):
                 ts = time.strftime("%Y-%m-%d %H:%M:%S")
                 line = f"{ts} {msg}"
                 try:
@@ -1477,6 +1692,8 @@ WHERE 1=CONTAINS(
                         fh.write(line + "\n")
                 except Exception:
                     pass
+                if gui:
+                    self.log_message.emit(msg)
 
             def log_cmd_failure(tag, fname, reason, cmd=None, stdout=None, stderr=None):
                 L(f"{fname}: {tag} fail reason={reason}")
@@ -1489,8 +1706,23 @@ WHERE 1=CONTAINS(
                 if err_tail:
                     L(f"{fname}: {tag} stderr_tail={err_tail}")
 
+            def ensure_astnet_available() -> bool:
+                nonlocal astnet_available, astnet_preflight, astnet_preflight_checked
+                if not astnet_local_enable:
+                    return False
+                if astnet_preflight_checked:
+                    return bool(astnet_available)
+                with astnet_preflight_lock:
+                    if not astnet_preflight_checked:
+                        astnet_available, astnet_preflight = _check_astnet_available(self.params)
+                        astnet_preflight_checked = True
+                        L(f"[WCS][Fallback] astrometry.net: {astnet_preflight}", gui=True)
+                return bool(astnet_available)
+
             L("=" * 60)
             L(f"[WCS] start files={len(files)} use_cropped={self.use_cropped} cache_dir={self.cache_dir}")
+            L(f"[WCS][Preflight] ASTAP: {astap_preflight}")
+            L(f"[WCS][Preflight] astrometry.net: {astnet_preflight}", gui=(not astap_available))
             L(f"[WCS] astap_timeout_s={astap_timeout} astap_radius_deg={astap_radius} astap_db={astap_db or 'default'} astap_fov_fudge={astap_fov_fudge}")
             L(
                 f"[WCS] astnet_local_enable={astnet_local_enable} use_wsl={astnet_use_wsl} "
@@ -1559,11 +1791,29 @@ WHERE 1=CONTAINS(
                 f"fov_w={fov_w:.5f}deg fov_h={fov_h:.5f}deg diag={diag_deg:.5f}deg "
                 f"gaia_r={gaia_r:.5f}deg"
             )
+            self.progress.emit(0, total, "Querying Gaia catalog...")
+            self.worker_status.emit(0, "Gaia catalog", "Querying", 5)
+            L(
+                f"[Gaia] querying catalog before WCS refinement: "
+                f"center=({center_coord.ra.deg:.6f},{center_coord.dec.deg:.6f}) "
+                f"r={gaia_r:.4f}deg",
+                gui=True,
+            )
             gaia_df, gaia_src = self._load_or_query_gaia(center_coord, gaia_r)
             if self._stop_requested:
                 self.finished.emit({"stopped": True, "total": 0, "ok": 0, "wcs_qc_pass": 0})
                 return
             L(f"[Gaia] center=({center_coord.ra.deg:.6f},{center_coord.dec.deg:.6f}) r={gaia_r:.4f}deg source={gaia_src} N={len(gaia_df)}")
+            if len(gaia_df) == 0:
+                self.worker_status.emit(0, "Gaia catalog", "Unavailable", 100)
+                L(
+                    f"[Gaia][WARN] catalog unavailable ({gaia_src}); "
+                    "WCS refine/residual match stats will be skipped.",
+                    gui=True,
+                )
+            else:
+                self.worker_status.emit(0, "Gaia catalog", "Loaded", 100)
+                L(f"[Gaia] catalog loaded: {len(gaia_df)} sources ({gaia_src})", gui=True)
             gaia_ra_vals = np.array([], dtype=float)
             gaia_dec_vals = np.array([], dtype=float)
             if isinstance(gaia_df, pd.DataFrame) and (not gaia_df.empty) and {"ra", "dec"} <= set(gaia_df.columns):
@@ -1627,19 +1877,22 @@ WHERE 1=CONTAINS(
                 fov_h_deg = (ny * pix_arc) / 3600.0 * astap_fov_fudge
                 fov_deg = float(max(fov_w_deg, fov_h_deg))
 
-                ok_astap, rc, dt_astap, astap_stdout, astap_stderr, astap_cmd = self._run_astap(
-                    fits_path, fov_deg=fov_deg, radius_deg=astap_radius, timeout_s=astap_timeout
-                )
+                if astap_available:
+                    ok_astap, rc, dt_astap, astap_stdout, astap_stderr, astap_cmd = self._run_astap(
+                        fits_path, fov_deg=fov_deg, radius_deg=astap_radius, timeout_s=astap_timeout
+                    )
+                else:
+                    ok_astap = False
+                    rc = -996
+                    dt_astap = 0.0
+                    astap_stdout = ""
+                    astap_stderr = astap_preflight
+                    astap_cmd = [str(getattr(self.params.P, "astap_exe", "astap_cli.exe") or "astap_cli.exe")]
                 if self._stop_requested:
                     return filename, None
                 astap_cmd_str = " ".join(str(c) for c in astap_cmd)
                 if not ok_astap:
-                    if rc == -999 or "timeout" in str(astap_stderr).lower():
-                        fail_reason = "astap_timeout"
-                    elif rc == -997 or "stopped" in str(astap_stderr).lower():
-                        fail_reason = "astap_stopped"
-                    else:
-                        fail_reason = f"astap_rc_{rc}"
+                    fail_reason = _classify_astap_failure(rc, astap_stdout, astap_stderr)
                     log_cmd_failure(
                         "ASTAP",
                         filename,
@@ -1648,12 +1901,15 @@ WHERE 1=CONTAINS(
                         stdout=astap_stdout,
                         stderr=astap_stderr,
                     )
-                    if not astnet_local_enable:
+                    if not astnet_local_enable or not ensure_astnet_available():
+                        if astnet_local_enable and not astnet_available:
+                            fail_reason = f"{fail_reason}; astnet_not_found"
                         qc_metrics["pix_scale_fit_arcsec"] = np.nan
+                        status_text = "astap_not_found" if rc == -996 else f"astap_fail rc={rc}"
                         return filename, {
                             "fname": filename,
                             "ok": False,
-                            "status": f"astap_fail rc={rc}",
+                            "status": status_text,
                             "wcs_ok": False,
                             "pix_fit": pix_fit,
                             "elapsed": float(dt_astap),
@@ -1697,7 +1953,7 @@ WHERE 1=CONTAINS(
                         if not wcs_ok:
                             wcs_ok = self._try_ingest_wcs(fits_path, hdr)
 
-                    if (not ok_astap or not wcs_ok) and astnet_local_enable:
+                    if (not ok_astap or not wcs_ok) and astnet_local_enable and ensure_astnet_available():
                         scale_low = astnet_scale_low
                         scale_high = astnet_scale_high
                         if scale_low <= 0 or scale_high <= 0:
@@ -1825,7 +2081,13 @@ WHERE 1=CONTAINS(
                         pix_fit = self._pixscale_from_wcs(w)
 
                         refine_enable = bool(getattr(self.params.P, "wcs_refine_enable", True))
-                        if refine_enable and gaia_df is not None and len(gaia_df) > 0 and len(det_xy) > 0:
+                        if not refine_enable:
+                            refine_note = "disabled"
+                        elif gaia_df is None or len(gaia_df) == 0:
+                            refine_note = f"gaia_unavailable:{gaia_src}"
+                        elif len(det_xy) == 0:
+                            refine_note = "no_det"
+                        else:
                             fwhm_px, _ = self._load_fwhm_for_frame(filename)
                             ok_ref, note, rmed, rmax, nmatch = self._refine_crpix_by_match(
                                 w, hdr, det_xy, gaia_df,
@@ -1833,12 +2095,12 @@ WHERE 1=CONTAINS(
                                 max_match=int(getattr(self.params.P, "wcs_refine_max_match", 600))
                             )
                             refine_note = note
+                            match_n = int(nmatch)
                             if ok_ref:
                                 w2 = WCS(hdr, relax=True)
                                 pix_fit = self._pixscale_from_wcs(w2)
                                 resid_med = rmed
                                 resid_max = rmax
-                                match_n = nmatch
 
                         # Use final WCS (refined if available)
                         w_final = WCS(hdr, relax=True)
@@ -1884,10 +2146,15 @@ WHERE 1=CONTAINS(
                         status = "ok_astnet_wsl" if solver == "astnet_wsl" else "ok"
                     else:
                         hdr["WCS_OK"] = (False, "WCS solve failed")
-                        status = f"astap_fail rc={rc}" if not ok_astap else "wcs_missing"
+                        if rc == -996:
+                            status = "astap_not_found"
+                        elif not ok_astap:
+                            status = f"astap_fail rc={rc}"
+                        else:
+                            status = "wcs_missing"
                         if not fail_reason:
                             if not ok_astap:
-                                fail_reason = f"astap_rc_{rc}"
+                                fail_reason = _classify_astap_failure(rc, astap_stdout, astap_stderr)
                             elif astnet_local_enable and astnet_reason:
                                 fail_reason = astnet_reason
                             elif astnet_local_enable:
@@ -2036,6 +2303,7 @@ WHERE 1=CONTAINS(
                     "n_inlier",
                     "match_rate",
                     "match_rate_cat",
+                    "match_rate_eff",
                     "match_radius_arcsec",
                     "match_radius_px",
                     "dx_med_px",
@@ -2067,10 +2335,16 @@ WHERE 1=CONTAINS(
                 pass
 
             n_qc_pass = sum(1 for r in results if bool(r.get("wcs_qc_pass", False)))
+            n_qc_not_eval = sum(
+                1
+                for r in results
+                if "gaia_unavailable" in str(r.get("wcs_qc_reason", ""))
+            )
             summary = {
                 "total": len(results),
                 "ok": sum(1 for r in results if r.get("ok")),
                 "wcs_qc_pass": int(n_qc_pass),
+                "wcs_qc_not_evaluated": int(n_qc_not_eval),
                 "stopped": bool(self._stop_requested),
             }
             self.finished.emit(summary)
@@ -2131,7 +2405,7 @@ class AstrometryNetWorker(QThread):
         except Exception:
             return None
 
-    def _query_gaia_vizier(self, center: SkyCoord, radius_deg: float, mag_max: float):
+    def _query_gaia_vizier(self, center: SkyCoord, radius_deg: float, mag_max: float, timeout_s: float):
         """VizieR mirror fallback (Strasbourg CDS). Used when ESA server is unavailable/blocked."""
         try:
             from astroquery.utils.tap.core import TapPlus
@@ -2163,7 +2437,7 @@ WHERE 1=CONTAINS(
         tap = TapPlus(url="https://tapvizier.cds.unistra.fr/TAPVizieR/tap")
         try:
             # async mode: no MAXREC=2000 server-side cap (sync mode silently truncates)
-            job = tap.launch_job_async(adql)
+            job = _tap_launch_job_async(tap, adql, timeout_s=timeout_s)
             tab = job.get_results()
         except Exception as e:
             raise RuntimeError(f"VizieR fallback query failed: {_exc_brief(e)}") from e
@@ -2185,6 +2459,8 @@ WHERE 1=CONTAINS(
             raise RuntimeError("astroquery.gaia not available")
         if self._stop_requested:
             raise RuntimeError("stopped")
+        timeout_s = float(getattr(self.params.P, "gaia_timeout_s", 30.0))
+        mag_where = f"AND phot_g_mean_mag <= {mag_max:.4f}" if np.isfinite(mag_max) and mag_max > 0 else ""
         adql = f"""
     SELECT
       source_id, ra, dec,
@@ -2197,12 +2473,13 @@ WHERE 1=CONTAINS(
         POINT('ICRS', ra, dec),
         CIRCLE('ICRS', {center.ra.deg:.8f}, {center.dec.deg:.8f}, {radius_deg:.8f})
     )
+    {mag_where}
         """.strip()
         Gaia.ROW_LIMIT = -1
         if self._stop_requested:
             raise RuntimeError("stopped")
         try:
-            job = Gaia.launch_job_async(adql, dump_to_file=False)
+            job = _tap_launch_job_async(Gaia, adql, timeout_s=timeout_s, dump_to_file=False)
             tab = job.get_results()
         except Exception as e:
             err_str = str(e).lower()
@@ -2216,11 +2493,14 @@ WHERE 1=CONTAINS(
                 cause = "TIMEOUT"
             elif any(w in err_str for w in ("connection", "refused", "unreachable")):
                 cause = "NETWORK_ERROR"
+            elif ssl_error_reason(e):
+                cause = "SSL_CERTIFICATE_VERIFY_FAILED"
             else:
                 cause = "UNKNOWN"
-            if cause in ("IP_BANNED", "SERVER_JOB_LOST", "SERVER_DOWN"):
+            if cause in ("IP_BANNED", "SERVER_JOB_LOST", "SERVER_DOWN", "TIMEOUT", "NETWORK_ERROR"):
+                self.log_message.emit(f"[Gaia][WARN] ESA TAP failed [{cause}], trying VizieR fallback.")
                 try:
-                    df_viz = self._query_gaia_vizier(center, radius_deg, mag_max)
+                    df_viz = self._query_gaia_vizier(center, radius_deg, mag_max, timeout_s)
                     self.log_message.emit(
                         f"[Gaia][WARN] ESA TAP failed [{cause}] → VizieR fallback 사용 (N={len(df_viz)}). "
                         f"mag_max={mag_max:.2f}. WCS-QC match rate가 예상보다 낮을 수 있음."
@@ -2228,6 +2508,7 @@ WHERE 1=CONTAINS(
                     df_viz.attrs["gaia_source"] = "vizier_fallback"
                     return df_viz
                 except Exception as e2:
+                    self.log_message.emit(f"[Gaia][WARN] VizieR fallback failed: {_gaia_failure_reason(e2)}")
                     raise RuntimeError(
                         f"Gaia TAP async query failed [{cause}]: {_exc_brief(e)}; "
                         f"VizieR fallback also failed: {_exc_brief(e2)}"
@@ -2244,7 +2525,12 @@ WHERE 1=CONTAINS(
         meta_path = step5_out / "gaia_fov_meta.json"
         retry = int(getattr(self.params.P, "gaia_retry", 2))
         backoff_s = float(getattr(self.params.P, "gaia_backoff_s", 6.0))
-        mag_max = float(getattr(self.params.P, "gaia_mag_max", 18.0))
+        mag_max_cfg = float(getattr(self.params.P, "gaia_mag_max", 18.0))
+        wcs_mag_max = float(getattr(self.params.P, "gaia_wcs_mag_max", 18.0))
+        if np.isfinite(mag_max_cfg) and np.isfinite(wcs_mag_max) and wcs_mag_max > 0:
+            mag_max = float(min(mag_max_cfg, wcs_mag_max))
+        else:
+            mag_max = mag_max_cfg
         allow_no_cache = bool(getattr(self.params.P, "gaia_allow_no_cache", True))
 
         cache_valid = False
@@ -2321,7 +2607,7 @@ WHERE 1=CONTAINS(
         if allow_no_cache:
             if last_err is None:
                 return pd.DataFrame(), "fail_no_cache:unknown"
-            return pd.DataFrame(), f"fail_no_cache:{_exc_brief(last_err, limit=180)}"
+            return pd.DataFrame(), f"fail_no_cache:{_gaia_failure_reason(last_err)}"
         raise RuntimeError(f"Gaia query failed: {last_err}")
 
     def _load_fwhm_for_frame(self, fname: str):
@@ -2417,6 +2703,7 @@ WHERE 1=CONTAINS(
             "pix_scale_input_arcsec": np.nan,
             "pix_scale_fit_arcsec": np.nan,
             "scale_delta_pct": np.nan,
+            "gaia_available": False,
         }
 
     def _compute_wcs_qc_metrics(
@@ -2433,6 +2720,7 @@ WHERE 1=CONTAINS(
         center_coord: SkyCoord | None,
     ) -> dict:
         out = self._empty_wcs_qc_metrics(n_detect=len(det_xy))
+        out["gaia_available"] = bool(len(gaia_ra_deg) > 0 and len(gaia_dec_deg) > 0)
         if np.isfinite(pix_input_arcsec):
             out["pix_scale_input_arcsec"] = float(pix_input_arcsec)
         if np.isfinite(pix_fit_arcsec):
@@ -2588,6 +2876,10 @@ WHERE 1=CONTAINS(
         reasons: list[str] = []
         if bool(getattr(self.params.P, "wcs_qc_require_wcs_ok", True)) and not wcs_ok:
             reasons.append("wcs_fail")
+        gaia_available = bool(metrics.get("gaia_available", True))
+        if not gaia_available:
+            reasons.append("gaia_unavailable")
+            return False, reasons
         n_match = int(metrics.get("n_match", 0) or 0)
         if int(getattr(self.params.P, "wcs_qc_min_match_n", 20)) > 0 and n_match < int(getattr(self.params.P, "wcs_qc_min_match_n", 20)):
             reasons.append("low_match_n")
@@ -3086,7 +3378,7 @@ WHERE 1=CONTAINS(
                         center_coord = SkyCoord(str(ra0), str(dec0), unit=(u.hourangle, u.deg))
             except Exception:
                 center_coord = None
-            
+
             attempt_specs = _astnet_center_candidates(header_coord=center_coord, target_coord=self.target_coord)
             has_hint_attempt = any(coord is not None for _, coord in attempt_specs)
             if not blind_retry and has_hint_attempt:
@@ -3184,7 +3476,7 @@ WHERE 1=CONTAINS(
                         if w.has_celestial:
                             self._safe_header_update(fits_path, new_hdr)
                             self._refresh_detect_cache_signature(fits_path, filename)
-                            
+
                             pix_fit = float(np.mean(proj_plane_pixel_scales(w.celestial) * 3600.0))
                             with fits.open(fits_path, memmap=False) as hdul_src:
                                 src_hdr = hdul_src[0].header
@@ -3192,7 +3484,7 @@ WHERE 1=CONTAINS(
                             cx = nx / 2.0
                             cy = ny / 2.0
                             ra_dec = w.pixel_to_world(cx, cy)
-                            
+
                             result = {
                                 "fname": filename,
                                 "file": filename,
@@ -3568,6 +3860,7 @@ WHERE 1=CONTAINS(
                 "n_inlier",
                 "match_rate",
                 "match_rate_cat",
+                "match_rate_eff",
                 "match_radius_arcsec",
                 "match_radius_px",
                 "dx_med_px",
@@ -3598,10 +3891,16 @@ WHERE 1=CONTAINS(
 
         # --- 마무리 ---
         n_qc_pass = sum(1 for r in results if bool(r.get("wcs_qc_pass", False)))
+        n_qc_not_eval = sum(
+            1
+            for r in results
+            if "gaia_unavailable" in str(r.get("wcs_qc_reason", ""))
+        )
         summary = {
             "total": len(results),
             "ok": sum(1 for r in results if r.get("ok")),
             "wcs_qc_pass": int(n_qc_pass),
+            "wcs_qc_not_evaluated": int(n_qc_not_eval),
             "stopped": bool(self._stop_requested),
         }
         self.finished.emit(summary)
@@ -3655,14 +3954,16 @@ class WcsPlateSolvingWindow(StepWindowBase):
         layout = QVBoxLayout(self.astap_tab)
 
         info = QLabel(
-            "Solve WCS for all frames using ASTAP (local)."
+            "Solve WCS for all frames using ASTAP (local). "
+            "ASTAP and its D80/D50 star database are installed separately; "
+            "see Help > WCS Solver Installation Help."
         )
+        info.setWordWrap(True)
         info.setStyleSheet("QLabel { background-color: #E3F2FD; padding: 10px; border-radius: 5px; }")
         layout.addWidget(info)
 
         control_layout = QHBoxLayout()
-        btn_params = QPushButton("ASTAP Parameters")
-        btn_params.setStyleSheet("QPushButton { background-color: #9C27B0; color: white; font-weight: bold; padding: 8px 15px; }")
+        btn_params = create_parameter_button("ASTAP Parameters")
         btn_params.clicked.connect(self.open_parameters_dialog)
         control_layout.addWidget(btn_params)
 
@@ -3710,9 +4011,14 @@ class WcsPlateSolvingWindow(StepWindowBase):
         """Setup Astrometry.net tab UI"""
         layout = QVBoxLayout(self.astrometrynet_tab)
 
-        info_text = "Solve WCS for all frames using local astrometry.net (solve-field)."
+        info_text = (
+            "Solve WCS for all frames using local astrometry.net (solve-field). "
+            "This optional fallback needs a local solve-field installation and "
+            "matching astrometry.net index files; see Help > WCS Solver Installation Help."
+        )
         info_style = "QLabel { background-color: #E8F5E9; padding: 10px; border-radius: 5px; }"
         info = QLabel(info_text)
+        info.setWordWrap(True)
         info.setStyleSheet(info_style)
         layout.addWidget(info)
 
@@ -3732,10 +4038,7 @@ class WcsPlateSolvingWindow(StepWindowBase):
 
         control_layout = QHBoxLayout()
 
-        btn_astnet_params = QPushButton("Astrometry.net Parameters")
-        btn_astnet_params.setStyleSheet(
-            "QPushButton { background-color: #9C27B0; color: white; font-weight: bold; padding: 8px 15px; }"
-        )
+        btn_astnet_params = create_parameter_button("Astrometry.net Parameters")
         btn_astnet_params.clicked.connect(self.open_astrometrynet_parameters_dialog)
         control_layout.addWidget(btn_astnet_params)
 
@@ -3834,6 +4137,31 @@ class WcsPlateSolvingWindow(StepWindowBase):
             QMessageBox.warning(self, "Warning", "No frames remain after Step 4 QC filtering.")
             return
 
+        astnet_ok, astnet_detail = _check_astnet_available(self.params)
+        self.log(f"[WCS][Preflight] astrometry.net: {astnet_detail}")
+        if not astnet_ok:
+            self.astrometrynet_status.setText("solve-field not found or not configured")
+            QMessageBox.warning(
+                self,
+                "Astrometry.net Not Found",
+                f"{astnet_detail}\n\n"
+                "Install local astrometry.net with matching index files, or update Step 5 > "
+                "Astrometry.net Parameters. See Help > WCS Solver Installation Help.",
+            )
+            return
+
+        gaia_ok, gaia_detail = _check_gaia_runtime_available()
+        self.log(f"[WCS][Preflight] Gaia: {gaia_detail}")
+        if not gaia_ok:
+            QMessageBox.warning(
+                self,
+                "Gaia Runtime Not Available",
+                f"{gaia_detail}\n\n"
+                "Local astrometry.net can still solve WCS, but Gaia attach, "
+                "refine, residual medians, and Step 6 Gaia stats will be absent "
+                "unless a compatible gaia_fov.ecsv cache already exists.",
+            )
+
         target_coord = None
         ra = getattr(self.params.P, "target_ra_deg", None)
         dec = getattr(self.params.P, "target_dec_deg", None)
@@ -3869,8 +4197,10 @@ class WcsPlateSolvingWindow(StepWindowBase):
 
         self.run_bar_astnet.set_running(True)
         self.astrometrynet_progress.setValue(0)
-        self.astrometrynet_status.setText("Starting local astrometry.net...")
         self._astnet_start_time = time.monotonic()
+        self.astrometrynet_status.setText(
+            progress_status_text(0, len(file_list), self._astnet_start_time, message="Starting local astrometry.net...")
+        )
         self.log("=" * 50)
         self.log("Starting local astrometry.net (solve-field) plate solving...")
         self.log(f"Frames: {len(file_list)}")
@@ -3887,15 +4217,9 @@ class WcsPlateSolvingWindow(StepWindowBase):
     def on_astrometrynet_progress(self, current, total, status):
         pct = int(100 * current / max(1, total))
         self.astrometrynet_progress.setValue(pct)
-        eta_str = ""
-        if current > 0 and total > 0 and hasattr(self, "_astnet_start_time"):
-            elapsed = time.monotonic() - self._astnet_start_time
-            remaining = elapsed / current * (total - current)
-            if remaining < 60:
-                eta_str = f" | ETA {int(remaining)}s"
-            else:
-                eta_str = f" | ETA {int(remaining // 60)}m{int(remaining % 60):02d}s"
-        self.astrometrynet_status.setText(f"{status}{eta_str}")
+        self.astrometrynet_status.setText(
+            progress_status_text(current, total, getattr(self, "_astnet_start_time", None), message=status)
+        )
 
     def on_astrometrynet_file_done(self, filename, result):
         row = self.astrometrynet_results_table.rowCount()
@@ -3942,13 +4266,19 @@ class WcsPlateSolvingWindow(StepWindowBase):
         stopped = bool(summary.get("stopped")) if isinstance(summary, dict) else False
         n_ok = summary.get("ok", 0)
         n_qc = summary.get("wcs_qc_pass", 0)
+        n_qc_not_eval = int(summary.get("wcs_qc_not_evaluated", 0) or 0)
         if not stopped:
             self.astrometrynet_progress.setValue(100)
             self.astrometrynet_status.setText(f"Done: {n_ok}/{summary.get('total', 0)} solved")
         else:
             self.astrometrynet_status.setText(f"Stopped: {n_ok}/{summary.get('total', 0)} solved")
         if n_ok > 0:
-            self.log(f"Astrometry.net: {n_ok} frames solved successfully | WCS-QC pass: {n_qc}")
+            qc_text = (
+                f"WCS-QC not evaluated: {n_qc_not_eval} (Gaia unavailable)"
+                if n_qc_not_eval
+                else f"WCS-QC pass: {n_qc}"
+            )
+            self.log(f"Astrometry.net: {n_ok} frames solved successfully | {qc_text}")
         if stopped:
             self.log("Astrometry.net solve stopped by user")
         self.save_state()
@@ -4014,101 +4344,147 @@ class WcsPlateSolvingWindow(StepWindowBase):
 
     def open_parameters_dialog(self):
         dialog = QDialog(self)
-        dialog.setWindowTitle("WCS Parameters")
-        dialog.resize(560, 720)
+        configure_parameter_dialog(dialog, "WCS Parameters", 560, 720)
 
         layout = QVBoxLayout(dialog)
-        wcs_form = QFormLayout()
+        scroll = QScrollArea(dialog)
+        scroll.setWidgetResizable(True)
+        scroll.setFrameShape(QScrollArea.NoFrame)
+        content = QWidget()
+        body = QVBoxLayout(content)
+        body.setContentsMargins(4, 4, 4, 4)
+        body.setSpacing(8)
+        scroll.setWidget(content)
+        layout.addWidget(scroll, 1)
+
+        _info = QLabel(
+            "Adjust WCS plate-solving parameters. ASTAP and the selected D80/D50 "
+            "star database must be installed outside APEX. See Help > WCS Solver "
+            "Installation Help."
+        )
+        _info.setStyleSheet("QLabel { background-color: #E3F2FD; padding: 10px; margin-bottom: 10px; }")
+        _info.setWordWrap(True)
+        body.addWidget(_info)
+
+        def _add_group(title: str, *, expanded: bool = False) -> QFormLayout:
+            group, container = create_collapsible_section(title, initial_expanded=expanded)
+            form = QFormLayout(container)
+            form.setLabelAlignment(Qt.AlignRight)
+            form.setFieldGrowthPolicy(QFormLayout.AllNonFixedFieldsGrow)
+            body.addWidget(group)
+            return form
+
+        astap_form = _add_group("ASTAP Solver", expanded=True)
+        refine_form = _add_group("WCS Refinement", expanded=True)
+        gaia_form = _add_group("Gaia / Hybrid ID")
 
         self.param_astap_exe = QLineEdit(str(getattr(self.params.P, "astap_exe", "astap_cli.exe")))
-        wcs_form.addRow("ASTAP CLI Path:", self.param_astap_exe)
+        astap_exe_row = QWidget()
+        astap_exe_layout = QHBoxLayout(astap_exe_row)
+        astap_exe_layout.setContentsMargins(0, 0, 0, 0)
+        astap_exe_layout.setSpacing(6)
+        astap_exe_layout.addWidget(self.param_astap_exe, 1)
+        btn_browse_astap = QPushButton("Browse...")
+        btn_browse_astap.clicked.connect(self.browse_astap_cli)
+        astap_exe_layout.addWidget(btn_browse_astap)
+        astap_form.addRow("ASTAP CLI Path:", astap_exe_row)
 
         self.param_timeout = QDoubleSpinBox()
         self.param_timeout.setRange(10, 1000)
         self.param_timeout.setValue(float(getattr(self.params.P, "astap_timeout_s", 120.0)))
-        wcs_form.addRow("Timeout (s):", self.param_timeout)
+        astap_form.addRow("Timeout (s):", self.param_timeout)
 
         self.param_radius = QDoubleSpinBox()
         self.param_radius.setRange(0.5, 30.0)
         self.param_radius.setValue(float(getattr(self.params.P, "astap_search_radius_deg", 8.0)))
-        wcs_form.addRow("Search Radius (deg):", self.param_radius)
+        astap_form.addRow("Search Radius (deg):", self.param_radius)
 
         self.param_astap_db = QComboBox()
-        self.param_astap_db.addItems(["D50", "D80"])
-        current_db = str(getattr(self.params.P, "astap_database", "D50"))
+        self.param_astap_db.addItems(["D80", "D50"])
+        current_db = str(getattr(self.params.P, "astap_database", "D80"))
         idx = self.param_astap_db.findText(current_db)
         if idx >= 0:
             self.param_astap_db.setCurrentIndex(idx)
-        wcs_form.addRow("ASTAP Star DB:", self.param_astap_db)
+        astap_form.addRow("ASTAP Star DB:", self.param_astap_db)
 
         self.param_annotate_variables = QCheckBox("Enable")
         self.param_annotate_variables.setChecked(bool(getattr(self.params.P, "astap_annotate_variables", False)))
         self.param_annotate_variables.setToolTip("ASTAP 변광성 데이터베이스로 변광성 주석 표시 (별도 설치 필요)")
-        wcs_form.addRow("Annotate Variable Stars:", self.param_annotate_variables)
+        astap_form.addRow("Annotate Variable Stars:", self.param_annotate_variables)
 
         self.param_fov_fudge = QDoubleSpinBox()
         self.param_fov_fudge.setRange(0.5, 2.0)
         self.param_fov_fudge.setSingleStep(0.05)
         self.param_fov_fudge.setValue(float(getattr(self.params.P, "astap_fov_fudge", 1.0)))
-        wcs_form.addRow("FOV Fudge:", self.param_fov_fudge)
+        astap_form.addRow("FOV Fudge:", self.param_fov_fudge)
 
         self.param_downsample = QSpinBox()
         self.param_downsample.setRange(1, 8)
         self.param_downsample.setValue(int(getattr(self.params.P, "astap_downsample_z", 2)))
-        wcs_form.addRow("Downsample Z:", self.param_downsample)
+        astap_form.addRow("Downsample Z:", self.param_downsample)
 
         self.param_max_stars = QSpinBox()
         self.param_max_stars.setRange(50, 5000)
         self.param_max_stars.setValue(int(getattr(self.params.P, "astap_max_stars_s", 500)))
-        wcs_form.addRow("Max Stars (S):", self.param_max_stars)
+        astap_form.addRow("Max Stars (S):", self.param_max_stars)
 
         self.param_max_workers = QSpinBox()
         self.param_max_workers.setRange(1, 16)
         self.param_max_workers.setValue(int(getattr(self.params.P, "wcs_max_workers", 1)))
-        wcs_form.addRow("Max Workers:", self.param_max_workers)
+        astap_form.addRow("Max Workers:", self.param_max_workers)
 
         self.param_require_qc = QCheckBox("Enable")
         self.param_require_qc.setChecked(bool(getattr(self.params.P, "wcs_require_qc_pass", True)))
-        wcs_form.addRow("QC Pass Only:", self.param_require_qc)
+        refine_form.addRow("QC Pass Only:", self.param_require_qc)
 
         self.param_refine_enable = QCheckBox("Enable")
         self.param_refine_enable.setChecked(bool(getattr(self.params.P, "wcs_refine_enable", True)))
-        wcs_form.addRow("Refine CRPIX:", self.param_refine_enable)
+        refine_form.addRow("Refine CRPIX:", self.param_refine_enable)
 
         self.param_refine_max_match = QSpinBox()
         self.param_refine_max_match.setRange(50, 5000)
         self.param_refine_max_match.setValue(int(getattr(self.params.P, "wcs_refine_max_match", 600)))
-        wcs_form.addRow("Refine Max Match:", self.param_refine_max_match)
+        refine_form.addRow("Refine Max Match:", self.param_refine_max_match)
 
         self.param_refine_match_r = QDoubleSpinBox()
         self.param_refine_match_r.setRange(0.5, 5.0)
         self.param_refine_match_r.setSingleStep(0.1)
         self.param_refine_match_r.setValue(float(getattr(self.params.P, "wcs_refine_match_r_fwhm", 1.6)))
-        wcs_form.addRow("Refine Match R (×FWHM):", self.param_refine_match_r)
+        refine_form.addRow("Refine Match R (×FWHM):", self.param_refine_match_r)
 
         self.param_refine_min_match = QSpinBox()
         self.param_refine_min_match.setRange(5, 500)
         self.param_refine_min_match.setValue(int(getattr(self.params.P, "wcs_refine_min_match", 50)))
-        wcs_form.addRow("Refine Min Match:", self.param_refine_min_match)
+        refine_form.addRow("Refine Min Match:", self.param_refine_min_match)
 
         self.param_gaia_fudge = QDoubleSpinBox()
         self.param_gaia_fudge.setRange(0.5, 3.0)
         self.param_gaia_fudge.setSingleStep(0.05)
         self.param_gaia_fudge.setValue(float(getattr(self.params.P, "gaia_radius_fudge", 1.35)))
-        wcs_form.addRow("Gaia Radius Fudge:", self.param_gaia_fudge)
+        gaia_form.addRow("Gaia Radius Fudge:", self.param_gaia_fudge)
 
         self.param_gaia_mag_max = QDoubleSpinBox()
         self.param_gaia_mag_max.setRange(10.0, 25.0)
         self.param_gaia_mag_max.setSingleStep(0.5)
         self.param_gaia_mag_max.setValue(float(getattr(self.params.P, "gaia_mag_max", 18.0)))
-        wcs_form.addRow("Gaia Mag Max:", self.param_gaia_mag_max)
+        gaia_form.addRow("Gaia Mag Max:", self.param_gaia_mag_max)
+
+        self.param_gaia_wcs_mag_max = QDoubleSpinBox()
+        self.param_gaia_wcs_mag_max.setRange(10.0, 21.0)
+        self.param_gaia_wcs_mag_max.setSingleStep(0.5)
+        self.param_gaia_wcs_mag_max.setValue(float(getattr(self.params.P, "gaia_wcs_mag_max", 18.0)))
+        self.param_gaia_wcs_mag_max.setToolTip(
+            "Server-side Gaia G magnitude cap used by Step 5 WCS refinement/QC. "
+            "Keep this near 18-20 to avoid TAP timeouts."
+        )
+        gaia_form.addRow("Gaia WCS Mag Max:", self.param_gaia_wcs_mag_max)
 
         self.param_ref_gaia_match_tol = QDoubleSpinBox()
         self.param_ref_gaia_match_tol.setRange(0.1, 30.0)
         self.param_ref_gaia_match_tol.setDecimals(2)
         self.param_ref_gaia_match_tol.setSingleStep(0.1)
         self.param_ref_gaia_match_tol.setValue(float(getattr(self.params.P, "ref_wcs_match_radius_arcsec", 2.0)))
-        wcs_form.addRow("Gaia Match Tol (Ref, arcsec):", self.param_ref_gaia_match_tol)
+        gaia_form.addRow("Gaia Match Tol (Ref, arcsec):", self.param_ref_gaia_match_tol)
 
         self.param_gaia_g_limit = QDoubleSpinBox()
         self.param_gaia_g_limit.setRange(10.0, 25.0)
@@ -4123,24 +4499,33 @@ class WcsPlateSolvingWindow(StepWindowBase):
                 )
             )
         )
-        wcs_form.addRow("Gaia G limit (Hybrid ID):", self.param_gaia_g_limit)
+        gaia_form.addRow("Gaia G limit (Hybrid ID):", self.param_gaia_g_limit)
 
         self.param_gaia_retry = QSpinBox()
         self.param_gaia_retry.setRange(0, 10)
         self.param_gaia_retry.setValue(int(getattr(self.params.P, "gaia_retry", 2)))
-        wcs_form.addRow("Gaia Retry:", self.param_gaia_retry)
+        gaia_form.addRow("Gaia Retry:", self.param_gaia_retry)
+
+        self.param_gaia_timeout = QDoubleSpinBox()
+        self.param_gaia_timeout.setRange(5.0, 300.0)
+        self.param_gaia_timeout.setSingleStep(5.0)
+        self.param_gaia_timeout.setValue(float(getattr(self.params.P, "gaia_timeout_s", 30.0)))
+        self.param_gaia_timeout.setSuffix(" s")
+        gaia_form.addRow("Gaia Timeout:", self.param_gaia_timeout)
 
         self.param_gaia_backoff = QDoubleSpinBox()
         self.param_gaia_backoff.setRange(0.0, 30.0)
         self.param_gaia_backoff.setSingleStep(1.0)
         self.param_gaia_backoff.setValue(float(getattr(self.params.P, "gaia_backoff_s", 6.0)))
-        wcs_form.addRow("Gaia Backoff (s):", self.param_gaia_backoff)
+        gaia_form.addRow("Gaia Backoff (s):", self.param_gaia_backoff)
 
-        self.param_gaia_allow_no_cache = QCheckBox("Allow")
+        self.param_gaia_allow_no_cache = QCheckBox("Allow query when cache missing")
         self.param_gaia_allow_no_cache.setChecked(bool(getattr(self.params.P, "gaia_allow_no_cache", True)))
-        wcs_form.addRow("Gaia Allow No Cache:", self.param_gaia_allow_no_cache)
-
-        layout.addLayout(wcs_form)
+        self.param_gaia_allow_no_cache.setToolTip(
+            "This is not a reuse-cache toggle. It controls whether Step 5 may query Gaia online "
+            "when no local Gaia cache exists."
+        )
+        gaia_form.addRow("Gaia cache miss:", self.param_gaia_allow_no_cache)
 
         buttons = QDialogButtonBox(QDialogButtonBox.Save | QDialogButtonBox.Cancel)
         buttons.accepted.connect(lambda: self.save_parameters(dialog))
@@ -4150,11 +4535,38 @@ class WcsPlateSolvingWindow(StepWindowBase):
 
     def open_astrometrynet_parameters_dialog(self):
         dialog = QDialog(self)
-        dialog.setWindowTitle("Astrometry.net Parameters")
-        dialog.resize(520, 600)
+        configure_parameter_dialog(dialog, "Astrometry.net Parameters", 540, 620)
 
         layout = QVBoxLayout(dialog)
-        form = QFormLayout()
+        scroll = QScrollArea(dialog)
+        scroll.setWidgetResizable(True)
+        scroll.setFrameShape(QScrollArea.NoFrame)
+        content = QWidget()
+        body = QVBoxLayout(content)
+        body.setContentsMargins(4, 4, 4, 4)
+        body.setSpacing(8)
+        scroll.setWidget(content)
+        layout.addWidget(scroll, 1)
+
+        _info = QLabel(
+            "Configure Astrometry.net local solver as a fallback for ASTAP failures. "
+            "Local solve-field and matching index files must be installed outside APEX. "
+            "See Help > WCS Solver Installation Help."
+        )
+        _info.setStyleSheet("QLabel { background-color: #E3F2FD; padding: 10px; margin-bottom: 10px; }")
+        _info.setWordWrap(True)
+        body.addWidget(_info)
+
+        def _add_group(title: str, *, expanded: bool = False) -> QFormLayout:
+            group, container = create_collapsible_section(title, initial_expanded=expanded)
+            form = QFormLayout(container)
+            form.setLabelAlignment(Qt.AlignRight)
+            form.setFieldGrowthPolicy(QFormLayout.AllNonFixedFieldsGrow)
+            body.addWidget(group)
+            return form
+
+        form = _add_group("Local Solve", expanded=True)
+        retry_form = _add_group("Blind Retry")
 
         self.param_astnet_enable = QCheckBox("Enable")
         self.param_astnet_enable.setChecked(bool(getattr(self.params.P, "astnet_local_enable", False)))
@@ -4201,8 +4613,11 @@ class WcsPlateSolvingWindow(StepWindowBase):
         )
         form.addRow("Keep Debug Outputs:", self.param_astnet_keep_outputs)
 
-        self.param_astnet_use_cache = QCheckBox("Use Cache")
-        self.param_astnet_use_cache.setChecked(bool(getattr(self.params.P, "astnet_local_use_cache", True)))
+        self.param_astnet_use_cache = create_cache_checkbox(
+            "Use Cache",
+            bool(getattr(self.params.P, "astnet_local_use_cache", True)),
+            "Reuse compatible local astrometry.net sidecar outputs instead of running solve-field again.",
+        )
         form.addRow("Use Cached Outputs:", self.param_astnet_use_cache)
 
         self.param_astnet_max_objs = QSpinBox()
@@ -4215,25 +4630,33 @@ class WcsPlateSolvingWindow(StepWindowBase):
         self.param_astnet_cpulimit.setValue(float(getattr(self.params.P, "astnet_local_cpulimit_s", 30.0)))
         form.addRow("CPU Limit (s):", self.param_astnet_cpulimit)
 
-        form.addRow(QLabel("── Blind retry ─────────────────────────"))
-
         self.param_astnet_blind_retry = QCheckBox("Retry blind when hint-based solve fails")
         self.param_astnet_blind_retry.setChecked(bool(getattr(self.params.P, "astnet_blind_retry_on_fail", True)))
-        form.addRow("Blind Retry:", self.param_astnet_blind_retry)
+        retry_form.addRow("Blind Retry:", self.param_astnet_blind_retry)
 
         self.param_astnet_blind_cpulimit = QDoubleSpinBox()
         self.param_astnet_blind_cpulimit.setRange(10, 600)
         self.param_astnet_blind_cpulimit.setValue(float(getattr(self.params.P, "astnet_blind_cpulimit_s", 120.0)))
         self.param_astnet_blind_cpulimit.setSuffix(" s")
-        form.addRow("Blind CPU Limit:", self.param_astnet_blind_cpulimit)
-
-        layout.addLayout(form)
+        retry_form.addRow("Blind CPU Limit:", self.param_astnet_blind_cpulimit)
 
         buttons = QDialogButtonBox(QDialogButtonBox.Save | QDialogButtonBox.Cancel)
         buttons.accepted.connect(lambda: self.save_astrometrynet_parameters(dialog))
         buttons.rejected.connect(dialog.reject)
         layout.addWidget(buttons)
         dialog.exec_()
+
+    def browse_astap_cli(self):
+        current = _strip_outer_quotes(self.param_astap_exe.text())
+        start_dir = Path(current).parent if current and Path(current).parent.exists() else Path.home()
+        path, _ = QFileDialog.getOpenFileName(
+            self,
+            "Select ASTAP CLI executable",
+            str(start_dir),
+            "ASTAP CLI (astap_cli.exe);;Executables (*.exe);;All Files (*)",
+        )
+        if path:
+            self.param_astap_exe.setText(path)
 
     def save_parameters(self, dialog):
         self.params.P.astap_exe = self.param_astap_exe.text().strip()
@@ -4252,9 +4675,11 @@ class WcsPlateSolvingWindow(StepWindowBase):
         self.params.P.wcs_refine_min_match = self.param_refine_min_match.value()
         self.params.P.gaia_radius_fudge = self.param_gaia_fudge.value()
         self.params.P.gaia_mag_max = self.param_gaia_mag_max.value()
+        self.params.P.gaia_wcs_mag_max = self.param_gaia_wcs_mag_max.value()
         self.params.P.ref_wcs_match_radius_arcsec = self.param_ref_gaia_match_tol.value()
         self.params.P.idmatch_gaia_g_limit = self.param_gaia_g_limit.value()
         self.params.P.gaia_retry = self.param_gaia_retry.value()
+        self.params.P.gaia_timeout_s = self.param_gaia_timeout.value()
         self.params.P.gaia_backoff_s = self.param_gaia_backoff.value()
         self.params.P.gaia_allow_no_cache = self.param_gaia_allow_no_cache.isChecked()
         self.persist_params()
@@ -4314,6 +4739,57 @@ class WcsPlateSolvingWindow(StepWindowBase):
             self.log(qc_log)
         self.stop_requested = False
 
+        astap_ok, astap_detail = _check_astap_available(self.params)
+        astnet_enabled = bool(getattr(self.params.P, "astnet_local_enable", False))
+        self.log(f"[WCS][Preflight] ASTAP: {astap_detail}")
+        if astnet_enabled and not astap_ok:
+            astnet_ok, astnet_detail = _check_astnet_available(self.params)
+            self.log(f"[WCS][Preflight] astrometry.net: {astnet_detail}")
+        else:
+            astnet_ok = False
+            astnet_detail = (
+                "local astrometry.net fallback deferred until ASTAP fails"
+                if astnet_enabled
+                else "local astrometry.net fallback disabled"
+            )
+            if not astap_ok:
+                self.log(f"[WCS][Preflight] astrometry.net: {astnet_detail}")
+
+        gaia_ok, gaia_detail = _check_gaia_runtime_available()
+        self.log(f"[WCS][Preflight] Gaia: {gaia_detail}")
+        if not gaia_ok:
+            QMessageBox.warning(
+                self,
+                "Gaia Runtime Not Available",
+                f"{gaia_detail}\n\n"
+                "ASTAP can still solve WCS, but Gaia attach, refine, residual "
+                "medians, and Step 6 Gaia stats will be absent unless a compatible "
+                "gaia_fov.ecsv cache already exists.",
+            )
+
+        if not astap_ok and not astnet_ok:
+            self.progress_label.setText("WCS solver not found or not configured")
+            QMessageBox.warning(
+                self,
+                "WCS Solver Not Found",
+                f"{astap_detail}\n\n{astnet_detail}\n\n"
+                "Install ASTAP with a D80/D50 star database, or enable/install local "
+                "astrometry.net with matching index files. See Help > WCS Solver "
+                "Installation Help.",
+            )
+            return
+
+        if not astap_ok and astnet_ok:
+            self.progress_label.setText("ASTAP not found; using local astrometry.net fallback")
+            QMessageBox.information(
+                self,
+                "ASTAP Not Found",
+                f"{astap_detail}\n\n"
+                "Local astrometry.net is enabled and available, so APEX will continue "
+                "with solve-field fallback. See Help > WCS Solver Installation Help "
+                "for ASTAP/D80/D50 setup.",
+            )
+
         # Get target from params.P (loaded from TOML)
         target_coord = None
         ra = getattr(self.params.P, "target_ra_deg", None)
@@ -4335,6 +4811,7 @@ class WcsPlateSolvingWindow(StepWindowBase):
         )
         self.worker.progress.connect(self.on_progress)
         self.worker.file_done.connect(self.on_file_done)
+        self.worker.log_message.connect(self.log)
         self.worker.finished.connect(self.on_finished)
         self.worker.error.connect(self.on_error)
         self.setup_log_window()
@@ -4344,9 +4821,11 @@ class WcsPlateSolvingWindow(StepWindowBase):
 
         self.run_bar_astap.set_running(True)
         self.progress_bar.setValue(0)
-        self.progress_bar.setMaximum(len(self.file_list))
-        self.progress_label.setText(f"0/{len(self.file_list)} | Starting...")
+        self.progress_bar.setMaximum(len(file_list))
         self._wcs_start_time = time.monotonic()
+        self.progress_label.setText(
+            progress_status_text(0, len(file_list), self._wcs_start_time, message="Starting...")
+        )
         self.worker.start()
         self.show_log_window()
 
@@ -4360,15 +4839,9 @@ class WcsPlateSolvingWindow(StepWindowBase):
 
     def on_progress(self, current, total, filename):
         self.progress_bar.setValue(current)
-        eta_str = ""
-        if current > 0 and total > 0 and hasattr(self, "_wcs_start_time"):
-            elapsed = time.monotonic() - self._wcs_start_time
-            remaining = elapsed / current * (total - current)
-            if remaining < 60:
-                eta_str = f" | ETA {int(remaining)}s"
-            else:
-                eta_str = f" | ETA {int(remaining // 60)}m{int(remaining % 60):02d}s"
-        self.progress_label.setText(f"{current}/{total}{eta_str} | {filename}")
+        self.progress_label.setText(
+            progress_status_text(current, total, getattr(self, "_wcs_start_time", None), message=filename)
+        )
 
     @staticmethod
     def _boolish(value) -> bool:
@@ -4443,6 +4916,37 @@ class WcsPlateSolvingWindow(StepWindowBase):
         except Exception:
             pass
 
+    @staticmethod
+    def _wcs_failure_detail(result: dict, *, limit: int = 260) -> str:
+        reason = str(result.get("fail_reason", "") or "").strip()
+        for key in (
+            "astap_stderr",
+            "astap_stdout",
+            "astnet_wsl_stderr",
+            "astnet_wsl_stdout",
+        ):
+            tail = _tail_text(result.get(key), limit=limit, max_lines=2)
+            if tail:
+                return f"{reason} | {tail}" if reason else tail
+        return reason
+
+    @staticmethod
+    def _wcs_failure_tooltip(result: dict) -> str:
+        parts: list[str] = []
+        reason = str(result.get("fail_reason", "") or "").strip()
+        if reason:
+            parts.append(f"reason: {reason}")
+        for label, key in (
+            ("ASTAP stderr", "astap_stderr"),
+            ("ASTAP stdout", "astap_stdout"),
+            ("astrometry.net stderr", "astnet_wsl_stderr"),
+            ("astrometry.net stdout", "astnet_wsl_stdout"),
+        ):
+            tail = _tail_text(result.get(key), limit=900, max_lines=5)
+            if tail:
+                parts.append(f"{label}: {tail}")
+        return "\n".join(parts)
+
     def on_file_done(self, filename, result):
         if self._is_successful_wcs_result(result):
             self.results[filename] = result
@@ -4451,24 +4955,44 @@ class WcsPlateSolvingWindow(StepWindowBase):
         row = self.results_table.rowCount()
         self.results_table.insertRow(row)
         self.results_table.setItem(row, 0, QTableWidgetItem(filename))
-        self.results_table.setItem(row, 1, QTableWidgetItem(str(result.get("status", ""))))
+        status_item = QTableWidgetItem(str(result.get("status", "")))
+        if not self._is_successful_wcs_result(result):
+            tooltip = self._wcs_failure_tooltip(result)
+            if tooltip:
+                status_item.setToolTip(tooltip)
+        self.results_table.setItem(row, 1, status_item)
         pix_fit = result.get("pix_fit")
         pix_str = f"{pix_fit:.4f}" if isinstance(pix_fit, float) and np.isfinite(pix_fit) else "-"
         self.results_table.setItem(row, 2, QTableWidgetItem(pix_str))
         refine = result.get("refine", "")
         self.results_table.setItem(row, 3, QTableWidgetItem(str(refine)))
         resid_med = result.get("resid_med")
-        resid_str = f"{resid_med:.3f}" if isinstance(resid_med, float) and np.isfinite(resid_med) else "-"
+        if isinstance(resid_med, float) and np.isfinite(resid_med):
+            resid_str = f"{resid_med:.3f}\""
+        else:
+            resid_px = result.get("resid_med_px")
+            resid_str = f"{resid_px:.3f}px" if isinstance(resid_px, float) and np.isfinite(resid_px) else "-"
         self.results_table.setItem(row, 4, QTableWidgetItem(resid_str))
         elapsed = result.get("elapsed", 0.0)
         self.results_table.setItem(row, 5, QTableWidgetItem(f"{elapsed:.1f}"))
         pix_fit_log = result.get("pix_fit")
         pix_log = f"{pix_fit_log:.4f}" if isinstance(pix_fit_log, float) and np.isfinite(pix_fit_log) else "-"
         resid_log = result.get("resid_med")
-        resid_str = f"{resid_log:.3f}" if isinstance(resid_log, float) and np.isfinite(resid_log) else "-"
-        self.log(f"{filename}: {result.get('status', '')} pix={pix_log} refine={refine or '-'} resid_med={resid_str}")
+        if isinstance(resid_log, float) and np.isfinite(resid_log):
+            resid_str = f"{resid_log:.3f}\""
+        else:
+            resid_px = result.get("resid_med_px")
+            resid_str = f"{resid_px:.3f}px" if isinstance(resid_px, float) and np.isfinite(resid_px) else "-"
         if self._is_successful_wcs_result(result):
+            self.log(f"{filename}: {result.get('status', '')} pix={pix_log} refine={refine or '-'} resid_med={resid_str}")
             self._write_wcs_manifest(filename, result)
+        else:
+            detail = self._wcs_failure_detail(result)
+            detail_txt = f" reason={detail}" if detail else ""
+            self.log(
+                f"{filename}: {result.get('status', '')} pix={pix_log} "
+                f"refine={refine or '-'} resid_med={resid_str}{detail_txt}"
+            )
 
     def on_error(self, filename, error):
         self.log(f"ERROR {filename}: {error}")
@@ -4477,12 +5001,18 @@ class WcsPlateSolvingWindow(StepWindowBase):
         self.run_bar_astap.set_running(False)
         self.stop_requested = False
         stopped = bool(summary.get("stopped")) if isinstance(summary, dict) else False
-        self.progress_label.setText("Stopped" if stopped else "Done")
+        elapsed_txt = ""
+        if hasattr(self, "_wcs_start_time"):
+            elapsed_txt = f" | elapsed {format_duration(time.monotonic() - self._wcs_start_time)}"
+        self.progress_label.setText(("Stopped" if stopped else "Done") + elapsed_txt)
         if summary:
-            self.log(
-                f"WCS done: {summary.get('ok', 0)}/{summary.get('total', 0)} OK | "
-                f"WCS-QC pass: {summary.get('wcs_qc_pass', 0)}"
+            qc_not_eval = int(summary.get("wcs_qc_not_evaluated", 0) or 0)
+            qc_text = (
+                f"WCS-QC not evaluated: {qc_not_eval} (Gaia unavailable)"
+                if qc_not_eval
+                else f"WCS-QC pass: {summary.get('wcs_qc_pass', 0)}"
             )
+            self.log(f"WCS done: {summary.get('ok', 0)}/{summary.get('total', 0)} OK | {qc_text}")
         self.save_state()
         self.update_navigation_buttons()
 
@@ -4497,7 +5027,7 @@ class WcsPlateSolvingWindow(StepWindowBase):
             "astap_exe": getattr(self.params.P, "astap_exe", "astap_cli.exe"),
             "astap_timeout_s": getattr(self.params.P, "astap_timeout_s", 120.0),
             "astap_search_radius_deg": getattr(self.params.P, "astap_search_radius_deg", 8.0),
-            "astap_database": getattr(self.params.P, "astap_database", "D50"),
+            "astap_database": getattr(self.params.P, "astap_database", "D80"),
             "astap_annotate_variables": getattr(self.params.P, "astap_annotate_variables", False),
             "astap_fov_fudge": getattr(self.params.P, "astap_fov_fudge", 1.0),
             "astap_downsample_z": getattr(self.params.P, "astap_downsample_z", 2),
@@ -4510,7 +5040,9 @@ class WcsPlateSolvingWindow(StepWindowBase):
             "wcs_refine_min_match": getattr(self.params.P, "wcs_refine_min_match", 50),
             "gaia_radius_fudge": getattr(self.params.P, "gaia_radius_fudge", 1.35),
             "gaia_mag_max": getattr(self.params.P, "gaia_mag_max", 18.0),
+            "gaia_wcs_mag_max": getattr(self.params.P, "gaia_wcs_mag_max", 18.0),
             "gaia_retry": getattr(self.params.P, "gaia_retry", 2),
+            "gaia_timeout_s": getattr(self.params.P, "gaia_timeout_s", 30.0),
             "gaia_backoff_s": getattr(self.params.P, "gaia_backoff_s", 6.0),
             "gaia_allow_no_cache": getattr(self.params.P, "gaia_allow_no_cache", True),
         }

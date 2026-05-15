@@ -6,8 +6,8 @@ This is a string-literal inventory, not a final cache schema. It is meant
 to expose current cache/output naming before a shared cache manager is
 introduced.
 
-- files with cache/output literals: `63`
-- distinct file/literal pairs: `1184`
+- files with cache/output literals: `66`
+- distinct file/literal pairs: `1223`
 
 | file | literal | count |
 | --- | --- | --- |
@@ -23,18 +23,17 @@ introduced.
 | apex/analysis/light_curve/period_io_service.py | period_analysis_{flt}_ID{target_id}.json | 1 |
 | apex/analysis/light_curve/period_io_service.py | periodogram_{flt}_{key}_ID{target_id}.csv | 1 |
 | apex/analysis/merge/workspace_build.py | file_path_map.json | 1 |
+| apex/analysis/merge/workspace_build.py | filter_frames.json | 1 |
 | apex/analysis/merge/workspace_build.py | headers.csv | 1 |
 | apex/analysis/merge/workspace_build.py | id_mapping_{flt}.csv | 1 |
-| apex/analysis/merge/workspace_build.py | idmatch_{merged_fname}.csv | 1 |
 | apex/analysis/merge/workspace_build.py | master_catalog_{flt}.tsv | 1 |
+| apex/analysis/merge/workspace_build.py | master_sources.csv | 1 |
 | apex/analysis/merge/workspace_build.py | merge_id_map.csv | 1 |
 | apex/analysis/merge/workspace_build.py | merge_manifest.json | 1 |
 | apex/analysis/merge/workspace_build.py | night_assignments.json | 1 |
 | apex/analysis/merge/workspace_build.py | photometry_index.csv | 1 |
+| apex/analysis/merge/workspace_build.py | photometry_{merged_fname}.tsv | 1 |
 | apex/analysis/merge/workspace_build.py | selection_{flt}.json | 1 |
-| apex/analysis/merge/workspace_build.py | step8_filter_frames.json | 1 |
-| apex/analysis/merge/workspace_build.py | step8_master_sources.csv | 1 |
-| apex/analysis/merge/workspace_build.py | {merged_fname}_photometry.tsv | 1 |
 | apex/analysis/merge/workspace_scan.py | Cheap signature for cache invalidation during folder scan. | 1 |
 | apex/analysis/merge/workspace_scan.py | lightcurve_*.csv | 2 |
 | apex/analysis/merge/workspace_scan.py | master_catalog_ | 2 |
@@ -43,15 +42,20 @@ introduced.
 | apex/analysis/merge/workspace_scan.py | run_manifest.json | 1 |
 | apex/analysis/merge/workspace_scan.py | selection_*.json | 4 |
 | apex/config/parameter_map.py | allow_no_cache | 3 |
-| apex/config/parameter_map.py | apcorr | 42 |
+| apex/config/parameter_map.py | apcorr | 46 |
 | apex/config/parameter_map.py | apcorr_apply | 3 |
+| apex/config/parameter_map.py | apcorr_flux_pct | 1 |
+| apex/config/parameter_map.py | apcorr_isolation_factor | 1 |
 | apex/config/parameter_map.py | apcorr_large_scale | 3 |
 | apex/config/parameter_map.py | apcorr_large_scale_max | 3 |
 | apex/config/parameter_map.py | apcorr_large_scale_min | 3 |
 | apex/config/parameter_map.py | apcorr_max_pairs | 3 |
 | apex/config/parameter_map.py | apcorr_max_sources | 3 |
 | apex/config/parameter_map.py | apcorr_min_gap_fwhm | 3 |
+| apex/config/parameter_map.py | apcorr_min_snr | 1 |
 | apex/config/parameter_map.py | apcorr_optimize_scales | 3 |
+| apex/config/parameter_map.py | apcorr_scale_max | 1 |
+| apex/config/parameter_map.py | apcorr_scale_min | 1 |
 | apex/config/parameter_map.py | apcorr_scale_step | 3 |
 | apex/config/parameter_map.py | apcorr_scatter_max | 3 |
 | apex/config/parameter_map.py | apcorr_small_scale | 3 |
@@ -66,6 +70,7 @@ introduced.
 | apex/config/parameter_map.py | detect_mode | 2 |
 | apex/config/parameter_map.py | detect_progress_bar | 6 |
 | apex/config/parameter_map.py | detect_sigma | 4 |
+| apex/config/parameter_map.py | detect_sigma_by_filter | 1 |
 | apex/config/parameter_map.py | detect_sigma_g | 3 |
 | apex/config/parameter_map.py | detect_sigma_i | 3 |
 | apex/config/parameter_map.py | detect_sigma_r | 3 |
@@ -119,9 +124,9 @@ introduced.
 | apex/config/parameter_map.py | ref_wcs_min_match_n | 2 |
 | apex/config/parameter_map.py | ref_wcs_min_match_rate | 2 |
 | apex/config/parameter_map.py | require_wcs_ok | 3 |
-| apex/config/parameter_map.py | step9_use_cache | 4 |
+| apex/config/parameter_map.py | source_quality_apcorr_flux_pct | 1 |
 | apex/config/parameter_map.py | use_wcs_qc_gate | 3 |
-| apex/config/parameter_map.py | wcs | 82 |
+| apex/config/parameter_map.py | wcs | 83 |
 | apex/config/parameter_map.py | wcs_header_coord_max_sep_deg | 2 |
 | apex/config/parameter_map.py | wcs_header_coord_warn_sep_deg | 2 |
 | apex/config/parameter_map.py | wcs_match_radius_arcsec | 6 |
@@ -153,145 +158,206 @@ introduced.
 | apex/config/parameter_map.py | wcs_refine_min_match | 3 |
 | apex/config/parameter_map.py | wcs_require_qc_pass | 3 |
 | apex/config/parameters_cmd.py | CACHE_DIR     : {P.cache_dir} | 1 |
-| apex/config/parameters_cmd.py | apcorr | 1 |
-| apex/config/parameters_cmd.py | apcorr_apply | 1 |
+| apex/config/parameters_cmd.py | allow_no_cache | 1 |
+| apex/config/parameters_cmd.py | apcorr | 15 |
+| apex/config/parameters_cmd.py | apcorr_apply | 2 |
 | apex/config/parameters_cmd.py | apcorr_isolation_factor | 1 |
-| apex/config/parameters_cmd.py | apcorr_large_ref_scale | 1 |
-| apex/config/parameters_cmd.py | apcorr_max_sources | 1 |
+| apex/config/parameters_cmd.py | apcorr_large_ref_scale | 2 |
+| apex/config/parameters_cmd.py | apcorr_large_scale | 3 |
+| apex/config/parameters_cmd.py | apcorr_large_scale_max | 1 |
+| apex/config/parameters_cmd.py | apcorr_large_scale_min | 1 |
+| apex/config/parameters_cmd.py | apcorr_max_pairs | 1 |
+| apex/config/parameters_cmd.py | apcorr_max_sources | 2 |
+| apex/config/parameters_cmd.py | apcorr_min_gap_fwhm | 1 |
+| apex/config/parameters_cmd.py | apcorr_min_snr | 1 |
+| apex/config/parameters_cmd.py | apcorr_optimize_scales | 1 |
 | apex/config/parameters_cmd.py | apcorr_scale_max | 1 |
 | apex/config/parameters_cmd.py | apcorr_scale_min | 1 |
-| apex/config/parameters_cmd.py | apcorr_scale_step | 1 |
-| apex/config/parameters_cmd.py | apcorr_scatter_max | 1 |
-| apex/config/parameters_cmd.py | apcorr_use_min_n | 1 |
-| apex/config/parameters_cmd.py | astnet_local_use_cache | 1 |
+| apex/config/parameters_cmd.py | apcorr_scale_step | 2 |
+| apex/config/parameters_cmd.py | apcorr_scatter_max | 2 |
+| apex/config/parameters_cmd.py | apcorr_small_scale | 1 |
+| apex/config/parameters_cmd.py | apcorr_small_scale_max | 1 |
+| apex/config/parameters_cmd.py | apcorr_small_scale_min | 1 |
+| apex/config/parameters_cmd.py | apcorr_use_min_n | 2 |
+| apex/config/parameters_cmd.py | astnet_local_use_cache | 3 |
 | apex/config/parameters_cmd.py | cache | 1 |
-| apex/config/parameters_cmd.py | cache_dir | 1 |
-| apex/config/parameters_cmd.py | detect_cache_strategy | 1 |
-| apex/config/parameters_cmd.py | detect_engine | 1 |
-| apex/config/parameters_cmd.py | detect_keep_max | 1 |
-| apex/config/parameters_cmd.py | detect_mode | 1 |
+| apex/config/parameters_cmd.py | cache_dir | 3 |
+| apex/config/parameters_cmd.py | detect_cache_strategy | 3 |
+| apex/config/parameters_cmd.py | detect_engine | 2 |
+| apex/config/parameters_cmd.py | detect_keep_max | 2 |
+| apex/config/parameters_cmd.py | detect_mode | 2 |
 | apex/config/parameters_cmd.py | detect_mode   : {getattr(P,  | 1 |
-| apex/config/parameters_cmd.py | detect_progress_bar | 1 |
-| apex/config/parameters_cmd.py | detect_sigma | 1 |
+| apex/config/parameters_cmd.py | detect_progress_bar | 3 |
+| apex/config/parameters_cmd.py | detect_sigma | 2 |
 | apex/config/parameters_cmd.py | detect_sigma  : base={P.detect_sigma} \| g={P.detect_sigma_g} r={P.detect_sigma_r} i={P.detect_sigma_i} | 1 |
-| apex/config/parameters_cmd.py | detect_sigma_g | 1 |
-| apex/config/parameters_cmd.py | detect_sigma_i | 1 |
-| apex/config/parameters_cmd.py | detect_sigma_r | 1 |
-| apex/config/parameters_cmd.py | force_idmatch | 1 |
-| apex/config/parameters_cmd.py | gaia_allow_no_cache | 1 |
-| apex/config/parameters_cmd.py | idmatch_adaptive_retry_threshold | 1 |
-| apex/config/parameters_cmd.py | idmatch_fwhm_adaptive_floor | 1 |
-| apex/config/parameters_cmd.py | idmatch_gaia_g_limit | 1 |
-| apex/config/parameters_cmd.py | idmatch_geom_correction_enable | 1 |
-| apex/config/parameters_cmd.py | idmatch_loose_radius_arcsec | 1 |
-| apex/config/parameters_cmd.py | idmatch_match_r_fwhm | 1 |
-| apex/config/parameters_cmd.py | idmatch_min_affine_pairs | 1 |
-| apex/config/parameters_cmd.py | idmatch_min_correction_pairs | 1 |
-| apex/config/parameters_cmd.py | idmatch_mode | 1 |
+| apex/config/parameters_cmd.py | detect_sigma_by_filter | 1 |
+| apex/config/parameters_cmd.py | detect_sigma_g | 2 |
+| apex/config/parameters_cmd.py | detect_sigma_i | 2 |
+| apex/config/parameters_cmd.py | detect_sigma_r | 2 |
+| apex/config/parameters_cmd.py | force_idmatch | 2 |
+| apex/config/parameters_cmd.py | gaia_allow_no_cache | 2 |
+| apex/config/parameters_cmd.py | idmatch | 22 |
+| apex/config/parameters_cmd.py | idmatch_adaptive_retry_threshold | 2 |
+| apex/config/parameters_cmd.py | idmatch_fwhm_adaptive_floor | 2 |
+| apex/config/parameters_cmd.py | idmatch_gaia_g_limit | 3 |
+| apex/config/parameters_cmd.py | idmatch_geom_correction_enable | 2 |
+| apex/config/parameters_cmd.py | idmatch_loose_radius_arcsec | 2 |
+| apex/config/parameters_cmd.py | idmatch_match_r_fwhm | 2 |
+| apex/config/parameters_cmd.py | idmatch_min_affine_pairs | 2 |
+| apex/config/parameters_cmd.py | idmatch_min_correction_pairs | 2 |
+| apex/config/parameters_cmd.py | idmatch_mode | 2 |
 | apex/config/parameters_cmd.py | idmatch_mode  : {getattr(P,  | 1 |
-| apex/config/parameters_cmd.py | idmatch_tight_radius_arcsec | 1 |
-| apex/config/parameters_cmd.py | idmatch_tol_arcsec | 1 |
-| apex/config/parameters_cmd.py | idmatch_tol_px | 1 |
-| apex/config/parameters_cmd.py | idmatch_two_pass_enable | 1 |
-| apex/config/parameters_cmd.py | idmatch_use_gaia_refs_only | 2 |
-| apex/config/parameters_cmd.py | idmatch_use_qc_pass_only | 1 |
-| apex/config/parameters_cmd.py | idmatch_use_wcs_qc_gate | 1 |
-| apex/config/parameters_cmd.py | idmatch_wcs_qc_max_p99_px | 1 |
-| apex/config/parameters_cmd.py | idmatch_wcs_qc_max_rms_px | 1 |
-| apex/config/parameters_cmd.py | idmatch_wcs_qc_min_inlier_rate | 1 |
-| apex/config/parameters_cmd.py | idmatch_wcs_qc_min_match_n | 1 |
-| apex/config/parameters_cmd.py | idmatch_wcs_qc_min_match_rate | 1 |
-| apex/config/parameters_cmd.py | psf_redetect_round_abs_max | 1 |
-| apex/config/parameters_cmd.py | psf_redetect_sharp_hi | 1 |
-| apex/config/parameters_cmd.py | psf_redetect_sharp_lo | 1 |
-| apex/config/parameters_cmd.py | psf_redetect_sigma | 1 |
-| apex/config/parameters_cmd.py | psf_redetect_sigma_g | 1 |
-| apex/config/parameters_cmd.py | psf_redetect_sigma_i | 1 |
-| apex/config/parameters_cmd.py | psf_redetect_sigma_r | 1 |
-| apex/config/parameters_cmd.py | ref_wcs_match_radius_arcsec | 1 |
-| apex/config/parameters_cmd.py | resume_mode   : {P.resume_mode} \| step9_use_cache={getattr(P,  | 1 |
-| apex/config/parameters_cmd.py | step9_use_cache | 1 |
-| apex/config/parameters_cmd.py | wcs_header_coord_max_sep_deg | 1 |
-| apex/config/parameters_cmd.py | wcs_header_coord_warn_sep_deg | 1 |
-| apex/config/parameters_cmd.py | wcs_max_workers | 1 |
-| apex/config/parameters_cmd.py | wcs_qc_clip_sigma | 1 |
-| apex/config/parameters_cmd.py | wcs_qc_match_radius_arcsec | 1 |
-| apex/config/parameters_cmd.py | wcs_qc_max_center_offset_arcsec | 1 |
-| apex/config/parameters_cmd.py | wcs_qc_max_edge_ratio | 1 |
-| apex/config/parameters_cmd.py | wcs_qc_max_p99_px | 1 |
-| apex/config/parameters_cmd.py | wcs_qc_max_rms_px | 1 |
-| apex/config/parameters_cmd.py | wcs_qc_min_inlier_rate | 1 |
-| apex/config/parameters_cmd.py | wcs_qc_min_match_n | 1 |
-| apex/config/parameters_cmd.py | wcs_qc_min_match_rate | 1 |
-| apex/config/parameters_cmd.py | wcs_qc_require_wcs_ok | 1 |
-| apex/config/parameters_cmd.py | wcs_refine | 1 |
-| apex/config/parameters_cmd.py | wcs_refine_enable | 3 |
-| apex/config/parameters_cmd.py | wcs_refine_match_r_fwhm | 1 |
-| apex/config/parameters_cmd.py | wcs_refine_max_match | 1 |
-| apex/config/parameters_cmd.py | wcs_refine_min_match | 1 |
-| apex/config/parameters_cmd.py | wcs_require_qc_pass | 1 |
+| apex/config/parameters_cmd.py | idmatch_tight_radius_arcsec | 2 |
+| apex/config/parameters_cmd.py | idmatch_tol_arcsec | 2 |
+| apex/config/parameters_cmd.py | idmatch_tol_px | 2 |
+| apex/config/parameters_cmd.py | idmatch_two_pass_enable | 2 |
+| apex/config/parameters_cmd.py | idmatch_use_gaia_refs_only | 3 |
+| apex/config/parameters_cmd.py | idmatch_use_qc_pass_only | 2 |
+| apex/config/parameters_cmd.py | idmatch_use_wcs_qc_gate | 2 |
+| apex/config/parameters_cmd.py | idmatch_wcs_qc_max_p99_px | 2 |
+| apex/config/parameters_cmd.py | idmatch_wcs_qc_max_rms_px | 2 |
+| apex/config/parameters_cmd.py | idmatch_wcs_qc_min_inlier_rate | 2 |
+| apex/config/parameters_cmd.py | idmatch_wcs_qc_min_match_n | 2 |
+| apex/config/parameters_cmd.py | idmatch_wcs_qc_min_match_rate | 2 |
+| apex/config/parameters_cmd.py | psf_redetect_round_abs_max | 2 |
+| apex/config/parameters_cmd.py | psf_redetect_sharp_hi | 2 |
+| apex/config/parameters_cmd.py | psf_redetect_sharp_lo | 2 |
+| apex/config/parameters_cmd.py | psf_redetect_sigma | 2 |
+| apex/config/parameters_cmd.py | psf_redetect_sigma_g | 2 |
+| apex/config/parameters_cmd.py | psf_redetect_sigma_i | 2 |
+| apex/config/parameters_cmd.py | psf_redetect_sigma_r | 2 |
+| apex/config/parameters_cmd.py | redetect_round_abs_max | 1 |
+| apex/config/parameters_cmd.py | redetect_sharp_hi | 1 |
+| apex/config/parameters_cmd.py | redetect_sharp_lo | 1 |
+| apex/config/parameters_cmd.py | redetect_sigma | 1 |
+| apex/config/parameters_cmd.py | redetect_sigma_g | 1 |
+| apex/config/parameters_cmd.py | redetect_sigma_i | 1 |
+| apex/config/parameters_cmd.py | redetect_sigma_r | 1 |
+| apex/config/parameters_cmd.py | ref_wcs_match_radius_arcsec | 3 |
+| apex/config/parameters_cmd.py | require_wcs_ok | 1 |
+| apex/config/parameters_cmd.py | source_quality_apcorr_flux_pct | 1 |
+| apex/config/parameters_cmd.py | use_wcs_qc_gate | 1 |
+| apex/config/parameters_cmd.py | wcs | 25 |
+| apex/config/parameters_cmd.py | wcs_header_coord_max_sep_deg | 2 |
+| apex/config/parameters_cmd.py | wcs_header_coord_warn_sep_deg | 2 |
+| apex/config/parameters_cmd.py | wcs_match_radius_arcsec | 2 |
+| apex/config/parameters_cmd.py | wcs_max_workers | 2 |
+| apex/config/parameters_cmd.py | wcs_qc | 10 |
+| apex/config/parameters_cmd.py | wcs_qc_clip_sigma | 2 |
+| apex/config/parameters_cmd.py | wcs_qc_match_radius_arcsec | 2 |
+| apex/config/parameters_cmd.py | wcs_qc_max_center_offset_arcsec | 2 |
+| apex/config/parameters_cmd.py | wcs_qc_max_edge_ratio | 2 |
+| apex/config/parameters_cmd.py | wcs_qc_max_p99_px | 3 |
+| apex/config/parameters_cmd.py | wcs_qc_max_rms_px | 3 |
+| apex/config/parameters_cmd.py | wcs_qc_min_inlier_rate | 3 |
+| apex/config/parameters_cmd.py | wcs_qc_min_match_n | 3 |
+| apex/config/parameters_cmd.py | wcs_qc_min_match_rate | 3 |
+| apex/config/parameters_cmd.py | wcs_qc_require_wcs_ok | 2 |
+| apex/config/parameters_cmd.py | wcs_radius_arcsec | 1 |
+| apex/config/parameters_cmd.py | wcs_refine | 5 |
+| apex/config/parameters_cmd.py | wcs_refine_enable | 5 |
+| apex/config/parameters_cmd.py | wcs_refine_match_r_fwhm | 2 |
+| apex/config/parameters_cmd.py | wcs_refine_max_match | 2 |
+| apex/config/parameters_cmd.py | wcs_refine_min_match | 2 |
+| apex/config/parameters_cmd.py | wcs_require_qc_pass | 2 |
 | apex/config/parameters_lc.py | CACHE_DIR     : {P.cache_dir} | 1 |
-| apex/config/parameters_lc.py | apcorr | 1 |
-| apex/config/parameters_lc.py | apcorr_apply | 1 |
-| apex/config/parameters_lc.py | apcorr_large_scale | 1 |
-| apex/config/parameters_lc.py | apcorr_large_scale_max | 1 |
-| apex/config/parameters_lc.py | apcorr_large_scale_min | 1 |
-| apex/config/parameters_lc.py | apcorr_max_pairs | 1 |
-| apex/config/parameters_lc.py | apcorr_max_sources | 1 |
-| apex/config/parameters_lc.py | apcorr_min_gap_fwhm | 1 |
-| apex/config/parameters_lc.py | apcorr_optimize_scales | 1 |
-| apex/config/parameters_lc.py | apcorr_scale_step | 1 |
-| apex/config/parameters_lc.py | apcorr_scatter_max | 1 |
-| apex/config/parameters_lc.py | apcorr_small_scale | 1 |
-| apex/config/parameters_lc.py | apcorr_small_scale_max | 1 |
-| apex/config/parameters_lc.py | apcorr_small_scale_min | 1 |
-| apex/config/parameters_lc.py | apcorr_use_min_n | 1 |
-| apex/config/parameters_lc.py | astnet_local_use_cache | 1 |
+| apex/config/parameters_lc.py | allow_no_cache | 1 |
+| apex/config/parameters_lc.py | apcorr | 15 |
+| apex/config/parameters_lc.py | apcorr_apply | 2 |
+| apex/config/parameters_lc.py | apcorr_isolation_factor | 1 |
+| apex/config/parameters_lc.py | apcorr_large_ref_scale | 1 |
+| apex/config/parameters_lc.py | apcorr_large_scale | 3 |
+| apex/config/parameters_lc.py | apcorr_large_scale_max | 2 |
+| apex/config/parameters_lc.py | apcorr_large_scale_min | 2 |
+| apex/config/parameters_lc.py | apcorr_max_pairs | 2 |
+| apex/config/parameters_lc.py | apcorr_max_sources | 2 |
+| apex/config/parameters_lc.py | apcorr_min_gap_fwhm | 2 |
+| apex/config/parameters_lc.py | apcorr_min_snr | 1 |
+| apex/config/parameters_lc.py | apcorr_optimize_scales | 2 |
+| apex/config/parameters_lc.py | apcorr_scale_step | 2 |
+| apex/config/parameters_lc.py | apcorr_scatter_max | 2 |
+| apex/config/parameters_lc.py | apcorr_small_scale | 2 |
+| apex/config/parameters_lc.py | apcorr_small_scale_max | 2 |
+| apex/config/parameters_lc.py | apcorr_small_scale_min | 2 |
+| apex/config/parameters_lc.py | apcorr_use_min_n | 2 |
+| apex/config/parameters_lc.py | astnet_local_use_cache | 3 |
 | apex/config/parameters_lc.py | cache | 1 |
-| apex/config/parameters_lc.py | cache_dir | 1 |
-| apex/config/parameters_lc.py | detect_cache_strategy | 1 |
-| apex/config/parameters_lc.py | detect_engine | 1 |
-| apex/config/parameters_lc.py | detect_progress_bar | 1 |
-| apex/config/parameters_lc.py | detect_sigma | 1 |
+| apex/config/parameters_lc.py | cache_dir | 3 |
+| apex/config/parameters_lc.py | detect_cache_strategy | 3 |
+| apex/config/parameters_lc.py | detect_engine | 2 |
+| apex/config/parameters_lc.py | detect_keep_max | 1 |
+| apex/config/parameters_lc.py | detect_progress_bar | 3 |
+| apex/config/parameters_lc.py | detect_sigma | 2 |
 | apex/config/parameters_lc.py | detect_sigma  : base={P.detect_sigma} \| g={P.detect_sigma_g} r={P.detect_sigma_r} i={P.detect_sigma_i} | 1 |
-| apex/config/parameters_lc.py | detect_sigma_g | 1 |
-| apex/config/parameters_lc.py | detect_sigma_i | 1 |
-| apex/config/parameters_lc.py | detect_sigma_r | 1 |
-| apex/config/parameters_lc.py | force_idmatch | 1 |
-| apex/config/parameters_lc.py | gaia_allow_no_cache | 1 |
-| apex/config/parameters_lc.py | idmatch_adaptive_retry_threshold | 1 |
-| apex/config/parameters_lc.py | idmatch_fwhm_adaptive_floor | 1 |
-| apex/config/parameters_lc.py | idmatch_gaia_g_limit | 1 |
-| apex/config/parameters_lc.py | idmatch_geom_correction_enable | 1 |
-| apex/config/parameters_lc.py | idmatch_init_r_fwhm | 1 |
-| apex/config/parameters_lc.py | idmatch_loose_radius_arcsec | 1 |
-| apex/config/parameters_lc.py | idmatch_match_r_fwhm | 1 |
-| apex/config/parameters_lc.py | idmatch_min_affine_pairs | 1 |
-| apex/config/parameters_lc.py | idmatch_min_correction_pairs | 1 |
-| apex/config/parameters_lc.py | idmatch_min_pairs | 1 |
-| apex/config/parameters_lc.py | idmatch_mutual_nearest | 1 |
-| apex/config/parameters_lc.py | idmatch_ratio_max | 1 |
-| apex/config/parameters_lc.py | idmatch_tight_radius_arcsec | 1 |
-| apex/config/parameters_lc.py | idmatch_tol_arcsec | 1 |
-| apex/config/parameters_lc.py | idmatch_tol_px | 1 |
-| apex/config/parameters_lc.py | idmatch_transform_mode | 1 |
-| apex/config/parameters_lc.py | idmatch_two_pass_enable | 1 |
-| apex/config/parameters_lc.py | ref_wcs_match_radius_arcsec | 1 |
-| apex/config/parameters_lc.py | ref_wcs_max_dup_rate | 1 |
-| apex/config/parameters_lc.py | ref_wcs_max_sep_med_arcsec | 1 |
-| apex/config/parameters_lc.py | ref_wcs_max_sep_p90_arcsec | 1 |
-| apex/config/parameters_lc.py | ref_wcs_min_match_n | 1 |
-| apex/config/parameters_lc.py | ref_wcs_min_match_rate | 1 |
-| apex/config/parameters_lc.py | wcs_max_workers | 1 |
-| apex/config/parameters_lc.py | wcs_propagate_max_shift_px | 1 |
-| apex/config/parameters_lc.py | wcs_propagate_min_match | 1 |
-| apex/config/parameters_lc.py | wcs_propagate_sigma_clip | 1 |
-| apex/config/parameters_lc.py | wcs_refine | 1 |
-| apex/config/parameters_lc.py | wcs_refine_enable | 3 |
-| apex/config/parameters_lc.py | wcs_refine_match_r_fwhm | 1 |
-| apex/config/parameters_lc.py | wcs_refine_max_match | 1 |
-| apex/config/parameters_lc.py | wcs_refine_min_match | 1 |
-| apex/config/parameters_lc.py | wcs_require_qc_pass | 1 |
+| apex/config/parameters_lc.py | detect_sigma_by_filter | 1 |
+| apex/config/parameters_lc.py | detect_sigma_g | 2 |
+| apex/config/parameters_lc.py | detect_sigma_i | 2 |
+| apex/config/parameters_lc.py | detect_sigma_r | 2 |
+| apex/config/parameters_lc.py | force_idmatch | 2 |
+| apex/config/parameters_lc.py | gaia_allow_no_cache | 2 |
+| apex/config/parameters_lc.py | idmatch | 25 |
+| apex/config/parameters_lc.py | idmatch_adaptive_retry_threshold | 2 |
+| apex/config/parameters_lc.py | idmatch_fwhm_adaptive_floor | 2 |
+| apex/config/parameters_lc.py | idmatch_gaia_g_limit | 3 |
+| apex/config/parameters_lc.py | idmatch_geom_correction_enable | 2 |
+| apex/config/parameters_lc.py | idmatch_init_r_fwhm | 2 |
+| apex/config/parameters_lc.py | idmatch_loose_radius_arcsec | 2 |
+| apex/config/parameters_lc.py | idmatch_match_r_fwhm | 2 |
+| apex/config/parameters_lc.py | idmatch_min_affine_pairs | 2 |
+| apex/config/parameters_lc.py | idmatch_min_correction_pairs | 2 |
+| apex/config/parameters_lc.py | idmatch_min_pairs | 2 |
+| apex/config/parameters_lc.py | idmatch_mutual_nearest | 2 |
+| apex/config/parameters_lc.py | idmatch_ratio_max | 2 |
+| apex/config/parameters_lc.py | idmatch_tight_radius_arcsec | 2 |
+| apex/config/parameters_lc.py | idmatch_tol_arcsec | 2 |
+| apex/config/parameters_lc.py | idmatch_tol_px | 2 |
+| apex/config/parameters_lc.py | idmatch_transform_mode | 2 |
+| apex/config/parameters_lc.py | idmatch_two_pass_enable | 2 |
+| apex/config/parameters_lc.py | idmatch_use_qc_pass_only | 1 |
+| apex/config/parameters_lc.py | idmatch_use_wcs_qc_gate | 1 |
+| apex/config/parameters_lc.py | idmatch_wcs_qc_max_p99_px | 1 |
+| apex/config/parameters_lc.py | idmatch_wcs_qc_max_rms_px | 1 |
+| apex/config/parameters_lc.py | idmatch_wcs_qc_min_inlier_rate | 1 |
+| apex/config/parameters_lc.py | idmatch_wcs_qc_min_match_n | 1 |
+| apex/config/parameters_lc.py | idmatch_wcs_qc_min_match_rate | 1 |
+| apex/config/parameters_lc.py | ref_wcs_match_radius_arcsec | 2 |
+| apex/config/parameters_lc.py | ref_wcs_max_dup_rate | 2 |
+| apex/config/parameters_lc.py | ref_wcs_max_sep_med_arcsec | 2 |
+| apex/config/parameters_lc.py | ref_wcs_max_sep_p90_arcsec | 2 |
+| apex/config/parameters_lc.py | ref_wcs_min_match_n | 2 |
+| apex/config/parameters_lc.py | ref_wcs_min_match_rate | 2 |
+| apex/config/parameters_lc.py | require_wcs_ok | 1 |
+| apex/config/parameters_lc.py | source_quality_apcorr_flux_pct | 1 |
+| apex/config/parameters_lc.py | use_wcs_qc_gate | 1 |
+| apex/config/parameters_lc.py | wcs | 27 |
+| apex/config/parameters_lc.py | wcs_match_radius_arcsec | 2 |
+| apex/config/parameters_lc.py | wcs_max_dup_rate | 1 |
+| apex/config/parameters_lc.py | wcs_max_sep_med_arcsec | 1 |
+| apex/config/parameters_lc.py | wcs_max_sep_p90_arcsec | 1 |
+| apex/config/parameters_lc.py | wcs_max_workers | 2 |
+| apex/config/parameters_lc.py | wcs_min_match_n | 1 |
+| apex/config/parameters_lc.py | wcs_min_match_rate | 1 |
+| apex/config/parameters_lc.py | wcs_propagate_max_shift_px | 2 |
+| apex/config/parameters_lc.py | wcs_propagate_min_match | 2 |
+| apex/config/parameters_lc.py | wcs_propagate_sigma_clip | 2 |
+| apex/config/parameters_lc.py | wcs_qc | 10 |
+| apex/config/parameters_lc.py | wcs_qc_clip_sigma | 1 |
+| apex/config/parameters_lc.py | wcs_qc_match_radius_arcsec | 1 |
+| apex/config/parameters_lc.py | wcs_qc_max_center_offset_arcsec | 1 |
+| apex/config/parameters_lc.py | wcs_qc_max_edge_ratio | 1 |
+| apex/config/parameters_lc.py | wcs_qc_max_p99_px | 2 |
+| apex/config/parameters_lc.py | wcs_qc_max_rms_px | 2 |
+| apex/config/parameters_lc.py | wcs_qc_min_inlier_rate | 2 |
+| apex/config/parameters_lc.py | wcs_qc_min_match_n | 2 |
+| apex/config/parameters_lc.py | wcs_qc_min_match_rate | 2 |
+| apex/config/parameters_lc.py | wcs_qc_require_wcs_ok | 1 |
+| apex/config/parameters_lc.py | wcs_radius_arcsec | 1 |
+| apex/config/parameters_lc.py | wcs_refine | 5 |
+| apex/config/parameters_lc.py | wcs_refine_enable | 5 |
+| apex/config/parameters_lc.py | wcs_refine_match_r_fwhm | 2 |
+| apex/config/parameters_lc.py | wcs_refine_max_match | 2 |
+| apex/config/parameters_lc.py | wcs_refine_min_match | 2 |
+| apex/config/parameters_lc.py | wcs_require_qc_pass | 2 |
 | apex/config/schema.py | Allow GAIA queries without cache | 1 |
 | apex/config/schema.py | CACHE_DIR     : {self.cache_dir} | 1 |
 | apex/config/schema.py | Cache directory name | 1 |
@@ -397,13 +463,15 @@ introduced.
 | apex/gui/tools/common/paths.py | config.json | 1 |
 | apex/gui/tools/eb_tool.py | CSV (*.csv) | 2 |
 | apex/gui/tools/eb_tool.py | No lightcurve_*.csv found in\n{rd} | 1 |
-| apex/gui/tools/extinction_fit.py | Cached Step 5 input belongs to a different workspace: {cached_label} | 1 |
-| apex/gui/tools/extinction_fit.py | Cached Step 5 input has no source workspace metadata. Load Step 5 again. | 1 |
-| apex/gui/tools/extinction_fit.py | Load and cache Step 5 photometry + frame airmass from the selected workspace.\n | 1 |
-| apex/gui/tools/extinction_fit.py | Run per-star Bouguer extinction fitting on the cached Step 5 source table.\n | 1 |
-| apex/gui/tools/extinction_fit.py | Step 5 extinction input cache not found. Load Step 5 first. | 1 |
-| apex/gui/tools/extinction_fit.py | Step 5 photometry_index.csv not found in:\n{source_dir} | 2 |
-| apex/gui/tools/extinction_fit.py | Step 5 photometry_index.csv not found. Run Step 5 first. | 1 |
+| apex/gui/tools/extinction_fit.py | Cached Step 7 input belongs to a different workspace: {cached_label} | 1 |
+| apex/gui/tools/extinction_fit.py | Cached Step 7 input has no source workspace metadata. Load Step 7 again. | 1 |
+| apex/gui/tools/extinction_fit.py | Load and cache Step 7 forced photometry + frame airmass from the selected workspace.\n | 1 |
+| apex/gui/tools/extinction_fit.py | Run per-star Bouguer extinction fitting on the cached Step 7 source table.\n | 1 |
+| apex/gui/tools/extinction_fit.py | Step 7 extinction input cache not found. Load Step 7 first. | 1 |
+| apex/gui/tools/extinction_fit.py | Step 7 forced photometry_index.csv not found in:\n{source_dir} | 2 |
+| apex/gui/tools/extinction_fit.py | Step 7 forced photometry_index.csv not found. Run Step 7 forced photometry first. | 1 |
+| apex/gui/tools/extinction_fit.py | Step4 QC: frame_quality.csv ignored ({qc_info[ | 2 |
+| apex/gui/tools/extinction_fit.py | Step4 QC: frame_quality.csv not found; using all frames. | 2 |
 | apex/gui/tools/extinction_fit.py | The cached table is reused by the selection tab and the Bouguer fit. | 1 |
 | apex/gui/tools/extinction_fit.py | Warning: failed to write ensemble_allstar_phot.csv | 1 |
 | apex/gui/tools/extinction_fit.py | Warning: failed to write extinction_fit_by_filter.csv | 3 |
@@ -419,7 +487,6 @@ introduced.
 | apex/gui/tools/extinction_fit.py | extinction_star_selection.json | 1 |
 | apex/gui/tools/extinction_fit.py | frame_airmass.csv | 2 |
 | apex/gui/tools/extinction_fit.py | frame_airmass.csv missing and airmass computation failed | 1 |
-| apex/gui/tools/extinction_fit.py | frame_quality.csv | 4 |
 | apex/gui/tools/extinction_fit.py | mag_apcorr | 2 |
 | apex/gui/tools/extinction_fit.py | master_catalog.tsv | 1 |
 | apex/gui/tools/extinction_fit.py | per_star_extinction_by_filter.csv | 1 |
@@ -429,13 +496,13 @@ introduced.
 | apex/gui/tools/extinction_fit.py | photometry_{fname}.tsv | 1 |
 | apex/gui/tools/extinction_fit.py | ref_catalog.tsv | 2 |
 | apex/gui/tools/extinction_fit.py | ref_catalog.tsv missing ID column | 1 |
-| apex/gui/tools/extinction_fit.py | ref_catalog.tsv not found in step7_refbuild/ | 1 |
+| apex/gui/tools/extinction_fit.py | ref_catalog.tsv not found in step6_refbuild/ | 1 |
 | apex/gui/tools/extinction_fit.py | ref_catalog_*.tsv | 1 |
 | apex/gui/tools/extinction_fit.py | selection_*.json | 1 |
 | apex/gui/tools/extinction_fit.py | step11_extinction_fit_by_filter.csv | 1 |
 | apex/gui/tools/extinction_fit.py | step11_extinction_fit_points.csv | 1 |
-| apex/gui/tools/extinction_fit.py | step5_extinction_input.csv | 1 |
-| apex/gui/tools/gaia_3d_viewer.py | Expected: step7_refbuild/master_catalog.tsv or step6_wcs/gaia_derived.csv | 1 |
+| apex/gui/tools/extinction_fit.py | step7_extinction_input.csv | 1 |
+| apex/gui/tools/gaia_3d_viewer.py | Expected: step6_refbuild/master_catalog.tsv or step5_wcs/gaia_derived.csv | 1 |
 | apex/gui/tools/gaia_3d_viewer.py | ][i]     if i < len(self._plot_cache[ | 1 |
 | apex/gui/tools/gaia_3d_viewer.py | ][i]    if i < len(self._plot_cache[ | 2 |
 | apex/gui/tools/gaia_3d_viewer.py | ][i]   if i < len(self._plot_cache[ | 1 |
@@ -466,6 +533,8 @@ introduced.
 | apex/gui/tools/qa_report.py | aperture_by_frame.csv | 1 |
 | apex/gui/tools/qa_report.py | frame_quality | 13 |
 | apex/gui/tools/qa_report.py | frame_zeropoint.csv | 2 |
+| apex/gui/tools/qa_report.py | photometry_ | 2 |
+| apex/gui/tools/qa_report.py | photometry_*.tsv | 2 |
 | apex/gui/tools/qa_report.py | photometry_index.csv | 2 |
 | apex/gui/tools/qa_report.py | qa_background.csv | 1 |
 | apex/gui/tools/qa_report.py | qa_centroid_shift.csv | 1 |
@@ -485,219 +554,205 @@ introduced.
 | apex/gui/tools/variable_star.py | {stem}_multimode_candidates.csv | 1 |
 | apex/gui/tools/variable_star.py | {stem}_multimode_history.csv | 1 |
 | apex/gui/tools/variable_star.py | {stem}_multimode_modes.csv | 1 |
-| apex/gui/workflow/cmd/step10_master_id_editor.py |  if idmatch_path.suffix.lower() ==  | 1 |
-| apex/gui/workflow/cmd/step10_master_id_editor.py | */idmatch_{fname}.csv | 1 |
-| apex/gui/workflow/cmd/step10_master_id_editor.py | .tsv | 2 |
-| apex/gui/workflow/cmd/step10_master_id_editor.py | .wcs | 1 |
-| apex/gui/workflow/cmd/step10_master_id_editor.py | Convert pixel-space ROI to sky ROI {ra_deg, dec_deg, radius_arcsec} using current frame WCS. | 1 |
-| apex/gui/workflow/cmd/step10_master_id_editor.py | Edit master_star_ids.csv using idmatch overlays.\n | 1 |
-| apex/gui/workflow/cmd/step10_master_id_editor.py | Get WCS from header or .wcs file | 1 |
-| apex/gui/workflow/cmd/step10_master_id_editor.py | ROI: no WCS in current frame header, cannot convert to sky coords | 1 |
-| apex/gui/workflow/cmd/step10_master_id_editor.py | Return (image_data, header) from cache or disk. LRU eviction. | 1 |
-| apex/gui/workflow/cmd/step10_master_id_editor.py | Step10 frame filter (wcs_ok): {len(files)}/{base_count} kept | 1 |
-| apex/gui/workflow/cmd/step10_master_id_editor.py | [{filename}] idmatch: dropped {dropped} invalid rows (x/y) | 1 |
-| apex/gui/workflow/cmd/step10_master_id_editor.py | [{filename}] idmatch: unmatched detections kept={unmatched} | 1 |
-| apex/gui/workflow/cmd/step10_master_id_editor.py | [{frame}] No WCS available - cannot match to Gaia | 1 |
-| apex/gui/workflow/cmd/step10_master_id_editor.py | [{frame}] WCS conversion failed: {e} | 1 |
-| apex/gui/workflow/cmd/step10_master_id_editor.py | cmd_roi.json | 1 |
-| apex/gui/workflow/cmd/step10_master_id_editor.py | cmd_with_gaia_membership.csv | 2 |
-| apex/gui/workflow/cmd/step10_master_id_editor.py | cmd_with_membership.csv | 2 |
-| apex/gui/workflow/cmd/step10_master_id_editor.py | gaia_derived.csv | 4 |
-| apex/gui/workflow/cmd/step10_master_id_editor.py | idmatch_{fname}.csv | 1 |
-| apex/gui/workflow/cmd/step10_master_id_editor.py | master_catalog.tsv | 4 |
-| apex/gui/workflow/cmd/step10_master_id_editor.py | master_star_ids.csv | 3 |
-| apex/gui/workflow/cmd/step10_master_id_editor.py | master_star_ids.orig.csv | 1 |
-| apex/gui/workflow/cmd/step10_master_id_editor.py | median_by_ID_filter_wide_cmd.csv | 2 |
-| apex/gui/workflow/cmd/step10_master_id_editor.py | photometry_ | 1 |
-| apex/gui/workflow/cmd/step10_master_id_editor.py | photometry_*.tsv | 1 |
-| apex/gui/workflow/cmd/step10_master_id_editor.py | photometry_index.csv | 3 |
-| apex/gui/workflow/cmd/step10_master_id_editor.py | photometry_{filename}.tsv | 1 |
-| apex/gui/workflow/cmd/step10_master_id_editor.py | photometry_{f}.tsv | 1 |
-| apex/gui/workflow/cmd/step10_master_id_editor.py | ref_catalog.tsv | 2 |
-| apex/gui/workflow/cmd/step10_master_id_editor.py | sourceid_to_ID.csv | 4 |
-| apex/gui/workflow/cmd/step10_master_id_editor.py | step8_fits_cache_size | 1 |
-| apex/gui/workflow/cmd/step10_master_id_editor.py | step8_frame_stats.csv | 1 |
-| apex/gui/workflow/cmd/step10_master_id_editor.py | wcs_ok | 2 |
-| apex/gui/workflow/cmd/step11_zeropoint_calibration.py |  if _idmatch_csv.suffix.lower() ==  | 1 |
-| apex/gui/workflow/cmd/step11_zeropoint_calibration.py | *phot*index*.csv | 3 |
-| apex/gui/workflow/cmd/step11_zeropoint_calibration.py | Check photometry_index.csv path column and Step5/Step6 photometry outputs. | 1 |
-| apex/gui/workflow/cmd/step11_zeropoint_calibration.py | Find per-frame photometry TSV from forced phot (replaces old idmatch CSV). | 1 |
-| apex/gui/workflow/cmd/step11_zeropoint_calibration.py | Load cmd_roi.json from step8 output directory and update UI. | 1 |
-| apex/gui/workflow/cmd/step11_zeropoint_calibration.py | Pick[{cache[ | 1 |
-| apex/gui/workflow/cmd/step11_zeropoint_calibration.py | Re-read cmd_roi.json from Step 10 output directory | 1 |
-| apex/gui/workflow/cmd/step11_zeropoint_calibration.py | Saved zp_fit_coefficients.csv | 1 |
-| apex/gui/workflow/cmd/step11_zeropoint_calibration.py | WCS auto-detected: {fp.name} (from {base.name}) | 1 |
-| apex/gui/workflow/cmd/step11_zeropoint_calibration.py | WCS from ref_frame index: {fp.name} | 1 |
-| apex/gui/workflow/cmd/step11_zeropoint_calibration.py | WCS from ref_frame: {fp.name} | 1 |
-| apex/gui/workflow/cmd/step11_zeropoint_calibration.py | cmd_roi.json | 1 |
-| apex/gui/workflow/cmd/step11_zeropoint_calibration.py | cmd_with_gaia_membership.csv | 1 |
-| apex/gui/workflow/cmd/step11_zeropoint_calibration.py | extinction_fit_by_filter.csv | 2 |
-| apex/gui/workflow/cmd/step11_zeropoint_calibration.py | frame_airmass.csv | 3 |
-| apex/gui/workflow/cmd/step11_zeropoint_calibration.py | frame_quality.csv | 2 |
-| apex/gui/workflow/cmd/step11_zeropoint_calibration.py | frame_zeropoint.csv | 4 |
-| apex/gui/workflow/cmd/step11_zeropoint_calibration.py | frame_zeropoint_cut_summary.csv | 1 |
-| apex/gui/workflow/cmd/step11_zeropoint_calibration.py | frame_zeropoint_rejects.csv | 1 |
-| apex/gui/workflow/cmd/step11_zeropoint_calibration.py | gaia_derived.csv | 4 |
-| apex/gui/workflow/cmd/step11_zeropoint_calibration.py | gaia_sdss_calibrator_by_ID.csv | 3 |
-| apex/gui/workflow/cmd/step11_zeropoint_calibration.py | mag_apcorr | 1 |
-| apex/gui/workflow/cmd/step11_zeropoint_calibration.py | master_catalog | 2 |
-| apex/gui/workflow/cmd/step11_zeropoint_calibration.py | master_catalog missing Gaia mags and source_id for Gaia join | 1 |
-| apex/gui/workflow/cmd/step11_zeropoint_calibration.py | master_catalog missing Gaia mags and step6_wcs/gaia_derived.csv not found | 1 |
-| apex/gui/workflow/cmd/step11_zeropoint_calibration.py | master_catalog.tsv | 2 |
-| apex/gui/workflow/cmd/step11_zeropoint_calibration.py | master_catalog.tsv or master_gaia_map.csv missing/invalid | 1 |
-| apex/gui/workflow/cmd/step11_zeropoint_calibration.py | master_gaia_map.csv | 1 |
-| apex/gui/workflow/cmd/step11_zeropoint_calibration.py | median_by_ID_filter.csv | 1 |
-| apex/gui/workflow/cmd/step11_zeropoint_calibration.py | median_by_ID_filter_raw.csv | 1 |
-| apex/gui/workflow/cmd/step11_zeropoint_calibration.py | median_by_ID_filter_wide.csv | 3 |
-| apex/gui/workflow/cmd/step11_zeropoint_calibration.py | median_by_ID_filter_wide_cmd.csv | 3 |
-| apex/gui/workflow/cmd/step11_zeropoint_calibration.py | median_by_ID_filter_wide_raw.csv | 1 |
-| apex/gui/workflow/cmd/step11_zeropoint_calibration.py | parallax column not found in CMD data or master_catalog.\n | 1 |
-| apex/gui/workflow/cmd/step11_zeropoint_calibration.py | phot_index.csv | 2 |
-| apex/gui/workflow/cmd/step11_zeropoint_calibration.py | photometry_ | 2 |
-| apex/gui/workflow/cmd/step11_zeropoint_calibration.py | photometry_index.csv | 4 |
-| apex/gui/workflow/cmd/step11_zeropoint_calibration.py | photometry_{fname}.tsv | 1 |
-| apex/gui/workflow/cmd/step11_zeropoint_calibration.py | photometry_{f}.tsv | 1 |
-| apex/gui/workflow/cmd/step11_zeropoint_calibration.py | ref_catalog | 2 |
-| apex/gui/workflow/cmd/step11_zeropoint_calibration.py | ref_catalog.tsv | 1 |
-| apex/gui/workflow/cmd/step11_zeropoint_calibration.py | ref_catalog_*.tsv | 1 |
-| apex/gui/workflow/cmd/step11_zeropoint_calibration.py | sourceid_to_ID.csv | 1 |
-| apex/gui/workflow/cmd/step11_zeropoint_calibration.py | zp_fit_coefficients.csv | 2 |
-| apex/gui/workflow/cmd/step12_cmd_plot.py | median_by_ID_filter_wide.csv | 2 |
-| apex/gui/workflow/cmd/step12_cmd_plot.py | median_by_ID_filter_wide_cmd.csv | 2 |
-| apex/gui/workflow/cmd/step12_cmd_plot.py | phot_index.csv | 2 |
-| apex/gui/workflow/cmd/step12_cmd_plot.py | photometry_index.csv | 3 |
-| apex/gui/workflow/cmd/step13_isochrone_model.py | , cache_dir /  | 1 |
-| apex/gui/workflow/cmd/step13_isochrone_model.py | .apex_cache | 1 |
-| apex/gui/workflow/cmd/step13_isochrone_model.py | Draw/update the color-color diagram (cached – fast on slider changes). | 1 |
-| apex/gui/workflow/cmd/step13_isochrone_model.py | Folder mode: {len(files)} files cached | 2 |
-| apex/gui/workflow/cmd/step13_isochrone_model.py | Merged folder isochrone cache ready: {merged_path} | 1 |
-| apex/gui/workflow/cmd/step13_isochrone_model.py | Using cached folder isochrone: {merged_path} | 1 |
-| apex/gui/workflow/cmd/step13_isochrone_model.py | cmd_roi.json | 1 |
-| apex/gui/workflow/cmd/step13_isochrone_model.py | cmd_with_membership.csv | 1 |
-| apex/gui/workflow/cmd/step13_isochrone_model.py | grid_scan_chi2.npz | 1 |
-| apex/gui/workflow/cmd/step13_isochrone_model.py | isochrone_fit_result.json | 1 |
-| apex/gui/workflow/cmd/step13_isochrone_model.py | median_by_ID_filter_wide.csv | 2 |
-| apex/gui/workflow/cmd/step13_isochrone_model.py | median_by_ID_filter_wide_cmd.csv | 2 |
+| apex/gui/workflow/cmd/step10_zeropoint_calibration.py |  if _idmatch_csv.suffix.lower() ==  | 1 |
+| apex/gui/workflow/cmd/step10_zeropoint_calibration.py | *phot*index*.csv | 3 |
+| apex/gui/workflow/cmd/step10_zeropoint_calibration.py | Check photometry_index.csv path column and Step5/Step6 photometry outputs. | 1 |
+| apex/gui/workflow/cmd/step10_zeropoint_calibration.py | Find per-frame photometry TSV from forced phot (replaces old idmatch CSV). | 1 |
+| apex/gui/workflow/cmd/step10_zeropoint_calibration.py | Load cmd_roi.json from step8 output directory and update UI. | 1 |
+| apex/gui/workflow/cmd/step10_zeropoint_calibration.py | Pick[{cache[ | 1 |
+| apex/gui/workflow/cmd/step10_zeropoint_calibration.py | Re-read cmd_roi.json from Step 9 output directory | 1 |
+| apex/gui/workflow/cmd/step10_zeropoint_calibration.py | Saved zp_fit_coefficients.csv | 1 |
+| apex/gui/workflow/cmd/step10_zeropoint_calibration.py | Step4 QC: frame_quality.csv ignored ({qc_info[ | 1 |
+| apex/gui/workflow/cmd/step10_zeropoint_calibration.py | Step4 QC: frame_quality.csv not found; using all frames. | 1 |
+| apex/gui/workflow/cmd/step10_zeropoint_calibration.py | WCS auto-detected: {fp.name} (from {base.name}) | 1 |
+| apex/gui/workflow/cmd/step10_zeropoint_calibration.py | WCS from ref_frame index: {fp.name} | 1 |
+| apex/gui/workflow/cmd/step10_zeropoint_calibration.py | WCS from ref_frame: {fp.name} | 1 |
+| apex/gui/workflow/cmd/step10_zeropoint_calibration.py | cmd_roi.json | 1 |
+| apex/gui/workflow/cmd/step10_zeropoint_calibration.py | cmd_with_gaia_membership.csv | 1 |
+| apex/gui/workflow/cmd/step10_zeropoint_calibration.py | extinction_fit_by_filter.csv | 2 |
+| apex/gui/workflow/cmd/step10_zeropoint_calibration.py | frame_airmass.csv | 3 |
+| apex/gui/workflow/cmd/step10_zeropoint_calibration.py | frame_zeropoint.csv | 4 |
+| apex/gui/workflow/cmd/step10_zeropoint_calibration.py | frame_zeropoint_cut_summary.csv | 1 |
+| apex/gui/workflow/cmd/step10_zeropoint_calibration.py | frame_zeropoint_rejects.csv | 1 |
+| apex/gui/workflow/cmd/step10_zeropoint_calibration.py | gaia_derived.csv | 4 |
+| apex/gui/workflow/cmd/step10_zeropoint_calibration.py | gaia_sdss_calibrator_by_ID.csv | 3 |
+| apex/gui/workflow/cmd/step10_zeropoint_calibration.py | mag_apcorr | 1 |
+| apex/gui/workflow/cmd/step10_zeropoint_calibration.py | master_catalog | 2 |
+| apex/gui/workflow/cmd/step10_zeropoint_calibration.py | master_catalog missing Gaia mags and source_id for Gaia join | 1 |
+| apex/gui/workflow/cmd/step10_zeropoint_calibration.py | master_catalog missing Gaia mags and step5_wcs/gaia_derived.csv not found | 1 |
+| apex/gui/workflow/cmd/step10_zeropoint_calibration.py | master_catalog.tsv | 2 |
+| apex/gui/workflow/cmd/step10_zeropoint_calibration.py | master_catalog.tsv or master_gaia_map.csv missing/invalid | 1 |
+| apex/gui/workflow/cmd/step10_zeropoint_calibration.py | master_gaia_map.csv | 1 |
+| apex/gui/workflow/cmd/step10_zeropoint_calibration.py | median_by_ID_filter.csv | 1 |
+| apex/gui/workflow/cmd/step10_zeropoint_calibration.py | median_by_ID_filter_raw.csv | 1 |
+| apex/gui/workflow/cmd/step10_zeropoint_calibration.py | median_by_ID_filter_wide.csv | 3 |
+| apex/gui/workflow/cmd/step10_zeropoint_calibration.py | median_by_ID_filter_wide_cmd.csv | 3 |
+| apex/gui/workflow/cmd/step10_zeropoint_calibration.py | median_by_ID_filter_wide_raw.csv | 1 |
+| apex/gui/workflow/cmd/step10_zeropoint_calibration.py | parallax column not found in CMD data or master_catalog.\n | 1 |
+| apex/gui/workflow/cmd/step10_zeropoint_calibration.py | phot_index.csv | 2 |
+| apex/gui/workflow/cmd/step10_zeropoint_calibration.py | photometry_ | 2 |
+| apex/gui/workflow/cmd/step10_zeropoint_calibration.py | photometry_index.csv | 4 |
+| apex/gui/workflow/cmd/step10_zeropoint_calibration.py | photometry_{fname}.tsv | 1 |
+| apex/gui/workflow/cmd/step10_zeropoint_calibration.py | photometry_{f}.tsv | 1 |
+| apex/gui/workflow/cmd/step10_zeropoint_calibration.py | ref_catalog | 2 |
+| apex/gui/workflow/cmd/step10_zeropoint_calibration.py | ref_catalog.tsv | 1 |
+| apex/gui/workflow/cmd/step10_zeropoint_calibration.py | ref_catalog_*.tsv | 1 |
+| apex/gui/workflow/cmd/step10_zeropoint_calibration.py | sourceid_to_ID.csv | 1 |
+| apex/gui/workflow/cmd/step10_zeropoint_calibration.py | zp_fit_coefficients.csv | 2 |
+| apex/gui/workflow/cmd/step11_cmd_plot.py | median_by_ID_filter_wide.csv | 2 |
+| apex/gui/workflow/cmd/step11_cmd_plot.py | median_by_ID_filter_wide_cmd.csv | 2 |
+| apex/gui/workflow/cmd/step11_cmd_plot.py | phot_index.csv | 2 |
+| apex/gui/workflow/cmd/step11_cmd_plot.py | photometry_index.csv | 3 |
+| apex/gui/workflow/cmd/step12_isochrone_model.py | , cache_dir /  | 1 |
+| apex/gui/workflow/cmd/step12_isochrone_model.py | .apex_cache | 1 |
+| apex/gui/workflow/cmd/step12_isochrone_model.py | Draw/update the color-color diagram (cached – fast on slider changes). | 1 |
+| apex/gui/workflow/cmd/step12_isochrone_model.py | Folder mode: {len(files)} files cached | 2 |
+| apex/gui/workflow/cmd/step12_isochrone_model.py | Merged folder isochrone cache ready: {merged_path} | 1 |
+| apex/gui/workflow/cmd/step12_isochrone_model.py | Using cached folder isochrone: {merged_path} | 1 |
+| apex/gui/workflow/cmd/step12_isochrone_model.py | cmd_roi.json | 1 |
+| apex/gui/workflow/cmd/step12_isochrone_model.py | cmd_with_membership.csv | 1 |
+| apex/gui/workflow/cmd/step12_isochrone_model.py | grid_scan_chi2.npz | 1 |
+| apex/gui/workflow/cmd/step12_isochrone_model.py | isochrone_fit_result.json | 1 |
+| apex/gui/workflow/cmd/step12_isochrone_model.py | median_by_ID_filter_wide.csv | 2 |
+| apex/gui/workflow/cmd/step12_isochrone_model.py | median_by_ID_filter_wide_cmd.csv | 2 |
 | apex/gui/workflow/cmd/step1_file_selection.py | cache | 1 |
-| apex/gui/workflow/cmd/step6_psf_photometry.py |   [REDETECT] filter={this_filter} sigma override: {redetect_sigma:.2f} -> {redetect_sigma_eff:.2f} | 1 |
-| apex/gui/workflow/cmd/step6_psf_photometry.py | .json | 2 |
-| apex/gui/workflow/cmd/step6_psf_photometry.py | .tsv | 1 |
-| apex/gui/workflow/cmd/step6_psf_photometry.py | Click Skip PSF to continue to Step 7 (WCS); Step 8 (RefBuild) will use aperture results. | 1 |
-| apex/gui/workflow/cmd/step6_psf_photometry.py | PSF redetect cuts \| sharp=[{redetect_sharp_lo:.2f},{redetect_sharp_hi:.2f}]  | 1 |
-| apex/gui/workflow/cmd/step6_psf_photometry.py | Reload EPSF models and residual images from disk into memory caches. | 1 |
-| apex/gui/workflow/cmd/step6_psf_photometry.py | [APCORR] apply=True frame filter: {len(files)}/{before_n} kept | 1 |
-| apex/gui/workflow/cmd/step6_psf_photometry.py | [APCORR] frame filter skipped ({e}) | 1 |
-| apex/gui/workflow/cmd/step6_psf_photometry.py | apcorr_summary.csv | 1 |
-| apex/gui/workflow/cmd/step6_psf_photometry.py | appliedxy_iter*_{fname}.npy | 1 |
-| apex/gui/workflow/cmd/step6_psf_photometry.py | appliedxy_iter{it_no}_{fname}.npy | 1 |
-| apex/gui/workflow/cmd/step6_psf_photometry.py | boxxy_iter*_{fname}.npy | 1 |
-| apex/gui/workflow/cmd/step6_psf_photometry.py | boxxy_iter{it_no}_{fname}.npy | 1 |
-| apex/gui/workflow/cmd/step6_psf_photometry.py | detect_{fname}.csv | 2 |
-| apex/gui/workflow/cmd/step6_psf_photometry.py | detect_{fname}.json | 2 |
-| apex/gui/workflow/cmd/step6_psf_photometry.py | detxy_iter*_{fname}.npy | 1 |
-| apex/gui/workflow/cmd/step6_psf_photometry.py | detxy_iter{it_no}_{fname}.npy | 1 |
-| apex/gui/workflow/cmd/step6_psf_photometry.py | fitxy_iter*_{fname}.npy | 1 |
-| apex/gui/workflow/cmd/step6_psf_photometry.py | fitxy_iter{it_no}_{fname}.npy | 1 |
-| apex/gui/workflow/cmd/step6_psf_photometry.py | max_iter={max_iter} \| redetect_sigma={redetect_sigma:.2f} \|  | 1 |
-| apex/gui/workflow/cmd/step6_psf_photometry.py | modelxy_iter{it_no}_{fname}.npy | 1 |
-| apex/gui/workflow/cmd/step6_psf_photometry.py | photometry_ | 1 |
-| apex/gui/workflow/cmd/step6_psf_photometry.py | photometry_*.tsv | 2 |
-| apex/gui/workflow/cmd/step6_psf_photometry.py | photometry_index.csv | 6 |
-| apex/gui/workflow/cmd/step6_psf_photometry.py | photometry_index.csv not found.\nRun Step 6 first. | 1 |
-| apex/gui/workflow/cmd/step6_psf_photometry.py | photometry_{fname_key} | 1 |
-| apex/gui/workflow/cmd/step6_psf_photometry.py | photometry_{fname}.tsv | 3 |
-| apex/gui/workflow/cmd/step6_psf_photometry.py | psf_redetect_round_abs_max | 9 |
-| apex/gui/workflow/cmd/step6_psf_photometry.py | psf_redetect_sharp_hi | 9 |
-| apex/gui/workflow/cmd/step6_psf_photometry.py | psf_redetect_sharp_lo | 9 |
-| apex/gui/workflow/cmd/step6_psf_photometry.py | psf_redetect_sigma | 9 |
-| apex/gui/workflow/cmd/step6_psf_photometry.py | psf_redetect_sigma_g | 3 |
-| apex/gui/workflow/cmd/step6_psf_photometry.py | psf_redetect_sigma_i | 3 |
-| apex/gui/workflow/cmd/step6_psf_photometry.py | psf_redetect_sigma_r | 3 |
-| apex/gui/workflow/cmd/step6_psf_photometry.py | psf_redetect_sigma_{this_filter} | 1 |
-| apex/gui/workflow/cmd/step6_psf_photometry.py | rawxy_iter2_{fname}.npy | 2 |
-| apex/gui/workflow/cmd/step6_psf_photometry.py | residual_meta_*.json | 2 |
-| apex/gui/workflow/cmd/step6_psf_photometry.py | residual_meta_{fname}.json | 2 |
-| apex/gui/workflow/cmd/step6_psf_photometry.py | seed_xy_{fname}.npy | 1 |
-| apex/gui/workflow/cmd/step6_psf_photometry.py | \| \|round\|<={redetect_round_abs_max:.2f} | 1 |
-| apex/gui/workflow/lc/step10_lightcurve_builder.py | Load filename -> night_id mapping from step1 night_assignments.json. | 1 |
-| apex/gui/workflow/lc/step10_lightcurve_builder.py | Return basename→night_id map. Merges all sources; result is cached per result_dir. | 1 |
-| apex/gui/workflow/lc/step10_lightcurve_builder.py | [CACHE] All caches cleared | 1 |
-| apex/gui/workflow/lc/step10_lightcurve_builder.py | [CACHE] Diff series + photometry cache cleared | 1 |
-| apex/gui/workflow/lc/step10_lightcurve_builder.py | [CACHE] Stored diff series for target={target_id}, comp={comp_id} ({len(result_df)} rows) | 1 |
-| apex/gui/workflow/lc/step10_lightcurve_builder.py | [CACHE] Using cached diff series for target={target_id}, comp={comp_id} | 1 |
-| apex/gui/workflow/lc/step10_lightcurve_builder.py | [DEBUG] photometry_index.csv missing  | 3 |
-| apex/gui/workflow/lc/step10_lightcurve_builder.py | [DEBUG] photometry_index.csv not found in {result_dir} | 3 |
-| apex/gui/workflow/lc/step10_lightcurve_builder.py | [QC] Loaded cached QC for {len(cached_rows)} comp(s). | 1 |
-| apex/gui/workflow/lc/step10_lightcurve_builder.py | _night_id_map_cache | 1 |
-| apex/gui/workflow/lc/step10_lightcurve_builder.py | _qc_checkstar_cache | 3 |
-| apex/gui/workflow/lc/step10_lightcurve_builder.py | comp_qc_summary.csv | 2 |
-| apex/gui/workflow/lc/step10_lightcurve_builder.py | comp_qc_summary.meta.json | 1 |
-| apex/gui/workflow/lc/step10_lightcurve_builder.py | extinction_fit_by_filter.csv | 4 |
-| apex/gui/workflow/lc/step10_lightcurve_builder.py | frame_airmass.csv | 2 |
-| apex/gui/workflow/lc/step10_lightcurve_builder.py | frame_exclude.csv | 1 |
-| apex/gui/workflow/lc/step10_lightcurve_builder.py | frame_qc_done.json | 1 |
-| apex/gui/workflow/lc/step10_lightcurve_builder.py | id_mapping_{key}.csv | 1 |
-| apex/gui/workflow/lc/step10_lightcurve_builder.py | lightcurve_check_ID*_raw.csv | 1 |
-| apex/gui/workflow/lc/step10_lightcurve_builder.py | lightcurve_check_ID{check_id}_raw.csv | 2 |
-| apex/gui/workflow/lc/step10_lightcurve_builder.py | lightcurve_check_combined_raw.csv | 2 |
-| apex/gui/workflow/lc/step10_lightcurve_builder.py | lightcurve_check_{filt_key}_ID{check_id}_raw.csv | 1 |
-| apex/gui/workflow/lc/step10_lightcurve_builder.py | master_catalog.tsv | 1 |
-| apex/gui/workflow/lc/step10_lightcurve_builder.py | master_catalog_*.tsv | 2 |
-| apex/gui/workflow/lc/step10_lightcurve_builder.py | master_catalog_{_normalize_filter_key(flt)}.tsv | 1 |
-| apex/gui/workflow/lc/step10_lightcurve_builder.py | master_catalog_{key}.tsv | 1 |
-| apex/gui/workflow/lc/step10_lightcurve_builder.py | median_by_ID_filter_wide.csv | 1 |
-| apex/gui/workflow/lc/step10_lightcurve_builder.py | median_by_ID_filter_wide_cmd.csv | 1 |
-| apex/gui/workflow/lc/step10_lightcurve_builder.py | photometry_index.csv | 7 |
-| apex/gui/workflow/lc/step10_lightcurve_builder.py | photometry_index_mtime_ns | 1 |
-| apex/gui/workflow/lc/step10_lightcurve_builder.py | photometry_{fname}.tsv | 1 |
-| apex/gui/workflow/lc/step10_lightcurve_builder.py | selection_*.json | 1 |
-| apex/gui/workflow/lc/step10_lightcurve_builder.py | sourceid_to_ID.csv | 3 |
-| apex/gui/workflow/lc/step10_lightcurve_builder.py | target_selection.json | 2 |
-| apex/gui/workflow/lc/step10_lightcurve_builder.py | {fname}_photometry.tsv | 1 |
-| apex/gui/workflow/lc/step10_lightcurve_builder.py | 필터별 selection 로드 (Step 8에서 저장한 selection_{filter}.json) | 1 |
-| apex/gui/workflow/lc/step11_detrend_merge.py |   Tried: lightcurve_ID{target_id}_raw.csv, lightcurve_combined_ID{target_id}_raw.csv | 1 |
-| apex/gui/workflow/lc/step11_detrend_merge.py | Load filename -> night_id from step1/night_assignments.json. | 1 |
-| apex/gui/workflow/lc/step11_detrend_merge.py | Step 10 comp_selection.json → Step 9 merged selection 순서로 자동 로드. | 1 |
-| apex/gui/workflow/lc/step11_detrend_merge.py | [GLOBAL] photometry_index.csv missing  | 1 |
-| apex/gui/workflow/lc/step11_detrend_merge.py | [GLOBAL] photometry_index.csv missing: {result_dir} | 1 |
-| apex/gui/workflow/lc/step11_detrend_merge.py | [NIGHT] night_assignments.json 없음 → 원본 날짜 유지 | 1 |
-| apex/gui/workflow/lc/step11_detrend_merge.py | comp_selection.json | 3 |
-| apex/gui/workflow/lc/step11_detrend_merge.py | fit_params_ID{target_id}_*.csv | 1 |
-| apex/gui/workflow/lc/step11_detrend_merge.py | fit_params_ID{target_id}_global.csv | 1 |
-| apex/gui/workflow/lc/step11_detrend_merge.py | fit_params_ID{target_id}_{mode_tag}.csv | 1 |
-| apex/gui/workflow/lc/step11_detrend_merge.py | global_diagnostics_ID{target_id}.json | 1 |
-| apex/gui/workflow/lc/step11_detrend_merge.py | global_diagnostics_ID{target_id}_*.json | 1 |
-| apex/gui/workflow/lc/step11_detrend_merge.py | global_mean_ID{target_id}.csv | 1 |
-| apex/gui/workflow/lc/step11_detrend_merge.py | global_mean_ID{target_id}_*.csv | 1 |
-| apex/gui/workflow/lc/step11_detrend_merge.py | global_zp_ID{target_id}.csv | 1 |
-| apex/gui/workflow/lc/step11_detrend_merge.py | global_zp_ID{target_id}_*.csv | 1 |
-| apex/gui/workflow/lc/step11_detrend_merge.py | headers.csv | 2 |
-| apex/gui/workflow/lc/step11_detrend_merge.py | id_mapping_*.csv | 1 |
-| apex/gui/workflow/lc/step11_detrend_merge.py | id_mapping_{key}.csv | 1 |
-| apex/gui/workflow/lc/step11_detrend_merge.py | lightcurve_*.csv | 1 |
-| apex/gui/workflow/lc/step11_detrend_merge.py | lightcurve_ID(\d+)_raw\.csv | 1 |
-| apex/gui/workflow/lc/step11_detrend_merge.py | lightcurve_ID*_raw.csv | 3 |
-| apex/gui/workflow/lc/step11_detrend_merge.py | lightcurve_ID{target_id}_*.csv | 1 |
-| apex/gui/workflow/lc/step11_detrend_merge.py | lightcurve_ID{target_id}_global.csv | 1 |
-| apex/gui/workflow/lc/step11_detrend_merge.py | lightcurve_ID{target_id}_raw.csv | 1 |
-| apex/gui/workflow/lc/step11_detrend_merge.py | lightcurve_ID{target_id}_{mode_tag}.csv | 1 |
-| apex/gui/workflow/lc/step11_detrend_merge.py | lightcurve_combined_ID{target_id}_raw.csv | 1 |
-| apex/gui/workflow/lc/step11_detrend_merge.py | master_catalog.tsv | 1 |
-| apex/gui/workflow/lc/step11_detrend_merge.py | master_catalog_*.tsv | 2 |
-| apex/gui/workflow/lc/step11_detrend_merge.py | master_catalog_{key}.tsv | 1 |
-| apex/gui/workflow/lc/step11_detrend_merge.py | median_by_ID_filter_wide.csv | 1 |
-| apex/gui/workflow/lc/step11_detrend_merge.py | median_by_ID_filter_wide_cmd.csv | 1 |
-| apex/gui/workflow/lc/step11_detrend_merge.py | params_ID{target_id}_*.csv | 1 |
-| apex/gui/workflow/lc/step11_detrend_merge.py | photometry_index.csv | 1 |
-| apex/gui/workflow/lc/step11_detrend_merge.py | result_ID{target_id}_*.json | 1 |
-| apex/gui/workflow/lc/step11_detrend_merge.py | selection_*.json | 1 |
-| apex/gui/workflow/lc/step12_period_analysis.py | comp_selection.json | 1 |
-| apex/gui/workflow/lc/step12_period_analysis.py | id_mapping_*.csv | 1 |
-| apex/gui/workflow/lc/step12_period_analysis.py | id_mapping_{key}.csv | 1 |
-| apex/gui/workflow/lc/step12_period_analysis.py | master_catalog_*.tsv | 1 |
-| apex/gui/workflow/lc/step12_period_analysis.py | master_catalog_{key}.tsv | 1 |
-| apex/gui/workflow/lc/step12_period_analysis.py | period_analysis_*.json | 1 |
-| apex/gui/workflow/lc/step12_period_analysis.py | selection_*.json | 1 |
+| apex/gui/workflow/cmd/step8_psf_photometry.py |   [REDETECT] filter={this_filter} sigma override: {redetect_sigma:.2f} -> {redetect_sigma_eff:.2f} | 1 |
+| apex/gui/workflow/cmd/step8_psf_photometry.py |  ON: frames below this threshold reuse the cached filter EPSF.\n | 1 |
+| apex/gui/workflow/cmd/step8_psf_photometry.py | (min={min_epsf_stars}) → reusing cached ePSF for filter={this_filter} | 1 |
+| apex/gui/workflow/cmd/step8_psf_photometry.py | (min={min_epsf_stars}), no cached ePSF yet → using this frame | 1 |
+| apex/gui/workflow/cmd/step8_psf_photometry.py | .json | 2 |
+| apex/gui/workflow/cmd/step8_psf_photometry.py | .tsv | 1 |
+| apex/gui/workflow/cmd/step8_psf_photometry.py | Cached Step 8 PSF output loaded ({len(frames_for_run)} frame(s)) | 1 |
+| apex/gui/workflow/cmd/step8_psf_photometry.py | Load Step 8 PSF outputs when photometry_index.csv, per-frame TSVs,  | 1 |
+| apex/gui/workflow/cmd/step8_psf_photometry.py | Min isolated PSF stars required to build/cache a new EPSF.\n | 1 |
+| apex/gui/workflow/cmd/step8_psf_photometry.py | No frames remain after Step 4 QC / Step 7 apcorr filtering. | 1 |
+| apex/gui/workflow/cmd/step8_psf_photometry.py | PSF redetect cuts \| sharp=[{redetect_sharp_lo:.2f},{redetect_sharp_hi:.2f}]  | 1 |
+| apex/gui/workflow/cmd/step8_psf_photometry.py | Reload EPSF models and residual images from disk into memory caches. | 1 |
+| apex/gui/workflow/cmd/step8_psf_photometry.py | Step4 QC: frame_quality.csv ignored ({qc_info.get( | 1 |
+| apex/gui/workflow/cmd/step8_psf_photometry.py | Step4 QC: frame_quality.csv ignored ({qc_info[ | 1 |
+| apex/gui/workflow/cmd/step8_psf_photometry.py | Step4 QC: frame_quality.csv not found; using all frames. | 2 |
+| apex/gui/workflow/cmd/step8_psf_photometry.py | [APCORR] apply=True frame filter: {len(files)}/{before_n} kept | 1 |
+| apex/gui/workflow/cmd/step8_psf_photometry.py | [APCORR] frame filter skipped ({e}) | 1 |
+| apex/gui/workflow/cmd/step8_psf_photometry.py | [PSF][CACHE] Existing Step 8 output is complete  | 1 |
+| apex/gui/workflow/cmd/step8_psf_photometry.py | [PSF][CACHE] Existing output not reusable: {cache_reason} | 1 |
+| apex/gui/workflow/cmd/step8_psf_photometry.py | [PSF][CACHE] Output reuse disabled for this run:  | 1 |
+| apex/gui/workflow/cmd/step8_psf_photometry.py | [PSF][CACHE] Output signature saved for future reuse. | 1 |
+| apex/gui/workflow/cmd/step8_psf_photometry.py | [PSF][CACHE] Removed {removed} stale Step 8 output file(s) before recompute. | 1 |
+| apex/gui/workflow/cmd/step8_psf_photometry.py | [PSF][CACHE] Signature not saved: output incomplete ({cache_reason}). | 1 |
+| apex/gui/workflow/cmd/step8_psf_photometry.py | apcorr_candidate | 1 |
+| apex/gui/workflow/cmd/step8_psf_photometry.py | apcorr_summary.csv | 2 |
+| apex/gui/workflow/cmd/step8_psf_photometry.py | appliedxy_iter*.npy | 1 |
+| apex/gui/workflow/cmd/step8_psf_photometry.py | appliedxy_iter{it_no}_{fname}.npy | 1 |
+| apex/gui/workflow/cmd/step8_psf_photometry.py | boxxy_iter*.npy | 1 |
+| apex/gui/workflow/cmd/step8_psf_photometry.py | boxxy_iter{it_no}_{fname}.npy | 1 |
+| apex/gui/workflow/cmd/step8_psf_photometry.py | cache_dir | 1 |
+| apex/gui/workflow/cmd/step8_psf_photometry.py | cannot read photometry_index.csv: {exc} | 1 |
+| apex/gui/workflow/cmd/step8_psf_photometry.py | detect_csv | 1 |
+| apex/gui/workflow/cmd/step8_psf_photometry.py | detect_json | 1 |
+| apex/gui/workflow/cmd/step8_psf_photometry.py | detect_{fname}.csv | 4 |
+| apex/gui/workflow/cmd/step8_psf_photometry.py | detect_{fname}.json | 4 |
+| apex/gui/workflow/cmd/step8_psf_photometry.py | detxy_iter*.npy | 1 |
+| apex/gui/workflow/cmd/step8_psf_photometry.py | detxy_iter{it_no}_{fname}.npy | 1 |
+| apex/gui/workflow/cmd/step8_psf_photometry.py | fitxy_iter*.npy | 1 |
+| apex/gui/workflow/cmd/step8_psf_photometry.py | fitxy_iter{it_no}_{fname}.npy | 1 |
+| apex/gui/workflow/cmd/step8_psf_photometry.py | max_iter={max_iter} \| redetect_sigma={redetect_sigma:.2f} \|  | 1 |
+| apex/gui/workflow/cmd/step8_psf_photometry.py | missing photometry_index.csv | 1 |
+| apex/gui/workflow/cmd/step8_psf_photometry.py | modelxy_iter*.npy | 1 |
+| apex/gui/workflow/cmd/step8_psf_photometry.py | modelxy_iter{it_no}_{fname}.npy | 1 |
+| apex/gui/workflow/cmd/step8_psf_photometry.py | photometry_ | 1 |
+| apex/gui/workflow/cmd/step8_psf_photometry.py | photometry_*.tsv | 4 |
+| apex/gui/workflow/cmd/step8_psf_photometry.py | photometry_index.csv | 9 |
+| apex/gui/workflow/cmd/step8_psf_photometry.py | photometry_index.csv frame set mismatch | 1 |
+| apex/gui/workflow/cmd/step8_psf_photometry.py | photometry_index.csv missing file/filter columns | 1 |
+| apex/gui/workflow/cmd/step8_psf_photometry.py | photometry_index.csv not found.\nRun Step 8 first. | 1 |
+| apex/gui/workflow/cmd/step8_psf_photometry.py | photometry_{fname_key} | 1 |
+| apex/gui/workflow/cmd/step8_psf_photometry.py | photometry_{fname}.tsv | 6 |
+| apex/gui/workflow/cmd/step8_psf_photometry.py | psf_output_signature.json | 1 |
+| apex/gui/workflow/cmd/step8_psf_photometry.py | psf_redetect_round_abs_max | 10 |
+| apex/gui/workflow/cmd/step8_psf_photometry.py | psf_redetect_sharp_hi | 10 |
+| apex/gui/workflow/cmd/step8_psf_photometry.py | psf_redetect_sharp_lo | 10 |
+| apex/gui/workflow/cmd/step8_psf_photometry.py | psf_redetect_sigma | 10 |
+| apex/gui/workflow/cmd/step8_psf_photometry.py | psf_redetect_sigma_g | 4 |
+| apex/gui/workflow/cmd/step8_psf_photometry.py | psf_redetect_sigma_i | 4 |
+| apex/gui/workflow/cmd/step8_psf_photometry.py | psf_redetect_sigma_r | 4 |
+| apex/gui/workflow/cmd/step8_psf_photometry.py | psf_redetect_sigma_{this_filter} | 1 |
+| apex/gui/workflow/cmd/step8_psf_photometry.py | rawxy_iter*.npy | 1 |
+| apex/gui/workflow/cmd/step8_psf_photometry.py | rawxy_iter2_{fname}.npy | 2 |
+| apex/gui/workflow/cmd/step8_psf_photometry.py | residual_meta_*.json | 2 |
+| apex/gui/workflow/cmd/step8_psf_photometry.py | residual_meta_{fname}.json | 2 |
+| apex/gui/workflow/cmd/step8_psf_photometry.py | seed_xy_*.npy | 1 |
+| apex/gui/workflow/cmd/step8_psf_photometry.py | seed_xy_{fname}.npy | 1 |
+| apex/gui/workflow/cmd/step8_psf_photometry.py | step7_apcorr_summary | 1 |
+| apex/gui/workflow/cmd/step8_psf_photometry.py | \| \|round\|<={redetect_round_abs_max:.2f} | 1 |
+| apex/gui/workflow/cmd/step9_master_id_editor.py | .tsv | 3 |
+| apex/gui/workflow/cmd/step9_master_id_editor.py | .wcs | 1 |
+| apex/gui/workflow/cmd/step9_master_id_editor.py | Convert pixel-space ROI to sky ROI {ra_deg, dec_deg, radius_arcsec} using current frame WCS. | 1 |
+| apex/gui/workflow/cmd/step9_master_id_editor.py | Get WCS from header or .wcs file | 1 |
+| apex/gui/workflow/cmd/step9_master_id_editor.py | ROI: no WCS in current frame header, cannot convert to sky coords | 1 |
+| apex/gui/workflow/cmd/step9_master_id_editor.py | Return (image_data, header) from cache or disk. LRU eviction. | 1 |
+| apex/gui/workflow/cmd/step9_master_id_editor.py | Step 9 frame filter (wcs_ok): {len(files)}/{base_count} kept | 1 |
+| apex/gui/workflow/cmd/step9_master_id_editor.py | cmd_roi.json | 1 |
+| apex/gui/workflow/cmd/step9_master_id_editor.py | cmd_with_gaia_membership.csv | 2 |
+| apex/gui/workflow/cmd/step9_master_id_editor.py | cmd_with_membership.csv | 2 |
+| apex/gui/workflow/cmd/step9_master_id_editor.py | frame_stats.csv | 2 |
+| apex/gui/workflow/cmd/step9_master_id_editor.py | gaia_derived.csv | 4 |
+| apex/gui/workflow/cmd/step9_master_id_editor.py | master_catalog.tsv | 7 |
+| apex/gui/workflow/cmd/step9_master_id_editor.py | master_star_ids.csv | 3 |
+| apex/gui/workflow/cmd/step9_master_id_editor.py | master_star_ids.orig.csv | 1 |
+| apex/gui/workflow/cmd/step9_master_id_editor.py | median_by_ID_filter_wide_cmd.csv | 2 |
+| apex/gui/workflow/cmd/step9_master_id_editor.py | photometry_ | 1 |
+| apex/gui/workflow/cmd/step9_master_id_editor.py | photometry_*.tsv | 1 |
+| apex/gui/workflow/cmd/step9_master_id_editor.py | photometry_index.csv | 3 |
+| apex/gui/workflow/cmd/step9_master_id_editor.py | photometry_{filename}.tsv | 1 |
+| apex/gui/workflow/cmd/step9_master_id_editor.py | photometry_{f}.tsv | 1 |
+| apex/gui/workflow/cmd/step9_master_id_editor.py | ref_catalog.tsv | 2 |
+| apex/gui/workflow/cmd/step9_master_id_editor.py | sourceid_to_ID.csv | 4 |
+| apex/gui/workflow/cmd/step9_master_id_editor.py | step8_fits_cache_size | 1 |
+| apex/gui/workflow/cmd/step9_master_id_editor.py | step8_frame_stats.csv | 1 |
+| apex/gui/workflow/cmd/step9_master_id_editor.py | wcs_ok | 2 |
+| apex/gui/workflow/lc/step10_detrend_merge.py |   Tried: lightcurve_ID{target_id}_raw.csv, lightcurve_combined_ID{target_id}_raw.csv | 1 |
+| apex/gui/workflow/lc/step10_detrend_merge.py | Load filename -> night_id from step1/night_assignments.json. | 1 |
+| apex/gui/workflow/lc/step10_detrend_merge.py | Step 9 comp_selection.json → Step 8 merged selection 순서로 자동 로드. | 1 |
+| apex/gui/workflow/lc/step10_detrend_merge.py | [GLOBAL] photometry_index.csv missing  | 1 |
+| apex/gui/workflow/lc/step10_detrend_merge.py | [GLOBAL] photometry_index.csv missing: {result_dir} | 1 |
+| apex/gui/workflow/lc/step10_detrend_merge.py | [NIGHT] night_assignments.json 없음 → 원본 날짜 유지 | 1 |
+| apex/gui/workflow/lc/step10_detrend_merge.py | comp_selection.json | 3 |
+| apex/gui/workflow/lc/step10_detrend_merge.py | fit_params_ID{target_id}_*.csv | 1 |
+| apex/gui/workflow/lc/step10_detrend_merge.py | fit_params_ID{target_id}_global.csv | 1 |
+| apex/gui/workflow/lc/step10_detrend_merge.py | fit_params_ID{target_id}_{mode_tag}.csv | 1 |
+| apex/gui/workflow/lc/step10_detrend_merge.py | global_diagnostics_ID{target_id}.json | 1 |
+| apex/gui/workflow/lc/step10_detrend_merge.py | global_diagnostics_ID{target_id}_*.json | 1 |
+| apex/gui/workflow/lc/step10_detrend_merge.py | global_mean_ID{target_id}.csv | 1 |
+| apex/gui/workflow/lc/step10_detrend_merge.py | global_mean_ID{target_id}_*.csv | 1 |
+| apex/gui/workflow/lc/step10_detrend_merge.py | global_zp_ID{target_id}.csv | 1 |
+| apex/gui/workflow/lc/step10_detrend_merge.py | global_zp_ID{target_id}_*.csv | 1 |
+| apex/gui/workflow/lc/step10_detrend_merge.py | headers.csv | 2 |
+| apex/gui/workflow/lc/step10_detrend_merge.py | id_mapping_*.csv | 1 |
+| apex/gui/workflow/lc/step10_detrend_merge.py | id_mapping_{key}.csv | 1 |
+| apex/gui/workflow/lc/step10_detrend_merge.py | lightcurve_*.csv | 1 |
+| apex/gui/workflow/lc/step10_detrend_merge.py | lightcurve_ID(\d+)_raw\.csv | 1 |
+| apex/gui/workflow/lc/step10_detrend_merge.py | lightcurve_ID*_raw.csv | 3 |
+| apex/gui/workflow/lc/step10_detrend_merge.py | lightcurve_ID{target_id}_*.csv | 1 |
+| apex/gui/workflow/lc/step10_detrend_merge.py | lightcurve_ID{target_id}_global.csv | 1 |
+| apex/gui/workflow/lc/step10_detrend_merge.py | lightcurve_ID{target_id}_raw.csv | 1 |
+| apex/gui/workflow/lc/step10_detrend_merge.py | lightcurve_ID{target_id}_{mode_tag}.csv | 1 |
+| apex/gui/workflow/lc/step10_detrend_merge.py | lightcurve_combined_ID{target_id}_raw.csv | 1 |
+| apex/gui/workflow/lc/step10_detrend_merge.py | master_catalog.tsv | 1 |
+| apex/gui/workflow/lc/step10_detrend_merge.py | master_catalog_*.tsv | 2 |
+| apex/gui/workflow/lc/step10_detrend_merge.py | master_catalog_{key}.tsv | 1 |
+| apex/gui/workflow/lc/step10_detrend_merge.py | median_by_ID_filter_wide.csv | 1 |
+| apex/gui/workflow/lc/step10_detrend_merge.py | median_by_ID_filter_wide_cmd.csv | 1 |
+| apex/gui/workflow/lc/step10_detrend_merge.py | params_ID{target_id}_*.csv | 1 |
+| apex/gui/workflow/lc/step10_detrend_merge.py | photometry_index.csv | 1 |
+| apex/gui/workflow/lc/step10_detrend_merge.py | result_ID{target_id}_*.json | 1 |
+| apex/gui/workflow/lc/step10_detrend_merge.py | selection_*.json | 1 |
+| apex/gui/workflow/lc/step11_period_analysis.py | comp_selection.json | 1 |
+| apex/gui/workflow/lc/step11_period_analysis.py | id_mapping_*.csv | 1 |
+| apex/gui/workflow/lc/step11_period_analysis.py | id_mapping_{key}.csv | 1 |
+| apex/gui/workflow/lc/step11_period_analysis.py | master_catalog_*.tsv | 1 |
+| apex/gui/workflow/lc/step11_period_analysis.py | master_catalog_{key}.tsv | 1 |
+| apex/gui/workflow/lc/step11_period_analysis.py | period_analysis_*.json | 1 |
+| apex/gui/workflow/lc/step11_period_analysis.py | selection_*.json | 1 |
 | apex/gui/workflow/lc/step1_file_selection.py | cache | 2 |
 | apex/gui/workflow/lc/step1_file_selection.py | cache_dir | 2 |
 | apex/gui/workflow/lc/step1_file_selection.py | file_path_map.json | 1 |
@@ -705,37 +760,74 @@ introduced.
 | apex/gui/workflow/lc/step1_night_setup.py | cache | 1 |
 | apex/gui/workflow/lc/step1_night_setup.py | cache_dir | 1 |
 | apex/gui/workflow/lc/step1_night_setup.py | night_assignments.json | 1 |
-| apex/gui/workflow/lc/step9_target_selection.py | */idmatch_{fname}.csv | 1 |
-| apex/gui/workflow/lc/step9_target_selection.py | .tsv | 1 |
-| apex/gui/workflow/lc/step9_target_selection.py | : {k: v for k, v in self._simbad_type_cache.items() if isinstance(k, str) and str(v or  | 1 |
-| apex/gui/workflow/lc/step9_target_selection.py | IDMatch loaded: {idmatch_path} | 1 |
-| apex/gui/workflow/lc/step9_target_selection.py | IDMatch loaded: {idmatch_path} (total {n_total}, Gaia {n_gaia}, local {n_local}) | 1 |
-| apex/gui/workflow/lc/step9_target_selection.py | IDMatch missing or invalid: {idmatch_path} | 1 |
-| apex/gui/workflow/lc/step9_target_selection.py | Load FITS data/header with LRU cache to avoid repeated disk I/O. | 1 |
-| apex/gui/workflow/lc/step9_target_selection.py | Step 8 idmatch 파일 로드 | 1 |
-| apex/gui/workflow/lc/step9_target_selection.py | WCS 없음 - Step 1 타겟 좌표도 없습니다. | 1 |
-| apex/gui/workflow/lc/step9_target_selection.py | _common_sid_cache | 2 |
-| apex/gui/workflow/lc/step9_target_selection.py | id_mapping_{flt}.csv | 2 |
-| apex/gui/workflow/lc/step9_target_selection.py | id_registry_{flt}.json | 2 |
-| apex/gui/workflow/lc/step9_target_selection.py | idmatch_tol_arcsec | 2 |
-| apex/gui/workflow/lc/step9_target_selection.py | idmatch_{fname}.csv | 2 |
-| apex/gui/workflow/lc/step9_target_selection.py | master_catalog_{flt}.tsv | 4 |
-| apex/gui/workflow/lc/step9_target_selection.py | photometry_index.csv | 1 |
-| apex/gui/workflow/lc/step9_target_selection.py | photometry_{fname}.tsv | 1 |
-| apex/gui/workflow/lc/step9_target_selection.py | ref_build_meta.json | 2 |
-| apex/gui/workflow/lc/step9_target_selection.py | ref_catalog.tsv | 1 |
-| apex/gui/workflow/lc/step9_target_selection.py | ref_catalog_{flt}.tsv | 1 |
-| apex/gui/workflow/lc/step9_target_selection.py | ref_catalog_{flt}_*.tsv | 1 |
-| apex/gui/workflow/lc/step9_target_selection.py | ref_wcs_match_radius_arcsec | 2 |
-| apex/gui/workflow/lc/step9_target_selection.py | selection_{flt}.json | 3 |
-| apex/gui/workflow/lc/step9_target_selection.py | selection_{self.current_filter}.json | 1 |
-| apex/gui/workflow/lc/step9_target_selection.py | sourceid_to_ID.csv | 2 |
-| apex/gui/workflow/lc/step9_target_selection.py | sourceid_to_ID_{flt}.csv | 1 |
-| apex/gui/workflow/lc/step9_target_selection.py | sourceid_to_ID_{use_flt}.csv | 1 |
-| apex/gui/workflow/lc/step9_target_selection.py | step8_filter_frames.json | 1 |
-| apex/gui/workflow/lc/step9_target_selection.py | step8_fits_cache_size | 1 |
-| apex/gui/workflow/lc/step9_target_selection.py | step8_master_sources.csv | 1 |
-| apex/gui/workflow/lc/step9_target_selection.py | {fname}_photometry.tsv | 1 |
+| apex/gui/workflow/lc/step8_target_selection.py | */idmatch_{fname}.csv | 1 |
+| apex/gui/workflow/lc/step8_target_selection.py | .tsv | 1 |
+| apex/gui/workflow/lc/step8_target_selection.py | : {k: v for k, v in self._simbad_type_cache.items() if isinstance(k, str) and str(v or  | 1 |
+| apex/gui/workflow/lc/step8_target_selection.py | Forced photometry loaded: {idmatch_path} | 1 |
+| apex/gui/workflow/lc/step8_target_selection.py | Forced photometry loaded: {idmatch_path}  | 1 |
+| apex/gui/workflow/lc/step8_target_selection.py | Forced photometry table missing or invalid: {idmatch_path} | 1 |
+| apex/gui/workflow/lc/step8_target_selection.py | Load FITS data/header with LRU cache to avoid repeated disk I/O. | 1 |
+| apex/gui/workflow/lc/step8_target_selection.py | WCS 없음 - Step 1 타겟 좌표도 없습니다. | 1 |
+| apex/gui/workflow/lc/step8_target_selection.py | _common_sid_cache | 2 |
+| apex/gui/workflow/lc/step8_target_selection.py | filter_frames.json | 2 |
+| apex/gui/workflow/lc/step8_target_selection.py | id_mapping_{flt}.csv | 2 |
+| apex/gui/workflow/lc/step8_target_selection.py | id_registry_{flt}.json | 2 |
+| apex/gui/workflow/lc/step8_target_selection.py | idmatch_tol_arcsec | 2 |
+| apex/gui/workflow/lc/step8_target_selection.py | idmatch_{fname}.csv | 2 |
+| apex/gui/workflow/lc/step8_target_selection.py | master_catalog_{flt}.tsv | 4 |
+| apex/gui/workflow/lc/step8_target_selection.py | master_sources.csv | 2 |
+| apex/gui/workflow/lc/step8_target_selection.py | photometry_index.csv | 1 |
+| apex/gui/workflow/lc/step8_target_selection.py | photometry_{fname}.tsv | 1 |
+| apex/gui/workflow/lc/step8_target_selection.py | ref_build_meta.json | 2 |
+| apex/gui/workflow/lc/step8_target_selection.py | ref_catalog.tsv | 1 |
+| apex/gui/workflow/lc/step8_target_selection.py | ref_catalog_{flt}.tsv | 1 |
+| apex/gui/workflow/lc/step8_target_selection.py | ref_catalog_{flt}_*.tsv | 1 |
+| apex/gui/workflow/lc/step8_target_selection.py | ref_wcs_match_radius_arcsec | 2 |
+| apex/gui/workflow/lc/step8_target_selection.py | selection_{flt}.json | 3 |
+| apex/gui/workflow/lc/step8_target_selection.py | selection_{self.current_filter}.json | 1 |
+| apex/gui/workflow/lc/step8_target_selection.py | sourceid_to_ID.csv | 2 |
+| apex/gui/workflow/lc/step8_target_selection.py | sourceid_to_ID_{flt}.csv | 1 |
+| apex/gui/workflow/lc/step8_target_selection.py | sourceid_to_ID_{use_flt}.csv | 1 |
+| apex/gui/workflow/lc/step8_target_selection.py | step8_filter_frames.json | 1 |
+| apex/gui/workflow/lc/step8_target_selection.py | step8_fits_cache_size | 1 |
+| apex/gui/workflow/lc/step8_target_selection.py | step8_master_sources.csv | 1 |
+| apex/gui/workflow/lc/step8_target_selection.py | {fname}_photometry.tsv | 1 |
+| apex/gui/workflow/lc/step9_lightcurve_builder.py | Load filename -> night_id mapping from step1 night_assignments.json. | 1 |
+| apex/gui/workflow/lc/step9_lightcurve_builder.py | Return basename→night_id map. Merges all sources; result is cached per result_dir. | 1 |
+| apex/gui/workflow/lc/step9_lightcurve_builder.py | [CACHE] All caches cleared | 1 |
+| apex/gui/workflow/lc/step9_lightcurve_builder.py | [CACHE] Diff series + photometry cache cleared | 1 |
+| apex/gui/workflow/lc/step9_lightcurve_builder.py | [CACHE] Stored diff series for target={target_id}, comp={comp_id} ({len(result_df)} rows) | 1 |
+| apex/gui/workflow/lc/step9_lightcurve_builder.py | [CACHE] Using cached diff series for target={target_id}, comp={comp_id} | 1 |
+| apex/gui/workflow/lc/step9_lightcurve_builder.py | [DEBUG] photometry_index.csv missing  | 3 |
+| apex/gui/workflow/lc/step9_lightcurve_builder.py | [DEBUG] photometry_index.csv not found in {result_dir} | 3 |
+| apex/gui/workflow/lc/step9_lightcurve_builder.py | [QC] Loaded cached QC for {len(cached_rows)} comp(s). | 1 |
+| apex/gui/workflow/lc/step9_lightcurve_builder.py | _night_id_map_cache | 1 |
+| apex/gui/workflow/lc/step9_lightcurve_builder.py | _qc_checkstar_cache | 3 |
+| apex/gui/workflow/lc/step9_lightcurve_builder.py | comp_qc_summary.csv | 2 |
+| apex/gui/workflow/lc/step9_lightcurve_builder.py | comp_qc_summary.meta.json | 1 |
+| apex/gui/workflow/lc/step9_lightcurve_builder.py | extinction_fit_by_filter.csv | 4 |
+| apex/gui/workflow/lc/step9_lightcurve_builder.py | frame_airmass.csv | 2 |
+| apex/gui/workflow/lc/step9_lightcurve_builder.py | frame_exclude.csv | 1 |
+| apex/gui/workflow/lc/step9_lightcurve_builder.py | frame_qc_done.json | 1 |
+| apex/gui/workflow/lc/step9_lightcurve_builder.py | id_mapping_{key}.csv | 1 |
+| apex/gui/workflow/lc/step9_lightcurve_builder.py | lightcurve_check_ID*_raw.csv | 1 |
+| apex/gui/workflow/lc/step9_lightcurve_builder.py | lightcurve_check_ID{check_id}_raw.csv | 2 |
+| apex/gui/workflow/lc/step9_lightcurve_builder.py | lightcurve_check_combined_raw.csv | 2 |
+| apex/gui/workflow/lc/step9_lightcurve_builder.py | lightcurve_check_{filt_key}_ID{check_id}_raw.csv | 1 |
+| apex/gui/workflow/lc/step9_lightcurve_builder.py | master_catalog.tsv | 1 |
+| apex/gui/workflow/lc/step9_lightcurve_builder.py | master_catalog_*.tsv | 2 |
+| apex/gui/workflow/lc/step9_lightcurve_builder.py | master_catalog_{_normalize_filter_key(flt)}.tsv | 1 |
+| apex/gui/workflow/lc/step9_lightcurve_builder.py | master_catalog_{key}.tsv | 1 |
+| apex/gui/workflow/lc/step9_lightcurve_builder.py | median_by_ID_filter_wide.csv | 1 |
+| apex/gui/workflow/lc/step9_lightcurve_builder.py | median_by_ID_filter_wide_cmd.csv | 1 |
+| apex/gui/workflow/lc/step9_lightcurve_builder.py | photometry_index.csv | 7 |
+| apex/gui/workflow/lc/step9_lightcurve_builder.py | photometry_index_mtime_ns | 1 |
+| apex/gui/workflow/lc/step9_lightcurve_builder.py | photometry_{fname}.tsv | 1 |
+| apex/gui/workflow/lc/step9_lightcurve_builder.py | selection_*.json | 1 |
+| apex/gui/workflow/lc/step9_lightcurve_builder.py | sourceid_to_ID.csv | 3 |
+| apex/gui/workflow/lc/step9_lightcurve_builder.py | target_selection.json | 2 |
+| apex/gui/workflow/lc/step9_lightcurve_builder.py | {fname}_photometry.tsv | 1 |
+| apex/gui/workflow/lc/step9_lightcurve_builder.py | 필터별 selection 로드 (Step 8에서 저장한 selection_{filter}.json) | 1 |
 | apex/gui/workflow/step1_file_selection_common.py | cache | 2 |
 | apex/gui/workflow/step1_file_selection_common.py | cache_dir | 2 |
 | apex/gui/workflow/step1_file_selection_common.py | file_path_map.json | 1 |
@@ -744,10 +836,9 @@ introduced.
 | apex/gui/workflow/step3_sky_preview.py | headers.csv | 2 |
 | apex/gui/workflow/step3_sky_preview.py | photometry_index.csv | 1 |
 | apex/gui/workflow/step3_sky_preview.py | step3_fits_cache_size | 1 |
-| apex/gui/workflow/step3_sky_preview.py | step5*/photometry_index.csv | 1 |
 | apex/gui/workflow/step4_source_detection.py |  if detect_engine ==  | 2 |
+| apex/gui/workflow/step4_source_detection.py |  \| elapsed {format_duration(time.monotonic() - self._detect_start_time)} | 2 |
 | apex/gui/workflow/step4_source_detection.py | All frames already cached. Nothing to do. | 1 |
-| apex/gui/workflow/step4_source_detection.py | Backup current cache to previous cache for undo | 1 |
 | apex/gui/workflow/step4_source_detection.py | Cache dir: {cache_dir} | 1 |
 | apex/gui/workflow/step4_source_detection.py | Cache directory not found. | 1 |
 | apex/gui/workflow/step4_source_detection.py | Clear Detection Cache | 1 |
@@ -756,54 +847,49 @@ introduced.
 | apex/gui/workflow/step4_source_detection.py | Detection cache cleared: {removed} files removed. | 1 |
 | apex/gui/workflow/step4_source_detection.py | Detection complete (cache+new): {len(self.detection_results)} files | 1 |
 | apex/gui/workflow/step4_source_detection.py | Ignored incompatible detection cache: {skipped_incompatible} files | 1 |
-| apex/gui/workflow/step4_source_detection.py | Ignored incompatible previous cache: {skipped_incompatible} files | 1 |
 | apex/gui/workflow/step4_source_detection.py | Load cached detection results from disk | 1 |
 | apex/gui/workflow/step4_source_detection.py | Loaded cached results: {len(results)} files | 1 |
-| apex/gui/workflow/step4_source_detection.py | Loaded previous cached results: {len(results)} files | 1 |
 | apex/gui/workflow/step4_source_detection.py | Results are cached for subsequent steps. Mouse: Wheel to zoom \| Right-click drag to pan | 1 |
-| apex/gui/workflow/step4_source_detection.py | Resume from cache | 1 |
-| apex/gui/workflow/step4_source_detection.py | Skip files that already have detect_*.json in cache | 1 |
 | apex/gui/workflow/step4_source_detection.py | Skipped incompatible detection cache: {skipped_incompatible} files | 1 |
 | apex/gui/workflow/step4_source_detection.py | Starting detection (resume). Cached: {len(self.file_list) - len(pending_files)}, Pending: {len(pending_files)} | 1 |
-| apex/gui/workflow/step4_source_detection.py | Swap current cache with previous cache on disk | 1 |
+| apex/gui/workflow/step4_source_detection.py | Use detection cache | 1 |
+| apex/gui/workflow/step4_source_detection.py | When enabled, skip frames with compatible Step 4 detect_*.json cache.  | 1 |
 | apex/gui/workflow/step4_source_detection.py | [DetectionWorker] Error in detect_single({filename}): {e} | 1 |
 | apex/gui/workflow/step4_source_detection.py | [DetectionWorker] max_workers={max_workers}, sigma_base={detect_sigma_base} | 1 |
-| apex/gui/workflow/step4_source_detection.py | _detect_start_time | 1 |
-| apex/gui/workflow/step4_source_detection.py | _normalized_cache | 1 |
+| apex/gui/workflow/step4_source_detection.py | _detect_start_time | 3 |
 | apex/gui/workflow/step4_source_detection.py | _pick_detection_cache | 1 |
-| apex/gui/workflow/step4_source_detection.py | cache_schema | 2 |
+| apex/gui/workflow/step4_source_detection.py | apcorr_candidate | 1 |
 | apex/gui/workflow/step4_source_detection.py | chk_resume_cache | 1 |
 | apex/gui/workflow/step4_source_detection.py | detect_ | 1 |
 | apex/gui/workflow/step4_source_detection.py | detect_*.csv | 1 |
 | apex/gui/workflow/step4_source_detection.py | detect_*.json | 1 |
-| apex/gui/workflow/step4_source_detection.py | detect_engine | 10 |
+| apex/gui/workflow/step4_source_detection.py | detect_csv | 1 |
+| apex/gui/workflow/step4_source_detection.py | detect_engine | 8 |
+| apex/gui/workflow/step4_source_detection.py | detect_json | 2 |
 | apex/gui/workflow/step4_source_detection.py | detect_keep_max | 2 |
-| apex/gui/workflow/step4_source_detection.py | detect_method | 9 |
+| apex/gui/workflow/step4_source_detection.py | detect_method | 7 |
 | apex/gui/workflow/step4_source_detection.py | detect_mode | 3 |
 | apex/gui/workflow/step4_source_detection.py | detect_peak_ | 1 |
 | apex/gui/workflow/step4_source_detection.py | detect_peak_*.csv | 1 |
-| apex/gui/workflow/step4_source_detection.py | detect_peak_{filename}.csv | 4 |
+| apex/gui/workflow/step4_source_detection.py | detect_peak_{filename}.csv | 2 |
 | apex/gui/workflow/step4_source_detection.py | detect_prev_ | 1 |
 | apex/gui/workflow/step4_source_detection.py | detect_prev_peak_ | 1 |
 | apex/gui/workflow/step4_source_detection.py | detect_prev_peak_*.csv | 1 |
-| apex/gui/workflow/step4_source_detection.py | detect_prev_peak_{filename}.csv | 2 |
-| apex/gui/workflow/step4_source_detection.py | detect_prev_{filename}.csv | 2 |
-| apex/gui/workflow/step4_source_detection.py | detect_prev_{filename}.json | 3 |
 | apex/gui/workflow/step4_source_detection.py | detect_sigma | 9 |
 | apex/gui/workflow/step4_source_detection.py | detect_sigma_ | 2 |
+| apex/gui/workflow/step4_source_detection.py | detect_sigma_by_filter | 2 |
 | apex/gui/workflow/step4_source_detection.py | detect_sigma_g | 1 |
 | apex/gui/workflow/step4_source_detection.py | detect_sigma_i | 1 |
 | apex/gui/workflow/step4_source_detection.py | detect_sigma_r | 1 |
 | apex/gui/workflow/step4_source_detection.py | detect_tmp_peak_*.csv | 1 |
-| apex/gui/workflow/step4_source_detection.py | detect_tmp_peak_{filename}.csv | 1 |
-| apex/gui/workflow/step4_source_detection.py | detect_tmp_{filename}.csv | 1 |
-| apex/gui/workflow/step4_source_detection.py | detect_tmp_{filename}.json | 1 |
-| apex/gui/workflow/step4_source_detection.py | detect_{filename}.csv | 4 |
-| apex/gui/workflow/step4_source_detection.py | detect_{filename}.json | 6 |
+| apex/gui/workflow/step4_source_detection.py | detect_{filename}.csv | 3 |
+| apex/gui/workflow/step4_source_detection.py | detect_{filename}.json | 5 |
 | apex/gui/workflow/step4_source_detection.py | detect_{fname}.json | 2 |
 | apex/gui/workflow/step4_source_detection.py | detect_{self.current_filename}.csv | 1 |
+| apex/gui/workflow/step4_source_detection.py | elong_med is N/A for all frames — re-run Step 4 detection to refresh cache. | 1 |
 | apex/gui/workflow/step4_source_detection.py | frame_quality.csv | 2 |
 | apex/gui/workflow/step4_source_detection.py | idmatch_use_qc_pass_only | 1 |
+| apex/gui/workflow/step4_source_detection.py | n_apcorr_candidates | 1 |
 | apex/gui/workflow/step4_source_detection.py | param_detect_mode | 1 |
 | apex/gui/workflow/step4_source_detection.py | param_detect_mode_apply | 1 |
 | apex/gui/workflow/step4_source_detection.py | param_detect_sigma | 1 |
@@ -811,327 +897,269 @@ introduced.
 | apex/gui/workflow/step4_source_detection.py | {peak_prefix}{filename}.csv | 1 |
 | apex/gui/workflow/step4_source_detection.py | {prefix}{filename}.csv | 1 |
 | apex/gui/workflow/step4_source_detection.py | {prefix}{filename}.json | 3 |
-| apex/gui/workflow/step5_aperture_photometry.py |  \| apcorr={apcorr_val:.4f} | 1 |
-| apex/gui/workflow/step5_aperture_photometry.py | 0/{len(self.file_list)} \| Apcorr... | 1 |
-| apex/gui/workflow/step5_aperture_photometry.py | APCORR ERROR {src}: {err} | 1 |
-| apex/gui/workflow/step5_aperture_photometry.py | Apcorr | 1 |
-| apex/gui/workflow/step5_aperture_photometry.py | Apcorr = correction from optimal aperture to large reference aperture. | 1 |
-| apex/gui/workflow/step5_aperture_photometry.py | Apcorr Failed | 1 |
-| apex/gui/workflow/step5_aperture_photometry.py | Apcorr QC | 1 |
-| apex/gui/workflow/step5_aperture_photometry.py | Apcorr apply: | 1 |
-| apex/gui/workflow/step5_aperture_photometry.py | Apcorr done | 1 |
-| apex/gui/workflow/step5_aperture_photometry.py | Apcorr done: {summary} | 1 |
-| apex/gui/workflow/step5_aperture_photometry.py | Apcorr finished but aperture_by_frame.csv not found. | 1 |
-| apex/gui/workflow/step5_aperture_photometry.py | Apcorr is running. Stop it first. | 1 |
-| apex/gui/workflow/step5_aperture_photometry.py | Aperture Correction (Apcorr) | 1 |
-| apex/gui/workflow/step5_aperture_photometry.py | Load det_uid, x, y from detect_{fname}.csv.  Returns DataFrame or None. | 1 |
-| apex/gui/workflow/step5_aperture_photometry.py | Max allowed rel_scatter (1.4826×MAD/apcorr). 희소 시야는 0.10–0.20으로 올릴 것. | 1 |
-| apex/gui/workflow/step5_aperture_photometry.py | No frames with apcorr apply=True | 1 |
-| apex/gui/workflow/step5_aperture_photometry.py | Run Apcorr | 1 |
-| apex/gui/workflow/step5_aperture_photometry.py | Run Apcorr first (Apcorr QC tab → Run Apcorr). | 1 |
-| apex/gui/workflow/step5_aperture_photometry.py | Run Apcorr first to find optimal aperture per frame, then Run Photometry. | 1 |
-| apex/gui/workflow/step5_aperture_photometry.py | Start Apcorr \| {len(self.file_list)} frames | 1 |
-| apex/gui/workflow/step5_aperture_photometry.py | [APCORR] Failed to load apcorr_summary.csv: {e} | 1 |
-| apex/gui/workflow/step5_aperture_photometry.py | [APCORR] Loaded correction for {len(apcorr_map)}/{len(df_apc)} frames | 1 |
-| apex/gui/workflow/step5_aperture_photometry.py | [APCORR] apply=True frame filter: {len(files_to_run)}/{before_n} kept | 1 |
-| apex/gui/workflow/step5_aperture_photometry.py | [APCORR] filter skipped ({e}) | 1 |
-| apex/gui/workflow/step5_aperture_photometry.py | [AUTO] aperture_by_frame.csv missing – running Apcorr first. | 1 |
-| apex/gui/workflow/step5_aperture_photometry.py | _apcorr_summary_df | 1 |
-| apex/gui/workflow/step5_aperture_photometry.py | apcorr | 6 |
-| apex/gui/workflow/step5_aperture_photometry.py | apcorr 계산에 필요한 최소 기준성 수. | 1 |
-| apex/gui/workflow/step5_aperture_photometry.py | apcorr_apply | 3 |
-| apex/gui/workflow/step5_aperture_photometry.py | apcorr_file_cand_table | 1 |
-| apex/gui/workflow/step5_aperture_photometry.py | apcorr_file_list | 1 |
-| apex/gui/workflow/step5_aperture_photometry.py | apcorr_large_ref_scale | 1 |
-| apex/gui/workflow/step5_aperture_photometry.py | apcorr_scatter_max | 1 |
-| apex/gui/workflow/step5_aperture_photometry.py | apcorr_status | 1 |
-| apex/gui/workflow/step5_aperture_photometry.py | apcorr_summary.csv | 4 |
-| apex/gui/workflow/step5_aperture_photometry.py | apcorr_table | 1 |
-| apex/gui/workflow/step5_aperture_photometry.py | apcorr_use_min_n | 1 |
-| apex/gui/workflow/step5_aperture_photometry.py | aperture_by_frame.csv | 3 |
-| apex/gui/workflow/step5_aperture_photometry.py | aperture_by_frame.csv not found at {ap_path}.  | 1 |
-| apex/gui/workflow/step5_aperture_photometry.py | detect_{fname}.csv | 3 |
-| apex/gui/workflow/step5_aperture_photometry.py | detect_{fname}.json | 2 |
-| apex/gui/workflow/step5_aperture_photometry.py | growth_curve.csv | 1 |
-| apex/gui/workflow/step5_aperture_photometry.py | photometry_index.csv | 3 |
-| apex/gui/workflow/step5_aperture_photometry.py | photometry_{fname}.tsv | 1 |
-| apex/gui/workflow/step5_aperture_photometry.py | {current}/{total} \| Apcorr {filename} | 1 |
-| apex/gui/workflow/step5_aperture_worker.py | [APCORR] {fname} apply={apply_flag} reason={apply_reason} \|  | 1 |
-| apex/gui/workflow/step5_aperture_worker.py | [Apcorr] {fname}: {exc} | 1 |
-| apex/gui/workflow/step5_aperture_worker.py | apcorr_apply | 1 |
-| apex/gui/workflow/step5_aperture_worker.py | apcorr_disabled | 1 |
-| apex/gui/workflow/step5_aperture_worker.py | apcorr_isolation_factor | 1 |
-| apex/gui/workflow/step5_aperture_worker.py | apcorr_large_ref_scale | 1 |
-| apex/gui/workflow/step5_aperture_worker.py | apcorr_max_sources | 1 |
-| apex/gui/workflow/step5_aperture_worker.py | apcorr_nan | 1 |
-| apex/gui/workflow/step5_aperture_worker.py | apcorr_not_run | 1 |
-| apex/gui/workflow/step5_aperture_worker.py | apcorr_out_of_range({apcorr:.3f}) | 1 |
-| apex/gui/workflow/step5_aperture_worker.py | apcorr_scale_max | 1 |
-| apex/gui/workflow/step5_aperture_worker.py | apcorr_scale_min | 1 |
-| apex/gui/workflow/step5_aperture_worker.py | apcorr_scale_step | 1 |
-| apex/gui/workflow/step5_aperture_worker.py | apcorr_scatter_max | 1 |
-| apex/gui/workflow/step5_aperture_worker.py | apcorr_summary.csv | 1 |
-| apex/gui/workflow/step5_aperture_worker.py | apcorr_use_min_n | 1 |
-| apex/gui/workflow/step5_aperture_worker.py | apcorr_{fname}.json | 1 |
-| apex/gui/workflow/step5_aperture_worker.py | aperture_by_frame.csv | 1 |
-| apex/gui/workflow/step5_aperture_worker.py | detect_{fname}.csv | 3 |
-| apex/gui/workflow/step5_aperture_worker.py | detect_{fname}.json | 2 |
-| apex/gui/workflow/step5_aperture_worker.py | growth_curve.csv | 1 |
-| apex/gui/workflow/step5_aperture_worker.py | n={n_used} apcorr={apcorr:.4f}(flux ratio)  | 1 |
-| apex/gui/workflow/step5_aperture_worker.py | n_used<{apcorr_use_min_n} | 1 |
-| apex/gui/workflow/step5_aperture_worker.py | rel_scatter>{apcorr_scatter_max:.3f}({rel_sc:.3f}) | 1 |
-| apex/gui/workflow/step6_wcs_plate_solving.py | .json | 2 |
-| apex/gui/workflow/step6_wcs_plate_solving.py | Astrometry.net: {n_ok} frames solved successfully \| WCS-QC pass: {n_qc} | 1 |
-| apex/gui/workflow/step6_wcs_plate_solving.py | Extract rotation angle from WCS CD matrix (degrees, E of N). | 1 |
-| apex/gui/workflow/step6_wcs_plate_solving.py | Gaia Allow No Cache: | 1 |
-| apex/gui/workflow/step6_wcs_plate_solving.py | Get center RA/Dec from WCS. | 1 |
-| apex/gui/workflow/step6_wcs_plate_solving.py | Guard against stale/misaligned Gaia caches that cover only part of the field. | 1 |
-| apex/gui/workflow/step6_wcs_plate_solving.py | Keep .wcs and debug sidecars; redundant .new FITS copies are removed automatically. | 1 |
-| apex/gui/workflow/step6_wcs_plate_solving.py | Keep .wcs/debug files | 1 |
-| apex/gui/workflow/step6_wcs_plate_solving.py | Solve WCS for all frames using ASTAP (local). | 1 |
-| apex/gui/workflow/step6_wcs_plate_solving.py | Solve WCS for all frames using local astrometry.net (solve-field). | 1 |
-| apex/gui/workflow/step6_wcs_plate_solving.py | Step 6: WCS Plate Solving | 1 |
-| apex/gui/workflow/step6_wcs_plate_solving.py | The WCS transformation has more axes* | 1 |
-| apex/gui/workflow/step6_wcs_plate_solving.py | Use Cache | 1 |
-| apex/gui/workflow/step6_wcs_plate_solving.py | Use Cached Outputs: | 1 |
-| apex/gui/workflow/step6_wcs_plate_solving.py | WCS Log | 1 |
-| apex/gui/workflow/step6_wcs_plate_solving.py | WCS Parameters | 1 |
-| apex/gui/workflow/step6_wcs_plate_solving.py | WCS Plate Solving | 1 |
-| apex/gui/workflow/step6_wcs_plate_solving.py | WCS Results | 1 |
-| apex/gui/workflow/step6_wcs_plate_solving.py | WCS center Dec (deg) | 1 |
-| apex/gui/workflow/step6_wcs_plate_solving.py | WCS center RA (deg) | 1 |
-| apex/gui/workflow/step6_wcs_plate_solving.py | WCS done: {summary.get( | 1 |
-| apex/gui/workflow/step6_wcs_plate_solving.py | WCS rotation (deg, E of N) | 1 |
-| apex/gui/workflow/step6_wcs_plate_solving.py | WCS solve by astrometry.net (local) | 1 |
-| apex/gui/workflow/step6_wcs_plate_solving.py | WCS solve failed | 1 |
-| apex/gui/workflow/step6_wcs_plate_solving.py | WCS solve success | 1 |
-| apex/gui/workflow/step6_wcs_plate_solving.py | WCS source | 2 |
-| apex/gui/workflow/step6_wcs_plate_solving.py | WCS source (refined with Gaia) | 1 |
-| apex/gui/workflow/step6_wcs_plate_solving.py | WCS-QC pass: {summary.get( | 1 |
-| apex/gui/workflow/step6_wcs_plate_solving.py | WCSAXES | 2 |
-| apex/gui/workflow/step6_wcs_plate_solving.py | WCSCDEC | 1 |
-| apex/gui/workflow/step6_wcs_plate_solving.py | WCSCRA | 1 |
-| apex/gui/workflow/step6_wcs_plate_solving.py | WCSPIXF | 1 |
-| apex/gui/workflow/step6_wcs_plate_solving.py | WCSPIXI | 1 |
-| apex/gui/workflow/step6_wcs_plate_solving.py | WCSREFN | 1 |
-| apex/gui/workflow/step6_wcs_plate_solving.py | WCSRMAX | 1 |
-| apex/gui/workflow/step6_wcs_plate_solving.py | WCSRMD | 1 |
-| apex/gui/workflow/step6_wcs_plate_solving.py | WCSROT | 1 |
-| apex/gui/workflow/step6_wcs_plate_solving.py | WCSSIP | 1 |
-| apex/gui/workflow/step6_wcs_plate_solving.py | WCSSRC | 3 |
-| apex/gui/workflow/step6_wcs_plate_solving.py | WCS_OK | 3 |
-| apex/gui/workflow/step6_wcs_plate_solving.py | Worker thread for ASTAP WCS solving | 1 |
-| apex/gui/workflow/step6_wcs_plate_solving.py | Worker thread for local astrometry.net (solve-field) WCS solving | 1 |
-| apex/gui/workflow/step6_wcs_plate_solving.py | [Refine] Starting WCS refinement with Gaia matching... | 1 |
-| apex/gui/workflow/step6_wcs_plate_solving.py | [WCS-QC] Failed to write QC CSV: {e} | 1 |
-| apex/gui/workflow/step6_wcs_plate_solving.py | [WCS] WARNING: FITS header coords differ by {sep_deg:.2f}deg from project_state, using header | 1 |
-| apex/gui/workflow/step6_wcs_plate_solving.py | [WCS] astap_timeout_s={astap_timeout} astap_radius_deg={astap_radius} astap_db={astap_db or  | 1 |
-| apex/gui/workflow/step6_wcs_plate_solving.py | [WCS] astnet_local_enable={astnet_local_enable} use_wsl={astnet_use_wsl}  | 1 |
-| apex/gui/workflow/step6_wcs_plate_solving.py | [WCS] sample={sample} shape={nx0}x{ny0} pix_arcsec={pix_arc:.5f}  | 1 |
-| apex/gui/workflow/step6_wcs_plate_solving.py | [WCS] start files={len(files)} use_cropped={self.use_cropped} cache_dir={self.cache_dir} | 1 |
-| apex/gui/workflow/step6_wcs_plate_solving.py | _wcs_start_time | 1 |
-| apex/gui/workflow/step6_wcs_plate_solving.py | astap_fail,wcs_fail | 1 |
-| apex/gui/workflow/step6_wcs_plate_solving.py | astnet_cache_hit_without_solution_marker | 1 |
-| apex/gui/workflow/step6_wcs_plate_solving.py | astnet_cache_miss_solved_marker_missing | 1 |
-| apex/gui/workflow/step6_wcs_plate_solving.py | astnet_local_use_cache | 3 |
-| apex/gui/workflow/step6_wcs_plate_solving.py | astnet_ran_but_wcs_missing | 1 |
-| apex/gui/workflow/step6_wcs_plate_solving.py | astroquery.gaia not available and no cache | 2 |
-| apex/gui/workflow/step6_wcs_plate_solving.py | cache | 2 |
-| apex/gui/workflow/step6_wcs_plate_solving.py | cache(after_fail) | 2 |
-| apex/gui/workflow/step6_wcs_plate_solving.py | cache_hit | 4 |
-| apex/gui/workflow/step6_wcs_plate_solving.py | cache_schema | 3 |
-| apex/gui/workflow/step6_wcs_plate_solving.py | cpulimit_s={cpulimit_s} use_wsl={use_wsl} use_cache={use_cache}  | 1 |
-| apex/gui/workflow/step6_wcs_plate_solving.py | data_none,wcs_fail | 1 |
-| apex/gui/workflow/step6_wcs_plate_solving.py | detect_{fname}.csv | 8 |
-| apex/gui/workflow/step6_wcs_plate_solving.py | detect_{fname}.json | 4 |
-| apex/gui/workflow/step6_wcs_plate_solving.py | fail_no_cache:unknown | 2 |
-| apex/gui/workflow/step6_wcs_plate_solving.py | fail_no_cache:{_exc_brief(last_err, limit=180)} | 2 |
-| apex/gui/workflow/step6_wcs_plate_solving.py | frame_quality.csv | 1 |
-| apex/gui/workflow/step6_wcs_plate_solving.py | frame_wcs_qc.csv | 2 |
-| apex/gui/workflow/step6_wcs_plate_solving.py | gaia_allow_no_cache | 5 |
-| apex/gui/workflow/step6_wcs_plate_solving.py | gaia_fov_meta.json | 2 |
-| apex/gui/workflow/step6_wcs_plate_solving.py | idmatch_gaia_g_limit | 1 |
-| apex/gui/workflow/step6_wcs_plate_solving.py | mag_max={mag_max:.2f}. WCS-QC match rate가 예상보다 낮을 수 있음. | 1 |
-| apex/gui/workflow/step6_wcs_plate_solving.py | match_n={match_n} wcs_qc={ | 1 |
-| apex/gui/workflow/step6_wcs_plate_solving.py | no_detect_data | 1 |
-| apex/gui/workflow/step6_wcs_plate_solving.py | no_wcs | 2 |
-| apex/gui/workflow/step6_wcs_plate_solving.py | ref_wcs_match_radius_arcsec | 1 |
-| apex/gui/workflow/step6_wcs_plate_solving.py | wcs_complete | 1 |
-| apex/gui/workflow/step6_wcs_plate_solving.py | wcs_fail | 2 |
-| apex/gui/workflow/step6_wcs_plate_solving.py | wcs_header | 1 |
-| apex/gui/workflow/step6_wcs_plate_solving.py | wcs_header_not_celestial | 1 |
-| apex/gui/workflow/step6_wcs_plate_solving.py | wcs_keywords_missing_after_astap | 1 |
-| apex/gui/workflow/step6_wcs_plate_solving.py | wcs_max_workers | 4 |
-| apex/gui/workflow/step6_wcs_plate_solving.py | wcs_missing | 1 |
-| apex/gui/workflow/step6_wcs_plate_solving.py | wcs_not_celestial | 1 |
-| apex/gui/workflow/step6_wcs_plate_solving.py | wcs_ok | 9 |
-| apex/gui/workflow/step6_wcs_plate_solving.py | wcs_plate_solve | 2 |
-| apex/gui/workflow/step6_wcs_plate_solving.py | wcs_qc_clip_sigma | 2 |
-| apex/gui/workflow/step6_wcs_plate_solving.py | wcs_qc_match_radius_arcsec | 2 |
-| apex/gui/workflow/step6_wcs_plate_solving.py | wcs_qc_match_radius_px | 2 |
-| apex/gui/workflow/step6_wcs_plate_solving.py | wcs_qc_max_center_offset_arcsec | 2 |
-| apex/gui/workflow/step6_wcs_plate_solving.py | wcs_qc_max_edge_ratio | 2 |
-| apex/gui/workflow/step6_wcs_plate_solving.py | wcs_qc_max_p99_px | 2 |
-| apex/gui/workflow/step6_wcs_plate_solving.py | wcs_qc_max_rms_px | 2 |
-| apex/gui/workflow/step6_wcs_plate_solving.py | wcs_qc_min_inlier_rate | 2 |
-| apex/gui/workflow/step6_wcs_plate_solving.py | wcs_qc_min_match_n | 3 |
-| apex/gui/workflow/step6_wcs_plate_solving.py | wcs_qc_min_match_rate | 2 |
-| apex/gui/workflow/step6_wcs_plate_solving.py | wcs_qc_pass | 15 |
-| apex/gui/workflow/step6_wcs_plate_solving.py | wcs_qc_reason | 6 |
-| apex/gui/workflow/step6_wcs_plate_solving.py | wcs_qc_require_wcs_ok | 2 |
-| apex/gui/workflow/step6_wcs_plate_solving.py | wcs_refine_enable | 4 |
-| apex/gui/workflow/step6_wcs_plate_solving.py | wcs_refine_match_r_fwhm | 5 |
-| apex/gui/workflow/step6_wcs_plate_solving.py | wcs_refine_max_match | 5 |
-| apex/gui/workflow/step6_wcs_plate_solving.py | wcs_refine_min_match | 5 |
-| apex/gui/workflow/step6_wcs_plate_solving.py | wcs_require_qc_pass | 4 |
-| apex/gui/workflow/step6_wcs_plate_solving.py | wcs_rot_deg | 4 |
-| apex/gui/workflow/step6_wcs_plate_solving.py | wcs_solve | 2 |
-| apex/gui/workflow/step6_wcs_plate_solving.py | wcs_solve.log | 1 |
-| apex/gui/workflow/step6_wcs_plate_solving.py | wcs_solve_summary.csv | 3 |
-| apex/gui/workflow/step6_wcs_plate_solving.py | wcs_{filename}.json | 1 |
-| apex/gui/workflow/step6_wcs_plate_solving.py | {filename}: final_wcs_fail status={status} fail_reason={fail_reason}  | 1 |
-| apex/gui/workflow/step6_wcs_plate_solving.py | {stem}.input.json | 2 |
-| apex/gui/workflow/step6_wcs_plate_solving.py | {stem}.wcs | 4 |
-| apex/gui/workflow/step7_ref_build.py | .json | 1 |
-| apex/gui/workflow/step7_ref_build.py | : ref_catalog_stats.get( | 4 |
-| apex/gui/workflow/step7_ref_build.py | Build a fixed reference catalog using WCS-solved frames.\n | 1 |
-| apex/gui/workflow/step7_ref_build.py | Detection cache found: {len(metas)} frames | 1 |
-| apex/gui/workflow/step7_ref_build.py | Missing detection file: detect_{ref_fname}.csv | 1 |
-| apex/gui/workflow/step7_ref_build.py | No WCS for reference frame: {ref_fname} | 1 |
-| apex/gui/workflow/step7_ref_build.py | No detection cache found. Run Source Detection first. | 1 |
-| apex/gui/workflow/step7_ref_build.py | Selection prefers good WCS match stats, then saturation/elongation/FWHM. | 1 |
-| apex/gui/workflow/step7_ref_build.py | Step 7: Reference Build (WCS-based) | 1 |
-| apex/gui/workflow/step7_ref_build.py | WCS conversion failed for {ref_fname}: {e} | 1 |
-| apex/gui/workflow/step7_ref_build.py | WCS match radius (arcsec): | 1 |
-| apex/gui/workflow/step7_ref_build.py | WCS max duplicate rate: | 1 |
-| apex/gui/workflow/step7_ref_build.py | WCS max sep median (arcsec): | 1 |
-| apex/gui/workflow/step7_ref_build.py | WCS max sep p90 (arcsec): | 1 |
-| apex/gui/workflow/step7_ref_build.py | WCS min match count: | 1 |
-| apex/gui/workflow/step7_ref_build.py | WCS min match rate: | 1 |
-| apex/gui/workflow/step7_ref_build.py | WCS/Detection Status | 1 |
-| apex/gui/workflow/step7_ref_build.py | [REF] Gaia catalog not available; WCS match stats will be skipped. | 1 |
-| apex/gui/workflow/step7_ref_build.py | [REF][QC] frame_quality.csv ignored ({qc_info[ | 1 |
-| apex/gui/workflow/step7_ref_build.py | [REF][QC] frame_quality.csv not found; using all frames. | 1 |
-| apex/gui/workflow/step7_ref_build.py | [REF][QC] wcs thresholds: match_r={r:.2f}\ | 1 |
-| apex/gui/workflow/step7_ref_build.py | [REF][QC] wcs_ok={wcs_ok}/{len(metrics)} | 1 |
-| apex/gui/workflow/step7_ref_build.py | cache_schema | 1 |
-| apex/gui/workflow/step7_ref_build.py | detect_*.json | 2 |
-| apex/gui/workflow/step7_ref_build.py | detect_{fname}.csv | 2 |
-| apex/gui/workflow/step7_ref_build.py | detect_{fname}.json | 2 |
-| apex/gui/workflow/step7_ref_build.py | idmatch_gaia_g_limit | 2 |
-| apex/gui/workflow/step7_ref_build.py | ref_build_meta.json | 4 |
-| apex/gui/workflow/step7_ref_build.py | ref_catalog.tsv | 1 |
-| apex/gui/workflow/step7_ref_build.py | ref_catalog_{flt}.tsv | 1 |
-| apex/gui/workflow/step7_ref_build.py | ref_catalog_{flt}_{date_key}.tsv | 1 |
-| apex/gui/workflow/step7_ref_build.py | ref_catalog_{ref_filter}.tsv | 1 |
-| apex/gui/workflow/step7_ref_build.py | ref_frame_stats.csv | 4 |
-| apex/gui/workflow/step7_ref_build.py | ref_wcs_match_radius_arcsec | 2 |
-| apex/gui/workflow/step7_ref_build.py | ref_wcs_max_dup_rate | 2 |
-| apex/gui/workflow/step7_ref_build.py | ref_wcs_max_sep_med_arcsec | 2 |
-| apex/gui/workflow/step7_ref_build.py | ref_wcs_max_sep_p90_arcsec | 2 |
-| apex/gui/workflow/step7_ref_build.py | ref_wcs_min_match_n | 2 |
-| apex/gui/workflow/step7_ref_build.py | ref_wcs_min_match_rate | 2 |
-| apex/gui/workflow/step7_ref_build.py | shape={shape} sat={sat} n={n} wcs_ok={wcs} match_n={mn} | 1 |
-| apex/gui/workflow/step7_ref_build.py | shape_drop={elong:.1f}% -> {n2} wcs_pass -> {n3} | 1 |
-| apex/gui/workflow/step7_ref_build.py | sourceid_to_ID.csv | 1 |
-| apex/gui/workflow/step7_ref_build.py | sourceid_to_ID_{flt}.csv | 1 |
-| apex/gui/workflow/step7_ref_build.py | sourceid_to_ID_{flt}_{date_key}.csv | 1 |
-| apex/gui/workflow/step7_ref_build.py | wcs_match_n | 2 |
-| apex/gui/workflow/step7_ref_build.py | wcs_match_radius_arcsec | 1 |
-| apex/gui/workflow/step7_ref_build.py | wcs_max_dup_rate | 1 |
-| apex/gui/workflow/step7_ref_build.py | wcs_max_sep_med_arcsec | 1 |
-| apex/gui/workflow/step7_ref_build.py | wcs_max_sep_p90_arcsec | 1 |
-| apex/gui/workflow/step7_ref_build.py | wcs_min_match_n | 1 |
-| apex/gui/workflow/step7_ref_build.py | wcs_min_match_rate | 1 |
-| apex/gui/workflow/step7_ref_build.py | wcs_ok | 7 |
-| apex/gui/workflow/step7_ref_build.py | wcs_require_qc_pass | 1 |
-| apex/gui/workflow/step7_ref_build.py | wcs_resid_max | 1 |
-| apex/gui/workflow/step7_ref_build.py | wcs_resid_med | 2 |
-| apex/gui/workflow/step7_ref_build.py | wcs_solve | 1 |
-| apex/gui/workflow/step7_ref_build.py | wcs_solve_summary.csv | 1 |
-| apex/gui/workflow/step7_ref_build.py | wcs_{fname}.json | 1 |
-| apex/gui/workflow/step_forced_aperture_phot.py |  \| apcorr={apcorr_val:.4f} | 1 |
-| apex/gui/workflow/step_forced_aperture_phot.py | ) or self._load_master_catalog( | 1 |
-| apex/gui/workflow/step_forced_aperture_phot.py | APCORR_WORKER | 1 |
-| apex/gui/workflow/step_forced_aperture_phot.py | Apcorr | 2 |
-| apex/gui/workflow/step_forced_aperture_phot.py | Apcorr = correction from optimal aperture to large reference aperture (flux ratio).\n | 1 |
-| apex/gui/workflow/step_forced_aperture_phot.py | Apcorr Error ({src}) | 1 |
-| apex/gui/workflow/step_forced_aperture_phot.py | Apcorr QC | 1 |
-| apex/gui/workflow/step_forced_aperture_phot.py | Apcorr done — {n_frames} frames | 1 |
-| apex/gui/workflow/step_forced_aperture_phot.py | Build the Apcorr QC tab (Tab 0). | 1 |
-| apex/gui/workflow/step_forced_aperture_phot.py | Called when ForcedApcorrWorker finishes. | 1 |
-| apex/gui/workflow/step_forced_aperture_phot.py | Edit apcorr parameters (apcorr_scale_min, apcorr_scale_max, apcorr_scale_step,  | 1 |
-| apex/gui/workflow/step_forced_aperture_phot.py | Forced Phot / Apcorr Log | 1 |
-| apex/gui/workflow/step_forced_aperture_phot.py | Project master catalog positions onto each frame via WCS and measure forced  | 1 |
-| apex/gui/workflow/step_forced_aperture_phot.py | Reload apcorr_summary.csv and growth_curve.csv from step_forced_phot/ and populate UI. | 1 |
-| apex/gui/workflow/step_forced_aperture_phot.py | Request the apcorr worker to stop. | 1 |
-| apex/gui/workflow/step_forced_aperture_phot.py | Results are saved as aperture_by_frame.csv and used automatically by Forced Phot. | 1 |
-| apex/gui/workflow/step_forced_aperture_phot.py | Run Apcorr | 1 |
-| apex/gui/workflow/step_forced_aperture_phot.py | Start the ForcedApcorrWorker to compute growth curves. | 1 |
-| apex/gui/workflow/step_forced_aperture_phot.py | WCS (step6_wcs/) not found | 1 |
-| apex/gui/workflow/step_forced_aperture_phot.py | [APCORR ERROR] {src}: {err} | 1 |
-| apex/gui/workflow/step_forced_aperture_phot.py | [APCORR] Done. {n_frames} frames processed. | 1 |
-| apex/gui/workflow/step_forced_aperture_phot.py | [APCORR] Starting growth curve analysis \| {len(file_list)} frames | 1 |
-| apex/gui/workflow/step_forced_aperture_phot.py | [APCORR] {fname} apply={apply_flag} reason={apply_reason} \|  | 1 |
-| apex/gui/workflow/step_forced_aperture_phot.py | [Apcorr {current}/{total}] {fname} | 1 |
-| apex/gui/workflow/step_forced_aperture_phot.py | [Apcorr] {fname}: {exc} | 1 |
-| apex/gui/workflow/step_forced_aperture_phot.py | [FORCED] Loaded aperture overrides for {len(ap_overrides)} frames from aperture_by_frame.csv | 1 |
-| apex/gui/workflow/step_forced_aperture_phot.py | [FORCED] No aperture_by_frame.csv found — using params-derived apertures | 1 |
-| apex/gui/workflow/step_forced_aperture_phot.py | [FORCED] [{fname}] No WCS — using reference pixel coords | 1 |
-| apex/gui/workflow/step_forced_aperture_phot.py | [FORCED] apcorr_summary write failed: {exc} | 1 |
-| apex/gui/workflow/step_forced_aperture_phot.py | [FORCED] photometry_index write failed: {exc} | 1 |
-| apex/gui/workflow/step_forced_aperture_phot.py | [FORCED][{fname}] WCS project failed: {exc} | 1 |
-| apex/gui/workflow/step_forced_aperture_phot.py | [FORCED][{fname}] using apcorr aperture r_ap={r_ap:.1f}px | 1 |
-| apex/gui/workflow/step_forced_aperture_phot.py | _apcorr_summary_df | 1 |
-| apex/gui/workflow/step_forced_aperture_phot.py | apcorr | 10 |
-| apex/gui/workflow/step_forced_aperture_phot.py | apcorr_apply | 1 |
-| apex/gui/workflow/step_forced_aperture_phot.py | apcorr_disabled | 1 |
-| apex/gui/workflow/step_forced_aperture_phot.py | apcorr_file_cand_table | 1 |
-| apex/gui/workflow/step_forced_aperture_phot.py | apcorr_file_list | 1 |
-| apex/gui/workflow/step_forced_aperture_phot.py | apcorr_isolation_factor | 1 |
-| apex/gui/workflow/step_forced_aperture_phot.py | apcorr_large_ref_scale | 1 |
-| apex/gui/workflow/step_forced_aperture_phot.py | apcorr_large_ref_scale, apcorr_use_min_n, apcorr_scatter_max, …)  | 1 |
-| apex/gui/workflow/step_forced_aperture_phot.py | apcorr_max_sources | 1 |
-| apex/gui/workflow/step_forced_aperture_phot.py | apcorr_min_snr | 1 |
-| apex/gui/workflow/step_forced_aperture_phot.py | apcorr_nan | 1 |
-| apex/gui/workflow/step_forced_aperture_phot.py | apcorr_not_run | 1 |
-| apex/gui/workflow/step_forced_aperture_phot.py | apcorr_out_of_range({apcorr:.3f}) | 1 |
-| apex/gui/workflow/step_forced_aperture_phot.py | apcorr_rows | 2 |
-| apex/gui/workflow/step_forced_aperture_phot.py | apcorr_scale_max | 1 |
-| apex/gui/workflow/step_forced_aperture_phot.py | apcorr_scale_min | 1 |
-| apex/gui/workflow/step_forced_aperture_phot.py | apcorr_scale_step | 1 |
-| apex/gui/workflow/step_forced_aperture_phot.py | apcorr_scatter_max | 1 |
-| apex/gui/workflow/step_forced_aperture_phot.py | apcorr_status | 1 |
-| apex/gui/workflow/step_forced_aperture_phot.py | apcorr_summary.csv | 3 |
-| apex/gui/workflow/step_forced_aperture_phot.py | apcorr_table | 1 |
-| apex/gui/workflow/step_forced_aperture_phot.py | apcorr_use_min_n | 2 |
-| apex/gui/workflow/step_forced_aperture_phot.py | apcorr_{fname}.json | 1 |
-| apex/gui/workflow/step_forced_aperture_phot.py | aperture photometry.\nRun Apcorr QC first to determine optimal aperture per frame,  | 1 |
-| apex/gui/workflow/step_forced_aperture_phot.py | aperture_by_frame.csv | 2 |
-| apex/gui/workflow/step_forced_aperture_phot.py | detect_{fname}.csv | 5 |
-| apex/gui/workflow/step_forced_aperture_phot.py | detect_{fname}.json | 6 |
-| apex/gui/workflow/step_forced_aperture_phot.py | growth_curve.csv | 2 |
-| apex/gui/workflow/step_forced_aperture_phot.py | in your parameters.toml file, then re-run Apcorr. | 1 |
-| apex/gui/workflow/step_forced_aperture_phot.py | n={n_used} apcorr={apcorr:.4f}(flux ratio)  | 1 |
-| apex/gui/workflow/step_forced_aperture_phot.py | n_apcorr_stars | 1 |
-| apex/gui/workflow/step_forced_aperture_phot.py | n_used<{apcorr_use_min_n} | 1 |
-| apex/gui/workflow/step_forced_aperture_phot.py | photometry_index.csv | 3 |
-| apex/gui/workflow/step_forced_aperture_phot.py | photometry_{fname}.tsv | 1 |
-| apex/gui/workflow/step_forced_aperture_phot.py | ref_catalog*.tsv | 2 |
-| apex/gui/workflow/step_forced_aperture_phot.py | ref_catalog.tsv | 1 |
-| apex/gui/workflow/step_forced_aperture_phot.py | ref_catalog_{filt.lower()}.tsv | 1 |
-| apex/gui/workflow/step_forced_aperture_phot.py | ref_catalog_{filt.upper()}.tsv | 1 |
-| apex/gui/workflow/step_forced_aperture_phot.py | ref_catalog_{filt}.tsv | 1 |
-| apex/gui/workflow/step_forced_aperture_phot.py | rel_scatter>{apcorr_scatter_max:.3f}({rel_sc:.3f}) | 1 |
-| apex/gui/workflow/step_forced_aperture_phot.py | step8_filter_frames.json | 1 |
-| apex/gui/workflow/step_forced_aperture_phot.py | step8_frame_stats.csv | 1 |
-| apex/gui/workflow/step_forced_aperture_phot.py | step8_master_sources.csv | 1 |
-| apex/gui/workflow/step_forced_aperture_phot.py | valid_phot={n_valid}  apcorr={apcorr_val:.4f} | 1 |
-| apex/gui/workflow/step_forced_aperture_phot.py | wcs_ok | 2 |
-| apex/gui/workflow/step_forced_aperture_phot.py | wcs_solve_summary.csv | 1 |
+| apex/gui/workflow/step5_wcs_plate_solving.py |  \| elapsed {format_duration(time.monotonic() - self._wcs_start_time)} | 1 |
+| apex/gui/workflow/step5_wcs_plate_solving.py | .json | 2 |
+| apex/gui/workflow/step5_wcs_plate_solving.py | After writing WCS headers into a FITS file, update size+mtime in detect JSONs. | 1 |
+| apex/gui/workflow/step5_wcs_plate_solving.py | Allow query when cache missing | 1 |
+| apex/gui/workflow/step5_wcs_plate_solving.py | Astrometry.net: {n_ok} frames solved successfully \| WCS-QC pass: {n_qc} | 1 |
+| apex/gui/workflow/step5_wcs_plate_solving.py | Extract rotation angle from WCS CD matrix (degrees, E of N). | 1 |
+| apex/gui/workflow/step5_wcs_plate_solving.py | Gaia cache miss: | 1 |
+| apex/gui/workflow/step5_wcs_plate_solving.py | Get center RA/Dec from WCS. | 1 |
+| apex/gui/workflow/step5_wcs_plate_solving.py | Guard against stale/misaligned Gaia caches that cover only part of the field. | 1 |
+| apex/gui/workflow/step5_wcs_plate_solving.py | Keep .wcs and debug sidecars; redundant .new FITS copies are removed automatically. | 1 |
+| apex/gui/workflow/step5_wcs_plate_solving.py | Keep .wcs/debug files | 1 |
+| apex/gui/workflow/step5_wcs_plate_solving.py | N이 2000 이하면 catalog truncation — Step 5(WCS) 재실행 권장. | 1 |
+| apex/gui/workflow/step5_wcs_plate_solving.py | Solve WCS for all frames using ASTAP (local). | 1 |
+| apex/gui/workflow/step5_wcs_plate_solving.py | Solve WCS for all frames using local astrometry.net (solve-field). | 1 |
+| apex/gui/workflow/step5_wcs_plate_solving.py | Step 5: WCS Plate Solving | 1 |
+| apex/gui/workflow/step5_wcs_plate_solving.py | The WCS transformation has more axes* | 1 |
+| apex/gui/workflow/step5_wcs_plate_solving.py | This is not a reuse-cache toggle. It controls whether Step 5 may query Gaia online  | 1 |
+| apex/gui/workflow/step5_wcs_plate_solving.py | Use Cache | 1 |
+| apex/gui/workflow/step5_wcs_plate_solving.py | Use Cached Outputs: | 1 |
+| apex/gui/workflow/step5_wcs_plate_solving.py | WCS Log & Workers | 1 |
+| apex/gui/workflow/step5_wcs_plate_solving.py | WCS Parameters | 1 |
+| apex/gui/workflow/step5_wcs_plate_solving.py | WCS Plate Solving | 1 |
+| apex/gui/workflow/step5_wcs_plate_solving.py | WCS Results | 1 |
+| apex/gui/workflow/step5_wcs_plate_solving.py | WCS center Dec (deg) | 1 |
+| apex/gui/workflow/step5_wcs_plate_solving.py | WCS center RA (deg) | 1 |
+| apex/gui/workflow/step5_wcs_plate_solving.py | WCS done: {summary.get( | 1 |
+| apex/gui/workflow/step5_wcs_plate_solving.py | WCS rotation (deg, E of N) | 1 |
+| apex/gui/workflow/step5_wcs_plate_solving.py | WCS solve by astrometry.net (local) | 1 |
+| apex/gui/workflow/step5_wcs_plate_solving.py | WCS solve failed | 1 |
+| apex/gui/workflow/step5_wcs_plate_solving.py | WCS solve success | 1 |
+| apex/gui/workflow/step5_wcs_plate_solving.py | WCS source | 2 |
+| apex/gui/workflow/step5_wcs_plate_solving.py | WCS source (refined with Gaia) | 1 |
+| apex/gui/workflow/step5_wcs_plate_solving.py | WCS-QC pass: {summary.get( | 1 |
+| apex/gui/workflow/step5_wcs_plate_solving.py | WCSAXES | 2 |
+| apex/gui/workflow/step5_wcs_plate_solving.py | WCSCDEC | 1 |
+| apex/gui/workflow/step5_wcs_plate_solving.py | WCSCRA | 1 |
+| apex/gui/workflow/step5_wcs_plate_solving.py | WCSPIXF | 1 |
+| apex/gui/workflow/step5_wcs_plate_solving.py | WCSPIXI | 1 |
+| apex/gui/workflow/step5_wcs_plate_solving.py | WCSREFN | 1 |
+| apex/gui/workflow/step5_wcs_plate_solving.py | WCSRMAX | 1 |
+| apex/gui/workflow/step5_wcs_plate_solving.py | WCSRMD | 1 |
+| apex/gui/workflow/step5_wcs_plate_solving.py | WCSROT | 1 |
+| apex/gui/workflow/step5_wcs_plate_solving.py | WCSSIP | 1 |
+| apex/gui/workflow/step5_wcs_plate_solving.py | WCSSRC | 3 |
+| apex/gui/workflow/step5_wcs_plate_solving.py | WCS_OK | 3 |
+| apex/gui/workflow/step5_wcs_plate_solving.py | Worker thread for ASTAP WCS solving | 1 |
+| apex/gui/workflow/step5_wcs_plate_solving.py | Worker thread for local astrometry.net (solve-field) WCS solving | 1 |
+| apex/gui/workflow/step5_wcs_plate_solving.py | [Refine] Starting WCS refinement with Gaia matching... | 1 |
+| apex/gui/workflow/step5_wcs_plate_solving.py | [WCS-QC] Failed to write QC CSV: {e} | 1 |
+| apex/gui/workflow/step5_wcs_plate_solving.py | [WCS] WARNING: FITS header coords differ by {sep_deg:.2f}deg from project_state, using header | 1 |
+| apex/gui/workflow/step5_wcs_plate_solving.py | [WCS] astap_timeout_s={astap_timeout} astap_radius_deg={astap_radius} astap_db={astap_db or  | 1 |
+| apex/gui/workflow/step5_wcs_plate_solving.py | [WCS] astnet_local_enable={astnet_local_enable} use_wsl={astnet_use_wsl}  | 1 |
+| apex/gui/workflow/step5_wcs_plate_solving.py | [WCS] sample={sample} shape={nx0}x{ny0} pix_arcsec={pix_arc:.5f}  | 1 |
+| apex/gui/workflow/step5_wcs_plate_solving.py | [WCS] start files={len(files)} use_cropped={self.use_cropped} cache_dir={self.cache_dir} | 1 |
+| apex/gui/workflow/step5_wcs_plate_solving.py | [WCS][QC] Frame QC filter: {qc_info[ | 2 |
+| apex/gui/workflow/step5_wcs_plate_solving.py | [WCS][QC] frame_quality.csv ignored ({qc_info[ | 2 |
+| apex/gui/workflow/step5_wcs_plate_solving.py | [WCS][QC] frame_quality.csv not found; using all frames. | 2 |
+| apex/gui/workflow/step5_wcs_plate_solving.py | _wcs_start_time | 2 |
+| apex/gui/workflow/step5_wcs_plate_solving.py | astap_fail,wcs_fail | 1 |
+| apex/gui/workflow/step5_wcs_plate_solving.py | astnet_cache_hit_without_solution_marker | 1 |
+| apex/gui/workflow/step5_wcs_plate_solving.py | astnet_cache_miss_solved_marker_missing | 1 |
+| apex/gui/workflow/step5_wcs_plate_solving.py | astnet_local_use_cache | 3 |
+| apex/gui/workflow/step5_wcs_plate_solving.py | astnet_ran_but_wcs_missing | 1 |
+| apex/gui/workflow/step5_wcs_plate_solving.py | astroquery.gaia not available and no cache | 2 |
+| apex/gui/workflow/step5_wcs_plate_solving.py | cache | 2 |
+| apex/gui/workflow/step5_wcs_plate_solving.py | cache(after_fail) | 2 |
+| apex/gui/workflow/step5_wcs_plate_solving.py | cache_hit | 4 |
+| apex/gui/workflow/step5_wcs_plate_solving.py | cache_schema | 2 |
+| apex/gui/workflow/step5_wcs_plate_solving.py | cpulimit_s={cpulimit_s} use_wsl={use_wsl} use_cache={use_cache}  | 1 |
+| apex/gui/workflow/step5_wcs_plate_solving.py | data_none,wcs_fail | 1 |
+| apex/gui/workflow/step5_wcs_plate_solving.py | detect_{fname}.csv | 8 |
+| apex/gui/workflow/step5_wcs_plate_solving.py | detect_{fname}.json | 8 |
+| apex/gui/workflow/step5_wcs_plate_solving.py | fail_no_cache:unknown | 2 |
+| apex/gui/workflow/step5_wcs_plate_solving.py | fail_no_cache:{_exc_brief(last_err, limit=180)} | 2 |
+| apex/gui/workflow/step5_wcs_plate_solving.py | frame_wcs_qc.csv | 2 |
+| apex/gui/workflow/step5_wcs_plate_solving.py | gaia_allow_no_cache | 5 |
+| apex/gui/workflow/step5_wcs_plate_solving.py | gaia_fov_meta.json | 2 |
+| apex/gui/workflow/step5_wcs_plate_solving.py | idmatch_gaia_g_limit | 1 |
+| apex/gui/workflow/step5_wcs_plate_solving.py | mag_max={mag_max:.2f}. WCS-QC match rate가 예상보다 낮을 수 있음. | 1 |
+| apex/gui/workflow/step5_wcs_plate_solving.py | match_n={match_n} wcs_qc={ | 1 |
+| apex/gui/workflow/step5_wcs_plate_solving.py | no_detect_data | 1 |
+| apex/gui/workflow/step5_wcs_plate_solving.py | no_wcs | 2 |
+| apex/gui/workflow/step5_wcs_plate_solving.py | ref_wcs_match_radius_arcsec | 1 |
+| apex/gui/workflow/step5_wcs_plate_solving.py | wcs_complete | 1 |
+| apex/gui/workflow/step5_wcs_plate_solving.py | wcs_fail | 2 |
+| apex/gui/workflow/step5_wcs_plate_solving.py | wcs_header | 1 |
+| apex/gui/workflow/step5_wcs_plate_solving.py | wcs_header_not_celestial | 1 |
+| apex/gui/workflow/step5_wcs_plate_solving.py | wcs_keywords_missing_after_astap | 1 |
+| apex/gui/workflow/step5_wcs_plate_solving.py | wcs_max_workers | 4 |
+| apex/gui/workflow/step5_wcs_plate_solving.py | wcs_missing | 1 |
+| apex/gui/workflow/step5_wcs_plate_solving.py | wcs_not_celestial | 1 |
+| apex/gui/workflow/step5_wcs_plate_solving.py | wcs_ok | 9 |
+| apex/gui/workflow/step5_wcs_plate_solving.py | wcs_plate_solve | 2 |
+| apex/gui/workflow/step5_wcs_plate_solving.py | wcs_plate_solving | 1 |
+| apex/gui/workflow/step5_wcs_plate_solving.py | wcs_qc_clip_sigma | 2 |
+| apex/gui/workflow/step5_wcs_plate_solving.py | wcs_qc_match_radius_arcsec | 2 |
+| apex/gui/workflow/step5_wcs_plate_solving.py | wcs_qc_match_radius_px | 2 |
+| apex/gui/workflow/step5_wcs_plate_solving.py | wcs_qc_max_center_offset_arcsec | 2 |
+| apex/gui/workflow/step5_wcs_plate_solving.py | wcs_qc_max_edge_ratio | 2 |
+| apex/gui/workflow/step5_wcs_plate_solving.py | wcs_qc_max_p99_px | 2 |
+| apex/gui/workflow/step5_wcs_plate_solving.py | wcs_qc_max_rms_px | 2 |
+| apex/gui/workflow/step5_wcs_plate_solving.py | wcs_qc_min_inlier_rate | 2 |
+| apex/gui/workflow/step5_wcs_plate_solving.py | wcs_qc_min_match_n | 3 |
+| apex/gui/workflow/step5_wcs_plate_solving.py | wcs_qc_min_match_rate | 2 |
+| apex/gui/workflow/step5_wcs_plate_solving.py | wcs_qc_pass | 15 |
+| apex/gui/workflow/step5_wcs_plate_solving.py | wcs_qc_reason | 6 |
+| apex/gui/workflow/step5_wcs_plate_solving.py | wcs_qc_require_wcs_ok | 2 |
+| apex/gui/workflow/step5_wcs_plate_solving.py | wcs_refine_enable | 4 |
+| apex/gui/workflow/step5_wcs_plate_solving.py | wcs_refine_match_r_fwhm | 5 |
+| apex/gui/workflow/step5_wcs_plate_solving.py | wcs_refine_max_match | 5 |
+| apex/gui/workflow/step5_wcs_plate_solving.py | wcs_refine_min_match | 5 |
+| apex/gui/workflow/step5_wcs_plate_solving.py | wcs_require_qc_pass | 5 |
+| apex/gui/workflow/step5_wcs_plate_solving.py | wcs_rot_deg | 4 |
+| apex/gui/workflow/step5_wcs_plate_solving.py | wcs_solve | 2 |
+| apex/gui/workflow/step5_wcs_plate_solving.py | wcs_solve.log | 1 |
+| apex/gui/workflow/step5_wcs_plate_solving.py | wcs_solve_summary.csv | 4 |
+| apex/gui/workflow/step5_wcs_plate_solving.py | wcs_summary | 1 |
+| apex/gui/workflow/step5_wcs_plate_solving.py | wcs_{filename}.json | 1 |
+| apex/gui/workflow/step5_wcs_plate_solving.py | when no local Gaia cache exists. | 1 |
+| apex/gui/workflow/step5_wcs_plate_solving.py | {filename}: final_wcs_fail status={status} fail_reason={fail_reason}  | 1 |
+| apex/gui/workflow/step5_wcs_plate_solving.py | {stem}.input.json | 2 |
+| apex/gui/workflow/step5_wcs_plate_solving.py | {stem}.wcs | 4 |
+| apex/gui/workflow/step6_ref_build.py | .json | 1 |
+| apex/gui/workflow/step6_ref_build.py | : ref_catalog_stats.get( | 4 |
+| apex/gui/workflow/step6_ref_build.py | Build a fixed master catalog using WCS-solved frames.\n | 1 |
+| apex/gui/workflow/step6_ref_build.py | Cached Step 6 output loaded | 1 |
+| apex/gui/workflow/step6_ref_build.py | Detection cache found: {len(metas)} frames | 1 |
+| apex/gui/workflow/step6_ref_build.py | Missing detection file: detect_{ref_fname}.csv | 1 |
+| apex/gui/workflow/step6_ref_build.py | No WCS for reference frame: {ref_fname} | 1 |
+| apex/gui/workflow/step6_ref_build.py | No detection cache found. Run Source Detection first. | 1 |
+| apex/gui/workflow/step6_ref_build.py | Selection prefers good WCS match stats, then saturation/elongation/FWHM. | 1 |
+| apex/gui/workflow/step6_ref_build.py | Step 6: Master Catalog Build (WCS-based). | 1 |
+| apex/gui/workflow/step6_ref_build.py | WCS conversion failed for {ref_fname}: {e} | 1 |
+| apex/gui/workflow/step6_ref_build.py | WCS match radius (arcsec) | 1 |
+| apex/gui/workflow/step6_ref_build.py | WCS max duplicate rate | 1 |
+| apex/gui/workflow/step6_ref_build.py | WCS max sep median (arcsec) | 1 |
+| apex/gui/workflow/step6_ref_build.py | WCS max sep p90 (arcsec) | 1 |
+| apex/gui/workflow/step6_ref_build.py | WCS min match count | 1 |
+| apex/gui/workflow/step6_ref_build.py | WCS min match rate | 1 |
+| apex/gui/workflow/step6_ref_build.py | WCS/Detection Status | 1 |
+| apex/gui/workflow/step6_ref_build.py | [REF] Gaia catalog not available; WCS match stats will be skipped. | 1 |
+| apex/gui/workflow/step6_ref_build.py | [REF][CACHE] Existing Step 6 reference build found; using cached output. | 1 |
+| apex/gui/workflow/step6_ref_build.py | [REF][CACHE] Existing ref_build_meta.json ignored: {exc} | 1 |
+| apex/gui/workflow/step6_ref_build.py | [REF][CACHE] ref_build_meta.json exists but no reference catalog was found; rebuilding. | 1 |
+| apex/gui/workflow/step6_ref_build.py | [REF][QC] frame_quality.csv ignored ({qc_info[ | 1 |
+| apex/gui/workflow/step6_ref_build.py | [REF][QC] frame_quality.csv not found; using all frames. | 1 |
+| apex/gui/workflow/step6_ref_build.py | [REF][QC] wcs thresholds: match_r={r:.2f}\ | 1 |
+| apex/gui/workflow/step6_ref_build.py | [REF][QC] wcs_ok={wcs_ok}/{len(metrics)} | 1 |
+| apex/gui/workflow/step6_ref_build.py | detect_*.json | 2 |
+| apex/gui/workflow/step6_ref_build.py | detect_{fname}.csv | 2 |
+| apex/gui/workflow/step6_ref_build.py | detect_{fname}.json | 2 |
+| apex/gui/workflow/step6_ref_build.py | idmatch_gaia_g_limit | 4 |
+| apex/gui/workflow/step6_ref_build.py | master_catalog.tsv | 1 |
+| apex/gui/workflow/step6_ref_build.py | ref_build_meta.json | 5 |
+| apex/gui/workflow/step6_ref_build.py | ref_catalog.tsv | 2 |
+| apex/gui/workflow/step6_ref_build.py | ref_catalog_{flt}.tsv | 1 |
+| apex/gui/workflow/step6_ref_build.py | ref_catalog_{flt}_{date_key}.tsv | 1 |
+| apex/gui/workflow/step6_ref_build.py | ref_catalog_{ref_filter}.tsv | 2 |
+| apex/gui/workflow/step6_ref_build.py | ref_frame_stats.csv | 4 |
+| apex/gui/workflow/step6_ref_build.py | ref_wcs_match_radius_arcsec | 2 |
+| apex/gui/workflow/step6_ref_build.py | ref_wcs_max_dup_rate | 2 |
+| apex/gui/workflow/step6_ref_build.py | ref_wcs_max_sep_med_arcsec | 2 |
+| apex/gui/workflow/step6_ref_build.py | ref_wcs_max_sep_p90_arcsec | 2 |
+| apex/gui/workflow/step6_ref_build.py | ref_wcs_min_match_n | 2 |
+| apex/gui/workflow/step6_ref_build.py | ref_wcs_min_match_rate | 2 |
+| apex/gui/workflow/step6_ref_build.py | shape={shape} sat={sat} n={n} wcs_ok={wcs} match_n={mn} | 1 |
+| apex/gui/workflow/step6_ref_build.py | shape_drop={elong:.1f}% -> {n2} wcs_pass -> {n3} | 1 |
+| apex/gui/workflow/step6_ref_build.py | sourceid_to_ID.csv | 1 |
+| apex/gui/workflow/step6_ref_build.py | sourceid_to_ID_{flt}.csv | 1 |
+| apex/gui/workflow/step6_ref_build.py | sourceid_to_ID_{flt}_{date_key}.csv | 1 |
+| apex/gui/workflow/step6_ref_build.py | wcs_match_n | 2 |
+| apex/gui/workflow/step6_ref_build.py | wcs_match_radius_arcsec | 1 |
+| apex/gui/workflow/step6_ref_build.py | wcs_max_dup_rate | 1 |
+| apex/gui/workflow/step6_ref_build.py | wcs_max_sep_med_arcsec | 1 |
+| apex/gui/workflow/step6_ref_build.py | wcs_max_sep_p90_arcsec | 1 |
+| apex/gui/workflow/step6_ref_build.py | wcs_min_match_n | 1 |
+| apex/gui/workflow/step6_ref_build.py | wcs_min_match_rate | 1 |
+| apex/gui/workflow/step6_ref_build.py | wcs_ok | 7 |
+| apex/gui/workflow/step6_ref_build.py | wcs_require_qc_pass | 1 |
+| apex/gui/workflow/step6_ref_build.py | wcs_resid_max | 1 |
+| apex/gui/workflow/step6_ref_build.py | wcs_resid_med | 2 |
+| apex/gui/workflow/step6_ref_build.py | wcs_solve | 1 |
+| apex/gui/workflow/step6_ref_build.py | wcs_solve_summary.csv | 1 |
+| apex/gui/workflow/step6_ref_build.py | wcs_{fname}.json | 1 |
+| apex/gui/workflow/step7_forced_aperture_phot.py |   \|  apcorr={apcorr_val:.4f} | 1 |
+| apex/gui/workflow/step7_forced_aperture_phot.py |  if wcs_ok else  | 1 |
+| apex/gui/workflow/step7_forced_aperture_phot.py |  if wcs_ok is None else ( | 1 |
+| apex/gui/workflow/step7_forced_aperture_phot.py | (apcorr_max_sources={apcorr_max_sources}) | 1 |
+| apex/gui/workflow/step7_forced_aperture_phot.py | ) or self._load_master_catalog( | 1 |
+| apex/gui/workflow/step7_forced_aperture_phot.py | ))}.tsv | 1 |
+| apex/gui/workflow/step7_forced_aperture_phot.py | Apcorr | 3 |
+| apex/gui/workflow/step7_forced_aperture_phot.py | Apcorr fallback | 2 |
+| apex/gui/workflow/step7_forced_aperture_phot.py | Apcorr radius {ri}/{total} | 1 |
+| apex/gui/workflow/step7_forced_aperture_phot.py | Apcorr refs {n_gc_stars}/{n_apcorr_candidates} | 1 |
+| apex/gui/workflow/step7_forced_aperture_phot.py | Apcorr reject | 1 |
+| apex/gui/workflow/step7_forced_aperture_phot.py | Apcorr 산정에 사용된 isolated bright star 개수 | 1 |
+| apex/gui/workflow/step7_forced_aperture_phot.py | Apcorr 조건을 통과한 후보 개수. 계산은 apcorr_max_sources까지만 사용. | 1 |
+| apex/gui/workflow/step7_forced_aperture_phot.py | Cached Step 7 output loaded ({len(file_list)} frames) | 1 |
+| apex/gui/workflow/step7_forced_aperture_phot.py | On-frame sources without a matched detection; their center remains WCS/master-driven | 1 |
+| apex/gui/workflow/step7_forced_aperture_phot.py | Project master catalog positions onto each frame via WCS and measure forced  | 1 |
+| apex/gui/workflow/step7_forced_aperture_phot.py | Step4 apcorr_candidate=false라서 aperture correction reference에서 제외된 source 수 | 1 |
+| apex/gui/workflow/step7_forced_aperture_phot.py | WCS | 1 |
+| apex/gui/workflow/step7_forced_aperture_phot.py | WCS (step5_wcs/) not found | 1 |
+| apex/gui/workflow/step7_forced_aperture_phot.py | WCS / FWHM | 1 |
+| apex/gui/workflow/step7_forced_aperture_phot.py | WCS solve 성공 여부 | 1 |
+| apex/gui/workflow/step7_forced_aperture_phot.py | When enabled, Step 7 loads existing photometry_index.csv and per-frame TSVs if the  | 1 |
+| apex/gui/workflow/step7_forced_aperture_phot.py | [FORCED] apcorr_summary write failed: {exc} | 1 |
+| apex/gui/workflow/step7_forced_aperture_phot.py | [FORCED] photometry_index write failed: {exc} | 1 |
+| apex/gui/workflow/step7_forced_aperture_phot.py | [FORCED][CACHE] Existing Step 7 output is complete ({len(file_list)} frames); loading cached result. | 1 |
+| apex/gui/workflow/step7_forced_aperture_phot.py | [FORCED][CACHE] Existing Step 7 output not reusable ({cache_reason}); recomputing all selected frames. | 1 |
+| apex/gui/workflow/step7_forced_aperture_phot.py | [FORCED][QC] frame_quality.csv ignored ({qc_info[ | 1 |
+| apex/gui/workflow/step7_forced_aperture_phot.py | [FORCED][QC] frame_quality.csv not found; using all frames. | 1 |
+| apex/gui/workflow/step7_forced_aperture_phot.py | [FORCED][{fname}] WCS project failed: {exc} | 1 |
+| apex/gui/workflow/step7_forced_aperture_phot.py | [FORCED][{fname}] apcorr refs capped  | 1 |
+| apex/gui/workflow/step7_forced_aperture_phot.py | apcorr | 13 |
+| apex/gui/workflow/step7_forced_aperture_phot.py | apcorr_candidate | 4 |
+| apex/gui/workflow/step7_forced_aperture_phot.py | apcorr_max_sources | 2 |
+| apex/gui/workflow/step7_forced_aperture_phot.py | apcorr_min_snr | 1 |
+| apex/gui/workflow/step7_forced_aperture_phot.py | apcorr_rows | 2 |
+| apex/gui/workflow/step7_forced_aperture_phot.py | apcorr_summary.csv | 2 |
+| apex/gui/workflow/step7_forced_aperture_phot.py | apcorr_use_min_n | 1 |
+| apex/gui/workflow/step7_forced_aperture_phot.py | centering_stats.csv | 2 |
+| apex/gui/workflow/step7_forced_aperture_phot.py | centroid_outlier_px보다 중심 오차가 커서 apcorr reference에서 제외된 source 수 | 1 |
+| apex/gui/workflow/step7_forced_aperture_phot.py | detect_{fname}.csv | 2 |
+| apex/gui/workflow/step7_forced_aperture_phot.py | detect_{fname}.json | 4 |
+| apex/gui/workflow/step7_forced_aperture_phot.py | filter_frames.json | 1 |
+| apex/gui/workflow/step7_forced_aperture_phot.py | frame_stats.csv | 1 |
+| apex/gui/workflow/step7_forced_aperture_phot.py | master_sources.csv | 1 |
+| apex/gui/workflow/step7_forced_aperture_phot.py | n_apcorr_candidates | 5 |
+| apex/gui/workflow/step7_forced_aperture_phot.py | n_apcorr_stars | 2 |
+| apex/gui/workflow/step7_forced_aperture_phot.py | n_apcorr_used | 2 |
+| apex/gui/workflow/step7_forced_aperture_phot.py | n_step4_apcorr_reject | 5 |
+| apex/gui/workflow/step7_forced_aperture_phot.py | phot_apcorr_s | 2 |
+| apex/gui/workflow/step7_forced_aperture_phot.py | photometry_*.tsv | 1 |
+| apex/gui/workflow/step7_forced_aperture_phot.py | photometry_index.csv | 4 |
+| apex/gui/workflow/step7_forced_aperture_phot.py | photometry_index.csv has no file column | 1 |
+| apex/gui/workflow/step7_forced_aperture_phot.py | photometry_index.csv missing | 1 |
+| apex/gui/workflow/step7_forced_aperture_phot.py | photometry_index.csv unreadable: {exc} | 1 |
+| apex/gui/workflow/step7_forced_aperture_phot.py | photometry_{fname_s}.tsv | 1 |
+| apex/gui/workflow/step7_forced_aperture_phot.py | photometry_{fname}.tsv | 2 |
+| apex/gui/workflow/step7_forced_aperture_phot.py | photometry_{str(r.get( | 1 |
+| apex/gui/workflow/step7_forced_aperture_phot.py | ref_catalog*.tsv | 2 |
+| apex/gui/workflow/step7_forced_aperture_phot.py | ref_catalog.tsv | 1 |
+| apex/gui/workflow/step7_forced_aperture_phot.py | ref_catalog_{filt.lower()}.tsv | 1 |
+| apex/gui/workflow/step7_forced_aperture_phot.py | ref_catalog_{filt.upper()}.tsv | 1 |
+| apex/gui/workflow/step7_forced_aperture_phot.py | ref_catalog_{filt}.tsv | 1 |
+| apex/gui/workflow/step7_forced_aperture_phot.py | step4_apcorr_candidate | 1 |
+| apex/gui/workflow/step7_forced_aperture_phot.py | valid={n_valid}  apcorr={apcorr_val:.4f}   | 1 |
+| apex/gui/workflow/step7_forced_aperture_phot.py | wcs_fwhm_s | 1 |
+| apex/gui/workflow/step7_forced_aperture_phot.py | wcs_ok | 8 |
+| apex/gui/workflow/step7_forced_aperture_phot.py | wcs_only | 1 |
+| apex/gui/workflow/step7_forced_aperture_phot.py | wcs_solve_summary.csv | 1 |
+| apex/gui/workflow/step7_forced_aperture_phot.py | {apcorr_val:.4f} | 1 |
+| apex/gui/workflow/step7_forced_aperture_phot.py | {n_apcorr_candidates}->{int(apcorr_mask.sum())}  | 1 |
 | apex/utils/astro_utils.py | Parse RA/Dec from WCS center if available. | 1 |
 | apex/utils/cache_utils.py | .wcs | 4 |
-| apex/utils/cache_utils.py | Shared file-signature and WCS-cache helpers used by workflow steps. | 1 |
+| apex/utils/cache_utils.py | Build the canonical Step4 detection cache signature block. | 1 |
+| apex/utils/cache_utils.py | Normalize detection-engine aliases used in cache compatibility checks. | 1 |
+| apex/utils/cache_utils.py | Return the integer cache schema from a cache payload. | 1 |
+| apex/utils/cache_utils.py | Shared cache schema, file-signature, and WCS-cache helpers. | 1 |
+| apex/utils/cache_utils.py | Validate a Step4 detection cache payload against current input state. | 1 |
+| apex/utils/cache_utils.py | cache_schema | 2 |
+| apex/utils/cache_utils.py | detect_engine | 2 |
 | apex/utils/constants.py | Constants for WCS and astrometric calculations. | 1 |
 | apex/utils/header_cache.py | Clear FITS header cache (call when switching projects). | 1 |
 | apex/utils/header_cache.py | Force reload headers.csv and clear all caches. | 1 |
@@ -1162,8 +1190,11 @@ introduced.
 | apex/utils/qc_utils.py | wcs_qc_pass | 3 |
 | apex/utils/run_workspace.py | headers.csv | 1 |
 | apex/utils/run_workspace.py | run_manifest.json | 2 |
+| apex/utils/source_quality.py | apcorr_candidate | 1 |
+| apex/utils/source_quality.py | apcorr_isolation_factor | 1 |
+| apex/utils/source_quality.py | source_quality_apcorr_flux_pct | 1 |
 | apex/utils/step_paths.py | crop_rect.json | 1 |
-| apex/utils/step_paths.py | step6_wcs | 1 |
+| apex/utils/step_paths.py | step5_wcs | 1 |
 | apex/utils/step_paths_lc.py | global_diagnostics_ID{int(target_id)}_current.json | 1 |
 | apex/utils/step_paths_lc.py | global_mean_ID{int(target_id)}_current.csv | 1 |
 | apex/utils/step_paths_lc.py | global_zp_ID{int(target_id)}_current.csv | 1 |
@@ -1185,6 +1216,9 @@ introduced.
 | tests/test_cache_manager.py | cache_schema_mismatch | 1 |
 | tests/test_cache_manager.py | detect_frame.json | 2 |
 | tests/test_cache_manager.py | detect_x.json | 1 |
+| tests/test_cache_utils.py | cache_schema | 2 |
+| tests/test_parameters_foundation.py | apcorr | 2 |
+| tests/test_parameters_foundation.py | apcorr_flux_pct | 1 |
 | tests/test_parameters_foundation.py | cache | 5 |
 | tests/test_parameters_foundation.py | cache_dir | 2 |
 | tests/test_parameters_foundation.py | idmatch.gaia_g_limit | 2 |
@@ -1195,3 +1229,8 @@ introduced.
 | tests/test_parameters_foundation.py | wcs_refine.enable | 2 |
 | tests/test_parameters_foundation.py | wcs_refine_enable | 2 |
 | tests/test_project_state.py | project_state.json | 2 |
+| tests/test_qc_utils.py | frame_exclude.csv | 1 |
+| tests/test_qc_utils.py | frame_quality.csv | 3 |
+| tests/test_source_quality.py | apcorr_candidate | 5 |
+| tests/test_step8_psf_detection_loader.py | cache | 1 |
+| tests/test_step8_psf_detection_loader.py | detect_frame.fits.csv | 1 |

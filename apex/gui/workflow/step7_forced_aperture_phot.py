@@ -16,6 +16,7 @@ Outputs (step7_forced_phot/):
 
 from __future__ import annotations
 
+import hashlib
 import json
 import time
 import traceback
@@ -47,8 +48,9 @@ except ImportError:
     _HAVE_MPL = False
 
 from .step_window_base import StepWindowBase
-from .run_control import RunControlBar
+from .run_control import RunControlBar, format_duration as _fmt_duration, progress_status_text
 from .log_panel import WorkflowLogWindow, WorkerStatusPanel, append_timestamped_log, show_raised
+from .ui_helpers import create_output_reuse_checkbox
 from apex.utils.step_paths import (
     step2_cropped_dir,
     step4_dir,
@@ -68,6 +70,41 @@ from apex.utils.constants import get_parallel_workers
 MAG_ERR_COEFF = 2.5 / np.log(10)
 
 _GC_N_STEPS = 14   # number of radii in the growth curve
+_FORCED_SIGNATURE_FILE = "forced_phot_signature.json"
+_FORCED_SIGNATURE_VERSION = 1
+_FORCED_SIGNATURE_PARAMS = (
+    "phot_use_qc_pass_only",
+    "fwhm_pix_guess",
+    "recenter_aperture",
+    "max_recenter_shift",
+    "centroid_outlier_px",
+    "registration_match_radius_px",
+    "registration_min_anchors",
+    "forced_r_ap_scale",
+    "forced_ref_ap_scale",
+    "min_r_ap_px",
+    "fitsky_annulus_scale",
+    "fitsky_dannulus_scale",
+    "annulus_min_gap_px",
+    "gain_e_per_adu",
+    "rdnoise_e",
+    "saturation_adu",
+    "datamax_adu",
+    "phot_sigma_clip",
+    "phot_max_iter",
+    "sky_sigma_mode",
+    "sky_sigma_includes_rn",
+    "sky_sigma_min_n_sky",
+    "center_cbox_scale",
+    "apcorr_min_snr",
+    "apcorr_use_min_n",
+    "apcorr_max_sources",
+    "ref_cat_max_elong",
+    "ref_cat_max_abs_round",
+    "ref_cat_sharp_min",
+    "ref_cat_sharp_max",
+    "ref_cat_min_peak_adu",
+)
 
 
 # ── Scalar helpers ─────────────────────────────────────────────────────────────
@@ -85,15 +122,6 @@ def _to_int(val, default: int) -> int:
         return int(float(val)) if val is not None else int(default)
     except Exception:
         return int(default)
-
-
-def _fmt_duration(seconds: float) -> str:
-    s = int(max(0, round(float(seconds))))
-    h, rem = divmod(s, 3600)
-    m, ss = divmod(rem, 60)
-    if h > 0:
-        return f"{h:d}:{m:02d}:{ss:02d}"
-    return f"{m:02d}:{ss:02d}"
 
 
 def _catalog_series(df: pd.DataFrame, col: str, fallback) -> pd.Series:
@@ -1464,11 +1492,13 @@ class ForcedPhotWorker(QThread):
             })
             return
 
+        index_write_ok = False
         if index_rows:
             idx_df = pd.DataFrame(index_rows)
             try:
                 idx_df.to_csv(out_dir / "photometry_index.csv",  index=False, float_format="%.6f")
                 idx_df.to_csv(out_dir / "frame_stats.csv", index=False, float_format="%.6f")
+                index_write_ok = True
             except Exception as exc:
                 self._log(f"[FORCED] photometry_index write failed: {exc}")
 
@@ -1487,6 +1517,24 @@ class ForcedPhotWorker(QThread):
                 )
             except Exception as exc:
                 self._log(f"[FORCED] centering_stats write failed: {exc}")
+
+        valid_tsv_names = {
+            f"photometry_{str(r.get('file', ''))}.tsv"
+            for r in index_rows
+            if r.get("status") == "ok" and r.get("file")
+        }
+        stale_removed = 0
+        if index_write_ok and index_rows:
+            for old_tsv in out_dir.glob("photometry_*.tsv"):
+                if old_tsv.name in valid_tsv_names:
+                    continue
+                try:
+                    old_tsv.unlink()
+                    stale_removed += 1
+                except Exception as exc:
+                    self._log(f"[FORCED] stale output cleanup failed for {old_tsv.name}: {exc}")
+            if stale_removed:
+                self._log(f"[FORCED] Removed {stale_removed} stale per-frame TSV outputs.")
 
         n_ok    = sum(1 for r in index_rows if r.get("status") == "ok")
         n_det_t = sum(r.get("n_detected", 0) for r in index_rows)
@@ -1642,6 +1690,8 @@ class ForcedPhotWindow(StepWindowBase):
         self._center_stats_rows: List[dict] = []
         self._stats_seen = False
         self._run_started_ts: Optional[float] = None
+        self._current_forced_signature: dict | None = None
+        self._current_forced_files: list[str] = []
 
         super().__init__(
             step_index=6,
@@ -1683,6 +1733,13 @@ class ForcedPhotWindow(StepWindowBase):
         ctrl_layout.addWidget(self.run_bar)
         self.btn_run  = self.run_bar.btn_run
         self.btn_stop = self.run_bar.btn_stop
+        self.chk_use_existing_output = create_output_reuse_checkbox(
+            not bool(getattr(self.params.P, "force_rephot", False)),
+            "When enabled, Step 7 loads existing photometry_index.csv and per-frame TSVs if the "
+            "selected frame set, inputs, and photometry parameters match the saved signature. "
+            "Disable to force forced photometry to rerun.",
+        )
+        ctrl_layout.addWidget(self.chk_use_existing_output)
         self.content_layout.addLayout(ctrl_layout)
 
         center_group = QGroupBox("Centering / Recenter")
@@ -2305,6 +2362,7 @@ class ForcedPhotWindow(StepWindowBase):
 
     def run_forced_phot(self):
         self._sync_centering_params()
+        self._sync_cache_params()
         P = self.params.P
         try:
             result_dir = Path(P.result_dir)
@@ -2352,6 +2410,29 @@ class ForcedPhotWindow(StepWindowBase):
                     self.log_text,
                     f"[FORCED][QC] frame_quality.csv ignored ({qc_info['reason']}); using all frames."
                 )
+        signature = self._build_forced_output_signature(file_list)
+        self._current_forced_signature = signature
+        self._current_forced_files = list(file_list)
+        use_existing = bool(getattr(self, "chk_use_existing_output", None) and self.chk_use_existing_output.isChecked())
+        if use_existing:
+            cache_complete, cache_reason = self._existing_output_covers(file_list, signature)
+            if cache_complete:
+                append_timestamped_log(
+                    self.log_text,
+                    f"[FORCED][CACHE] Existing Step 7 output matches current inputs ({len(file_list)} frames); loading cached result."
+                )
+                self._try_load_existing_results()
+                self.progress_bar.setMaximum(len(file_list))
+                self.progress_bar.setValue(len(file_list))
+                self.progress_label.setText(f"Cached Step 7 output loaded ({len(file_list)} frames)")
+                self.update_navigation_buttons()
+                self._current_forced_signature = None
+                self._current_forced_files = []
+                return
+            append_timestamped_log(
+                self.log_text,
+                f"[FORCED][CACHE] Existing Step 7 output not reusable ({cache_reason}); recomputing all selected frames."
+            )
         self._gc_accumulator.clear()
         self._gc_per_frame.clear()
         self._center_stats_rows.clear()
@@ -2381,9 +2462,11 @@ class ForcedPhotWindow(StepWindowBase):
         self.worker.start()
 
         self.run_bar.set_running(True)
-        self._run_started_ts = time.time()
+        self._run_started_ts = time.monotonic()
         self.progress_bar.setValue(0)
-        self.progress_label.setText(f"0/{len(file_list)} | ETA --:-- | Starting...")
+        self.progress_label.setText(
+            progress_status_text(0, len(file_list), self._run_started_ts, message="Starting...")
+        )
 
     def stop_forced_phot(self):
         if self.worker and self.worker.isRunning():
@@ -2392,20 +2475,234 @@ class ForcedPhotWindow(StepWindowBase):
         self.run_bar.set_running(False)
         elapsed_txt = ""
         if self._run_started_ts is not None:
-            elapsed_txt = f" | elapsed {_fmt_duration(time.time() - float(self._run_started_ts))}"
+            elapsed_txt = f" | elapsed {_fmt_duration(time.monotonic() - float(self._run_started_ts))}"
         self.progress_label.setText(f"Stopped{elapsed_txt}")
 
     # ── Slots ──────────────────────────────────────────────────────────────────
 
+    @staticmethod
+    def _signature_value(value):
+        if isinstance(value, np.generic):
+            value = value.item()
+        if isinstance(value, Path):
+            return str(value)
+        if isinstance(value, float):
+            return float(value) if np.isfinite(value) else None
+        if isinstance(value, (bool, int, str)) or value is None:
+            return value
+        if isinstance(value, (list, tuple, set)):
+            return [ForcedPhotWindow._signature_value(v) for v in value]
+        if isinstance(value, dict):
+            return {
+                str(k): ForcedPhotWindow._signature_value(v)
+                for k, v in sorted(value.items(), key=lambda item: str(item[0]))
+            }
+        try:
+            if pd.isna(value):
+                return None
+        except Exception:
+            pass
+        return str(value)
+
+    @staticmethod
+    def _file_signature(path: Path | None) -> dict | None:
+        if path is None:
+            return None
+        try:
+            p = Path(path)
+            if not p.exists():
+                return None
+            st = p.stat()
+            try:
+                path_text = str(p.resolve())
+            except Exception:
+                path_text = str(p)
+            return {
+                "path": path_text,
+                "size": int(st.st_size),
+                "mtime_ns": int(st.st_mtime_ns),
+            }
+        except Exception:
+            return None
+
+    @staticmethod
+    def _first_existing(candidates: list[Path]) -> Path | None:
+        for path in candidates:
+            try:
+                if path.exists() and path.stat().st_size > 0:
+                    return path
+            except Exception:
+                continue
+        return None
+
+    def _resolved_cache_dir(self) -> Path:
+        result_dir = Path(self.params.P.result_dir)
+        cache_dir = Path(self.params.P.cache_dir)
+        return cache_dir if cache_dir.is_absolute() else result_dir / cache_dir
+
+    def _resolve_fits_path_for_signature(self, fname: str) -> Path | None:
+        result_dir = Path(self.params.P.result_dir)
+        if crop_is_active(result_dir):
+            cropped = step2_cropped_dir(result_dir) / fname
+            if cropped.exists():
+                return cropped
+        try:
+            original = Path(self.params.get_file_path(fname))
+            if original.exists():
+                return original
+        except Exception:
+            pass
+        try:
+            data_path = Path(self.params.P.data_dir) / fname
+            if data_path.exists():
+                return data_path
+        except Exception:
+            pass
+        return None
+
+    def _build_forced_output_signature(self, files: list[str]) -> dict:
+        result_dir = Path(self.params.P.result_dir)
+        cache_dir = self._resolved_cache_dir()
+        s4_dir = step4_dir(result_dir)
+        s5_dir = step5_wcs_dir(result_dir)
+        s6_dir = step6_refbuild_dir(result_dir)
+
+        ref_inputs = [
+            s6_dir / "ref_build_signature.json",
+            s6_dir / "ref_build_meta.json",
+            s6_dir / "ref_frame_stats.csv",
+            s6_dir / "master_catalog.tsv",
+        ]
+        ref_inputs.extend(sorted(s6_dir.glob("ref_catalog*.tsv")))
+        ref_signatures = []
+        for path in ref_inputs:
+            sig = self._file_signature(path)
+            if sig is not None:
+                ref_signatures.append(sig)
+
+        frame_inputs = []
+        for fname in files:
+            fits_path = self._resolve_fits_path_for_signature(str(fname))
+            wcs_path = self._first_existing(list(astap_wcs_candidates(fits_path)) if fits_path else [])
+            detect_json = self._first_existing([
+                cache_dir / f"detect_{fname}.json",
+                s4_dir / f"detect_{fname}.json",
+            ])
+            detect_csv = self._first_existing([
+                cache_dir / f"detect_{fname}.csv",
+                s4_dir / f"detect_{fname}.csv",
+            ])
+            frame_inputs.append({
+                "file": str(fname),
+                "fits": self._file_signature(fits_path),
+                "wcs_sidecar": self._file_signature(wcs_path),
+                "detect_json": self._file_signature(detect_json),
+                "detect_csv": self._file_signature(detect_csv),
+            })
+
+        payload = {
+            "signature_version": _FORCED_SIGNATURE_VERSION,
+            "step": "step7_forced_phot",
+            "frames": [str(f) for f in files],
+            "params": {
+                k: self._signature_value(getattr(self.params.P, k, None))
+                for k in _FORCED_SIGNATURE_PARAMS
+            },
+            "inputs": {
+                "frame_quality": self._file_signature(s4_dir / "frame_quality.csv"),
+                "wcs_summary": self._file_signature(s5_dir / "wcs_solve_summary.csv"),
+                "reference_catalogs": ref_signatures,
+                "frames": frame_inputs,
+            },
+        }
+        encoded = json.dumps(payload, sort_keys=True, ensure_ascii=False, allow_nan=False)
+        payload["signature_hash"] = hashlib.sha1(encoded.encode("utf-8")).hexdigest()
+        return payload
+
+    def _stored_forced_signature(self) -> dict | None:
+        sig_path = step7_forced_phot_dir(self.params.P.result_dir) / _FORCED_SIGNATURE_FILE
+        if not sig_path.exists():
+            return None
+        try:
+            data = json.loads(sig_path.read_text(encoding="utf-8"))
+            return data if isinstance(data, dict) else None
+        except Exception:
+            return None
+
+    def _write_forced_signature(self, signature: dict) -> None:
+        out_dir = step7_forced_phot_dir(self.params.P.result_dir)
+        out_dir.mkdir(parents=True, exist_ok=True)
+        (out_dir / _FORCED_SIGNATURE_FILE).write_text(
+            json.dumps(signature, ensure_ascii=False, indent=2, sort_keys=True, allow_nan=False),
+            encoding="utf-8",
+        )
+
+    def _remove_forced_signature(self) -> None:
+        sig_path = step7_forced_phot_dir(self.params.P.result_dir) / _FORCED_SIGNATURE_FILE
+        try:
+            sig_path.unlink()
+        except FileNotFoundError:
+            pass
+        except Exception:
+            pass
+
+    def _forced_signature_matches(self, signature: dict) -> tuple[bool, str]:
+        stored = self._stored_forced_signature()
+        if not stored:
+            return False, "missing signature"
+        if stored.get("signature_version") != _FORCED_SIGNATURE_VERSION:
+            return False, "signature version mismatch"
+        if stored.get("signature_hash") != signature.get("signature_hash"):
+            return False, "signature hash mismatch"
+        return True, "ok"
+
+    def _sync_cache_params(self) -> None:
+        use_existing = bool(
+            getattr(self, "chk_use_existing_output", None)
+            and self.chk_use_existing_output.isChecked()
+        )
+        self.params.P.force_rephot = not use_existing
+        if hasattr(self, "persist_params"):
+            self.persist_params()
+
+    def _existing_output_covers(self, file_list: list[str], signature: dict) -> tuple[bool, str]:
+        out_dir = step7_forced_phot_dir(self.params.P.result_dir)
+        sig_ok, sig_reason = self._forced_signature_matches(signature)
+        if not sig_ok:
+            return False, sig_reason
+        idx_path = out_dir / "photometry_index.csv"
+        if not idx_path.exists():
+            return False, "photometry_index.csv missing"
+        try:
+            df = pd.read_csv(idx_path)
+        except Exception as exc:
+            return False, f"photometry_index.csv unreadable: {exc}"
+        if "file" not in df.columns:
+            return False, "photometry_index.csv has no file column"
+
+        status = df.get("status", pd.Series(["ok"] * len(df), index=df.index)).fillna("").astype(str).str.lower()
+        ok_files = set(df.loc[status.eq("ok"), "file"].fillna("").astype(str).tolist())
+        missing = []
+        for fname in file_list:
+            fname_s = str(fname)
+            if fname_s not in ok_files:
+                missing.append(fname_s)
+                continue
+            if not (out_dir / f"photometry_{fname_s}.tsv").exists():
+                missing.append(fname_s)
+        if missing:
+            preview = ", ".join(missing[:3])
+            if len(missing) > 3:
+                preview += f", +{len(missing) - 3} more"
+            return False, f"missing/incomplete frames {len(missing)}/{len(file_list)}: {preview}"
+        return True, "ok"
+
     def _on_progress(self, current: int, total: int, fname: str):
         self.progress_bar.setMaximum(total)
         self.progress_bar.setValue(current)
-        eta_txt = "--:--"
-        if self._run_started_ts is not None and current > 0 and total > current:
-            elapsed = max(0.0, time.time() - float(self._run_started_ts))
-            per_frame = elapsed / float(current)
-            eta_txt = _fmt_duration(per_frame * float(total - current))
-        self.progress_label.setText(f"{current}/{total} | ETA {eta_txt} | {fname}")
+        self.progress_label.setText(
+            progress_status_text(current, total, self._run_started_ts, message=fname)
+        )
 
     def _on_log(self, msg: str):
         append_timestamped_log(self.log_text, msg)
@@ -2465,24 +2762,40 @@ class ForcedPhotWindow(StepWindowBase):
             self._refresh_center_summary()
         self.run_bar.set_running(False)
         n_ok = sum(1 for r in rows if r.get("status") == "ok")
+        expected = len(self._current_forced_files)
+        if self._current_forced_signature:
+            if expected > 0 and n_ok == expected and len(rows) == expected:
+                try:
+                    self._write_forced_signature(self._current_forced_signature)
+                    append_timestamped_log(self.log_text, "[FORCED][CACHE] Output signature saved for future reuse.")
+                except Exception as exc:
+                    append_timestamped_log(self.log_text, f"[FORCED][CACHE] Signature write failed: {exc}")
+            else:
+                self._remove_forced_signature()
+                append_timestamped_log(self.log_text, "[FORCED][CACHE] Signature not saved: output incomplete.")
+        self._current_forced_signature = None
+        self._current_forced_files = []
         elapsed_txt = ""
         if self._run_started_ts is not None:
-            elapsed_txt = f" | elapsed {_fmt_duration(time.time() - float(self._run_started_ts))}"
+            elapsed_txt = f" | elapsed {_fmt_duration(time.monotonic() - float(self._run_started_ts))}"
         self.progress_label.setText(f"Done — {n_ok}/{len(rows)} frames OK{elapsed_txt}")
         self.update_navigation_buttons()
 
     def _on_error(self, error_type: str, msg: str):
         QMessageBox.critical(self, error_type, msg)
         self.run_bar.set_running(False)
+        self._current_forced_signature = None
+        self._current_forced_files = []
         elapsed_txt = ""
         if self._run_started_ts is not None:
-            elapsed_txt = f" | elapsed {_fmt_duration(time.time() - float(self._run_started_ts))}"
+            elapsed_txt = f" | elapsed {_fmt_duration(time.monotonic() - float(self._run_started_ts))}"
         self.progress_label.setText(f"Error — see log{elapsed_txt}")
 
     # ── StepWindowBase overrides ───────────────────────────────────────────────
 
     def save_state(self):
         self._sync_centering_params()
+        self._sync_cache_params()
 
     def validate_step(self) -> bool:
         idx_path = step7_forced_phot_dir(self.params.P.result_dir) / "photometry_index.csv"

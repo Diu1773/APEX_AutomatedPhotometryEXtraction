@@ -13,6 +13,7 @@ Writes to cmd_psf/:
     residual_iter{N}_{fname}.fits – sky-subtracted residual image (per iteration)
     starsub_iter{N}_{fname}.fits  – raw image with fitted stars removed (per iteration)
     photometry_index.csv     – per-frame summary
+    psf_output_signature.json – selected frames, input mtimes, and PSF params
 
 Step can be SKIPPED: clicking "Skip PSF" marks step as complete and
 passes control to Step 9 (Master ID Editor). Downstream steps use Step 7 forced aperture
@@ -21,6 +22,7 @@ photometry results when PSF outputs are unavailable.
 from __future__ import annotations
 
 import json
+import hashlib
 import traceback
 import time
 import copy
@@ -51,7 +53,7 @@ from PyQt5.QtWidgets import (
     QTextEdit, QDialog, QFormLayout, QDialogButtonBox, QProgressBar,
     QCheckBox, QSpinBox, QDoubleSpinBox, QWidget, QTabWidget,
     QTableWidget, QTableWidgetItem, QHeaderView, QAbstractItemView,
-    QSplitter, QComboBox, QListWidget,
+    QSplitter, QComboBox, QListWidget, QScrollArea,
 )
 from PyQt5.QtCore import Qt, QThread, pyqtSignal
 from matplotlib.backends.backend_qt5agg import FigureCanvasQTAgg as FigureCanvas
@@ -62,6 +64,12 @@ from matplotlib.patches import Rectangle, Patch
 
 from apex.gui.workflow.step_window_base import StepWindowBase
 from apex.gui.workflow.log_panel import WorkflowLogWindow, WorkerStatusPanel, append_timestamped_log, show_raised
+from apex.gui.workflow.ui_helpers import (
+    create_collapsible_section,
+    create_output_reuse_checkbox,
+    create_parameter_button,
+    configure_parameter_dialog,
+)
 from apex.utils.step_paths_cmd import (
     step2_cropped_dir, step4_dir, step8_psf_dir,
     crop_is_active,
@@ -126,6 +134,63 @@ _KO_TO_ASCII = {
     "재검출 (step4 기검출)": "Re-detected (step4)",
     "경계소스": "Edge",
 }
+
+_PSF_SIGNATURE_FILE = "psf_output_signature.json"
+_PSF_SIGNATURE_VERSION = 2
+
+_PSF_SIGNATURE_PARAMS = (
+    "phot_use_qc_pass_only",
+    "gain_e_per_adu",
+    "zp_initial",
+    "rdnoise_e",
+    "saturation_adu",
+    "min_snr_for_mag",
+    "fwhm_pix_guess",
+    "psf_mode",
+    "psf_model_mode",
+    "psf_fit_engine",
+    "psf_build_mode",
+    "psf_parallel_workers",
+    "psf_epsf_oversampling",
+    "psf_epsf_size_px",
+    "psf_epsf_size_fwhm_mult",
+    "psf_n_stars_max",
+    "psf_isolation_fwhm_mult",
+    "psf_flux_percentile_lo",
+    "psf_flux_percentile_hi",
+    "psf_fit_shape_px",
+    "psf_fit_shape_fwhm_mult",
+    "psf_max_iter",
+    "psf_fit_mode",
+    "psf_redetect_sigma",
+    "psf_redetect_sigma_g",
+    "psf_redetect_sigma_r",
+    "psf_redetect_sigma_i",
+    "psf_epsf_sharp_lo",
+    "psf_epsf_sharp_hi",
+    "psf_epsf_round_abs_max",
+    "psf_epsf_elong_max",
+    "psf_duplicate_radius_fwhm_mult",
+    "psf_duplicate_radius_px",
+    "psf_new_sources_cap_per_iter",
+    "psf_new_sources_cap_frac",
+    "psf_fit_init_max_sources",
+    "psf_substar_iters",
+    "psf_substar_neighbor_r_fwhm_mult",
+    "psf_substar_max_sources",
+    "psf_conv_new_frac",
+    "psf_flux_conv_threshold",
+    "psf_use_grouper",
+    "psf_grouper_max_size",
+    "psf_use_error_image",
+    "psf_shared_filter_epsf",
+    "psf_min_epsf_stars",
+    "psf_redetect_sharp_lo",
+    "psf_redetect_sharp_hi",
+    "psf_redetect_round_abs_max",
+    "psf_save_residuals",
+    "psf_save_all_iter_residuals",
+)
 
 _PSF_MODE_PRESETS = {
     "normal": {
@@ -320,6 +385,624 @@ def _load_fwhm_from_meta(fname: str, cache_dir: Path, result_dir: Path,
     return float(params_fwhm_guess)
 
 
+# ── Moffat PSF builder ────────────────────────────────────────────────────────
+
+def _build_moffat_psf(img_sub: np.ndarray, xy_stars: np.ndarray,
+                      fwhm_safe: float, cutout_size: int,
+                      log_fn=None):
+    """Build normalized Moffat2D PSF from isolated star cutouts.
+    Returns (moffat_model, n_good).  Model has x_0=y_0=0, amplitude=1/integral.
+    """
+    from astropy.modeling.models import Moffat2D
+    from astropy.modeling.fitting import LevMarLSQFitter
+
+    h, w = img_sub.shape
+    half = cutout_size // 2
+    fitter = LevMarLSQFitter()
+    yy_c, xx_c = np.mgrid[-half:half + 1, -half:half + 1].astype(float)
+
+    gammas, alphas = [], []
+    for xi_f, yi_f in np.asarray(xy_stars, dtype=float):
+        xi, yi = int(round(xi_f)), int(round(yi_f))
+        if xi - half < 0 or xi + half + 1 > w or yi - half < 0 or yi + half + 1 > h:
+            continue
+        cutout = img_sub[yi - half:yi + half + 1, xi - half:xi + half + 1].copy()
+        if cutout.shape != yy_c.shape:
+            continue
+        peak = float(np.nanmax(cutout))
+        if peak <= 0:
+            continue
+        alpha_init = 2.5
+        gamma_init = max(0.5, fwhm_safe / (2.0 * np.sqrt(2.0 ** (1.0 / alpha_init) - 1.0)))
+        try:
+            fitted = fitter(
+                Moffat2D(amplitude=peak, x_0=0.0, y_0=0.0, gamma=gamma_init, alpha=alpha_init),
+                xx_c, yy_c, cutout, maxiter=50,
+            )
+            g, a = float(fitted.gamma.value), float(fitted.alpha.value)
+            if 0.3 < g < 25.0 and 0.5 < a < 10.0:
+                gammas.append(g)
+                alphas.append(a)
+        except Exception:
+            continue
+
+    n_good = len(gammas)
+    if n_good < 2:
+        alpha_med = 2.5
+        gamma_med = max(0.5, fwhm_safe / (2.0 * np.sqrt(2.0 ** (1.0 / alpha_med) - 1.0)))
+        if log_fn:
+            log_fn(f"[MOFFAT] {n_good} good fits; using FWHM estimate gamma={gamma_med:.2f} alpha={alpha_med:.2f}")
+    else:
+        gamma_med = float(np.median(gammas))
+        alpha_med = float(np.median(alphas))
+        if log_fn:
+            fwhm_est = 2.0 * gamma_med * np.sqrt(2.0 ** (1.0 / alpha_med) - 1.0)
+            log_fn(f"[MOFFAT] {n_good} stars: gamma={gamma_med:.3f} alpha={alpha_med:.3f} FWHM≈{fwhm_est:.2f}px")
+
+    # Normalize: integral of Moffat2D = pi*gamma^2/(alpha-1) for alpha>1
+    if alpha_med > 1.0:
+        integral = np.pi * gamma_med ** 2 / (alpha_med - 1.0)
+    else:
+        sz = max(cutout_size, 51)
+        _h2 = sz // 2
+        _yy, _xx = np.mgrid[-_h2:_h2 + 1, -_h2:_h2 + 1].astype(float)
+        integral = float(Moffat2D(1.0, 0.0, 0.0, gamma_med, alpha_med)(_xx, _yy).sum())
+        if integral <= 0:
+            integral = 1.0
+
+    model = Moffat2D(amplitude=1.0 / integral, x_0=0.0, y_0=0.0,
+                     gamma=gamma_med, alpha=alpha_med)
+    return model, n_good
+
+
+# ── Unified PSF evaluator (EPSF or Moffat) ───────────────────────────────────
+
+def _make_psf_evaluator(psf_model, psf_type: str, oversampling: int = 2):
+    """Return eval_fn(dx_2d, dy_2d) -> normalized PSF values.
+    dx, dy are pixel offsets from star centre.  Output sums to ≈ 1 / pixel².
+    """
+    if psf_type == 'moffat':
+        def _eval_moffat(dx, dy):
+            return np.asarray(psf_model(np.asarray(dx, dtype=float),
+                                        np.asarray(dy, dtype=float)), dtype=float)
+        return _eval_moffat
+
+    # EPSF
+    from scipy.ndimage import map_coordinates as _mc
+    psf_data = np.asarray(psf_model.data, dtype=float)
+    os = max(1, int(oversampling))
+    cy = psf_data.shape[0] // 2
+    cx = psf_data.shape[1] // 2
+    norm = psf_data.sum() / os ** 2
+    if norm <= 0:
+        norm = 1.0
+
+    def _eval_epsf(dx, dy):
+        dx_a = np.asarray(dx, dtype=float)
+        dy_a = np.asarray(dy, dtype=float)
+        coords_y = dy_a.ravel() * os + cy
+        coords_x = dx_a.ravel() * os + cx
+        vals = _mc(psf_data, [coords_y, coords_x], order=1, mode='constant', cval=0.0)
+        return (vals / norm).reshape(dx_a.shape)
+
+    return _eval_epsf
+
+
+# ── ALLSTAR engine ─────────────────────────────────────────────────────────────
+
+_NEWTON_GRAD_DELTA = 0.5  # sub-pixel step for numerical PSF gradient (pixels)
+
+
+def _allstar_newton_one(cleaned_patch: np.ndarray,
+                        x0: float, y0: float,
+                        patch_y0: int, patch_x0: int,
+                        flux0: float, eval_psf,
+                        max_shift: float = 2.0):
+    """Single linearized Newton step for one star (true DAOPHOT ALLSTAR style).
+
+    Solves 3×3 normal equations for (dflux, dx, dy) simultaneously.
+    One matrix solve replaces 20-40 LM iterations.
+    Returns (x_new, y_new, flux_new, ok).
+    """
+    ny, nx = cleaned_patch.shape
+    if ny < 3 or nx < 3:
+        return x0, y0, max(flux0, 1.0), False
+
+    xc = float(x0)
+    yc = float(y0)
+    flux_safe = max(float(flux0), 1.0)
+    d = _NEWTON_GRAD_DELTA
+
+    yy = np.arange(ny, dtype=float) + patch_y0
+    xx = np.arange(nx, dtype=float) + patch_x0
+    YY, XX = np.meshgrid(yy, xx, indexing='ij')
+
+    # PSF value and partial derivatives at current star centre
+    c_f = eval_psf(XX - xc, YY - yc)
+    c_x = (eval_psf(XX - xc - d, YY - yc) - eval_psf(XX - xc + d, YY - yc)) / (2.0 * d)
+    c_y = (eval_psf(XX - xc, YY - yc - d) - eval_psf(XX - xc, YY - yc + d)) / (2.0 * d)
+
+    residual = (cleaned_patch - c_f * flux_safe).ravel()
+    Cf = c_f.ravel()
+    Cx = (flux_safe * c_x).ravel()
+    Cy = (flux_safe * c_y).ravel()
+
+    # 3×3 normal equations: A^T A p = A^T r
+    A = np.array([
+        [np.dot(Cf, Cf), np.dot(Cf, Cx), np.dot(Cf, Cy)],
+        [np.dot(Cx, Cf), np.dot(Cx, Cx), np.dot(Cx, Cy)],
+        [np.dot(Cy, Cf), np.dot(Cy, Cx), np.dot(Cy, Cy)],
+    ])
+    b = np.array([np.dot(Cf, residual), np.dot(Cx, residual), np.dot(Cy, residual)])
+
+    try:
+        dflux, dx, dy = np.linalg.solve(A, b)
+    except np.linalg.LinAlgError:
+        return x0, y0, flux_safe, False
+
+    if abs(dx) > max_shift or abs(dy) > max_shift:
+        return x0, y0, flux_safe, np.nan, False
+
+    flux_new = flux_safe + dflux
+    if flux_new < flux_safe * 0.1:
+        flux_new = flux_safe * 0.5
+
+    # chi2: mean squared residual after update, normalised by flux²
+    model_new = eval_psf(XX - (xc + dx), YY - (yc + dy)) * flux_new
+    res_new = (cleaned_patch - model_new).ravel()
+    chi2 = float(np.mean(res_new ** 2)) / max(flux_new ** 2 * 1e-8, 1e-20)
+
+    return xc + dx, yc + dy, flux_new, chi2, True
+
+
+def _allstar_newton_group(cleaned_patch: np.ndarray,
+                          group_info: list,
+                          patch_y0: int, patch_x0: int,
+                          eval_psf, max_shift: float = 2.0):
+    """Single Newton step for N close stars simultaneously (3N×3N normal equations).
+
+    group_info: list of (x, y, flux) — absolute image coordinates.
+    Returns list of (x_new, y_new, flux_new, ok).
+    """
+    N = len(group_info)
+    if N == 0:
+        return []
+    if N == 1:
+        x0, y0, fl0 = group_info[0]
+        return [_allstar_newton_one(cleaned_patch, x0, y0, patch_y0, patch_x0,
+                                    fl0, eval_psf, max_shift)]  # returns (x,y,fl,chi2,ok)
+
+    ny, nx = cleaned_patch.shape
+    if ny < 3 or nx < 3:
+        return [(x, y, max(fl, 1.0), False) for x, y, fl in group_info]
+
+    yy_abs = np.arange(ny, dtype=float) + patch_y0
+    xx_abs = np.arange(nx, dtype=float) + patch_x0
+    YY, XX = np.meshgrid(yy_abs, xx_abs, indexing='ij')
+    n_pix = ny * nx
+    d = _NEWTON_GRAD_DELTA
+
+    xc_arr = np.array([float(x) for x, y, fl in group_info])
+    yc_arr = np.array([float(y) for x, y, fl in group_info])
+    fl_arr = np.array([max(float(fl), 1.0) for _, _, fl in group_info])
+
+    # Build design matrix A  (n_pix × 3N)
+    A_mat = np.zeros((n_pix, 3 * N), dtype=float)
+    model = np.zeros(n_pix, dtype=float)
+
+    for n in range(N):
+        xc, yc, fl = xc_arr[n], yc_arr[n], fl_arr[n]
+        c_f = eval_psf(XX - xc, YY - yc).ravel()
+        c_x = ((eval_psf(XX - xc - d, YY - yc) -
+                eval_psf(XX - xc + d, YY - yc)) / (2.0 * d)).ravel()
+        c_y = ((eval_psf(XX - xc, YY - yc - d) -
+                eval_psf(XX - xc, YY - yc + d)) / (2.0 * d)).ravel()
+        A_mat[:, 3 * n]     = c_f
+        A_mat[:, 3 * n + 1] = fl * c_x
+        A_mat[:, 3 * n + 2] = fl * c_y
+        model += c_f * fl
+
+    residual = cleaned_patch.ravel() - model
+
+    # Normal equations (3N × 3N)
+    ATA = A_mat.T @ A_mat
+    ATr = A_mat.T @ residual
+
+    try:
+        params = np.linalg.solve(ATA, ATr)
+    except np.linalg.LinAlgError:
+        return [(x, y, max(fl, 1.0), np.nan, False) for x, y, fl in group_info]
+
+    results = []
+    for n in range(N):
+        dflux, dx, dy = params[3 * n], params[3 * n + 1], params[3 * n + 2]
+        x0, y0, fl0 = group_info[n]
+        if abs(dx) > max_shift or abs(dy) > max_shift:
+            results.append((x0, y0, max(fl0, 1.0), np.nan, False))
+            continue
+        flux_new = fl_arr[n] + dflux
+        if flux_new < fl_arr[n] * 0.1:
+            flux_new = fl_arr[n] * 0.5
+        results.append((xc_arr[n] + dx, yc_arr[n] + dy, flux_new, np.nan, True))
+
+    return results
+
+def _build_groups(x_arr: np.ndarray, y_arr: np.ndarray, f_arr: np.ndarray,
+                  radius: float, max_size: int) -> list:
+    """Greedy brightest-first group assignment for simultaneous PSF fitting.
+    Stars within `radius` pixels of each other are grouped together (max `max_size`).
+    Each star appears in exactly one group.  Returns list of index-lists.
+    """
+    N = len(x_arr)
+    if N == 0 or radius <= 0 or max_size <= 1:
+        return [[i] for i in range(N)]
+
+    xy = np.column_stack([np.asarray(x_arr, dtype=float),
+                          np.asarray(y_arr, dtype=float)])
+    tree = cKDTree(xy)
+    assigned = np.zeros(N, dtype=bool)
+    groups: list = []
+
+    for i in np.argsort(f_arr)[::-1]:  # brightest first
+        if assigned[i]:
+            continue
+        raw = tree.query_ball_point([float(x_arr[i]), float(y_arr[i])], r=radius)
+        neighbors = np.array([j for j in raw if not assigned[j]], dtype=int)
+        if len(neighbors) > max_size:
+            dists = np.hypot(x_arr[neighbors] - x_arr[i],
+                             y_arr[neighbors] - y_arr[i])
+            neighbors = neighbors[np.argsort(dists)[:max_size]]
+        for j in neighbors:
+            assigned[j] = True
+        groups.append(neighbors.tolist())
+
+    return groups
+
+
+def _allstar_fit_group(cleaned_patch: np.ndarray,
+                       group_info: list,
+                       patch_y0: int, patch_x0: int,
+                       eval_psf, max_shift: float):
+    """Simultaneously fit N stars on a pre-neighbour-subtracted patch.
+
+    group_info : list of (x, y, flux) — absolute image coordinates.
+    Returns    : list of (x_fit, y_fit, flux_fit, chi2, ok) per star.
+
+    Parameters are subpixel offsets (dx, dy) + log-flux for numerical stability.
+    Each dx/dy is relative to the integer-rounded star centre, keeping values near 0.
+    log-flux prevents negative-flux blow-up during LM iterations.
+    """
+    from scipy.optimize import least_squares
+
+    N = len(group_info)
+    if N == 0:
+        return []
+    if N == 1:
+        x0, y0, fl0 = group_info[0]
+        return [_allstar_fit_one(cleaned_patch, x0, y0, patch_y0, patch_x0,
+                                 fl0, eval_psf, max_shift)]
+
+    ny, nx = cleaned_patch.shape
+    if ny < 3 or nx < 3:
+        return [(x, y, max(fl, 1.0), np.nan, False) for x, y, fl in group_info]
+
+    yy_abs = np.arange(ny, dtype=float) + patch_y0
+    xx_abs = np.arange(nx, dtype=float) + patch_x0
+    YY, XX = np.meshgrid(yy_abs, xx_abs, indexing='ij')
+
+    # Integer reference centres (keep dx/dy near zero for good LM conditioning)
+    xi_refs = np.array([int(round(float(x))) for x, y, fl in group_info], dtype=int)
+    yi_refs = np.array([int(round(float(y))) for x, y, fl in group_info], dtype=int)
+
+    # p = [dx1, dy1, log_fl1, dx2, dy2, log_fl2, ...]
+    # Using log-flux so flux stays positive and scale is comparable to dx/dy
+    p0 = []
+    fl_refs = []
+    for n, (x, y, fl) in enumerate(group_info):
+        fl_safe = max(float(fl), 1.0)
+        fl_refs.append(fl_safe)
+        p0.extend([float(x) - xi_refs[n], float(y) - yi_refs[n],
+                   float(np.log(fl_safe))])
+    p0 = np.array(p0, dtype=float)
+
+    def _res(p):
+        model = np.zeros((ny, nx), dtype=float)
+        for n in range(N):
+            dx, dy = p[3 * n], p[3 * n + 1]
+            fl = float(np.exp(min(p[3 * n + 2], 30.0)))  # cap prevents overflow
+            xc = xi_refs[n] + dx
+            yc = yi_refs[n] + dy
+            model += eval_psf(XX - xc, YY - yc) * fl
+        diff = (cleaned_patch - model).ravel()
+        return np.where(np.isfinite(diff), diff, 0.0)
+
+    try:
+        r = least_squares(_res, p0, method='lm',
+                          ftol=1e-4, xtol=0.01, gtol=1e-6,
+                          max_nfev=40 * N)
+        chi2_base = float(np.mean(r.fun ** 2))
+        out = []
+        for n in range(N):
+            dx_f, dy_f = r.x[3 * n], r.x[3 * n + 1]
+            fl_f = float(np.exp(min(r.x[3 * n + 2], 30.0)))
+            x0, y0, fl0 = group_info[n]
+            xc_f = xi_refs[n] + dx_f
+            yc_f = yi_refs[n] + dy_f
+            if abs(dx_f) > max_shift or abs(dy_f) > max_shift or fl_f <= 0:
+                out.append((x0, y0, max(fl0, 1.0), np.nan, False))
+            else:
+                out.append((xc_f, yc_f, fl_f,
+                             chi2_base / max(fl_f ** 2 * 1e-8, 1e-20), True))
+        return out
+    except Exception:
+        return [(x, y, max(fl, 1.0), np.nan, False) for x, y, fl in group_info]
+
+def _allstar_stamp(img_shape, x_cen: float, y_cen: float, flux: float,
+                   eval_psf, stamp_size: int):
+    """Return (slice_y, slice_x, stamp_array) or (None, None, None)."""
+    h, w = img_shape
+    half = stamp_size // 2
+    xi, yi = int(round(x_cen)), int(round(y_cen))
+    y_lo, y_hi = max(0, yi - half), min(h, yi + half + 1)
+    x_lo, x_hi = max(0, xi - half), min(w, xi + half + 1)
+    if y_hi <= y_lo or x_hi <= x_lo:
+        return None, None, None
+    yy = np.arange(y_lo, y_hi, dtype=float) - yi
+    xx = np.arange(x_lo, x_hi, dtype=float) - xi
+    YY, XX = np.meshgrid(yy, xx, indexing='ij')
+    dx_sub = x_cen - xi
+    dy_sub = y_cen - yi
+    stamp = (eval_psf(XX - dx_sub, YY - dy_sub) * flux).astype(np.float32)
+    return slice(y_lo, y_hi), slice(x_lo, x_hi), stamp
+
+
+def _allstar_build_model(img_shape, x_arr, y_arr, f_arr, eval_psf, stamp_size: int):
+    model = np.zeros(img_shape, dtype=np.float32)
+    for xi, yi, fi in zip(x_arr, y_arr, f_arr):
+        sy, sx, stamp = _allstar_stamp(img_shape, xi, yi, fi, eval_psf, stamp_size)
+        if sy is not None:
+            model[sy, sx] += stamp
+    return model
+
+
+def _allstar_fit_one(cleaned_patch: np.ndarray,
+                     x0: float, y0: float,
+                     patch_y0: int, patch_x0: int,
+                     flux0: float, eval_psf,
+                     max_shift: float = 2.0):
+    """Fit one source on a pre-cleaned local patch.
+
+    cleaned_patch : 2D array, already neighbour-subtracted, positioned at
+                    image coords [patch_y0:patch_y0+ny, patch_x0:patch_x0+nx].
+    Returns (x_fit, y_fit, flux_fit, chi2, ok).
+    """
+    from scipy.optimize import least_squares
+    ny, nx = cleaned_patch.shape
+    if ny < 3 or nx < 3:
+        return x0, y0, flux0, np.nan, False
+
+    xi, yi = int(round(x0)), int(round(y0))
+    # Pixel offset grids (relative to integer star centre)
+    yy = np.arange(ny, dtype=float) + patch_y0 - yi
+    xx = np.arange(nx, dtype=float) + patch_x0 - xi
+    YY, XX = np.meshgrid(yy, xx, indexing='ij')
+
+    dx0, dy0 = x0 - xi, y0 - yi
+    flux_safe = max(float(flux0) if np.isfinite(flux0) else 1.0, 1.0)
+
+    # Cluster cores retain unresolved stellar light after global sky removal.
+    # Fit a local constant term so that diffuse core light is not forced into
+    # the target star's PSF flux.
+    edge_mask = np.zeros(cleaned_patch.shape, dtype=bool)
+    edge_mask[0, :] = True
+    edge_mask[-1, :] = True
+    edge_mask[:, 0] = True
+    edge_mask[:, -1] = True
+    edge_vals = cleaned_patch[edge_mask]
+    edge_vals = edge_vals[np.isfinite(edge_vals)]
+    if edge_vals.size:
+        bg0 = float(np.nanmedian(edge_vals))
+        bg_scale = float(_mad_std(edge_vals)) if edge_vals.size > 3 else float(np.nanstd(edge_vals))
+    else:
+        bg0 = 0.0
+        bg_scale = 0.0
+    if not np.isfinite(bg0):
+        bg0 = 0.0
+    if not np.isfinite(bg_scale) or bg_scale <= 0:
+        bg_scale = max(1.0, abs(bg0) * 0.1)
+
+    def _res(p):
+        dx, dy, fl, bg = p
+        diff = (cleaned_patch - (eval_psf(XX - dx, YY - dy) * fl + bg)).ravel()
+        return np.where(np.isfinite(diff), diff, 0.0)
+
+    try:
+        bg_pad = max(5.0 * bg_scale, abs(bg0) + 10.0)
+        r = least_squares(
+            _res,
+            [dx0, dy0, flux_safe, bg0],
+            bounds=(
+                [-max_shift, -max_shift, 1e-12, bg0 - bg_pad],
+                [ max_shift,  max_shift, np.inf, bg0 + bg_pad],
+            ),
+            method='trf',
+            ftol=1e-4,
+            xtol=0.01,
+            gtol=1e-6,
+            max_nfev=80,
+        )
+        dx_f, dy_f, fl_f, _bg_f = r.x
+        if abs(dx_f) > max_shift or abs(dy_f) > max_shift or fl_f <= 0:
+            return x0, y0, flux_safe, np.nan, False
+        chi2 = float(np.mean(r.fun ** 2)) / max(fl_f ** 2 * 1e-8, 1e-20)
+        return xi + dx_f, yi + dy_f, fl_f, chi2, True
+    except Exception:
+        return x0, y0, flux_safe, np.nan, False
+
+
+def _allstar_fit(img_sub: np.ndarray, positions: np.ndarray, fluxes: np.ndarray,
+                 eval_psf, fit_shape: int, stamp_size: int,
+                 max_iter: int, flux_conv: float,
+                 max_shift: float = 2.5,
+                 group_radius: float = 0.0,
+                 max_group_size: int = 1,
+                 log_fn=None, stop_fn=None):
+    """DAOPHOT ALLSTAR-style iterative PSF fitting.
+
+    Each iteration: for every star, subtract neighbours, fit star plus a local
+    constant background, then update the model with a delta stamp.
+    O(N) per iteration vs O(N_group × size²).
+
+    Returns astropy Table with columns matching photutils output format.
+    """
+    from astropy.table import Table as _Tab
+    N = len(positions)
+    if N == 0:
+        return _Tab({'x_fit': np.array([]), 'y_fit': np.array([]),
+                     'flux_fit': np.array([]), 'flux_err': np.array([]),
+                     'qfit': np.array([]), 'iter_detected': np.array([], dtype=int)})
+
+    h, w = img_sub.shape
+    fit_half = fit_shape // 2
+    x = positions[:, 0].copy().astype(float)
+    y = positions[:, 1].copy().astype(float)
+    f = np.where(np.isfinite(fluxes) & (fluxes > 0), fluxes, 1.0).copy().astype(float)
+    chi2 = np.full(N, np.nan)
+
+    use_groups = (group_radius > 0 and max_group_size > 1)
+    model_img = _allstar_build_model(img_sub.shape, x, y, f, eval_psf, stamp_size)
+    if log_fn:
+        log_fn(
+            f"  [ALLSTAR] N={N} fit_shape={fit_shape} stamp={stamp_size} "
+            f"max_iter={max_iter} "
+            f"grouping={'on r=%.1fpx max=%d' % (group_radius, max_group_size) if use_groups else 'off'}"
+        )
+
+    for it in range(max_iter):
+        if stop_fn and stop_fn():
+            break
+        n_changed = 0
+        max_df = 0.0
+
+        # Build groups for this iteration (brightest-first)
+        if use_groups:
+            groups = _build_groups(x, y, f, group_radius, max_group_size)
+        else:
+            groups = [[i] for i in np.argsort(f)[::-1]]  # brightest-first, singles only
+
+        for group in groups:
+            if stop_fn and stop_fn():
+                break
+
+            if len(group) == 1:
+                # ── Single-star fit (unchanged) ───────────────────────────
+                i = group[0]
+                xi, yi = int(round(x[i])), int(round(y[i]))
+                fy_lo = max(0, yi - fit_half)
+                fy_hi = min(h, yi + fit_half + 1)
+                fx_lo = max(0, xi - fit_half)
+                fx_hi = min(w, xi + fit_half + 1)
+                if fy_hi - fy_lo < 3 or fx_hi - fx_lo < 3:
+                    continue
+                sy_old, sx_old, stamp_old = _allstar_stamp(
+                    img_sub.shape, x[i], y[i], f[i], eval_psf, stamp_size)
+                if sy_old is None:
+                    continue
+                fit_raw   = img_sub  [fy_lo:fy_hi, fx_lo:fx_hi].copy()
+                fit_model = model_img[fy_lo:fy_hi, fx_lo:fx_hi].copy()
+                y0_s, y1_s = sy_old.start, sy_old.stop
+                x0_s, x1_s = sx_old.start, sx_old.stop
+                oy_lo, oy_hi = max(fy_lo, y0_s), min(fy_hi, y1_s)
+                ox_lo, ox_hi = max(fx_lo, x0_s), min(fx_hi, x1_s)
+                if oy_hi > oy_lo and ox_hi > ox_lo:
+                    fit_model[oy_lo - fy_lo:oy_hi - fy_lo,
+                              ox_lo - fx_lo:ox_hi - fx_lo] -= \
+                        stamp_old[oy_lo - y0_s:oy_hi - y0_s,
+                                  ox_lo - x0_s:ox_hi - x0_s]
+                cleaned = (fit_raw - fit_model).astype(np.float32, copy=False)
+                x_new, y_new, f_new, chi2_i, ok = _allstar_newton_one(
+                    cleaned, x[i], y[i], fy_lo, fx_lo, f[i], eval_psf, max_shift)
+                if ok:
+                    sy_new, sx_new, stamp_new = _allstar_stamp(
+                        img_sub.shape, x_new, y_new, f_new, eval_psf, stamp_size)
+                    model_img[sy_old, sx_old] -= stamp_old
+                    if sy_new is not None:
+                        model_img[sy_new, sx_new] += stamp_new
+                    df = abs(f_new - f[i]) / max(abs(f[i]), 1e-10)
+                    if df > flux_conv or abs(x_new - x[i]) > 0.01:
+                        n_changed += 1
+                    max_df = max(max_df, df)
+                    x[i], y[i], f[i], chi2[i] = x_new, y_new, f_new, chi2_i
+
+            else:
+                # ── Multi-star simultaneous fit ───────────────────────────
+                xi_arr = [int(round(x[k])) for k in group]
+                yi_arr = [int(round(y[k])) for k in group]
+                # Group patch: union of all fit windows
+                gy_lo = max(0, min(yi_arr) - fit_half)
+                gy_hi = min(h, max(yi_arr) + fit_half + 1)
+                gx_lo = max(0, min(xi_arr) - fit_half)
+                gx_hi = min(w, max(xi_arr) + fit_half + 1)
+                if gy_hi - gy_lo < 3 or gx_hi - gx_lo < 3:
+                    continue
+
+                # Cache old stamps
+                old_stamps = [_allstar_stamp(img_sub.shape, x[k], y[k], f[k],
+                                             eval_psf, stamp_size) for k in group]
+
+                # Build cleaned group patch
+                fit_raw   = img_sub  [gy_lo:gy_hi, gx_lo:gx_hi].copy()
+                fit_model = model_img[gy_lo:gy_hi, gx_lo:gx_hi].copy()
+                for sy_k, sx_k, stamp_k in old_stamps:
+                    if sy_k is None:
+                        continue
+                    y0_s, y1_s = sy_k.start, sy_k.stop
+                    x0_s, x1_s = sx_k.start, sx_k.stop
+                    oy_lo2, oy_hi2 = max(gy_lo, y0_s), min(gy_hi, y1_s)
+                    ox_lo2, ox_hi2 = max(gx_lo, x0_s), min(gx_hi, x1_s)
+                    if oy_hi2 > oy_lo2 and ox_hi2 > ox_lo2:
+                        fit_model[oy_lo2 - gy_lo:oy_hi2 - gy_lo,
+                                  ox_lo2 - gx_lo:ox_hi2 - gx_lo] -= \
+                            stamp_k[oy_lo2 - y0_s:oy_hi2 - y0_s,
+                                    ox_lo2 - x0_s:ox_hi2 - x0_s]
+                cleaned = (fit_raw - fit_model).astype(np.float32, copy=False)
+
+                group_info = [(x[k], y[k], f[k]) for k in group]
+                results = _allstar_newton_group(cleaned, group_info,
+                                                gy_lo, gx_lo, eval_psf, max_shift)
+
+                # Apply results and update model
+                for idx, k in enumerate(group):
+                    x_new, y_new, f_new, chi2_k, ok = results[idx]
+                    sy_old_k, sx_old_k, stamp_old_k = old_stamps[idx]
+                    if ok:
+                        sy_new_k, sx_new_k, stamp_new_k = _allstar_stamp(
+                            img_sub.shape, x_new, y_new, f_new, eval_psf, stamp_size)
+                        if sy_old_k is not None:
+                            model_img[sy_old_k, sx_old_k] -= stamp_old_k
+                        if sy_new_k is not None:
+                            model_img[sy_new_k, sx_new_k] += stamp_new_k
+                        df = abs(f_new - f[k]) / max(abs(f[k]), 1e-10)
+                        if df > flux_conv or abs(x_new - x[k]) > 0.01:
+                            n_changed += 1
+                        max_df = max(max_df, df)
+                        x[k], y[k], f[k], chi2[k] = x_new, y_new, f_new, chi2_k
+
+        if log_fn:
+            log_fn(f"  [ALLSTAR] iter {it + 1}/{max_iter} | changed={n_changed} max_dflux={max_df:.4f}")
+        if n_changed == 0 and it > 0:
+            if log_fn:
+                log_fn(f"  [ALLSTAR] converged at iter {it + 1}")
+            break
+
+    return _Tab({
+        'x_fit': x, 'y_fit': y, 'flux_fit': f,
+        'flux_err': np.full(N, np.nan),
+        'qfit': np.where(np.isfinite(chi2), chi2, np.nan),
+        'iter_detected': np.ones(N, dtype=int),
+    })
+
+
 # ── PSF Worker ────────────────────────────────────────────────────────────────
 
 class Step6PSFWorker(QThread):
@@ -447,6 +1130,18 @@ class Step6PSFWorker(QThread):
                 model_mode = "per_frame"
             use_shared_filter_epsf = bool(getattr(P, "psf_shared_filter_epsf", False))
             min_epsf_stars = max(1, _to_int(getattr(P, "psf_min_epsf_stars", 10), 10))
+            psf_fit_engine_cfg = str(getattr(P, "psf_fit_engine", "photutils")).strip().lower()
+            if psf_fit_engine_cfg not in ("photutils", "allstar"):
+                psf_fit_engine_cfg = "photutils"
+            psf_build_mode_cfg = str(getattr(P, "psf_build_mode", "epsf")).strip().lower()
+            if psf_build_mode_cfg != "epsf":
+                self._log(
+                    f"PSF build mode '{psf_build_mode_cfg}' is experimental/disabled; forcing epsf"
+                )
+                psf_build_mode_cfg = "epsf"
+            self._log(
+                f"PSF engine={psf_fit_engine_cfg} | build={psf_build_mode_cfg}"
+            )
 
             redetect_sigma = max(1.0, redetect_sigma)
             new_sources_cap_per_iter = max(0, new_sources_cap_per_iter)
@@ -538,7 +1233,8 @@ class Step6PSFWorker(QThread):
                     return {"file": fname, "status": "stopped"}
 
                 wid = int(threading.get_ident() % 10000)
-                # Stage update: frame picked by worker
+                _t_frame = time.time()
+                _t: dict[str, float] = {"start": _t_frame}
                 self.progress.emit(completed[0], total, f"RUN | {fname}")
                 self.worker_status.emit(wid, fname, "Load", 5)
                 img_path = self._resolve_fits_path(fname)
@@ -591,15 +1287,11 @@ class Step6PSFWorker(QThread):
 
                 try:
                     self.worker_status.emit(wid, fname, "Background", 20)
-                    # 2D background with source masking: better than scalar median for
-                    # crowded cluster fields where a scalar median absorbs stellar flux.
-                    # box_size ~10% of image; filter_size smooths the background map.
+                    _t["bkg"] = time.time()
                     _box = max(32, min(128, h // 16, w // 16))
                     try:
                         from astropy.stats import SigmaClip as _SigmaClip
-                        # SigmaClip within each box rejects bright star pixels —
-                        # equivalent to source masking, no external mask needed.
-                        _bkg2d = Background2D(img, (_box, _box), filter_size=(5, 5),
+                        _bkg2d = Background2D(img, (_box, _box), filter_size=(3, 3),
                                               sigma_clip=_SigmaClip(sigma=3.0, maxiters=3),
                                               bkg_estimator=MedianBackground())
                         bkg_map = np.asarray(_bkg2d.background, dtype=np.float32)
@@ -621,11 +1313,14 @@ class Step6PSFWorker(QThread):
                         self.worker_status.emit(wid, fname, "Stopped", 100)
                         return {"file": fname, "status": "stopped", "reason": "stop requested"}
 
+                    _t["bkg_done"] = time.time()
                     epsf_emit_arr = None
+                    psf_type_built = psf_build_mode_cfg  # 'epsf' or 'moffat'
                     with epsf_cache_lock:
                         epsf_model = epsf_cache.get(epsf_cache_key)
                     if epsf_model is None:
-                        self.worker_status.emit(wid, fname, "EPSF build", 40)
+                        self.worker_status.emit(wid, fname, "PSF build", 40)
+                        _t["epsf"] = time.time()
                         xy_all = det_df[["x", "y"]].to_numpy(float)
                         finite_xy = np.isfinite(xy_all[:, 0]) & np.isfinite(xy_all[:, 1])
                         xy_all = xy_all[finite_xy]
@@ -754,16 +1449,28 @@ class Step6PSFWorker(QThread):
                         if len(stars_extracted) < 3:
                             raise RuntimeError(f"Only {len(stars_extracted)} stars extracted; need ≥3")
 
+                        epsf_maxiters = _to_int(getattr(P, "psf_epsf_maxiters", 5), 5)
                         builder = EPSFBuilder(
                             oversampling=oversampling,
-                            maxiters=10,
+                            maxiters=max(3, epsf_maxiters),
                             progress_bar=False,
                             smoothing_kernel="quadratic",
                         )
                         if self._stop_requested:
                             self.worker_status.emit(wid, fname, "Stopped", 100)
                             return {"file": fname, "status": "stopped", "reason": "stop requested"}
-                        epsf, _ = builder(stars_extracted)
+
+                        if psf_build_mode_cfg == 'moffat':
+                            epsf, n_moffat_good = _build_moffat_psf(
+                                img_sub, xy_iso, fwhm_safe, epsf_size_frame, self._log)
+                            psf_type_built = 'moffat'
+                            self._log(
+                                f"[PSF] Moffat build | filter={this_filter} "
+                                f"n_stars={n_moffat_good} fwhm_guess={fwhm_safe:.2f}px"
+                            )
+                        else:
+                            epsf, _ = builder(stars_extracted)
+                            psf_type_built = 'epsf'
 
                         # ── P4-10: EPSF quality check ─────────────────────────────────
                         try:
@@ -812,6 +1519,7 @@ class Step6PSFWorker(QThread):
                         n_substar_iters = _to_int(getattr(P, "psf_substar_iters", 1), 1)
                         substar_neighbor_r_mult = _to_float(getattr(P, "psf_substar_neighbor_r_fwhm_mult", 8.0), 8.0)
                         substar_max_sources = _to_int(getattr(P, "psf_substar_max_sources", 1500), 1500)
+                        _t["substar"] = time.time()
                         if n_substar_iters > 0 and len(xy_all) > 1:
                             try:
                                 from photutils.datasets import make_model_image as _mmi
@@ -938,7 +1646,18 @@ class Step6PSFWorker(QThread):
                                     " | using initial EPSF"
                                 )
 
-                        epsf_emit_arr = epsf.data.copy()
+                        _t["epsf_done"] = time.time()
+                        if psf_build_mode_cfg == 'moffat':
+                            # Render Moffat to native-scale 2D array for PSF tab display
+                            _disp_half = max(25, int(fwhm_safe * 4))
+                            _yy_d, _xx_d = np.mgrid[
+                                -_disp_half:_disp_half + 1,
+                                -_disp_half:_disp_half + 1,
+                            ].astype(float)
+                            _moffat_disp = epsf(_xx_d, _yy_d)
+                            epsf_emit_arr = np.asarray(_moffat_disp, dtype=np.float32)
+                        else:
+                            epsf_emit_arr = epsf.data.copy()
 
                         if use_shared_filter_epsf:
                             epsf_path = output_dir / f"epsf_model_{this_filter}.fits"
@@ -1048,8 +1767,122 @@ class Step6PSFWorker(QThread):
                                             _flx.loc[_ok].to_numpy(dtype=float, copy=False),
                                         ):
                                             flux_init_map[int(_u)] = float(_v)
-                        except Exception:
-                            pass
+                            if psf_fit_engine_cfg == "allstar" and {"x_fit", "y_fit"} <= _ap_cols:
+                                if "flux_net_adu" in _ap_cols:
+                                    _seed_flux = pd.to_numeric(df_ap["flux_net_adu"], errors="coerce")
+                                elif "flux_e" in _ap_cols:
+                                    _seed_flux = pd.to_numeric(df_ap["flux_e"], errors="coerce") / max(GAIN, 1e-6)
+                                else:
+                                    _seed_flux = pd.Series(np.nan, index=df_ap.index)
+
+                                _seed_x = pd.to_numeric(df_ap["x_fit"], errors="coerce")
+                                _seed_y = pd.to_numeric(df_ap["y_fit"], errors="coerce")
+                                _seed_uid = (
+                                    pd.to_numeric(df_ap["det_uid"], errors="coerce")
+                                    if "det_uid" in _ap_cols
+                                    else pd.Series(np.nan, index=df_ap.index)
+                                )
+
+                                def _bool_series(col: str, default: bool) -> pd.Series:
+                                    if col not in _ap_cols:
+                                        return pd.Series(default, index=df_ap.index)
+                                    raw = df_ap[col]
+                                    if raw.dtype == bool:
+                                        return raw.fillna(default)
+                                    text = raw.astype(str).str.strip().str.lower()
+                                    true_vals = {"1", "true", "t", "yes", "y"}
+                                    false_vals = {"0", "false", "f", "no", "n", ""}
+                                    out = text.map(
+                                        lambda v: True if v in true_vals else (False if v in false_vals else default)
+                                    )
+                                    return out.astype(bool)
+
+                                _forced_like = (
+                                    _bool_series("forced_flag", False)
+                                    | (~_bool_series("detected_flag", True))
+                                    | (_seed_uid.fillna(-1) < 0)
+                                )
+                                _phot_ok = (
+                                    ~_bool_series("off_frame_flag", False)
+                                    & ~_bool_series("is_saturated", False)
+                                    & ~_bool_series("is_nonlinear", False)
+                                    & ~_bool_series("bad_phot_flag", False)
+                                )
+                                if "snr" in _ap_cols:
+                                    _snr = pd.to_numeric(df_ap["snr"], errors="coerce")
+                                    _phot_ok &= _snr.fillna(-np.inf) >= max(1.0, min_snr)
+
+                                _edge = fit_shape_frame // 2 + 2
+                                _seed_ok = (
+                                    _forced_like
+                                    & _phot_ok
+                                    & _seed_x.notna()
+                                    & _seed_y.notna()
+                                    & _seed_flux.notna()
+                                    & (_seed_flux > 0)
+                                    & (_seed_x >= _edge)
+                                    & (_seed_x < (w - _edge))
+                                    & (_seed_y >= _edge)
+                                    & (_seed_y < (h - _edge))
+                                )
+                                if _seed_ok.any():
+                                    _sx = _seed_x.loc[_seed_ok].to_numpy(dtype=float, copy=False)
+                                    _sy = _seed_y.loc[_seed_ok].to_numpy(dtype=float, copy=False)
+                                    _sf = _seed_flux.loc[_seed_ok].to_numpy(dtype=float, copy=False)
+                                    _smid = (
+                                        pd.to_numeric(df_ap.loc[_seed_ok, "master_id"], errors="coerce").to_numpy(dtype=float, copy=False)
+                                        if "master_id" in _ap_cols
+                                        else np.full(len(_sx), np.nan, dtype=float)
+                                    )
+
+                                    _xi = np.rint(_sx).astype(int).clip(0, w - 1)
+                                    _yi = np.rint(_sy).astype(int).clip(0, h - 1)
+                                    _not_sat = img[_yi, _xi] < sat_adu
+                                    _sx, _sy, _sf, _smid = _sx[_not_sat], _sy[_not_sat], _sf[_not_sat], _smid[_not_sat]
+
+                                    _supp_dedup_r = max(1.0, 0.15 * float(fwhm_safe))
+                                    _existing_tree = cKDTree(xy_det) if len(xy_det) else None
+                                    _kept_xy: list[list[float]] = []
+                                    _kept_uid: list[int] = []
+                                    _kept_flux: list[float] = []
+                                    _used_supp_uids: set[int] = set()
+                                    for _j in np.argsort(_sf)[::-1]:
+                                        _pt = np.array([float(_sx[_j]), float(_sy[_j])], dtype=float)
+                                        if _existing_tree is not None:
+                                            _d0, _ = _existing_tree.query(_pt, k=1, workers=1)
+                                            if float(_d0) <= _supp_dedup_r:
+                                                continue
+                                        if _kept_xy:
+                                            _d_keep = np.hypot(
+                                                np.asarray(_kept_xy, dtype=float)[:, 0] - _pt[0],
+                                                np.asarray(_kept_xy, dtype=float)[:, 1] - _pt[1],
+                                            )
+                                            if np.any(_d_keep <= _supp_dedup_r):
+                                                continue
+                                        _mid = _smid[_j]
+                                        if np.isfinite(_mid):
+                                            _uid_new = -1000000 - int(_mid)
+                                        else:
+                                            _uid_new = -2000000 - len(_kept_uid)
+                                        while int(_uid_new) in _used_supp_uids:
+                                            _uid_new -= 1
+                                        _kept_xy.append([float(_pt[0]), float(_pt[1])])
+                                        _kept_uid.append(int(_uid_new))
+                                        _used_supp_uids.add(int(_uid_new))
+                                        _kept_flux.append(float(_sf[_j]))
+
+                                    if _kept_xy:
+                                        _xy_supp = np.asarray(_kept_xy, dtype=float)
+                                        xy_det = np.vstack([xy_det, _xy_supp])
+                                        det_uids = np.concatenate([det_uids, np.asarray(_kept_uid, dtype=int)])
+                                        for _uid_new, _flux_new in zip(_kept_uid, _kept_flux):
+                                            flux_init_map[int(_uid_new)] = float(_flux_new)
+                                        self._log(
+                                            f"  [INIT] added {len(_kept_xy)} Step7 forced seeds "
+                                            f"for ALLSTAR (dedup_r={_supp_dedup_r:.2f}px)"
+                                        )
+                        except Exception as exc:
+                            self._log(f"  [WARN] Step7 flux/forced seed load failed: {exc}")
 
                     default_flux = max(1.0, float(bkg_std) * 10.0)
                     init_flux_list = []
@@ -1154,6 +1987,12 @@ class Step6PSFWorker(QThread):
                             if "max_group_size" in _sg_sig and grouper_max_size > 0:
                                 _grouper_kw["max_group_size"] = grouper_max_size
                             kw["grouper"] = SourceGrouper(**_grouper_kw)
+                        self._log(
+                            f"  [PSF] IterativePSFPhotometry | mode={kw.get('mode', 'N/A')} "
+                            f"maxiters={kw.get('maxiters', 'N/A')} "
+                            f"grouper={'on' if 'grouper' in kw else 'off'} "
+                            f"n_seed={n_seed}"
+                        )
                         return IterativePSFPhotometry(**kw)
 
                     def _results_to_init_params(results_tbl, photometry_obj=None):
@@ -1285,35 +2124,194 @@ class Step6PSFWorker(QThread):
                     photometry = None
                     model_img = None
 
+                    _t["fit1"] = time.time()
                     self.progress.emit(completed[0], total, f"FIT | {fname}")
-                    self.worker_status.emit(wid, fname, "PSF fit", 70)
-                    attempt_plan = [False]
-                    if use_grouper and _has_grouper:
-                        attempt_plan = [True, False]
-                    photometry, phot_result, fit_fail_reason = _run_iterative_fit(init_params, "pass1")
-                    if fit_fail_reason == "stopped":
+
+                    _psf_evaluator = None  # set in ALLSTAR branch; used for final residual rendering
+
+                    if psf_fit_engine_cfg == 'allstar':
+                        self.worker_status.emit(wid, fname, "ALLSTAR fit", 70)
+                        _psf_evaluator = _make_psf_evaluator(epsf_model, psf_type_built, oversampling)
+
+                        # Outer loop: ALLSTAR fit → residual → re-detect → add → repeat
+                        # max_iter controls number of find+fit cycles (DAOPHOT style)
+                        _INNER_ITERS    = 3  # inner ALLSTAR convergence per cycle
+                        _group_radius   = fwhm_safe * 1.5  # DAOPHOT standard
+                        _max_grp_size   = min(8, max(1, _to_int(
+                            getattr(P, "psf_grouper_max_size", 4), 4)))
+
+                        _cur_xy  = np.column_stack([
+                            np.asarray(init_params["x_0"], dtype=float),
+                            np.asarray(init_params["y_0"], dtype=float),
+                        ])
+                        _cur_flux  = np.asarray(init_params["flux_0"], dtype=float)
+                        _cur_idet  = np.ones(len(_cur_xy), dtype=int)  # iter_detected
+                        _n_initial = len(_cur_xy)
+
+                        _dedup_r = (float(duplicate_radius_px_cfg)
+                                    if np.isfinite(duplicate_radius_px_cfg) and duplicate_radius_px_cfg > 0
+                                    else float(max(0.0, duplicate_radius_mult * fwhm_safe)))
+                        _dedup_r = max(_dedup_r, 1.0)
+
+                        _outer_fit_result = None
+                        for _outer in range(max_iter):
+                            if self._stop_requested:
+                                break
+                            self._log(f"  [ALLSTAR] outer {_outer+1}/{max_iter} | n={len(_cur_xy)}")
+                            _outer_fit_result = _allstar_fit(
+                                img_sub, _cur_xy, _cur_flux,
+                                _psf_evaluator,
+                                fit_shape=fit_shape_frame,
+                                stamp_size=render_shape_frame,
+                                max_iter=_INNER_ITERS,
+                                flux_conv=flux_conv_threshold,
+                                max_shift=float(fit_shape_frame // 2),
+                                group_radius=_group_radius,
+                                max_group_size=_max_grp_size,
+                                log_fn=self._log,
+                                stop_fn=lambda: self._stop_requested,
+                            )
+
+                            # Update positions/fluxes from fit
+                            _cur_xy   = np.column_stack([
+                                np.asarray(_outer_fit_result["x_fit"],   dtype=float),
+                                np.asarray(_outer_fit_result["y_fit"],   dtype=float),
+                            ])
+                            _cur_flux = np.asarray(_outer_fit_result["flux_fit"], dtype=float)
+
+                            # Last cycle: no re-detection needed
+                            if _outer == max_iter - 1:
+                                break
+
+                            # Build residual image
+                            _model_temp = _allstar_build_model(
+                                img_sub.shape,
+                                _cur_xy[:, 0], _cur_xy[:, 1], _cur_flux,
+                                _psf_evaluator, render_shape_frame,
+                            )
+                            _resid_temp = (img_sub - _model_temp).astype(np.float32)
+
+                            # Re-detect on residual
+                            try:
+                                _new_tbl = redetect_finder(_resid_temp)
+                            except Exception as _rd_e:
+                                self._log(f"  [ALLSTAR] residual detect error: {_rd_e}")
+                                break
+                            if _new_tbl is None or len(_new_tbl) == 0:
+                                self._log(f"  [ALLSTAR] outer {_outer+1}: no new sources, converged")
+                                break
+
+                            # Cross-match → remove duplicates against existing fitted positions
+                            _new_x = np.asarray(_new_tbl["xcentroid"], dtype=float)
+                            _new_y = np.asarray(_new_tbl["ycentroid"], dtype=float)
+                            _new_pk = np.asarray(_new_tbl["peak"],      dtype=float)
+                            _new_xy_all = np.column_stack([_new_x, _new_y])
+                            _tree_cur = cKDTree(_cur_xy)
+                            _d_cur, _ = _tree_cur.query(_new_xy_all, k=1, workers=1)
+                            _unique_mask = np.asarray(_d_cur, dtype=float) > _dedup_r
+                            _new_xy_u  = _new_xy_all[_unique_mask]
+                            _new_flux_u = np.maximum(_new_pk[_unique_mask], 1.0)
+
+                            # Apply per-iter cap (absolute + fraction)
+                            _cap = new_sources_cap_per_iter if new_sources_cap_per_iter > 0 else len(_new_xy_u)
+                            _cap_f = int(np.floor(new_sources_cap_frac * _n_initial)) if new_sources_cap_frac > 0 else len(_new_xy_u)
+                            _cap = min(_cap, _cap_f)
+                            if _cap < len(_new_xy_u):
+                                _ord = np.argsort(_new_flux_u)[::-1][:_cap]
+                                _new_xy_u   = _new_xy_u[_ord]
+                                _new_flux_u = _new_flux_u[_ord]
+
+                            if len(_new_xy_u) == 0:
+                                self._log(f"  [ALLSTAR] outer {_outer+1}: all new were duplicates")
+                                break
+
+                            self._log(f"  [ALLSTAR] outer {_outer+1}: +{len(_new_xy_u)} new sources")
+                            _new_idet = np.full(len(_new_xy_u), _outer + 2, dtype=int)
+                            _cur_xy   = np.vstack([_cur_xy,   _new_xy_u])
+                            _cur_flux = np.concatenate([_cur_flux, _new_flux_u])
+                            _cur_idet = np.concatenate([_cur_idet, _new_idet])
+
+                        # Build final phot_result with iter_detected tracking
+                        from astropy.table import Table as _FinalTab
+                        if _outer_fit_result is not None:
+                            _n_fit = len(_outer_fit_result)
+                            _idet_final = _cur_idet[:_n_fit] if len(_cur_idet) >= _n_fit else np.ones(_n_fit, dtype=int)
+                            phot_result = _FinalTab({
+                                "x_fit":        np.asarray(_outer_fit_result["x_fit"],   dtype=float),
+                                "y_fit":        np.asarray(_outer_fit_result["y_fit"],   dtype=float),
+                                "flux_fit":     np.asarray(_outer_fit_result["flux_fit"],dtype=float),
+                                "flux_err":     np.asarray(_outer_fit_result["flux_err"],dtype=float),
+                                "qfit":         np.asarray(_outer_fit_result["qfit"],    dtype=float),
+                                "iter_detected": _idet_final,
+                            })
+                        else:
+                            phot_result = _allstar_fit(
+                                img_sub, _cur_xy, _cur_flux, _psf_evaluator,
+                                fit_shape=fit_shape_frame, stamp_size=render_shape_frame,
+                                max_iter=_INNER_ITERS, flux_conv=flux_conv_threshold,
+                                max_shift=float(fit_shape_frame // 2),
+                                group_radius=_group_radius,
+                                max_group_size=_max_grp_size,
+                                log_fn=self._log, stop_fn=lambda: self._stop_requested,
+                            )
+
+                        photometry = None
+                        fit_fail_reason = None
+                        _t["fit1_done"] = time.time()
+                        self._log(
+                            f"  [TIME] {fname} ALLSTAR={_t['fit1_done'] - _t['fit1']:.1f}s "
+                            f"n_fit={len(phot_result)} "
+                            f"n_new={int(np.sum(np.asarray(phot_result['iter_detected'], dtype=int) > 1))}"
+                        )
+
+                        # Poisson + readnoise flux_err
+                        if len(phot_result) > 0:
+                            _fl_adu = np.asarray(phot_result["flux_fit"], dtype=float)
+                            _n_pix  = max(1, fit_shape_frame ** 2)
+                            _fe_var = np.where(_fl_adu > 0, _fl_adu / max(GAIN, 1e-6), 0.0) \
+                                      + _n_pix * (rn_e / max(GAIN, 1e-6)) ** 2
+                            phot_result["flux_err"] = np.sqrt(np.maximum(_fe_var, 0.0)).astype(np.float32)
+                        if self._stop_requested:
+                            return {"file": fname, "status": "stopped"}
+                    else:
+                        self.worker_status.emit(wid, fname, "PSF fit", 70)
+                        attempt_plan = [False]
+                        if use_grouper and _has_grouper:
+                            attempt_plan = [True, False]
+                        photometry, phot_result, fit_fail_reason = _run_iterative_fit(init_params, "pass1")
+                        _t["fit1_done"] = time.time()
+                        self._log(f"  [TIME] {fname} pass1={_t['fit1_done'] - _t['fit1']:.1f}s")
+                    if psf_fit_engine_cfg != 'allstar' and fit_fail_reason == "stopped":
                         return {"file": fname, "status": "stopped"}
                     refine_pass_max_sources = 2500
-                    if phot_result is not None and len(phot_result) > 0:
+                    if psf_fit_engine_cfg != 'allstar' and phot_result is not None and len(phot_result) > 0:
                         refine_init = _results_to_init_params(phot_result, photometry_obj=photometry)
                         if refine_init is not None and len(refine_init) > 0:
                             if len(refine_init) <= refine_pass_max_sources:
                                 _skip_pass2 = False
-                                if "iter_detected" in phot_result.colnames and conv_new_frac > 0:
+                                if "iter_detected" in phot_result.colnames:
                                     _it_p1 = np.asarray(phot_result["iter_detected"], dtype=float)
                                     _it_p1 = np.where(np.isfinite(_it_p1), _it_p1, 1.0).astype(int)
-                                    _new_frac_p1 = float(np.sum(_it_p1 > 1)) / max(1, len(phot_result))
-                                    if _new_frac_p1 <= conv_new_frac:
+                                    _n_new_p1 = int(np.sum(_it_p1 > 1))
+                                    if _n_new_p1 == 0:
                                         _skip_pass2 = True
-                                        self._log(
-                                            f"  [PSF] pass2 skipped: converged "
-                                            f"(new_frac={_new_frac_p1:.3f} <= conv_new_frac={conv_new_frac:.3f})"
-                                        )
+                                        self._log("  [PSF] pass2 skipped: no new sources in pass1 (converged)")
+                                    elif conv_new_frac > 0:
+                                        _new_frac_p1 = float(_n_new_p1) / max(1, len(phot_result))
+                                        if _new_frac_p1 <= conv_new_frac:
+                                            _skip_pass2 = True
+                                            self._log(
+                                                f"  [PSF] pass2 skipped: converged "
+                                                f"(new_frac={_new_frac_p1:.3f} <= conv_new_frac={conv_new_frac:.3f})"
+                                            )
                                 if not _skip_pass2:
+                                    _t["fit2"] = time.time()
                                     photometry_refine, phot_result_refine, refine_reason = _run_iterative_fit(
                                         refine_init,
                                         "pass2",
                                     )
+                                    _t["fit2_done"] = time.time()
+                                    self._log(f"  [TIME] {fname} pass2={_t['fit2_done'] - _t['fit2']:.1f}s")
                                     if refine_reason == "stopped":
                                         return {"file": fname, "status": "stopped"}
                                     if phot_result_refine is not None and len(phot_result_refine) > 0:
@@ -1374,10 +2372,10 @@ class Step6PSFWorker(QThread):
                             pass
 
                     # De-duplicate residual re-detections against iter1 fitted sources first.
-                    # Keep this radius in PIXELS (not xFWHM) to avoid deleting legitimate
-                    # nearby sources in crowded fields.
+                    # ALLSTAR outer loop already deduped at detection time; skip here.
                     if (
-                        phot_result is not None
+                        psf_fit_engine_cfg != 'allstar'
+                        and phot_result is not None
                         and len(phot_result) > 0
                         and "iter_detected" in phot_result.colnames
                         and dedup_enabled
@@ -1426,9 +2424,14 @@ class Step6PSFWorker(QThread):
                         except Exception as _de:
                             self._log(f"  [DEDUP] skipped: {_de}")
 
-                    # Apply residual new-source cap (absolute + fraction of initial seed list)
-                    # after dedup, so cap budget is used on unique candidates.
-                    if phot_result is not None and len(phot_result) > 0 and "iter_detected" in phot_result.colnames:
+                    # Apply residual new-source cap.
+                    # ALLSTAR outer loop already applied per-cycle caps; skip here.
+                    if (
+                        psf_fit_engine_cfg != 'allstar'
+                        and phot_result is not None
+                        and len(phot_result) > 0
+                        and "iter_detected" in phot_result.colnames
+                    ):
                         try:
                             _cols_cap = list(phot_result.colnames)
                             _it_raw = np.asarray(phot_result["iter_detected"], dtype=float)
@@ -1514,7 +2517,17 @@ class Step6PSFWorker(QThread):
                     # ── Model image & residual ────────────────────────────────────────────
                     residual = img_sub.copy()
                     if phot_result is not None and len(phot_result) > 0:
-                        model_img = _render_model_from_results(phot_result, photometry_obj=photometry)
+                        if psf_fit_engine_cfg == 'allstar' and _psf_evaluator is not None:
+                            _x_f = np.asarray(phot_result["x_fit"],   dtype=float)
+                            _y_f = np.asarray(phot_result["y_fit"],   dtype=float)
+                            _fl_f = np.asarray(phot_result["flux_fit"], dtype=float)
+                            _v = np.isfinite(_x_f) & np.isfinite(_y_f) & np.isfinite(_fl_f) & (_fl_f > 0)
+                            model_img = _allstar_build_model(
+                                img_sub.shape, _x_f[_v], _y_f[_v], _fl_f[_v],
+                                _psf_evaluator, render_shape_frame,
+                            )
+                        else:
+                            model_img = _render_model_from_results(phot_result, photometry_obj=photometry)
                         if model_img is not None:
                             residual = img_sub - model_img
                             self._log(
@@ -1691,10 +2704,22 @@ class Step6PSFWorker(QThread):
                         detxy_iter_path = output_dir / f"detxy_iter{it_no}_{fname}.npy"
                         boxxy_iter_path = output_dir / f"boxxy_iter{it_no}_{fname}.npy"
                         _is_final_iter = (it_no == iter_max_used)
-                        _write_fits = save_all_iter_residuals or _is_final_iter
+                        _is_first_iter = (it_no == 1)
+                        _write_fits = save_all_iter_residuals or _is_final_iter or _is_first_iter
                         if _write_fits:
-                            fits.writeto(str(residual_iter_path), residual_i, hdr_it, overwrite=True)
-                            fits.writeto(str(starsub_iter_path), starsub_i, hdr_it, overwrite=True)
+                            # Rice-compressed FITS — 3-5× smaller, transparent to readers
+                            _chdu_res = fits.CompImageHDU(
+                                residual_i.astype(np.float32), hdr_it,
+                                compression_type='RICE_1', quantize_level=16.0,
+                            )
+                            _chdu_res.writeto(str(residual_iter_path), overwrite=True)
+                            # starsub only for final (or all-iters mode) — saves ~50% disk
+                            if _is_final_iter or save_all_iter_residuals:
+                                _chdu_sub = fits.CompImageHDU(
+                                    starsub_i.astype(np.float32), hdr_it,
+                                    compression_type='RICE_1', quantize_level=16.0,
+                                )
+                                _chdu_sub.writeto(str(starsub_iter_path), overwrite=True)
                         np.save(str(fitxy_iter_path), np.asarray(fit_xy_i, dtype=np.float32))
                         # modelxy: sources first detected at THIS iter only (not cumulative).
                         # iter1 → initial seeds (1023), iter2 → new residual detections (70).
@@ -1728,13 +2753,25 @@ class Step6PSFWorker(QThread):
                             "n_new_kept": int(n_new_i_kept),
                             "n_applied_prev": int(len(applied_xy_i)),
                             "residual_path": residual_iter_path.name if _write_fits else None,
-                            "starsub_path": starsub_iter_path.name if _write_fits else None,
+                            "starsub_path": starsub_iter_path.name if (_is_final_iter or save_all_iter_residuals) else None,
                             "fitxy_path": fitxy_iter_path.name,
                             "modelxy_path": modelxy_iter_path.name,
                             "detxy_path": detxy_iter_path.name,
                             "appliedxy_path": appliedxy_iter_path.name,
                             "boxxy_path": boxxy_iter_path.name,
                         })
+                    _t["done"] = time.time()
+                    _t_bkg   = _t.get("bkg_done", _t.get("bkg", _t["done"])) - _t.get("bkg", _t["done"])
+                    _t_epsf  = _t.get("epsf_done", _t.get("epsf", _t["done"])) - _t.get("epsf", _t.get("bkg_done", _t["done"]))
+                    _t_sub   = _t.get("fit1", _t["done"]) - _t.get("substar", _t.get("fit1", _t["done"]))
+                    _t_p1    = _t.get("fit1_done", _t["done"]) - _t.get("fit1", _t["done"])
+                    _t_p2    = _t.get("fit2_done", _t.get("fit2", _t["done"])) - _t.get("fit2", _t.get("fit2_done", _t["done"]))
+                    _t_total = _t["done"] - _t["start"]
+                    self._log(
+                        f"  [TIME] {fname} total={_t_total:.1f}s | "
+                        f"bkg={_t_bkg:.1f}s epsf={_t_epsf:.1f}s substar={_t_sub:.1f}s "
+                        f"pass1={_t_p1:.1f}s pass2={_t_p2:.1f}s"
+                    )
                     self._log(
                         f"  fit done | n_fit={n_fit} | n_new={n_new_total} | "
                         f"residual_std={res_std:.4f}"
@@ -1949,7 +2986,8 @@ class Step6PSFWorker(QThread):
                         "file": fname,
                         "status": "processed",
                         "idx_row": idx_row,
-                        "epsf_key": f"{fname} | {this_filter}" if epsf_emit_arr is not None else None,
+                        "epsf_key": (f"[{psf_type_built.upper()}] {this_filter} | {fname}"
+                                    if epsf_emit_arr is not None else None),
                         "epsf_frame": fname if epsf_emit_arr is not None else None,
                         "epsf_arr": epsf_emit_arr,
                         "residual_meta": residual_meta,
@@ -2133,6 +3171,8 @@ class PSFPhotometryWindow(StepWindowBase):
         self._cutout_idx: int = 0  # current star index in cutout viewer
         self._run_started_ts: float | None = None
         self._log_worker_frame: dict[int, str] = {}    # worker_id → current frame name
+        self._current_psf_run_frames: list[str] = []
+        self._current_psf_run_signature: dict | None = None
 
         super().__init__(
             step_index=7,
@@ -2155,7 +3195,7 @@ class PSFPhotometryWindow(StepWindowBase):
 
         # ── Controls ──────────────────────────────────────────────────────────
         ctrl = QHBoxLayout()
-        self.btn_params = QPushButton("Parameters")
+        self.btn_params = create_parameter_button("PSF Parameters")
         self.btn_params.clicked.connect(self.open_parameters_dialog)
         ctrl.addWidget(self.btn_params)
 
@@ -2168,6 +3208,14 @@ class PSFPhotometryWindow(StepWindowBase):
         )
         self.btn_skip.clicked.connect(self.skip_psf)
         ctrl.addWidget(self.btn_skip)
+
+        self.chk_use_existing_output = create_output_reuse_checkbox(
+            True,
+            "Load Step 8 PSF outputs when photometry_index.csv, per-frame TSVs, "
+            "ePSF/residual files, and the saved PSF signature all match the current run. "
+            "Disable to force recomputation.",
+        )
+        ctrl.addWidget(self.chk_use_existing_output)
 
         ctrl.addStretch()
 
@@ -2226,7 +3274,7 @@ class PSFPhotometryWindow(StepWindowBase):
         self.epsf_toolbar = NavigationToolbar(self.epsf_canvas, self)
         epsf_layout.addWidget(self.epsf_toolbar)
         epsf_layout.addWidget(self.epsf_canvas)
-        self.main_tabs.addTab(epsf_tab, "EPSF Model")
+        self.main_tabs.addTab(epsf_tab, "PSF Model")
 
         # Tab 1: Cutout viewer – Raw | Star-subtracted per star, per iter
         res_tab = QWidget()
@@ -2430,6 +3478,304 @@ class PSFPhotometryWindow(StepWindowBase):
 
         self.file_list = list(files)
 
+    def _cache_dir_path(self) -> Path:
+        return Path(getattr(self.params.P, "cache_dir", self.params.P.result_dir))
+
+    @staticmethod
+    def _signature_value(value):
+        if isinstance(value, np.generic):
+            value = value.item()
+        if isinstance(value, Path):
+            return str(value)
+        if isinstance(value, float):
+            return float(value) if np.isfinite(value) else None
+        if isinstance(value, (bool, int, str)) or value is None:
+            return value
+        if isinstance(value, (list, tuple, set)):
+            return [PSFPhotometryWindow._signature_value(v) for v in value]
+        if isinstance(value, dict):
+            return {
+                str(k): PSFPhotometryWindow._signature_value(v)
+                for k, v in sorted(value.items(), key=lambda item: str(item[0]))
+            }
+        try:
+            if pd.isna(value):
+                return None
+        except Exception:
+            pass
+        return str(value)
+
+    @staticmethod
+    def _first_existing_path(candidates: list[Path]) -> Path | None:
+        for p in candidates:
+            try:
+                if p.exists() and p.stat().st_size > 0:
+                    return p
+            except Exception:
+                continue
+        return None
+
+    @staticmethod
+    def _newest_existing_path(candidates: list[Path]) -> Path | None:
+        found = []
+        for p in candidates:
+            try:
+                if p.exists() and p.stat().st_size > 0:
+                    found.append(p)
+            except Exception:
+                continue
+        if not found:
+            return None
+        return max(found, key=lambda p: p.stat().st_mtime_ns)
+
+    @staticmethod
+    def _file_signature(path: Path | None) -> dict | None:
+        if path is None:
+            return None
+        try:
+            p = Path(path)
+            if not p.exists():
+                return None
+            st = p.stat()
+            try:
+                path_text = str(p.resolve())
+            except Exception:
+                path_text = str(p)
+            return {
+                "path": path_text,
+                "size": int(st.st_size),
+                "mtime_ns": int(st.st_mtime_ns),
+            }
+        except Exception:
+            return None
+
+    def _psf_frames_after_qc(self) -> tuple[list[str], dict]:
+        use_qc = bool(getattr(self.params.P, "phot_use_qc_pass_only", False))
+        frames, qc_info = filter_files_by_qc(
+            Path(self.params.P.result_dir),
+            list(self.file_list),
+            require_qc=use_qc,
+        )
+        return list(frames), dict(qc_info or {})
+
+    def _log_step4_qc_selection(self, qc_info: dict):
+        if not bool(getattr(self.params.P, "phot_use_qc_pass_only", False)):
+            return
+        if qc_info.get("applied"):
+            self.log(f"Step4 QC: {qc_info.get('kept', 0)}/{qc_info.get('total', 0)} frame(s) kept.")
+        elif qc_info.get("path") is None:
+            self.log("Step4 QC: frame_quality.csv not found; using all frames.")
+        else:
+            self.log(f"Step4 QC: frame_quality.csv ignored ({qc_info.get('reason', 'unknown')}); using all frames.")
+
+    def _build_psf_output_signature(self, frames: list[str]) -> dict:
+        result_dir = Path(self.params.P.result_dir)
+        cache_dir = self._cache_dir_path()
+        s4_dir = step4_dir(result_dir)
+        s7_dir = step7_forced_phot_dir(result_dir)
+
+        frame_inputs = []
+        for fname in frames:
+            detect_csv = self._first_existing_path([
+                cache_dir / f"detect_{fname}.csv",
+                s4_dir / f"detect_{fname}.csv",
+            ])
+            detect_json = self._newest_existing_path([
+                cache_dir / f"detect_{fname}.json",
+                s4_dir / f"detect_{fname}.json",
+            ])
+            frame_inputs.append({
+                "file": str(fname),
+                "fits": self._file_signature(self._resolve_fits_path_window(fname)),
+                "detect_csv": self._file_signature(detect_csv),
+                "detect_json": self._file_signature(detect_json),
+                "step7_tsv": self._file_signature(s7_dir / f"photometry_{fname}.tsv"),
+            })
+
+        payload = {
+            "signature_version": _PSF_SIGNATURE_VERSION,
+            "step": "cmd_step8_psf_photometry",
+            "frames": [str(f) for f in frames],
+            "use_cropped": bool(self.use_cropped),
+            "params": {
+                k: self._signature_value(getattr(self.params.P, k, None))
+                for k in _PSF_SIGNATURE_PARAMS
+            },
+            "inputs": {
+                "step7_index": self._file_signature(s7_dir / "photometry_index.csv"),
+                "step7_apcorr_summary": self._file_signature(s7_dir / "apcorr_summary.csv"),
+                "frames": frame_inputs,
+            },
+        }
+        encoded = json.dumps(payload, sort_keys=True, ensure_ascii=False, allow_nan=False)
+        payload["signature_hash"] = hashlib.sha1(encoded.encode("utf-8")).hexdigest()
+        return payload
+
+    def _stored_psf_signature(self) -> dict | None:
+        sig_path = step8_psf_dir(self.params.P.result_dir) / _PSF_SIGNATURE_FILE
+        if not sig_path.exists():
+            return None
+        try:
+            data = json.loads(sig_path.read_text(encoding="utf-8"))
+            return data if isinstance(data, dict) else None
+        except Exception:
+            return None
+
+    def _write_psf_output_signature(self, signature: dict):
+        out_dir = step8_psf_dir(self.params.P.result_dir)
+        out_dir.mkdir(parents=True, exist_ok=True)
+        sig_path = out_dir / _PSF_SIGNATURE_FILE
+        sig_path.write_text(
+            json.dumps(signature, ensure_ascii=False, indent=2, sort_keys=True, allow_nan=False),
+            encoding="utf-8",
+        )
+
+    def _psf_signature_matches(self, signature: dict) -> tuple[bool, str]:
+        stored = self._stored_psf_signature()
+        if not stored:
+            return False, "missing signature"
+        if stored.get("signature_version") != _PSF_SIGNATURE_VERSION:
+            return False, "signature version mismatch"
+        if stored.get("signature_hash") != signature.get("signature_hash"):
+            return False, "signature hash mismatch"
+        return True, "ok"
+
+    @staticmethod
+    def _path_from_meta(out_dir: Path, name) -> Path | None:
+        if name is None:
+            return None
+        text = str(name).strip()
+        if not text:
+            return None
+        return out_dir / text
+
+    def _existing_psf_output_covers(self, frames: list[str], signature: dict) -> tuple[bool, str]:
+        ok, reason = self._psf_signature_matches(signature)
+        if not ok:
+            return False, reason
+
+        out_dir = step8_psf_dir(self.params.P.result_dir)
+        idx_path = out_dir / "photometry_index.csv"
+        if not idx_path.exists():
+            return False, "missing photometry_index.csv"
+        try:
+            idx = pd.read_csv(idx_path)
+        except Exception as exc:
+            return False, f"cannot read photometry_index.csv: {exc}"
+        required_idx_cols = {"file", "filter"}
+        if not required_idx_cols <= set(idx.columns):
+            return False, "photometry_index.csv missing file/filter columns"
+
+        expected_frames = [Path(str(f)).name for f in frames]
+        expected_set = set(expected_frames)
+        idx_files = [Path(str(f)).name for f in idx["file"].astype(str).tolist()]
+        if len(idx_files) != len(expected_frames) or set(idx_files) != expected_set:
+            return False, "photometry_index.csv frame set mismatch"
+
+        expected_tsv_names = {f"photometry_{fname}.tsv" for fname in expected_frames}
+        actual_tsv_names = {p.name for p in out_dir.glob("photometry_*.tsv")}
+        if actual_tsv_names != expected_tsv_names:
+            return False, "per-frame photometry TSV set mismatch"
+
+        expected_epsf_paths: set[Path] = set()
+        shared_epsf = bool(getattr(self.params.P, "psf_shared_filter_epsf", False))
+        required_tsv_cols = {"det_uid", "x_fit", "y_fit", "mag_psf", "flags_psf"}
+
+        for fname in expected_frames:
+            rows = idx[idx["file"].astype(str).map(lambda s: Path(s).name) == fname]
+            if rows.empty:
+                return False, f"missing index row for {fname}"
+            filt = str(rows.iloc[0].get("filter", "")).strip()
+            if not filt:
+                return False, f"missing filter for {fname}"
+
+            tsv_path = out_dir / f"photometry_{fname}.tsv"
+            if not tsv_path.exists() or tsv_path.stat().st_size <= 0:
+                return False, f"missing TSV for {fname}"
+            try:
+                tsv_head = pd.read_csv(tsv_path, sep="\t", nrows=5)
+            except Exception as exc:
+                return False, f"cannot read TSV for {fname}: {exc}"
+            if not required_tsv_cols <= set(tsv_head.columns):
+                return False, f"TSV columns incomplete for {fname}"
+
+            for product_name in (f"residual_{fname}", f"starsub_{fname}"):
+                product_path = out_dir / product_name
+                if not product_path.exists() or product_path.stat().st_size <= 0:
+                    return False, f"missing {product_name}"
+
+            meta_path = out_dir / f"residual_meta_{fname}.json"
+            if not meta_path.exists() or meta_path.stat().st_size <= 0:
+                return False, f"missing residual metadata for {fname}"
+            try:
+                meta = json.loads(meta_path.read_text(encoding="utf-8"))
+            except Exception as exc:
+                return False, f"cannot read residual metadata for {fname}: {exc}"
+            if not isinstance(meta, dict):
+                return False, f"invalid residual metadata for {fname}"
+            iters = meta.get("iters", [])
+            if not isinstance(iters, list) or len(iters) == 0:
+                return False, f"missing iteration metadata for {fname}"
+            for key in ("seedxy_path", "rawxy_iter2_path"):
+                p = self._path_from_meta(out_dir, meta.get(key))
+                if p is None or not p.exists() or p.stat().st_size <= 0:
+                    return False, f"missing {key} for {fname}"
+            for rec in iters:
+                if not isinstance(rec, dict):
+                    return False, f"invalid iteration record for {fname}"
+                for key in ("fitxy_path", "modelxy_path", "detxy_path", "appliedxy_path", "boxxy_path"):
+                    p = self._path_from_meta(out_dir, rec.get(key))
+                    if p is None or not p.exists() or p.stat().st_size <= 0:
+                        return False, f"missing {key} for {fname}"
+                for key in ("residual_path", "starsub_path"):
+                    p = self._path_from_meta(out_dir, rec.get(key))
+                    if p is not None and (not p.exists() or p.stat().st_size <= 0):
+                        return False, f"missing {key} for {fname}"
+
+            if shared_epsf:
+                expected_epsf_paths.add(out_dir / f"epsf_model_{filt}.fits")
+            else:
+                expected_epsf_paths.add(out_dir / f"epsf_model_{filt}_{Path(fname).stem}.fits")
+
+        for epsf_path in expected_epsf_paths:
+            if not epsf_path.exists() or epsf_path.stat().st_size <= 0:
+                return False, f"missing {epsf_path.name}"
+
+        return True, "ok"
+
+    def _clear_psf_outputs(self) -> int:
+        out_dir = step8_psf_dir(self.params.P.result_dir)
+        if not out_dir.exists():
+            return 0
+        patterns = [
+            _PSF_SIGNATURE_FILE,
+            "photometry_index.csv",
+            "photometry_*.tsv",
+            "epsf_model_*.fits",
+            "residual_*",
+            "starsub_*",
+            "fitxy_iter*.npy",
+            "modelxy_iter*.npy",
+            "appliedxy_iter*.npy",
+            "detxy_iter*.npy",
+            "boxxy_iter*.npy",
+            "seed_xy_*.npy",
+            "rawxy_iter*.npy",
+        ]
+        removed = 0
+        seen: set[Path] = set()
+        for pat in patterns:
+            for p in out_dir.glob(pat):
+                if p in seen or not p.is_file():
+                    continue
+                seen.add(p)
+                try:
+                    p.unlink()
+                    removed += 1
+                except Exception:
+                    pass
+        return removed
+
     # ── Actions ───────────────────────────────────────────────────────────────
 
     def skip_psf(self):
@@ -2452,6 +3798,18 @@ class PSFPhotometryWindow(StepWindowBase):
             )
             return
 
+        frames_for_run, qc_info = self._psf_frames_after_qc()
+        if not frames_for_run:
+            QMessageBox.warning(
+                self,
+                "No frames",
+                "No frames remain after Step 4 QC / Step 7 apcorr filtering.",
+            )
+            return
+        signature = self._build_psf_output_signature(frames_for_run)
+        self._current_psf_run_frames = list(frames_for_run)
+        self._current_psf_run_signature = signature
+
         self._skip_psf = False
         self.log_text.clear()
         self.frame_table.setRowCount(0)
@@ -2463,41 +3821,47 @@ class PSFPhotometryWindow(StepWindowBase):
         self.res_iter_combo.clear()
         # Keep frame selector populated during run so UI is not visually blank
         # before first residual metadata arrives.
-        self.res_file_combo.addItems(self.file_list)
+        self.res_file_combo.addItems(frames_for_run)
         if self.res_file_combo.count() > 0:
             self.res_file_combo.setCurrentIndex(0)
+        self._log_step4_qc_selection(qc_info)
 
-        # Remove stale residual/model artifacts for selected frames to avoid mixing old runs.
-        out_dir = step8_psf_dir(self.params.P.result_dir)
-        for fname in self.file_list:
-            patterns = [
-                f"residual_meta_{fname}.json",
-                f"residual_{fname}",
-                f"starsub_{fname}",
-                f"residual_iter*_{fname}",
-                f"starsub_iter*_{fname}",
-                f"fitxy_iter*_{fname}.npy",
-                f"detxy_iter*_{fname}.npy",
-                f"appliedxy_iter*_{fname}.npy",
-                f"boxxy_iter*_{fname}.npy",
-            ]
-            for pat in patterns:
-                for p in out_dir.glob(pat):
-                    try:
-                        p.unlink()
-                    except Exception:
-                        pass
+        if getattr(self, "chk_use_existing_output", None) is not None and self.chk_use_existing_output.isChecked():
+            cache_ok, cache_reason = self._existing_psf_output_covers(frames_for_run, signature)
+            if cache_ok:
+                self.log(
+                    f"[PSF][CACHE] Existing Step 8 output is complete "
+                    f"({len(frames_for_run)} frame(s)); loading from disk."
+                )
+                self.progress_bar.setMaximum(len(frames_for_run))
+                self.progress_bar.setValue(len(frames_for_run))
+                self.progress_label.setText(
+                    f"Cached Step 8 PSF output loaded ({len(frames_for_run)} frame(s))"
+                )
+                self._load_from_disk()
+                self.update_frame_table()
+                self._refresh_qc()
+                self.save_state()
+                self.update_navigation_buttons()
+                self._current_psf_run_frames = []
+                self._current_psf_run_signature = None
+                return
+            self.log(f"[PSF][CACHE] Existing output not reusable: {cache_reason}")
+
+        removed = self._clear_psf_outputs()
+        if removed:
+            self.log(f"[PSF][CACHE] Removed {removed} stale Step 8 output file(s) before recompute.")
 
         # Clear log window worker bars from previous run
         self._log_worker_frame.clear()
         if hasattr(self, "_worker_panel") and self._worker_panel is not None:
             self._worker_panel.clear()
 
-        self.log(f"Start PSF photometry | {len(self.file_list)} frames")
+        self.log(f"Start PSF photometry | {len(frames_for_run)} frames")
         self._run_started_ts = time.time()
 
         self.worker = Step6PSFWorker(
-            self.file_list, self.params,
+            frames_for_run, self.params,
             self.params.P.data_dir, self.params.P.result_dir,
             self.params.P.cache_dir, self.use_cropped,
         )
@@ -2513,9 +3877,9 @@ class PSFPhotometryWindow(StepWindowBase):
         self.btn_run.setEnabled(False)
         self.btn_stop.setEnabled(True)
         self.btn_skip.setEnabled(False)
-        self.progress_bar.setMaximum(len(self.file_list))
+        self.progress_bar.setMaximum(len(frames_for_run))
         self.progress_bar.setValue(0)
-        self.progress_label.setText(f"0/{len(self.file_list)} | ETA --:-- | Starting...")
+        self.progress_label.setText(f"0/{len(frames_for_run)} | ETA --:-- | Starting...")
         self.worker.start()
         self.show_log_window()
 
@@ -2605,12 +3969,38 @@ class PSFPhotometryWindow(StepWindowBase):
         self.progress_label.setText(f"Done{elapsed_txt}")
         self._run_started_ts = None
         self.log(f"PSF done: {summary}")
+        if isinstance(summary, dict) and self._current_psf_run_signature:
+            expected = len(self._current_psf_run_frames)
+            processed = _to_int(summary.get("processed", 0), 0)
+            stopped = _to_int(summary.get("stopped", 0), 0)
+            if expected > 0 and stopped == 0 and processed == expected:
+                self._write_psf_output_signature(self._current_psf_run_signature)
+                cache_ok, cache_reason = self._existing_psf_output_covers(
+                    self._current_psf_run_frames,
+                    self._current_psf_run_signature,
+                )
+                if cache_ok:
+                    self.log("[PSF][CACHE] Output signature saved for future reuse.")
+                else:
+                    sig_path = step8_psf_dir(self.params.P.result_dir) / _PSF_SIGNATURE_FILE
+                    try:
+                        sig_path.unlink()
+                    except Exception:
+                        pass
+                    self.log(f"[PSF][CACHE] Signature not saved: output incomplete ({cache_reason}).")
+            else:
+                self.log(
+                    "[PSF][CACHE] Output reuse disabled for this run: "
+                    f"processed={processed}/{expected}, stopped={stopped}."
+                )
         self._cleanup_worker()
         self._update_skip_label()
         self.update_frame_table()  # refresh Photometry tab from disk
         self._refresh_qc()           # refresh QC tab (stats + Ap vs PSF plot)
         self.save_state()
         self.update_navigation_buttons()
+        self._current_psf_run_frames = []
+        self._current_psf_run_signature = None
 
     # ── EPSF plot ─────────────────────────────────────────────────────────────
 
@@ -2631,29 +4021,31 @@ class PSFPhotometryWindow(StepWindowBase):
             return
         epsf_arr = self._last_epsf[display_key]
 
-        # Clear ENTIRE figure to prevent colorbar accumulation
+        is_moffat = display_key.startswith("[MOFFAT]")
+        is_epsf   = display_key.startswith("[EPSF]")
+        psf_label = "Moffat PSF" if is_moffat else "ePSF"
+        px_label  = "px (native)" if is_moffat else "px (oversampled)"
+
         self.epsf_fig.clf()
-        ax2d = self.epsf_fig.add_subplot(121)
+        ax2d  = self.epsf_fig.add_subplot(121)
         ax_rad = self.epsf_fig.add_subplot(122)
 
         vmax = np.nanpercentile(epsf_arr, 99)
         im = ax2d.imshow(epsf_arr, origin="lower", cmap="viridis",
                          norm=mcolors.PowerNorm(gamma=0.5, vmin=0, vmax=max(vmax, 1e-10)))
         self.epsf_fig.colorbar(im, ax=ax2d, fraction=0.046, pad=0.04)
-        ax2d.set_title(f"ePSF — {display_key}", fontsize=9)
-        ax2d.set_xlabel("px (oversampled)", fontsize=8)
-        ax2d.set_ylabel("px (oversampled)", fontsize=8)
+        ax2d.set_title(f"{psf_label} — {display_key}", fontsize=9)
+        ax2d.set_xlabel(px_label, fontsize=8)
+        ax2d.set_ylabel(px_label, fontsize=8)
 
-        # Radial profile
         cy, cx = np.array(epsf_arr.shape) / 2.0
         yy, xx = np.mgrid[0:epsf_arr.shape[0], 0:epsf_arr.shape[1]]
         rr = np.sqrt((xx - cx) ** 2 + (yy - cy) ** 2)
-        r_flat = rr.ravel()
-        v_flat = epsf_arr.ravel()
+        r_flat, v_flat = rr.ravel(), epsf_arr.ravel()
         order = np.argsort(r_flat)
         ax_rad.plot(r_flat[order], v_flat[order], ".", markersize=1, alpha=0.3, color="#1565C0")
-        ax_rad.set_xlabel("Radius (oversampled px)", fontsize=8)
-        ax_rad.set_ylabel("ePSF value", fontsize=8)
+        ax_rad.set_xlabel(f"Radius ({px_label})", fontsize=8)
+        ax_rad.set_ylabel("PSF value", fontsize=8)
         ax_rad.set_title("Radial profile", fontsize=9)
         ax_rad.grid(True, alpha=0.3)
 
@@ -3480,13 +4872,18 @@ class PSFPhotometryWindow(StepWindowBase):
         out_dir = step8_psf_dir(self.params.P.result_dir)
         if not out_dir.exists():
             return
+        self._last_epsf.clear()
         self._residual_meta.clear()
+        self._last_new_xy.clear()
+        self.epsf_filter_combo.clear()
+        self.res_file_combo.clear()
+        self.res_iter_combo.clear()
 
         def _epsf_display_key_from_path(epsf_path: Path) -> str:
             stem = epsf_path.stem  # epsf_model_{filter}_{frame_stem} or epsf_model_{filter}
             body = stem.replace("epsf_model_", "", 1)
             if "_" not in body:
-                return ""
+                return body
             filt, frame_stem = body.split("_", 1)
             return f"{frame_stem} | {filt}"
 
@@ -3542,10 +4939,37 @@ class PSFPhotometryWindow(StepWindowBase):
 
     def open_parameters_dialog(self):
         dialog = QDialog(self)
-        dialog.setWindowTitle("Step 8 PSF Parameters")
-        dialog.resize(520, 660)
+        configure_parameter_dialog(dialog, "Step 8 PSF Parameters", 620, 720)
         layout = QVBoxLayout(dialog)
-        form = QFormLayout()
+
+        scroll = QScrollArea(dialog)
+        scroll.setWidgetResizable(True)
+        scroll.setFrameShape(QScrollArea.NoFrame)
+        content = QWidget()
+        body = QVBoxLayout(content)
+        body.setContentsMargins(4, 4, 4, 4)
+        body.setSpacing(8)
+        scroll.setWidget(content)
+        layout.addWidget(scroll, 1)
+
+        _info = QLabel("Adjust PSF photometry parameters. Changes apply to the next run.")
+        _info.setStyleSheet("QLabel { background-color: #E3F2FD; padding: 10px; margin-bottom: 10px; }")
+        _info.setWordWrap(True)
+        body.addWidget(_info)
+
+        def _add_group(title: str, *, expanded: bool = False) -> QFormLayout:
+            group, container = create_collapsible_section(title, initial_expanded=expanded)
+            form = QFormLayout(container)
+            form.setLabelAlignment(Qt.AlignRight)
+            form.setFieldGrowthPolicy(QFormLayout.AllNonFixedFieldsGrow)
+            body.addWidget(group)
+            return form
+
+        mode_form = _add_group("Mode", expanded=True)
+        epsf_form = _add_group("ePSF Model", expanded=True)
+        fit_form = _add_group("PSF Fit")
+        redetect_form = _add_group("Residual Re-detection")
+        output_form = _add_group("Output")
 
         # ── Field mode preset ──────────────────────────────────────────────
         mode_combo = QComboBox()
@@ -3556,57 +4980,73 @@ class PSFPhotometryWindow(StepWindowBase):
         _saved_mode = str(getattr(self.params.P, "psf_mode", "normal"))
         _mi = mode_combo.findData(_saved_mode)
         mode_combo.setCurrentIndex(_mi if _mi >= 0 else 0)
-        form.addRow("Field mode:", mode_combo)
+        mode_form.addRow("Field mode:", mode_combo)
 
         self.p_model_mode = QComboBox()
         self.p_model_mode.addItems(["per_frame"])
         self.p_model_mode.setCurrentText("per_frame")
-        form.addRow("Model mode:", self.p_model_mode)
+        mode_form.addRow("Model mode:", self.p_model_mode)
+
+        self.p_fit_engine = QComboBox()
+        self.p_fit_engine.addItem("photutils  —  grouped LM (정확, 느림)", "photutils")
+        self.p_fit_engine.addItem("allstar  —  sequential subtraction (DAOPHOT 방식, 빠름)", "allstar")
+        _eng = str(getattr(self.params.P, "psf_fit_engine", "photutils")).strip().lower()
+        _ei = self.p_fit_engine.findData(_eng)
+        self.p_fit_engine.setCurrentIndex(_ei if _ei >= 0 else 0)
+        mode_form.addRow("Fit engine:", self.p_fit_engine)
+
+        self.p_build_mode = QComboBox()
+        self.p_build_mode.addItem("epsf  —  EPSFBuilder 경험적 PSF", "epsf")
+        self.p_build_mode.setToolTip("Moffat build mode is currently disabled; EPSF is used for Step 8.")
+        _bm = str(getattr(self.params.P, "psf_build_mode", "epsf")).strip().lower()
+        _bi = self.p_build_mode.findData(_bm)
+        self.p_build_mode.setCurrentIndex(_bi if _bi >= 0 else 0)
+        mode_form.addRow("PSF build:", self.p_build_mode)
 
         self.p_workers = QSpinBox()
         self.p_workers.setRange(0, 64)
         self.p_workers.setValue(_to_int(getattr(self.params.P, "psf_parallel_workers", 0), 0))
         self.p_workers.setToolTip("0 = auto/global parallel workers")
-        form.addRow("PSF workers (0=auto):", self.p_workers)
+        mode_form.addRow("PSF workers (0=auto):", self.p_workers)
 
         self.p_oversampling = QSpinBox()
         self.p_oversampling.setRange(1, 8)
         self.p_oversampling.setValue(_to_int(getattr(self.params.P, "psf_epsf_oversampling", 2), 2))
-        form.addRow("EPSF oversampling:", self.p_oversampling)
+        epsf_form.addRow("EPSF oversampling:", self.p_oversampling)
 
         self.p_epsf_mult = QDoubleSpinBox()
         self.p_epsf_mult.setRange(1.0, 10.0)
         self.p_epsf_mult.setSingleStep(0.1)
         self.p_epsf_mult.setValue(_to_float(getattr(self.params.P, "psf_epsf_size_fwhm_mult", 4.0), 4.0))
-        form.addRow("EPSF cutout (×FWHM):", self.p_epsf_mult)
+        epsf_form.addRow("EPSF cutout (×FWHM):", self.p_epsf_mult)
 
         self.p_n_stars = QSpinBox()
         self.p_n_stars.setRange(5, 500)
         self.p_n_stars.setValue(_to_int(getattr(self.params.P, "psf_n_stars_max", 50), 50))
-        form.addRow("Max stars for EPSF:", self.p_n_stars)
+        epsf_form.addRow("Max stars for EPSF:", self.p_n_stars)
 
         self.p_isolation = QDoubleSpinBox()
         self.p_isolation.setRange(1.0, 10.0)
         self.p_isolation.setSingleStep(0.5)
         self.p_isolation.setValue(_to_float(getattr(self.params.P, "psf_isolation_fwhm_mult", 3.0), 3.0))
-        form.addRow("Isolation (×FWHM):", self.p_isolation)
+        epsf_form.addRow("Isolation (×FWHM):", self.p_isolation)
 
         self.p_fit_mult = QDoubleSpinBox()
         self.p_fit_mult.setRange(0.5, 5.0)
         self.p_fit_mult.setSingleStep(0.1)
         self.p_fit_mult.setValue(_to_float(getattr(self.params.P, "psf_fit_shape_fwhm_mult", 1.5), 1.5))
-        form.addRow("Fit window (×FWHM):", self.p_fit_mult)
+        fit_form.addRow("Fit window (×FWHM):", self.p_fit_mult)
 
         self.p_max_iter = QSpinBox()
         self.p_max_iter.setRange(1, 10)
         self.p_max_iter.setValue(_to_int(getattr(self.params.P, "psf_max_iter", 2), 2))
-        form.addRow("Max iterations:", self.p_max_iter)
+        fit_form.addRow("Max iterations:", self.p_max_iter)
 
         self.p_redetect = QDoubleSpinBox()
         self.p_redetect.setRange(1.0, 10.0)
         self.p_redetect.setSingleStep(0.5)
         self.p_redetect.setValue(_to_float(getattr(self.params.P, "psf_redetect_sigma", 4.0), 4.0))
-        form.addRow("Re-detect σ (base):", self.p_redetect)
+        redetect_form.addRow("Re-detect sigma (base):", self.p_redetect)
 
         def _make_filter_sigma_spin(attr, label):
             sp = QDoubleSpinBox()
@@ -3617,18 +5057,18 @@ class PSFPhotometryWindow(StepWindowBase):
             _v = _to_float(getattr(self.params.P, attr, float("nan")), float("nan"))
             sp.setValue(0.0 if not np.isfinite(_v) else float(_v))
             sp.setToolTip("0 = use base sigma")
-            form.addRow(label, sp)
+            redetect_form.addRow(label, sp)
             return sp
 
-        self.p_redetect_g = _make_filter_sigma_spin("psf_redetect_sigma_g", "  Re-detect σ g-band:")
-        self.p_redetect_r = _make_filter_sigma_spin("psf_redetect_sigma_r", "  Re-detect σ r-band:")
-        self.p_redetect_i = _make_filter_sigma_spin("psf_redetect_sigma_i", "  Re-detect σ i-band:")
+        self.p_redetect_g = _make_filter_sigma_spin("psf_redetect_sigma_g", "g-band override:")
+        self.p_redetect_r = _make_filter_sigma_spin("psf_redetect_sigma_r", "r-band override:")
+        self.p_redetect_i = _make_filter_sigma_spin("psf_redetect_sigma_i", "i-band override:")
 
         self.p_dup_mult = QDoubleSpinBox()
         self.p_dup_mult.setRange(0.0, 5.0)
         self.p_dup_mult.setSingleStep(0.1)
         self.p_dup_mult.setValue(_to_float(getattr(self.params.P, "psf_duplicate_radius_fwhm_mult", 0.8), 0.8))
-        form.addRow("Duplicate radius (×FWHM):", self.p_dup_mult)
+        redetect_form.addRow("Duplicate radius (×FWHM):", self.p_dup_mult)
 
         self.p_dup_px = QDoubleSpinBox()
         self.p_dup_px.setRange(0.0, 50.0)
@@ -3637,55 +5077,55 @@ class PSFPhotometryWindow(StepWindowBase):
         _dup_px = _to_float(getattr(self.params.P, "psf_duplicate_radius_px", np.nan), np.nan)
         self.p_dup_px.setValue(0.0 if not np.isfinite(_dup_px) else float(_dup_px))
         self.p_dup_px.setToolTip("0이면 비활성(×FWHM 값 사용), >0이면 절대 px 반경 사용")
-        form.addRow("Duplicate radius (px override):", self.p_dup_px)
+        redetect_form.addRow("Duplicate radius (px override):", self.p_dup_px)
 
         self.p_cap_per_iter = QSpinBox()
         self.p_cap_per_iter.setRange(0, 50000)
         self.p_cap_per_iter.setSingleStep(50)
         self.p_cap_per_iter.setValue(_to_int(getattr(self.params.P, "psf_new_sources_cap_per_iter", 70), 70))
-        form.addRow("Max new/iter (abs):", self.p_cap_per_iter)
+        redetect_form.addRow("Max new/iter (abs):", self.p_cap_per_iter)
 
         self.p_cap_frac = QDoubleSpinBox()
         self.p_cap_frac.setRange(0.0, 1.0)
         self.p_cap_frac.setSingleStep(0.01)
         self.p_cap_frac.setValue(_to_float(getattr(self.params.P, "psf_new_sources_cap_frac", 0.02), 0.02))
-        form.addRow("Max new/iter (frac):", self.p_cap_frac)
+        redetect_form.addRow("Max new/iter (frac):", self.p_cap_frac)
 
         self.p_fit_init_max = QSpinBox()
         self.p_fit_init_max.setRange(0, 200000)
         self.p_fit_init_max.setSingleStep(100)
         self.p_fit_init_max.setValue(_to_int(getattr(self.params.P, "psf_fit_init_max_sources", 0), 0))
         self.p_fit_init_max.setToolTip("0이면 초기 피팅 소스 무제한")
-        form.addRow("Initial fit source cap (0=off):", self.p_fit_init_max)
+        fit_form.addRow("Initial fit source cap (0=off):", self.p_fit_init_max)
 
         self.p_substar_nei_mult = QDoubleSpinBox()
         self.p_substar_nei_mult.setRange(2.0, 30.0)
         self.p_substar_nei_mult.setSingleStep(0.5)
         self.p_substar_nei_mult.setValue(_to_float(getattr(self.params.P, "psf_substar_neighbor_r_fwhm_mult", 8.0), 8.0))
-        form.addRow("Substar neighbor radius (×FWHM):", self.p_substar_nei_mult)
+        fit_form.addRow("Substar neighbor radius (×FWHM):", self.p_substar_nei_mult)
 
         self.p_substar_max_src = QSpinBox()
         self.p_substar_max_src.setRange(0, 200000)
         self.p_substar_max_src.setSingleStep(100)
         self.p_substar_max_src.setValue(_to_int(getattr(self.params.P, "psf_substar_max_sources", 1500), 1500))
         self.p_substar_max_src.setToolTip("0이면 substar 이웃 소스 캡 무제한")
-        form.addRow("Substar max neighbor sources:", self.p_substar_max_src)
+        fit_form.addRow("Substar max neighbor sources:", self.p_substar_max_src)
 
         self.p_conv_new = QDoubleSpinBox()
         self.p_conv_new.setRange(0.0, 1.0)
         self.p_conv_new.setSingleStep(0.005)
         self.p_conv_new.setValue(_to_float(getattr(self.params.P, "psf_conv_new_frac", 0.02), 0.02))
-        form.addRow("Converge new frac <", self.p_conv_new)
+        redetect_form.addRow("Converge new frac <", self.p_conv_new)
 
         self.p_conv_flux = QDoubleSpinBox()
         self.p_conv_flux.setRange(0.0, 1.0)
         self.p_conv_flux.setSingleStep(0.001)
         self.p_conv_flux.setValue(_to_float(getattr(self.params.P, "psf_flux_conv_threshold", 0.01), 0.01))
-        form.addRow("Converge std improve <", self.p_conv_flux)
+        redetect_form.addRow("Converge std improve <", self.p_conv_flux)
 
         self.p_use_grouper = QCheckBox("Use SourceGrouper (crowded field simultaneous fit)")
         self.p_use_grouper.setChecked(bool(getattr(self.params.P, "psf_use_grouper", True)))
-        form.addRow("", self.p_use_grouper)
+        fit_form.addRow("", self.p_use_grouper)
 
         self.p_grouper_max_size = QSpinBox()
         self.p_grouper_max_size.setRange(0, 500)
@@ -3693,14 +5133,14 @@ class PSFPhotometryWindow(StepWindowBase):
         self.p_grouper_max_size.setSpecialValueText("unlimited")
         self.p_grouper_max_size.setValue(_to_int(getattr(self.params.P, "psf_grouper_max_size", 25), 25))
         self.p_grouper_max_size.setToolTip(
-            "Max sources per group (0=unlimited). Large groups cause exponential slowdown — "
-            "25 is safe for most fields."
+            "photutils: max sources per simultaneous LM group (25 = DAOPHOT default).\n"
+            "ALLSTAR: max stars per close-pair group (2~4 recommended, 1.5×FWHM radius)."
         )
-        form.addRow("Grouper max group size:", self.p_grouper_max_size)
+        fit_form.addRow("Group max size:", self.p_grouper_max_size)
 
         self.p_use_error_img = QCheckBox("Use error image (slower, higher RAM)")
         self.p_use_error_img.setChecked(bool(getattr(self.params.P, "psf_use_error_image", True)))
-        form.addRow("", self.p_use_error_img)
+        fit_form.addRow("", self.p_use_error_img)
 
         self.p_shared_filter_epsf = QCheckBox(
             "Share EPSF per filter (faster; disable if seeing varies >1px across frames)"
@@ -3708,7 +5148,7 @@ class PSFPhotometryWindow(StepWindowBase):
         self.p_shared_filter_epsf.setChecked(
             bool(getattr(self.params.P, "psf_shared_filter_epsf", False))
         )
-        form.addRow("", self.p_shared_filter_epsf)
+        epsf_form.addRow("", self.p_shared_filter_epsf)
 
         self.p_min_epsf_stars = QSpinBox()
         self.p_min_epsf_stars.setRange(1, 200)
@@ -3719,33 +5159,33 @@ class PSFPhotometryWindow(StepWindowBase):
             "With 'Share EPSF' ON: frames below this threshold reuse the cached filter EPSF.\n"
             "Raise to avoid bad EPSF from crowded/trailed frames (e.g. 10–20)."
         )
-        form.addRow("Min isolated PSF stars:", self.p_min_epsf_stars)
+        epsf_form.addRow("Min isolated PSF stars:", self.p_min_epsf_stars)
 
         self.p_sharp_lo = QDoubleSpinBox()
         self.p_sharp_lo.setRange(0.0, 1.0)
         self.p_sharp_lo.setSingleStep(0.05)
         self.p_sharp_lo.setDecimals(2)
         self.p_sharp_lo.setValue(_to_float(getattr(self.params.P, "psf_redetect_sharp_lo", 0.15), 0.15))
-        form.addRow("Re-detect sharpness min:", self.p_sharp_lo)
+        redetect_form.addRow("Re-detect sharpness min:", self.p_sharp_lo)
 
         self.p_sharp_hi = QDoubleSpinBox()
         self.p_sharp_hi.setRange(0.0, 1.0)
         self.p_sharp_hi.setSingleStep(0.05)
         self.p_sharp_hi.setDecimals(2)
         self.p_sharp_hi.setValue(_to_float(getattr(self.params.P, "psf_redetect_sharp_hi", 0.95), 0.95))
-        form.addRow("Re-detect sharpness max:", self.p_sharp_hi)
+        redetect_form.addRow("Re-detect sharpness max:", self.p_sharp_hi)
 
         self.p_round_max = QDoubleSpinBox()
         self.p_round_max.setRange(0.0, 2.0)
         self.p_round_max.setSingleStep(0.05)
         self.p_round_max.setDecimals(2)
         self.p_round_max.setValue(_to_float(getattr(self.params.P, "psf_redetect_round_abs_max", 0.8), 0.8))
-        form.addRow("Re-detect |roundness| max:", self.p_round_max)
+        redetect_form.addRow("Re-detect |roundness| max:", self.p_round_max)
 
         self.p_save_residuals = QCheckBox("Save residual FITS (required for iter viewer)")
         self.p_save_residuals.setChecked(True)
         self.p_save_residuals.setEnabled(False)
-        form.addRow("", self.p_save_residuals)
+        output_form.addRow("", self.p_save_residuals)
 
         self.p_save_all_iter_residuals = QCheckBox(
             "Save residuals for ALL iterations (off = final iter only; saves ~2/3 disk)"
@@ -3753,9 +5193,7 @@ class PSFPhotometryWindow(StepWindowBase):
         self.p_save_all_iter_residuals.setChecked(
             bool(getattr(self.params.P, "psf_save_all_iter_residuals", False))
         )
-        form.addRow("", self.p_save_all_iter_residuals)
-
-        layout.addLayout(form)
+        output_form.addRow("", self.p_save_all_iter_residuals)
 
         # ── mode logic ────────────────────────────────────────────────────
         _manual_widgets = [
@@ -3788,14 +5226,58 @@ class PSFPhotometryWindow(StepWindowBase):
             self.p_sharp_hi.setValue(p["psf_redetect_sharp_hi"])
             self.p_round_max.setValue(p["psf_redetect_round_abs_max"])
 
+        _photutils_only_widgets = [
+            self.p_use_grouper,
+            self.p_cap_per_iter, self.p_cap_frac, self.p_conv_new,
+            self.p_redetect, self.p_redetect_g, self.p_redetect_r, self.p_redetect_i,
+            self.p_sharp_lo, self.p_sharp_hi, self.p_round_max,
+            self.p_dup_mult, self.p_dup_px,
+            self.p_substar_nei_mult, self.p_substar_max_src,
+        ]
+        _epsf_only_widgets = [
+            self.p_oversampling, self.p_shared_filter_epsf, self.p_min_epsf_stars,
+        ]
+
+        # Engine-specific parameter overrides applied on top of field preset
+        _engine_overrides = {
+            "allstar":    {"p_fit_mult": 2.0, "p_grouper_max_size": 4},
+            "photutils":  {"p_grouper_max_size": 25},
+        }
+
+        def _apply_engine_overrides(engine: str):
+            for attr, val in _engine_overrides.get(engine, {}).items():
+                w = getattr(self, attr, None)
+                if w is not None:
+                    w.setValue(val)
+
         def _refresh_mode_ui():
-            is_custom = (mode_combo.currentData() == "custom")
-            if not is_custom:
-                _apply_mode_to_widgets(mode_combo.currentData())
+            mode_key = mode_combo.currentData()
+            engine   = self.p_fit_engine.currentData()
+            is_allstar = (engine == "allstar")
+            is_moffat  = (self.p_build_mode.currentData() == "moffat")
+
+            # Apply field preset (always, including custom fallback)
+            if mode_key != "custom":
+                _apply_mode_to_widgets(mode_key)
+
+            # Apply engine-specific overrides on top
+            _apply_engine_overrides(engine)
+
+            # All editable parameters are always enabled
             for w in _manual_widgets:
-                w.setEnabled(is_custom)
+                w.setEnabled(True)
+
+            # Engine-irrelevant widgets disabled
+            for w in _photutils_only_widgets:
+                w.setEnabled(not is_allstar)
+
+            # EPSF-irrelevant widgets disabled when using Moffat build
+            for w in _epsf_only_widgets:
+                w.setEnabled(not is_moffat)
 
         mode_combo.currentIndexChanged.connect(lambda *_: _refresh_mode_ui())
+        self.p_fit_engine.currentIndexChanged.connect(lambda *_: _refresh_mode_ui())
+        self.p_build_mode.currentIndexChanged.connect(lambda *_: _refresh_mode_ui())
         _refresh_mode_ui()
 
         btns = QDialogButtonBox(QDialogButtonBox.Save | QDialogButtonBox.Cancel)
@@ -3808,6 +5290,8 @@ class PSFPhotometryWindow(StepWindowBase):
     def _save_params(self, dialog, mode_key="normal"):
         self.params.P.psf_mode = mode_key
         self.params.P.psf_model_mode = "per_frame"
+        self.params.P.psf_fit_engine = self.p_fit_engine.currentData()
+        self.params.P.psf_build_mode = self.p_build_mode.currentData()
         self.params.P.psf_parallel_workers = self.p_workers.value()
         self.params.P.psf_epsf_oversampling = self.p_oversampling.value()
         self.params.P.psf_epsf_size_fwhm_mult = self.p_epsf_mult.value()
@@ -3897,6 +5381,11 @@ class PSFPhotometryWindow(StepWindowBase):
     def save_state(self):
         self.project_state.store_step_data("psf_photometry", {
             "skip_psf": self._skip_psf,
+            "use_existing_psf_output": (
+                self.chk_use_existing_output.isChecked()
+                if hasattr(self, "chk_use_existing_output")
+                else True
+            ),
             "psf_model_mode": getattr(self.params.P, "psf_model_mode", "per_frame"),
             "psf_parallel_workers": getattr(self.params.P, "psf_parallel_workers", 0),
             "psf_epsf_oversampling": getattr(self.params.P, "psf_epsf_oversampling", 2),
@@ -3936,8 +5425,12 @@ class PSFPhotometryWindow(StepWindowBase):
         state = self.project_state.get_step_data("psf_photometry")
         if state:
             self._skip_psf = bool(state.get("skip_psf", False))
+            if hasattr(self, "chk_use_existing_output"):
+                self.chk_use_existing_output.setChecked(
+                    bool(state.get("use_existing_psf_output", True))
+                )
             for k, v in state.items():
-                if k != "skip_psf" and hasattr(self.params.P, k):
+                if k not in {"skip_psf", "use_existing_psf_output"} and hasattr(self.params.P, k):
                     setattr(self.params.P, k, v)
         if str(getattr(self.params.P, "psf_model_mode", "per_frame")).strip().lower() != "per_frame":
             self.params.P.psf_model_mode = "per_frame"

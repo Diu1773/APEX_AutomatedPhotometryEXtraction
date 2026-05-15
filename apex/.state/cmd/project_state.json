@@ -1,8 +1,8 @@
 {
   "project_name": "Untitled Project",
   "created": "2026-04-30T09:29:39.070927",
-  "last_modified": "2026-05-08T00:16:39.152856",
-  "current_step": 3,
+  "last_modified": "2026-05-16T02:12:11.417555",
+  "current_step": 8,
   "completed_steps": [
     0,
     1,
@@ -11,6 +11,7 @@
     4,
     5,
     6,
+    7,
     8,
     9,
     10,
@@ -81,7 +82,63 @@
       "peak_sharp_lo": 0.12,
       "peak_skip_if_nsrc_ge": 4500,
       "qc_state": {
-        "exclude_reasons": {},
+        "exclude_reasons": {
+          "pp_0002_1_20250308.fit": [],
+          "pp_0002_1_2_20250308.fit": [],
+          "pp_0002_20250308.fit": [],
+          "pp_0003_1_20250308.fit": [],
+          "pp_0003_1_2_20250308.fit": [],
+          "pp_0003_20250308.fit": [],
+          "pp_0004_1_20250308.fit": [],
+          "pp_0004_1_2_20250308.fit": [],
+          "pp_0004_20250308.fit": [],
+          "pp_0005_1_20250308.fit": [
+            "high_elong"
+          ],
+          "pp_0005_1_2_20250308.fit": [],
+          "pp_0005_20250308.fit": [],
+          "pp_0006_1_20250308.fit": [
+            "high_elong"
+          ],
+          "pp_0006_1_2_20250308.fit": [],
+          "pp_0006_20250308.fit": [],
+          "pp_0007_1_20250308.fit": [],
+          "pp_0007_1_2_20250308.fit": [],
+          "pp_0007_20250308.fit": [],
+          "pp_0008_1_20250308.fit": [],
+          "pp_0008_1_2_20250308.fit": [],
+          "pp_0008_20250308.fit": [],
+          "pp_0009_1_20250308.fit": [
+            "high_elong"
+          ],
+          "pp_0009_1_2_20250308.fit": [
+            "high_elong"
+          ],
+          "pp_0009_20250308.fit": [],
+          "pp_0010_1_20250308.fit": [
+            "high_elong"
+          ],
+          "pp_0010_1_2_20250308.fit": [],
+          "pp_0010_20250308.fit": [],
+          "pp_0011_1_20250308.fit": [
+            "high_elong"
+          ],
+          "pp_0011_20250308.fit": [],
+          "pp_0012_1_20250308.fit": [],
+          "pp_0012_20250308.fit": [],
+          "pp_0013_1_20250308.fit": [],
+          "pp_0013_20250308.fit": [],
+          "pp_0014_1_20250308.fit": [],
+          "pp_0014_20250308.fit": [],
+          "pp_0015_1_20250308.fit": [],
+          "pp_0015_20250308.fit": [],
+          "pp_0016_1_20250308.fit": [],
+          "pp_0016_20250308.fit": [],
+          "pp_0017_20250308.fit": [
+            "high_elong"
+          ],
+          "pp_0018_20250308.fit": []
+        },
         "qc_filter": null,
         "sky_z": 4.0,
         "fwhm_z": 4.0,
@@ -114,9 +171,9 @@
       "gaia_allow_no_cache": true
     },
     "ref_build": {
-      "ref_frame": "pp_0004_1_2_20250308.fit",
+      "ref_frame": "pp_0006_1_2_20250308.fit",
       "ref_filter": "r",
-      "n_sources": 1336
+      "n_sources": 1317
     },
     "psf_photometry": {
       "skip_psf": false,
@@ -128,7 +185,7 @@
       "psf_n_stars_max": 30,
       "psf_isolation_fwhm_mult": 2.0,
       "psf_fit_shape_px": 5,
-      "psf_fit_shape_fwhm_mult": 1.2,
+      "psf_fit_shape_fwhm_mult": 2.0,
       "psf_use_grouper": true,
       "psf_max_iter": 3,
       "psf_redetect_sigma": 4.5,
@@ -150,8 +207,10 @@
       "psf_redetect_round_abs_max": 0.6,
       "psf_save_residuals": true,
       "psf_shared_filter_epsf": false,
-      "psf_grouper_max_size": 25,
-      "psf_save_all_iter_residuals": false
+      "psf_grouper_max_size": 4,
+      "psf_save_all_iter_residuals": false,
+      "use_existing_psf_output": true,
+      "psf_min_epsf_stars": 10
     },
     "master_id_editor": {
       "search_radius_px": 7.0,

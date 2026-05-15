@@ -70,7 +70,6 @@ TOML_KEY_MAP: list[tuple[Iterable[str], str]] = [
     (("parallel", "mode"), "parallel_mode"),
     (("parallel", "max_workers"), "max_workers"),
     (("parallel", "resume_mode"), "resume_mode"),
-    (("parallel", "step9_use_cache"), "step9_use_cache"),
     (("parallel", "force_redetect"), "force_redetect"),
     (("parallel", "force_rephot"), "force_rephot"),
     (("parallel", "detect_cache_strategy"), "detect_cache_strategy"),
@@ -207,12 +206,14 @@ TOML_KEY_MAP: list[tuple[Iterable[str], str]] = [
     (("wcs_refine", "min_match"), "wcs_refine_min_match"),
     (("gaia", "radius_fudge"), "gaia_radius_fudge"),
     (("gaia", "mag_max"), "gaia_mag_max"),
+    (("gaia", "wcs_mag_max"), "gaia_wcs_mag_max"),
     (("gaia", "match_tol_arcsec"), "ref_wcs_match_radius_arcsec"),
     (("refbuild", "wcs_match_radius_arcsec"), "ref_wcs_match_radius_arcsec"),
     (("gaia", "snr_calib_min"), "gaia_snr_calib_min"),
     (("gaia", "gi_min"), "gaia_gi_min"),
     (("gaia", "gi_max"), "gaia_gi_max"),
     (("gaia", "retry"), "gaia_retry"),
+    (("gaia", "timeout_s"), "gaia_timeout_s"),
     (("gaia", "backoff_s"), "gaia_backoff_s"),
     (("gaia", "allow_no_cache"), "gaia_allow_no_cache"),
     (("gaia", "derived_enable"), "gaia_derived_enable"),
@@ -488,7 +489,6 @@ class Parameters:
             parallel_max_workers=parallel_workers,
             ui_log_tail=_geti(raw, "ui_log_tail", 300),
             resume_mode=_as_bool(raw.get("resume_mode", "true"), True),
-            step9_use_cache=_as_bool(raw.get("step9_use_cache", "false"), False),
             force_redetect=_as_bool(raw.get("force_redetect", "false"), False),
             force_rephot=_as_bool(raw.get("force_rephot", "false"), False),
             detect_cache_strategy=raw.get("detect_cache_strategy", "mtime"),
@@ -678,7 +678,7 @@ class Parameters:
             astap_exe=raw.get("astap_exe", "astap_cli.exe"),
             astap_timeout_s=_getf(raw, "astap_timeout_s", 120.0),
             astap_search_radius_deg=_getf(raw, "astap_search_radius_deg", 8.0),
-            astap_database=raw.get("astap_database", "D50"),
+            astap_database=raw.get("astap_database", "D80"),
             astap_annotate_variables=_as_bool(raw.get("astap_annotate_variables", "false"), False),
             astap_fov_fudge=_getf(raw, "astap_fov_fudge", 1.0),
             astap_downsample_z=_geti(raw, "astap_downsample_z", 2),
@@ -717,8 +717,10 @@ class Parameters:
             wcs_qc_max_center_offset_arcsec=_getf(raw, "wcs_qc_max_center_offset_arcsec", 0.0),
             gaia_radius_fudge=_getf(raw, "gaia_radius_fudge", 1.35),
             gaia_mag_max=_getf(raw, "gaia_mag_max", 18.0),
+            gaia_wcs_mag_max=_getf(raw, "gaia_wcs_mag_max", 18.0),
             ref_wcs_match_radius_arcsec=_getf(raw, "ref_wcs_match_radius_arcsec", 2.0),
             gaia_retry=_geti(raw, "gaia_retry", 2),
+            gaia_timeout_s=_getf(raw, "gaia_timeout_s", 30.0),
             gaia_backoff_s=_getf(raw, "gaia_backoff_s", 6.0),
             gaia_allow_no_cache=_as_bool(raw.get("gaia_allow_no_cache", "true"), True),
             gaia_derived_enable=_as_bool(raw.get("gaia_derived_enable", "true"), True),
@@ -811,6 +813,8 @@ class Parameters:
             psf_grouper_max_size=_geti(raw, "psf_grouper_max_size", 25),
             psf_save_all_iter_residuals=_as_bool(raw.get("psf_save_all_iter_residuals", "false"), False),
             psf_min_epsf_stars=_geti(raw, "psf_min_epsf_stars", 10),
+            psf_fit_engine=str(raw.get("psf_fit_engine", "photutils")).strip().lower() or "photutils",
+            psf_build_mode=str(raw.get("psf_build_mode", "epsf")).strip().lower() or "epsf",
 
             # Cross-frame pixel matching (Steps 7–8)
             cross_frame_ransac_tol_px=_getf(raw, "cross_frame_ransac_tol_px", 2.0),
@@ -938,8 +942,8 @@ class Parameters:
         print(f"RESULT_DIR    : {P.result_dir}")
         print(f"CACHE_DIR     : {P.cache_dir}")
         print(
-            f"resume_mode   : {P.resume_mode} | step9_use_cache={getattr(P, 'step9_use_cache', False)} | "
-            f"force_redetect={P.force_redetect} | force_rephot={P.force_rephot}"
+            f"resume_mode   : {P.resume_mode} | force_redetect={P.force_redetect} | "
+            f"force_rephot={P.force_rephot}"
         )
         print(
             f"idmatch_mode  : {getattr(P, 'idmatch_mode', 'normal')} | "

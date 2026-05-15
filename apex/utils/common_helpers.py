@@ -10,6 +10,8 @@ from __future__ import annotations
 import numpy as np
 from astropy.time import Time
 
+from apex.utils.astro_utils import normalize_filter_name
+
 
 def safe_float(value, default: float = np.nan) -> float:
     """Safely convert value to float, returning *default* on failure."""
@@ -20,13 +22,12 @@ def safe_float(value, default: float = np.nan) -> float:
 
 
 def normalize_filter_key(value: str | None) -> str:
-    """Normalize a filter name to a lowercase, stripped key.
+    """Normalize a filter name to its canonical APEX key.
 
-    Returns empty string for None/empty input.
+    Delegates to :func:`apex.utils.astro_utils.normalize_filter_name`.
+    Kept as an alias for the many call-sites that import this name.
     """
-    if value is None:
-        return ""
-    return str(value).strip().lower()
+    return normalize_filter_name(value)
 
 
 def parse_jd(date_obs: str | None) -> float:

@@ -20,6 +20,9 @@ Usage:
 """
 from __future__ import annotations
 
+import math
+import time
+
 from PyQt5.QtWidgets import QHBoxLayout, QPushButton, QSizePolicy, QWidget
 
 _RUN_SS = (
@@ -31,6 +34,53 @@ _STOP_SS = (
 _LOG_SS = (
     "QPushButton { background-color: #607D8B; color: white; font-weight: bold; padding: 8px 15px; }"
 )
+
+
+def format_duration(seconds: float) -> str:
+    """Format elapsed/remaining seconds as MM:SS or H:MM:SS."""
+    try:
+        value = float(seconds)
+    except Exception:
+        value = 0.0
+    if not math.isfinite(value):
+        value = 0.0
+    total = int(max(0, round(value)))
+    hours, rem = divmod(total, 3600)
+    minutes, secs = divmod(rem, 60)
+    if hours > 0:
+        return f"{hours:d}:{minutes:02d}:{secs:02d}"
+    return f"{minutes:02d}:{secs:02d}"
+
+
+def progress_status_text(
+    current: int,
+    total: int,
+    start_time: float | None,
+    *,
+    message: str = "",
+    workers: int | None = None,
+    now: float | None = None,
+) -> str:
+    """Build a consistent progress label with elapsed time and ETA."""
+    current_i = int(max(0, current))
+    total_i = int(max(0, total))
+    parts = [f"{current_i}/{total_i}"]
+
+    if start_time is not None:
+        clock_now = time.monotonic() if now is None else float(now)
+        elapsed = max(0.0, clock_now - float(start_time))
+        parts.append(f"elapsed {format_duration(elapsed)}")
+        if current_i > 0 and total_i > current_i:
+            remaining = elapsed / float(current_i) * float(total_i - current_i)
+            parts.append(f"ETA {format_duration(remaining)}")
+        else:
+            parts.append("ETA --:--")
+
+    if workers is not None:
+        parts.append(f"W:{int(workers)}")
+    if message:
+        parts.append(str(message))
+    return " | ".join(parts)
 
 
 class RunControlBar(QWidget):

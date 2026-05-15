@@ -34,6 +34,11 @@ from PyQt5.QtWidgets import (
 from apex.gui.workflow.step_window_base import StepWindowBase
 from apex.gui.workflow.run_control import RunControlBar
 from apex.gui.workflow.log_panel import WorkflowLogWindow, WorkerStatusPanel, append_timestamped_log, show_raised
+from apex.gui.workflow.ui_helpers import (
+    build_scroll_param_dialog,
+    create_collapsible_section,
+    create_parameter_button,
+)
 from apex.utils.astro_utils import normalize_filter_name
 from apex.utils.step_paths import (
     step2_cropped_dir,
@@ -46,6 +51,11 @@ from apex.utils.step_paths import (
 from apex.utils.step_paths_cmd import step8_psf_dir, step9_selection_dir, step10_zp_dir
 from apex.utils.io_utils import parse_int64_series, read_ecsv_int64_source_id
 from apex.utils.qc_utils import filter_frame_df_by_qc
+
+
+from apex.utils.gaia_transforms import GAIA_TO_BAND as _GAIA_TO_BAND
+from apex.utils.gaia_transforms import FILTER_COLOR_PREF as _FILTER_COLOR_PREF
+from apex.utils.gaia_transforms import BAND_ALIASES as _BAND_ALIASES
 
 
 def _first_existing_col(cols, candidates):
@@ -84,6 +94,111 @@ def _normalize_master_columns(df: pd.DataFrame) -> pd.DataFrame:
         ren[rp_col] = "gaia_RP"
     if ren:
         out = out.rename(columns=ren)
+    return out
+
+
+_GAIA_ENRICH_COLS = (
+    "phot_g_mean_mag",
+    "phot_bp_mean_mag",
+    "phot_rp_mean_mag",
+    "pmra",
+    "pmdec",
+    "pmra_error",
+    "pmdec_error",
+    "parallax",
+    "parallax_error",
+    "ruwe",
+    "visibility_periods_used",
+    "gaia_pmem",
+    "pmem_gaia",
+    "membership_prob_gaia",
+)
+
+
+def _load_gaia_enrichment_table(result_dir: Path, needed_cols=None) -> pd.DataFrame | None:
+    result_dir = Path(result_dir)
+    needed = [c for c in (needed_cols or _GAIA_ENRICH_COLS) if c != "source_id"]
+    candidates = [
+        step5_wcs_dir(result_dir) / "gaia_derived.csv",
+        step5_wcs_dir(result_dir) / "gaia_fov.ecsv",
+        result_dir / "gaia_derived.csv",
+        result_dir / "gaia_fov.ecsv",
+    ]
+    best_df = None
+    best_score = -1
+    for path in candidates:
+        if not path.exists():
+            continue
+        try:
+            if path.suffix.lower() == ".ecsv":
+                gdf = read_ecsv_int64_source_id(path)
+            else:
+                gdf = pd.read_csv(path, dtype={"source_id": str})
+        except Exception:
+            continue
+        if gdf is None or gdf.empty or "source_id" not in gdf.columns:
+            continue
+        gdf = gdf.copy()
+        gdf["source_id"] = parse_int64_series(gdf["source_id"]).astype("Int64")
+        gdf = gdf[gdf["source_id"].notna()].copy()
+        if gdf.empty:
+            continue
+        keep_cols = ["source_id"] + [c for c in _GAIA_ENRICH_COLS if c in gdf.columns]
+        score = sum(1 for c in needed if c in gdf.columns)
+        if score > best_score:
+            best_score = score
+            best_df = gdf[keep_cols].drop_duplicates(subset=["source_id"], keep="first")
+    return best_df
+
+
+def _merge_gaia_columns_from_catalog(
+    df: pd.DataFrame,
+    result_dir: Path,
+    needed_cols=None,
+) -> pd.DataFrame:
+    if df is None or df.empty:
+        return df
+    requested_cols = [c for c in (needed_cols or _GAIA_ENRICH_COLS) if c != "source_id"]
+    gdf = _load_gaia_enrichment_table(result_dir, requested_cols)
+    if gdf is None or gdf.empty:
+        return df
+
+    add_cols = [c for c in (needed_cols or _GAIA_ENRICH_COLS) if c in gdf.columns and c != "source_id"]
+    if not add_cols:
+        return df
+
+    out = df.copy()
+    join_keys = []
+    if "gaia_source_id" in out.columns:
+        join_keys.append("gaia_source_id")
+    if "source_id" in out.columns:
+        join_keys.append("source_id")
+    if not join_keys:
+        return out
+
+    for left_key in join_keys:
+        join_col = f"__gaia_join_{left_key}"
+        out[join_col] = parse_int64_series(out[left_key]).astype("Int64")
+        use = gdf[["source_id"] + add_cols].rename(columns={"source_id": join_col})
+        before_cols = set(out.columns)
+        try:
+            merged = out.merge(use, on=join_col, how="left", suffixes=("", "__gaia"))
+        except Exception:
+            out = out.drop(columns=[join_col], errors="ignore")
+            continue
+
+        for col in add_cols:
+            if col in before_cols:
+                aux = f"{col}__gaia"
+                if aux not in merged.columns:
+                    continue
+                missing = merged[col].isna()
+                merged.loc[missing, col] = merged.loc[missing, aux]
+                merged = merged.drop(columns=[aux])
+            elif col in merged.columns:
+                pass
+        out = merged.drop(columns=[join_col], errors="ignore")
+
     return out
 
 
@@ -395,7 +510,11 @@ class ZeropointCalibrationWorker(QThread):
         return y
 
     def _robust_linfit(self, x, y, w=None, clip_sigma=3.0, iters=5, slope_absmax=1.0, min_n=10):
-        """Robust sigma-clipping linear fit.  w = weights (e.g. 1/err²); if None, OLS."""
+        """Robust sigma-clipping linear fit.  w = weights (e.g. 1/err²); if None, OLS.
+
+        Returns (zp, ct, n_inlier, scatter_rms) where scatter_rms is the MAD-based
+        scatter of residuals from the final fit.
+        """
         x = np.asarray(x, float)
         y = np.asarray(y, float)
         m0 = np.isfinite(x) & np.isfinite(y)
@@ -405,8 +524,14 @@ class ZeropointCalibrationWorker(QThread):
         x, y = x[m0], y[m0]
         if w is not None:
             w = w[m0]
+
+        def _scatter(yf, zp_, ct_, xf):
+            r = yf - (zp_ + ct_ * xf)
+            return float(1.4826 * np.nanmedian(np.abs(r - np.nanmedian(r)))) if len(r) else np.nan
+
         if len(x) < min_n:
-            return (float(np.nanmedian(y)) if len(y) else np.nan, 0.0, int(len(x)))
+            med = float(np.nanmedian(y)) if len(y) else np.nan
+            return med, 0.0, int(len(x)), _scatter(y, med, 0.0, x)
 
         def _fit(xf, yf, wf):
             if wf is not None:
@@ -434,10 +559,13 @@ class ZeropointCalibrationWorker(QThread):
             if w is not None:
                 w = w[keep]
 
-        if abs(ct) > float(slope_absmax):
-            return (float(np.nanmedian(y)), 0.0, int(len(x)))
+        scatter = _scatter(y, zp, ct, x)
 
-        return float(zp), float(ct), int(len(x))
+        if abs(ct) > float(slope_absmax):
+            self._log(f"[ZP] color term {ct:+.4f} exceeds slope_absmax={slope_absmax:.2f}; using median ZP, ct=0")
+            return float(np.nanmedian(y)), 0.0, int(len(x)), scatter
+
+        return float(zp), float(ct), int(len(x)), scatter
 
     def run(self):
         try:
@@ -704,6 +832,12 @@ class ZeropointCalibrationWorker(QThread):
             if "ID" not in master.columns:
                 raise RuntimeError(f"{master_path.name} missing ID column")
 
+            master = _merge_gaia_columns_from_catalog(master, result_dir)
+            if "parallax" in master.columns:
+                n_plx = int(pd.to_numeric(master["parallax"], errors="coerce").notna().sum())
+                if n_plx > 0:
+                    self._log(f"Gaia astrometry attached: {n_plx} / {len(master)}")
+
             # Merge wide with master to get Gaia mags from master_catalog
             merge_cols = ["ID"]
             if "source_id" in master.columns:
@@ -797,82 +931,128 @@ class ZeropointCalibrationWorker(QThread):
             xcol = out_cal["gaia_BP_RP"].to_numpy(float)
             G = out_cal["gaia_G"].to_numpy(float)
 
-            m_g = np.isfinite(xcol) & (xcol >= 0.3) & (xcol <= 3.0)
-            m_r = np.isfinite(xcol) & (xcol >= 0.0) & (xcol <= 3.0)
-            m_i = np.isfinite(xcol) & (xcol >= 0.5) & (xcol <= 2.0)
+            # User-configurable global BP-RP pre-filter
+            bpRP_lo = float(getattr(P, "gaia_gi_min", -0.5))
+            bpRP_hi = float(getattr(P, "gaia_gi_max", 3.5))
+            m_bpRP = np.isfinite(xcol) & (xcol >= bpRP_lo) & (xcol <= bpRP_hi)
+            self._log(f"BP-RP pre-filter [{bpRP_lo:.2f}, {bpRP_hi:.2f}]: kept {m_bpRP.sum()}/{len(xcol)} stars")
 
-            G_minus_g = np.full_like(G, np.nan)
-            G_minus_r = np.full_like(G, np.nan)
-            G_minus_i = np.full_like(G, np.nan)
-
-            # Jordi+ (2010) transformations: Gaia G -> SDSS gri
-            self._log("=== Jordi+ (2010) Gaia->SDSS Transformations ===")
-            self._log("g_sdss = G - (0.2199 - 0.6365*(BP-RP) - 0.1548*(BP-RP)^2 + 0.0064*(BP-RP)^3)")
-            self._log("r_sdss = G - (-0.0984 + 0.0859*(BP-RP) + 0.1907*(BP-RP)^2 - 0.1701*(BP-RP)^3 + 0.0226*(BP-RP)^4)")
-            self._log("i_sdss = G - (-0.293 + 0.6404*(BP-RP) - 0.0961*(BP-RP)^2 - 0.0021*(BP-RP)^3)")
-
-            G_minus_g[m_g] = self._poly_eval(xcol[m_g], [0.2199, -0.6365, -0.1548, 0.0064])
-            G_minus_r[m_r] = self._poly_eval(xcol[m_r], [-0.09837, 0.08592, 0.1907, -0.1701, 0.02263])
-            G_minus_i[m_i] = self._poly_eval(xcol[m_i], [-0.293, 0.6404, -0.09609, -0.002104])
-
-            out_cal["sdss_g_ref"] = G - G_minus_g
-            out_cal["sdss_r_ref"] = G - G_minus_r
-            out_cal["sdss_i_ref"] = G - G_minus_i
-            self._log(f"Jordi applied: g_ref valid={np.isfinite(out_cal['sdss_g_ref']).sum()}, r_ref valid={np.isfinite(out_cal['sdss_r_ref']).sum()}, i_ref valid={np.isfinite(out_cal['sdss_i_ref']).sum()}")
-
-            snr_cut_sdss = float(getattr(P, "cmd_snr_calib_min", 20.0))
-            m_snr_sdss = np.ones(len(out_cal), dtype=bool)
-            for band in ("g", "r", "i"):
-                sc = f"snr_{band}"
-                if sc in out_cal.columns:
-                    svals = out_cal[sc].to_numpy(float)
-                    m_snr_sdss &= np.isfinite(svals) & (svals >= snr_cut_sdss)
+            clip_sigma   = float(getattr(P, "zp_clip_sigma", 3.0))
+            fit_iters    = int(getattr(P, "zp_fit_iters", 5))
+            slope_absmax = float(getattr(P, "zp_slope_absmax", 1.0))
+            snr_cut      = float(getattr(P, "gaia_snr_calib_min", getattr(P, "cmd_snr_calib_min", 20.0)))
 
             def _arr(col):
                 return out_cal[col].to_numpy(float) if col in out_cal.columns else np.full(len(out_cal), np.nan)
 
-            g_inst = _arr("mag_inst_g")
-            r_inst = _arr("mag_inst_r")
-            i_inst = _arr("mag_inst_i")
-
-            color_gr = g_inst - r_inst
-            color_ri = r_inst - i_inst
-
-            clip_sigma = float(getattr(P, "zp_clip_sigma", 3.0))
-            fit_iters = int(getattr(P, "zp_fit_iters", 5))
-            slope_absmax = float(getattr(P, "zp_slope_absmax", 1.0))
-
-            # WLS weights: 1/err² from median mag error per ID/band
             def _wls_weights(err_col):
                 e = _arr(err_col)
-                w = np.where(np.isfinite(e) & (e > 0), 1.0 / e**2, np.nan)
-                return w
+                return np.where(np.isfinite(e) & (e > 0), 1.0 / e**2, np.nan)
 
-            w_g = _wls_weights("mag_inst_err_g")
-            w_r = _wls_weights("mag_inst_err_r")
-            w_i = _wls_weights("mag_inst_err_i")
+            def _color_pair(fa, fb):
+                ca, cb = f"mag_inst_{fa}", f"mag_inst_{fb}"
+                if ca in out_cal.columns and cb in out_cal.columns:
+                    return out_cal[ca].to_numpy(float) - out_cal[cb].to_numpy(float)
+                return np.full(len(out_cal), np.nan)
 
-            delta_g = out_cal["sdss_g_ref"].to_numpy(float) - g_inst
-            mg = np.isfinite(delta_g) & np.isfinite(color_gr) & np.isfinite(g_inst) & m_snr_sdss
-            zp_g, ct_g, Ng = self._robust_linfit(color_gr[mg], delta_g[mg], w=w_g[mg], clip_sigma=clip_sigma, iters=fit_iters, slope_absmax=slope_absmax, min_n=min_match)
+            # Detect filters present in photometry data
+            data_filters = sorted(all_df["FILTER"].dropna().unique())
+            self._log(f"Photometric filters in data: {data_filters}")
 
-            delta_r = out_cal["sdss_r_ref"].to_numpy(float) - r_inst
-            mr = np.isfinite(delta_r) & np.isfinite(color_gr) & np.isfinite(r_inst) & m_snr_sdss
-            zp_r, ct_r, Nr = self._robust_linfit(color_gr[mr], delta_r[mr], w=w_r[mr], clip_sigma=clip_sigma, iters=fit_iters, slope_absmax=slope_absmax, min_n=min_match)
+            # ── Gaia → filter reference magnitude for each detected filter ──────
+            self._log("=== Gaia → Filter Transformations ===")
+            ref_col_map: dict[str, str] = {}  # filt -> column name in out_cal
+            for filt in data_filters:
+                key = _BAND_ALIASES.get(filt, filt)
+                if key not in _GAIA_TO_BAND:
+                    self._log(f"[ZP][{filt}] No Gaia transformation available — skipping")
+                    continue
+                coeffs, lo, hi, source, sig_approx = _GAIA_TO_BAND[key]
+                warn = " [WARNING: σ≈{:.2f} mag — use with caution]".format(sig_approx) if sig_approx >= 0.10 else ""
+                self._log(f"[ZP][{filt}] {source}  G-{filt}=poly(BP-RP)  σ≈{sig_approx:.3f}{warn}")
+                m_filt = m_bpRP & (xcol >= lo) & (xcol <= hi)
+                G_minus_filt = np.full_like(G, np.nan)
+                G_minus_filt[m_filt] = self._poly_eval(xcol[m_filt], coeffs)
+                col_name = f"ref_{filt}"
+                out_cal[col_name] = G - G_minus_filt
+                ref_col_map[filt] = col_name
+                self._log(f"[ZP][{filt}] ref_mag valid: {np.isfinite(out_cal[col_name]).sum()}/{len(out_cal)}")
 
-            delta_i = out_cal["sdss_i_ref"].to_numpy(float) - i_inst
-            mi = np.isfinite(delta_i) & np.isfinite(color_ri) & np.isfinite(i_inst) & m_snr_sdss
-            zp_i, ct_i, Ni = self._robust_linfit(color_ri[mi], delta_i[mi], w=w_i[mi], clip_sigma=clip_sigma, iters=fit_iters, slope_absmax=slope_absmax, min_n=min_match)
+            # Backwards-compat aliases for SDSS
+            for sdss_f, sdss_col in [("g", "sdss_g_ref"), ("r", "sdss_r_ref"), ("i", "sdss_i_ref")]:
+                if sdss_f in ref_col_map and sdss_col not in out_cal.columns:
+                    out_cal[sdss_col] = out_cal[ref_col_map[sdss_f]]
 
-            self._log(f"g_std = g_inst + {zp_g:+.4f} + {ct_g:+.4f}*(g-r)_inst (N={Ng})")
-            self._log(f"r_std = r_inst + {zp_r:+.4f} + {ct_r:+.4f}*(g-r)_inst (N={Nr})")
-            self._log(f"i_std = i_inst + {zp_i:+.4f} + {ct_i:+.4f}*(r-i)_inst (N={Ni})")
+            if not ref_col_map:
+                raise RuntimeError("No supported filters found in photometry data for Gaia calibration")
 
-            coeff_df = pd.DataFrame([
-                {"filter": "g", "zp": zp_g, "ct": ct_g, "N": Ng, "color_col": "color_gr"},
-                {"filter": "r", "zp": zp_r, "ct": ct_r, "N": Nr, "color_col": "color_gr"},
-                {"filter": "i", "zp": zp_i, "ct": ct_i, "N": Ni, "color_col": "color_ri"},
-            ])
+            # ── ZP + color-term fit per filter ────────────────────────────────
+            coeff_rows: list[dict] = []
+            fit_params: dict[str, dict] = {}
+
+            for filt in data_filters:
+                if filt not in ref_col_map:
+                    continue
+                inst_col = f"mag_inst_{filt}"
+                if inst_col not in out_cal.columns:
+                    self._log(f"[ZP][{filt}] mag_inst_{filt} missing in calibrator table — skipping fit")
+                    continue
+
+                ref_mag_arr = _arr(ref_col_map[filt])
+                inst_arr    = _arr(inst_col)
+                delta       = ref_mag_arr - inst_arr
+
+                # SNR mask for this filter
+                snr_col_f = f"snr_{filt}"
+                if snr_col_f in out_cal.columns:
+                    sv = out_cal[snr_col_f].to_numpy(float)
+                    m_snr_f = np.isfinite(sv) & (sv >= snr_cut)
+                else:
+                    m_snr_f = np.ones(len(out_cal), dtype=bool)
+
+                # Find best available instrumental color index
+                key = _BAND_ALIASES.get(filt, filt)
+                color_prefs = _FILTER_COLOR_PREF.get(key, _FILTER_COLOR_PREF.get(filt, []))
+                color_x = np.full(len(out_cal), np.nan)
+                color_col_name = "none"
+                for (ca, cb) in color_prefs:
+                    cidx = _color_pair(ca, cb)
+                    if np.isfinite(cidx).sum() >= min_match:
+                        color_x = cidx
+                        color_col_name = f"{ca}_{cb}"
+                        break
+
+                w_filt  = _wls_weights(f"mag_inst_err_{filt}")
+                s_max   = slope_absmax if key != "U" else max(slope_absmax, 3.0)
+                m_fit   = np.isfinite(delta) & np.isfinite(color_x) & np.isfinite(inst_arr) & m_snr_f
+
+                if m_fit.sum() < min_match:
+                    self._log(f"[ZP][{filt}] Only {m_fit.sum()} calibrators (need {min_match}) — skipping fit")
+                    continue
+
+                zp_f, ct_f, Nf, sc_f = self._robust_linfit(
+                    color_x[m_fit], delta[m_fit], w=w_filt[m_fit],
+                    clip_sigma=clip_sigma, iters=fit_iters, slope_absmax=s_max, min_n=min_match,
+                )
+                clabel = color_col_name.replace("_", "-")
+                self._log(f"{filt}_std = {filt}_inst + {zp_f:+.4f} + {ct_f:+.4f}*({clabel})_inst  N={Nf}  scatter={sc_f:.4f}")
+
+                # Store delta and color columns for CSV
+                out_cal[f"delta_{filt}"] = delta
+                if color_col_name != "none":
+                    ccol = f"color_{color_col_name}"
+                    if ccol not in out_cal.columns:
+                        out_cal[ccol] = color_x
+
+                coeff_rows.append({"filter": filt, "zp": zp_f, "ct": ct_f, "N": Nf,
+                                   "scatter_rms": sc_f, "color_col": color_col_name})
+                fit_params[filt] = {"zp": zp_f, "ct": ct_f, "scatter_rms": sc_f,
+                                    "color_col": color_col_name}
+
+            if not fit_params:
+                raise RuntimeError("ZP fit failed for all detected filters")
+
+            coeff_df = pd.DataFrame(coeff_rows)
             coeff_df.to_csv(output_dir / "zp_fit_coefficients.csv", index=False)
             self._log("Saved zp_fit_coefficients.csv")
             apply_ext = bool(getattr(P, "cmd_apply_extinction", False))
@@ -902,38 +1082,53 @@ class ZeropointCalibrationWorker(QThread):
                         for _, er in ext_df.iterrows():
                             ext_map[normalize_filter_name(er["filter"])] = float(er["k"])
 
-            out_cal["color_gr"] = color_gr
-            out_cal["color_ri"] = color_ri
-            out_cal["delta_g"] = out_cal["sdss_g_ref"].to_numpy(float) - g_inst
-            out_cal["delta_r"] = out_cal["sdss_r_ref"].to_numpy(float) - r_inst
-            out_cal["delta_i"] = out_cal["sdss_i_ref"].to_numpy(float) - i_inst
             out_cal_path = output_dir / "gaia_sdss_calibrator_by_ID.csv"
             out_cal.to_csv(out_cal_path, index=False)
             self._log(f"Saved {out_cal_path.name} | rows={len(out_cal)}")
 
+            # Color index DataFrame for all stars (used for per-frame ZP application)
             color_df = wide_raw[["ID"]].copy()
-            if "mag_inst_g" in wide_raw.columns and "mag_inst_r" in wide_raw.columns:
-                color_df["color_gr"] = wide_raw["mag_inst_g"].to_numpy(float) - wide_raw["mag_inst_r"].to_numpy(float)
-            else:
-                color_df["color_gr"] = np.nan
-            if "mag_inst_r" in wide_raw.columns and "mag_inst_i" in wide_raw.columns:
-                color_df["color_ri"] = wide_raw["mag_inst_r"].to_numpy(float) - wide_raw["mag_inst_i"].to_numpy(float)
-            else:
-                color_df["color_ri"] = np.nan
+            for filt, fp in fit_params.items():
+                ccol_name = fp["color_col"]
+                if ccol_name == "none":
+                    continue
+                fa, fb = ccol_name.split("_", 1)
+                ca, cb = f"mag_inst_{fa}", f"mag_inst_{fb}"
+                col_out = f"color_{ccol_name}"
+                if ca in wide_raw.columns and cb in wide_raw.columns and col_out not in color_df.columns:
+                    color_df[col_out] = wide_raw[ca].to_numpy(float) - wide_raw[cb].to_numpy(float)
 
-            cal_cols = ["ID", "sdss_g_ref", "sdss_r_ref", "sdss_i_ref", "color_gr", "color_ri", "gaia_BP_RP"]
-            obs = all_df.merge(out_cal[cal_cols], on="ID", how="left")
+            # Merge calibrator columns into per-observation table
+            cal_merge_cols = ["ID"]
+            for filt in fit_params:
+                rc = ref_col_map.get(filt)
+                if rc and rc in out_cal.columns and rc not in cal_merge_cols:
+                    cal_merge_cols.append(rc)
+            for ccol in [c for c in out_cal.columns if c.startswith("color_")]:
+                if ccol not in cal_merge_cols:
+                    cal_merge_cols.append(ccol)
+            if "gaia_BP_RP" in out_cal.columns:
+                cal_merge_cols.append("gaia_BP_RP")
+
+            obs = all_df.merge(out_cal[cal_merge_cols], on="ID", how="left")
             obs = obs.merge(frame_airmass[["file", "filter", "airmass"]], left_on=["file", "FILTER"], right_on=["file", "filter"], how="left")
 
             obs["ref_mag"] = np.nan
-            obs.loc[obs["FILTER"] == "g", "ref_mag"] = obs.loc[obs["FILTER"] == "g", "sdss_g_ref"]
-            obs.loc[obs["FILTER"] == "r", "ref_mag"] = obs.loc[obs["FILTER"] == "r", "sdss_r_ref"]
-            obs.loc[obs["FILTER"] == "i", "ref_mag"] = obs.loc[obs["FILTER"] == "i", "sdss_i_ref"]
-
             obs["color_term"] = np.nan
-            obs.loc[obs["FILTER"] == "g", "color_term"] = ct_g * obs.loc[obs["FILTER"] == "g", "color_gr"]
-            obs.loc[obs["FILTER"] == "r", "color_term"] = ct_r * obs.loc[obs["FILTER"] == "r", "color_gr"]
-            obs.loc[obs["FILTER"] == "i", "color_term"] = ct_i * obs.loc[obs["FILTER"] == "i", "color_ri"]
+            for filt, fp in fit_params.items():
+                m_f = obs["FILTER"] == filt
+                rc = ref_col_map.get(filt)
+                if rc and rc in obs.columns:
+                    obs.loc[m_f, "ref_mag"] = obs.loc[m_f, rc]
+                ccol_name = fp["color_col"]
+                if ccol_name != "none":
+                    ccol = f"color_{ccol_name}"
+                    if ccol in obs.columns:
+                        obs.loc[m_f, "color_term"] = fp["ct"] * obs.loc[m_f, ccol].to_numpy(float)
+                    else:
+                        obs.loc[m_f, "color_term"] = 0.0
+                else:
+                    obs.loc[m_f, "color_term"] = 0.0
 
             obs["k_term"] = 0.0
             if apply_ext and ext_map:
@@ -945,17 +1140,20 @@ class ZeropointCalibrationWorker(QThread):
             if apply_ext and ext_mode == "two_step":
                 obs["delta"] = obs["ref_mag"] - (obs["mag_inst"] + obs["color_term"] + obs["k_term"])
 
-            snr_cut_sdss = float(getattr(P, "cmd_snr_calib_min", 20.0))
             obs["snr_ok"] = True
             if "snr" in obs.columns:
                 svals = obs["snr"].to_numpy(float)
-                obs["snr_ok"] = np.isfinite(svals) & (svals >= snr_cut_sdss)
+                obs["snr_ok"] = np.isfinite(svals) & (svals >= snr_cut)
 
             obs["cal_ok"] = False
-            bp = obs["gaia_BP_RP"].to_numpy(float)
-            obs.loc[(obs["FILTER"] == "g") & np.isfinite(bp) & (bp >= 0.3) & (bp <= 3.0), "cal_ok"] = True
-            obs.loc[(obs["FILTER"] == "r") & np.isfinite(bp) & (bp >= 0.0) & (bp <= 3.0), "cal_ok"] = True
-            obs.loc[(obs["FILTER"] == "i") & np.isfinite(bp) & (bp >= 0.5) & (bp <= 2.0), "cal_ok"] = True
+            bp = obs["gaia_BP_RP"].to_numpy(float) if "gaia_BP_RP" in obs.columns else np.full(len(obs), np.nan)
+            m_bp_global = np.isfinite(bp) & (bp >= bpRP_lo) & (bp <= bpRP_hi)
+            for filt in fit_params:
+                key = _BAND_ALIASES.get(filt, filt)
+                entry = _GAIA_TO_BAND.get(key)
+                if entry:
+                    _, lo, hi, _, _ = entry
+                    obs.loc[(obs["FILTER"] == filt) & m_bp_global & (bp >= lo) & (bp <= hi), "cal_ok"] = True
 
             obs_all = obs.copy()
             obs = obs_all[np.isfinite(obs_all["delta"]) & obs_all["snr_ok"] & obs_all["cal_ok"]].copy()
@@ -1021,15 +1219,25 @@ class ZeropointCalibrationWorker(QThread):
                 self._log(f"Saved {reject_path.name} | rows={len(reject_df)}")
 
             obs = all_df.merge(frame_df[["file", "filter", "zp_frame"]], left_on=["file", "FILTER"], right_on=["file", "filter"], how="left")
-            zp_map = {"g": zp_g, "r": zp_r, "i": zp_i}
+            zp_map = {filt: fp["zp"] for filt, fp in fit_params.items()}
             obs["zp_frame"] = obs["zp_frame"].fillna(obs["FILTER"].map(zp_map))
-            obs = obs.merge(color_df[["ID", "color_gr", "color_ri"]], on="ID", how="left")
+
+            color_merge_cols = ["ID"] + [c for c in color_df.columns if c != "ID"]
+            obs = obs.merge(color_df[color_merge_cols], on="ID", how="left")
             obs = obs.merge(frame_airmass[["file", "filter", "airmass"]], left_on=["file", "FILTER"], right_on=["file", "filter"], how="left")
 
             obs["color_term"] = np.nan
-            obs.loc[obs["FILTER"] == "g", "color_term"] = ct_g * obs.loc[obs["FILTER"] == "g", "color_gr"]
-            obs.loc[obs["FILTER"] == "r", "color_term"] = ct_r * obs.loc[obs["FILTER"] == "r", "color_gr"]
-            obs.loc[obs["FILTER"] == "i", "color_term"] = ct_i * obs.loc[obs["FILTER"] == "i", "color_ri"]
+            for filt, fp in fit_params.items():
+                m_f = obs["FILTER"] == filt
+                ccol_name = fp["color_col"]
+                if ccol_name != "none":
+                    ccol = f"color_{ccol_name}"
+                    if ccol in obs.columns:
+                        obs.loc[m_f, "color_term"] = fp["ct"] * obs.loc[m_f, ccol].to_numpy(float)
+                    else:
+                        obs.loc[m_f, "color_term"] = 0.0
+                else:
+                    obs.loc[m_f, "color_term"] = 0.0
 
             obs["k_term"] = 0.0
             if apply_ext and ext_map:
@@ -1106,9 +1314,10 @@ class ZeropointCalibrationWorker(QThread):
                     df_out[col] = df[col]
 
             wide_by_id = wide.drop_duplicates(subset=["ID"], keep="first").set_index("ID", drop=False)
-            for band in ("g", "r", "i"):
-                c_inst = f"mag_inst_{band}"
-                c_std = f"mag_std_{band}"
+            std_cols_added = []
+            for filt in fit_params:
+                c_inst = f"mag_inst_{filt}"
+                c_std  = f"mag_std_{filt}"
                 if c_inst in wide.columns:
                     df_out[c_std] = pd.to_numeric(
                         wide_by_id.reindex(df_out["ID"])[c_inst],
@@ -1116,24 +1325,33 @@ class ZeropointCalibrationWorker(QThread):
                     ).to_numpy(float)
                 else:
                     df_out[c_std] = np.nan
+                std_cols_added.append(c_std)
 
-            missing_cal_ids = int(df_out[["mag_std_g", "mag_std_r", "mag_std_i"]].isna().all(axis=1).sum())
-            if missing_cal_ids:
-                self._log(
-                    f"CMD export: {missing_cal_ids} IDs missing calibrated wide magnitudes; keeping mag_std_* as NaN."
-                )
+            if std_cols_added:
+                n_missing = int(df_out[std_cols_added].isna().all(axis=1).sum())
+                if n_missing:
+                    self._log(f"CMD export: {n_missing} IDs missing all calibrated magnitudes; keeping mag_std_* as NaN.")
 
-            gi_std = df_out["mag_std_g"].to_numpy(float) - df_out["mag_std_i"].to_numpy(float)
-            m_gi_std = np.isfinite(gi_std) & (gi_std >= 1.0) & (gi_std <= 9.0)
+            # Synthetic Gaia magnitudes: prefer SDSS g-i, fall back to Johnson V-I
+            gaia_G_syn     = np.full(len(df_out), np.nan)
+            gaia_BP_RP_syn = np.full(len(df_out), np.nan)
 
-            G_minus_g_from_gi = np.full(len(df_out), np.nan)
-            BPmRP_from_gi = np.full(len(df_out), np.nan)
+            if "mag_std_g" in df_out.columns and "mag_std_i" in df_out.columns:
+                gi_std  = df_out["mag_std_g"].to_numpy(float) - df_out["mag_std_i"].to_numpy(float)
+                m_gi    = np.isfinite(gi_std) & (gi_std >= 1.0) & (gi_std <= 9.0)
+                gaia_G_syn[m_gi]     = df_out["mag_std_g"].to_numpy(float)[m_gi] + self._poly_eval(gi_std[m_gi], [-0.1064, -0.4964, -0.09339, 0.004444])
+                gaia_BP_RP_syn[m_gi] = self._poly_eval(gi_std[m_gi], [0.3971, 0.777, -0.04164, 0.008237])
+            elif "mag_std_V" in df_out.columns and "mag_std_I" in df_out.columns:
+                # Johnson V-I: GBP-GRP ≈ f(V-I) from Riello+2021 inverse
+                vi_std  = df_out["mag_std_V"].to_numpy(float) - df_out["mag_std_I"].to_numpy(float)
+                m_vi    = np.isfinite(vi_std) & (vi_std >= -0.5) & (vi_std <= 5.0)
+                bprp    = self._poly_eval(vi_std[m_vi], [-0.033, 1.259, -0.128, 0.016])
+                gm_v    = self._poly_eval(bprp, [-0.02704, 0.01424, -0.2156, 0.01426])
+                gaia_G_syn[m_vi]     = df_out["mag_std_V"].to_numpy(float)[m_vi] + gm_v
+                gaia_BP_RP_syn[m_vi] = bprp
 
-            G_minus_g_from_gi[m_gi_std] = self._poly_eval(gi_std[m_gi_std], [-0.1064, -0.4964, -0.09339, 0.004444])
-            BPmRP_from_gi[m_gi_std] = self._poly_eval(gi_std[m_gi_std], [0.3971, 0.777, -0.04164, 0.008237])
-
-            df_out["gaia_G_syn"] = df_out["mag_std_g"].to_numpy(float) + G_minus_g_from_gi
-            df_out["gaia_BP_RP_syn"] = BPmRP_from_gi
+            df_out["gaia_G_syn"]     = gaia_G_syn
+            df_out["gaia_BP_RP_syn"] = gaia_BP_RP_syn
 
             out_cmd_path = output_dir / "median_by_ID_filter_wide_cmd.csv"
             df_out.to_csv(out_cmd_path, index=False, na_rep="NaN")
@@ -1542,63 +1760,7 @@ class CmdViewerWindow(QWidget):
         return None, None
 
     def _merge_columns_from_gaia_derived(self, needed_cols):
-        candidates = [
-            step5_wcs_dir(self.result_dir) / "gaia_derived.csv",
-            step5_wcs_dir(self.result_dir) / "gaia_fov.ecsv",
-            self.result_dir / "gaia_derived.csv",
-        ]
-        gdf = None
-        for p in candidates:
-            if not p.exists():
-                continue
-            try:
-                d = pd.read_csv(p)
-            except Exception:
-                continue
-            if d.empty or ("source_id" not in d.columns):
-                continue
-            d["source_id"] = parse_int64_series(d["source_id"]).astype("Int64")
-            d = d[d["source_id"].notna()].copy()
-            if d.empty:
-                continue
-            gdf = d
-            break
-        if gdf is None:
-            return
-
-        left_key = None
-        if "source_id" in self.df.columns:
-            self.df["source_id"] = parse_int64_series(self.df["source_id"]).astype("Int64")
-            left_key = "source_id"
-        elif "gaia_source_id" in self.df.columns:
-            self.df["gaia_source_id"] = parse_int64_series(self.df["gaia_source_id"]).astype("Int64")
-            left_key = "gaia_source_id"
-        if left_key is None:
-            return
-
-        add_cols = [c for c in needed_cols if c in gdf.columns and c != "source_id"]
-        if not add_cols:
-            return
-
-        use = gdf[["source_id"] + add_cols].drop_duplicates(subset=["source_id"], keep="first")
-        if left_key != "source_id":
-            use = use.rename(columns={"source_id": left_key})
-        try:
-            merged = self.df.merge(use, on=left_key, how="left", suffixes=("", "__gaia"))
-        except Exception:
-            return
-
-        for c in add_cols:
-            c_aux = f"{c}__gaia"
-            if c_aux not in merged.columns:
-                continue
-            if c in merged.columns:
-                m = merged[c].isna()
-                merged.loc[m, c] = merged.loc[m, c_aux]
-            else:
-                merged[c] = merged[c_aux]
-            merged = merged.drop(columns=[c_aux])
-        self.df = merged
+        self.df = _merge_gaia_columns_from_catalog(self.df, self.result_dir, needed_cols)
 
     def _ensure_membership_columns_from_master(self):
         needed = [
@@ -2344,7 +2506,9 @@ class CmdViewerWindow(QWidget):
 class ZPFitPlotWidget(QWidget):
     """ZP linear fit (delta vs color) + per-frame ZP timeline plots."""
 
-    FILT_COLORS = {"g": "#1976D2", "r": "#D32F2F", "i": "#388E3C"}
+    FILT_COLORS = {"g": "#1976D2", "r": "#D32F2F", "i": "#388E3C",
+                   "u": "#7B1FA2", "z": "#E65100", "y": "#00695C",
+                   "ha": "#AD1457", "r_spec": "#B71C1C"}
 
     def __init__(self, result_dir: Path, parent=None):
         super().__init__(parent)
@@ -2355,6 +2519,29 @@ class ZPFitPlotWidget(QWidget):
         self._artist_map = {}   # id(artist) -> list of row dicts
         self._setup_ui()
 
+    def _filter_color(self, filt: str) -> str:
+        """Return a consistent color for any filter name."""
+        if filt in self.FILT_COLORS:
+            return self.FILT_COLORS[filt]
+        import hashlib
+        h = int(hashlib.md5(filt.encode()).hexdigest()[:6], 16)
+        # Keep it reasonably saturated (not too dark/light)
+        r = 80 + (h >> 16 & 0xFF) % 140
+        g = 80 + (h >> 8 & 0xFF) % 140
+        b = 80 + (h & 0xFF) % 140
+        return f"#{r:02X}{g:02X}{b:02X}"
+
+    def _detected_filters(self) -> list[str]:
+        """Collect all filter names present in loaded data."""
+        filts: set[str] = set()
+        if self._cal_df is not None:
+            filts.update(c[len("delta_"):] for c in self._cal_df.columns if c.startswith("delta_"))
+        if self._frame_df is not None and "filter" in self._frame_df.columns:
+            filts.update(str(f) for f in self._frame_df["filter"].dropna().unique())
+        if self._coeff_df is not None and "filter" in self._coeff_df.columns:
+            filts.update(str(f) for f in self._coeff_df["filter"].dropna().unique())
+        return sorted(filts)
+
     def _setup_ui(self):
         layout = QVBoxLayout(self)
         layout.setContentsMargins(4, 4, 4, 4)
@@ -2362,7 +2549,7 @@ class ZPFitPlotWidget(QWidget):
         ctrl = QHBoxLayout()
         ctrl.addWidget(QLabel("Filter:"))
         self._filt_combo = QComboBox()
-        self._filt_combo.addItems(["All", "g", "r", "i"])
+        self._filt_combo.addItem("All")
         self._filt_combo.currentTextChanged.connect(self._redraw)
         ctrl.addWidget(self._filt_combo)
         ctrl.addSpacing(12)
@@ -2428,8 +2615,21 @@ class ZPFitPlotWidget(QWidget):
             except Exception:
                 self._coeff_df = None
 
+        self._update_filter_combo()
         self._update_date_combo()
         self._redraw()
+
+    def _update_filter_combo(self) -> None:
+        """Repopulate filter combo from currently loaded data."""
+        prev = self._filt_combo.currentText()
+        self._filt_combo.blockSignals(True)
+        self._filt_combo.clear()
+        self._filt_combo.addItem("All")
+        for f in self._detected_filters():
+            self._filt_combo.addItem(f)
+        idx = self._filt_combo.findText(prev)
+        self._filt_combo.setCurrentIndex(max(idx, 0))
+        self._filt_combo.blockSignals(False)
 
     def _update_date_combo(self):
         import re
@@ -2470,18 +2670,31 @@ class ZPFitPlotWidget(QWidget):
             return
 
         cal = self._cal_df
-        filts = ["g", "r", "i"] if filt_sel == "All" else [filt_sel]
+        filts = self._detected_filters() if filt_sel == "All" else [filt_sel]
 
+        color_labels = set()
         for filt in filts:
-            fc = self.FILT_COLORS.get(filt, "gray")
-            color_col = "color_gr" if filt in ("g", "r") else "color_ri"
+            fc = self._filter_color(filt)
+
+            # Determine color index column from coefficients if available, else guess
+            color_col = None
+            if self._coeff_df is not None:
+                row_c = self._coeff_df[self._coeff_df["filter"] == filt]
+                if len(row_c) and "color_col" in row_c.columns:
+                    color_col = str(row_c["color_col"].iloc[0])
+            if color_col is None or color_col not in cal.columns:
+                # Guess: try generic fallback columns
+                for cand in (f"color_gr", f"color_ri", f"color_{filt}"):
+                    if cand in cal.columns:
+                        color_col = cand
+                        break
+            if color_col is None or color_col not in cal.columns:
+                continue
+
             ref_col = f"sdss_{filt}_ref"
             inst_col = f"mag_inst_{filt}"
             err_col = f"mag_inst_err_{filt}"
             delta_col = f"delta_{filt}"
-
-            if color_col not in cal.columns:
-                continue
 
             if delta_col in cal.columns:
                 delta = cal[delta_col].to_numpy(float)
@@ -2504,55 +2717,77 @@ class ZPFitPlotWidget(QWidget):
                 err_raw = cal[err_col].to_numpy(float)[mask]
                 err_arr = np.where(np.isfinite(err_raw), err_raw, np.nan)
 
+            # Sigma-clip outlier mask re-computed from saved fit line
+            inlier = np.ones(len(x_plot), dtype=bool)
+            zp_val = ct_val = None
+            fit_label = f"{filt} (N={mask.sum()})"
+            if self._coeff_df is not None:
+                row = self._coeff_df[self._coeff_df["filter"] == filt]
+                if len(row):
+                    zp_val = float(row["zp"].iloc[0])
+                    ct_val = float(row["ct"].iloc[0])
+                    N_val = int(row["N"].iloc[0]) if "N" in row.columns else mask.sum()
+                    sc_val = float(row["scatter_rms"].iloc[0]) if "scatter_rms" in row.columns else np.nan
+                    resid = y_plot - (zp_val + ct_val * x_plot)
+                    med_r = np.nanmedian(resid)
+                    mad_r = np.nanmedian(np.abs(resid - med_r)) + 1e-12
+                    sig_r = 1.4826 * mad_r
+                    inlier = np.abs(resid - med_r) <= 3.0 * sig_r
+                    sc_str = f"σ={sc_val:.4f}" if np.isfinite(sc_val) else ""
+                    fit_label = f"{filt}: ZP={zp_val:.3f} CT={ct_val:+.3f} {sc_str} (N={N_val})"
+
+            # Outliers first (behind inliers)
+            if (~inlier).any():
+                ax.scatter(x_plot[~inlier], y_plot[~inlier],
+                           marker="x", c="gray", s=25, alpha=0.35, linewidths=1.0, zorder=2)
+
             sc = ax.scatter(
-                x_plot, y_plot,
-                c=fc, s=10, alpha=0.55,
-                label=f"{filt} (N={mask.sum()})",
+                x_plot[inlier], y_plot[inlier],
+                c=fc, s=12, alpha=0.60,
+                label=fit_label,
                 picker=True, pickradius=6, zorder=3,
             )
-            if err_arr is not None and np.isfinite(err_arr).any():
+
+            if err_arr is not None and np.isfinite(err_arr[inlier]).any():
                 ax.errorbar(
-                    x_plot, y_plot, yerr=err_arr,
+                    x_plot[inlier], y_plot[inlier], yerr=err_arr[inlier],
                     fmt="none", ecolor=fc, elinewidth=0.7, capsize=2,
-                    alpha=0.4, zorder=2,
+                    alpha=0.35, zorder=2,
                 )
 
             row_list = []
-            for i, si in enumerate(stars_idx):
+            inlier_idx = np.where(inlier)[0]
+            for i, si_local in enumerate(inlier_idx):
+                si = stars_idx[si_local]
                 row_list.append({
                     "filt": filt,
                     "ID": cal["ID"].iloc[si] if "ID" in cal.columns else "?",
-                    "color": float(color_x[si]),
-                    "delta": float(delta[si]),
+                    "color": float(x_plot[si_local]),
+                    "delta": float(y_plot[si_local]),
                     "ref_mag": float(cal[ref_col].iloc[si]) if ref_col in cal.columns else np.nan,
                     "inst_mag": float(cal[inst_col].iloc[si]) if inst_col in cal.columns else np.nan,
-                    "err": float(err_arr[i]) if err_arr is not None and np.isfinite(err_arr[i]) else np.nan,
+                    "err": float(err_arr[si_local]) if err_arr is not None and np.isfinite(err_arr[si_local]) else np.nan,
                 })
             self._artist_map[id(sc)] = row_list
 
-            if self._coeff_df is not None:
-                row = self._coeff_df[self._coeff_df["filter"] == filt]
-                if len(row) > 0:
-                    zp_val = float(row["zp"].iloc[0])
-                    ct_val = float(row["ct"].iloc[0])
-                    x_fit = np.linspace(np.nanmin(x_plot) - 0.05, np.nanmax(x_plot) + 0.05, 200)
-                    y_fit = zp_val + ct_val * x_fit
-                    ax.plot(x_fit, y_fit, "-", color=fc, linewidth=2.0,
-                            label=f"{filt}: ZP={zp_val:.3f}, CT={ct_val:+.3f}", zorder=4)
+            if zp_val is not None and ct_val is not None:
+                x_fit = np.linspace(np.nanmin(x_plot) - 0.05, np.nanmax(x_plot) + 0.05, 200)
+                y_fit = zp_val + ct_val * x_fit
+                ax.plot(x_fit, y_fit, "-", color=fc, linewidth=2.0, zorder=4)
 
-        if filt_sel == "g":
-            color_label = "g - r (inst)"
-        elif filt_sel == "r":
-            color_label = "g - r (inst)"
-        elif filt_sel == "i":
-            color_label = "r - i (inst)"
+            color_labels.add(color_col)
+
+        # X-axis label based on color columns used
+        if len(color_labels) == 1:
+            cc = next(iter(color_labels))
+            color_label = cc.replace("color_", "").replace("_", " - ") + " (inst)"
         else:
-            color_label = "color index"
+            color_label = "color index (inst)"
         ax.set_xlabel(color_label)
-        ax.set_ylabel("gaia_ref - raw_inst (mag)")
-        ax.set_title("ZP Linear Fit: gaia_ref - raw_inst vs color")
+        ax.set_ylabel("gaia_ref − inst (mag)")
+        ax.set_title("ZP Linear Fit: gaia_ref − inst vs color  [× = sigma-clipped outliers]")
         if ax.collections or ax.get_lines():
-            ax.legend(fontsize=8)
+            ax.legend(fontsize=7)
         ax.grid(True, alpha=0.3)
 
     def _draw_zp_hist(self):
@@ -2573,7 +2808,7 @@ class ZPFitPlotWidget(QWidget):
             import re
             df = df[df["file"].apply(lambda f: bool(re.search(re.escape(date_sel), str(f))))].copy()
 
-        filts = ["g", "r", "i"] if filt_sel == "All" else [filt_sel]
+        filts = (sorted(df["filter"].unique()) if "filter" in df.columns else []) if filt_sel == "All" else [filt_sel]
         has_any = False
         for filt in filts:
             sub = df[df["filter"] == filt] if "filter" in df.columns else pd.DataFrame()
@@ -2584,7 +2819,7 @@ class ZPFitPlotWidget(QWidget):
             if len(zp_vals) < 3:
                 continue
             has_any = True
-            fc = self.FILT_COLORS.get(filt, "gray")
+            fc = self._filter_color(filt)
             med = float(np.median(zp_vals))
             mad = float(np.median(np.abs(zp_vals - med)))
             sigma = 1.4826 * mad
@@ -2625,31 +2860,80 @@ class ZPFitPlotWidget(QWidget):
         if date_sel != "All" and "file" in df.columns:
             df = df[df["file"].apply(lambda f: bool(re.search(re.escape(date_sel), str(f))))].copy()
 
-        filts = ["g", "r", "i"] if filt_sel == "All" else [filt_sel]
         if "filter" not in df.columns:
             ax.set_title("Per-Frame ZP — no filter column")
             return
+
+        filts = (sorted(df["filter"].unique())) if filt_sel == "All" else [filt_sel]
+
+        # Build shared x-tick labels from the first filter's file list
+        _label_sub = None
+        for filt in filts:
+            sub0 = df[df["filter"] == filt].reset_index(drop=True)
+            if not sub0.empty:
+                _label_sub = sub0
+                break
 
         for filt in filts:
             sub = df[df["filter"] == filt].reset_index(drop=True)
             if sub.empty:
                 continue
-            fc = self.FILT_COLORS.get(filt, "gray")
+            fc = self._filter_color(filt)
             x = np.arange(len(sub))
             y = sub["zp_frame"].to_numpy(float)
             yerr = sub["zp_scatter"].to_numpy(float) if "zp_scatter" in sub.columns else None
-            ax.errorbar(
-                x, y, yerr=yerr,
-                fmt="o-", color=fc, alpha=0.8,
-                markersize=4, elinewidth=0.8, capsize=3,
-                label=f"{filt} (N={len(sub)})",
-            )
 
-        ax.set_xlabel("Frame index")
+            # Point size ∝ n_ref
+            has_nref = "n_ref" in sub.columns
+            s_size = np.clip(sub["n_ref"].to_numpy(float) * 3.0, 12, 90) if has_nref else np.full(len(sub), 25)
+
+            # Connection line
+            ax.plot(x, y, "-", color=fc, alpha=0.45, linewidth=1.2, zorder=2)
+            # Error bars (scatter)
+            if yerr is not None and np.isfinite(yerr).any():
+                ax.errorbar(x, y, yerr=yerr, fmt="none", ecolor=fc,
+                           elinewidth=0.7, capsize=2, alpha=0.5, zorder=2)
+            # Points with variable size
+            n_label = int(sub["n_ref"].mean()) if has_nref else len(sub)
+            ax.scatter(x, y, s=s_size, c=fc, alpha=0.85, zorder=3,
+                      label=f"{filt}  N_frame={len(sub)}  <n_ref>≈{n_label}",
+                      picker=True, pickradius=6)
+
+            # Median ± σ band
+            yf = y[np.isfinite(y)]
+            if len(yf) >= 3:
+                med_zp = float(np.median(yf))
+                mad_zp = float(np.median(np.abs(yf - med_zp)))
+                sigma_zp = 1.4826 * mad_zp
+                ax.axhline(med_zp, color=fc, linestyle="--", linewidth=0.9, alpha=0.7)
+                ax.axhspan(med_zp - sigma_zp, med_zp + sigma_zp,
+                           color=fc, alpha=0.07, zorder=1)
+
+        # Date-based x-tick labels from the first filter
+        if _label_sub is not None and "file" in _label_sub.columns:
+            n = len(_label_sub)
+            tick_every = max(1, n // 18)
+            tick_x = list(range(0, n, tick_every))
+            tick_labels = []
+            for i in tick_x:
+                fname = str(_label_sub["file"].iloc[i])
+                m = re.search(r"\d{4}-\d{2}-\d{2}", fname)
+                if m:
+                    tick_labels.append(m.group(0))
+                else:
+                    m2 = re.search(r"\d{8}", fname)
+                    tick_labels.append(m2.group(0) if m2 else str(i))
+            ax.set_xticks(tick_x)
+            ax.set_xticklabels(tick_labels, rotation=35, ha="right", fontsize=7)
+            xlabel = "Frame  (date from filename;  point size ∝ n_ref)"
+        else:
+            xlabel = "Frame index  (point size ∝ n_ref)"
+
+        ax.set_xlabel(xlabel)
         ax.set_ylabel("ZP (mag)")
         ax.set_title("Per-Frame Zeropoint")
-        if ax.get_lines():
-            ax.legend(fontsize=8)
+        if ax.get_lines() or ax.collections:
+            ax.legend(fontsize=7)
         ax.grid(True, alpha=0.3)
 
     def _on_pick(self, event):
@@ -2708,8 +2992,7 @@ class ZeropointCalibrationWindow(StepWindowBase):
         self.content_layout.addWidget(info)
 
         control_layout = QHBoxLayout()
-        btn_params = QPushButton("Calibration Parameters")
-        btn_params.setStyleSheet("QPushButton { background-color: #9C27B0; color: white; font-weight: bold; padding: 8px 15px; }")
+        btn_params = create_parameter_button("Calibration Parameters")
         btn_params.clicked.connect(self.open_parameters_dialog)
         control_layout.addWidget(btn_params)
 
@@ -2753,92 +3036,102 @@ class ZeropointCalibrationWindow(StepWindowBase):
         show_raised(self.log_window)
 
     def open_parameters_dialog(self):
-        dialog = QDialog(self)
-        dialog.setWindowTitle("Calibration Parameters")
-        dialog.resize(480, 480)
-        layout = QVBoxLayout(dialog)
-        form = QFormLayout()
+        dialog, layout, buttons = build_scroll_param_dialog(
+            self, "Calibration Parameters",
+            info_text="Adjust zero-point calibration parameters. Changes apply to the next calibration run.",
+            size=(500, 620),
+        )
+
+        match_group, match_container = create_collapsible_section("Matching", initial_expanded=True)
+        match_form = QFormLayout(match_container)
+        match_form.setContentsMargins(0, 0, 0, 0)
 
         self.param_pix = QDoubleSpinBox()
         self.param_pix.setRange(0.0, 50.0)
         self.param_pix.setValue(float(getattr(self.params.P, "pixel_scale_arcsec", 0.0) or 0.0))
         self.param_pix.setEnabled(False)
-        form.addRow("Pixel scale (arcsec):", self.param_pix)
+        match_form.addRow("Pixel scale (arcsec):", self.param_pix)
 
         self.param_match = QDoubleSpinBox()
         self.param_match.setRange(0.1, 20.0)
         self.param_match.setValue(float(getattr(self.params.P, "match_tol_px", 5.0)))
-        form.addRow("Match tol (px):", self.param_match)
+        match_form.addRow("Match tol (px):", self.param_match)
 
         self.param_min_match = QSpinBox()
         self.param_min_match.setRange(3, 1000)
         self.param_min_match.setValue(int(getattr(self.params.P, "min_master_gaia_matches", 10)))
-        form.addRow("Min Gaia matches:", self.param_min_match)
+        match_form.addRow("Min Gaia matches:", self.param_min_match)
+
+        layout.addWidget(match_group)
+
+        zp_group, zp_container = create_collapsible_section("Zero-point Fit", initial_expanded=True)
+        zp_form = QFormLayout(zp_container)
+        zp_form.setContentsMargins(0, 0, 0, 0)
 
         self.param_cmd_snr = QDoubleSpinBox()
         self.param_cmd_snr.setRange(0.0, 200.0)
         self.param_cmd_snr.setValue(float(getattr(self.params.P, "cmd_snr_calib_min", 20.0)))
-        form.addRow("CMD calib SNR min:", self.param_cmd_snr)
+        zp_form.addRow("CMD calib SNR min:", self.param_cmd_snr)
 
         self.param_frame_min = QSpinBox()
         self.param_frame_min.setRange(1, 1000)
         self.param_frame_min.setValue(int(getattr(self.params.P, "frame_zp_min_n", 5)))
-        form.addRow("Frame ZP min refs:", self.param_frame_min)
+        zp_form.addRow("Frame ZP min refs:", self.param_frame_min)
 
         self.param_apply_ext = QCheckBox("Enable")
         self.param_apply_ext.setChecked(bool(getattr(self.params.P, "cmd_apply_extinction", False)))
-        form.addRow("Apply extinction (k·X):", self.param_apply_ext)
+        zp_form.addRow("Apply extinction (k·X):", self.param_apply_ext)
 
         self.param_ext_mode = QComboBox()
         self.param_ext_mode.addItems(["absorb", "two_step"])
         self.param_ext_mode.setCurrentText(str(getattr(self.params.P, "cmd_extinction_mode", "absorb")))
-        form.addRow("Extinction mode:", self.param_ext_mode)
+        zp_form.addRow("Extinction mode:", self.param_ext_mode)
 
         self.param_clip = QDoubleSpinBox()
         self.param_clip.setRange(0.5, 10.0)
         self.param_clip.setValue(float(getattr(self.params.P, "zp_clip_sigma", 3.0)))
-        form.addRow("ZP clip sigma:", self.param_clip)
+        zp_form.addRow("ZP clip sigma:", self.param_clip)
 
         self.param_iters = QSpinBox()
         self.param_iters.setRange(1, 20)
         self.param_iters.setValue(int(getattr(self.params.P, "zp_fit_iters", 5)))
-        form.addRow("ZP fit iters:", self.param_iters)
+        zp_form.addRow("ZP fit iters:", self.param_iters)
 
         self.param_slope = QDoubleSpinBox()
         self.param_slope.setRange(0.1, 5.0)
         self.param_slope.setValue(float(getattr(self.params.P, "zp_slope_absmax", 1.0)))
-        form.addRow("ZP slope abs max:", self.param_slope)
+        zp_form.addRow("ZP slope abs max:", self.param_slope)
+
+        layout.addWidget(zp_group)
+
+        gaia_group, gaia_container = create_collapsible_section("Calibration Star Selection")
+        gaia_form = QFormLayout(gaia_container)
+        gaia_form.setContentsMargins(0, 0, 0, 0)
 
         self.param_gaia_snr = QDoubleSpinBox()
         self.param_gaia_snr.setRange(0.0, 200.0)
         self.param_gaia_snr.setValue(float(getattr(self.params.P, "gaia_snr_calib_min", 20.0)))
-        form.addRow("Gaia calib SNR min:", self.param_gaia_snr)
+        self.param_gaia_snr.setToolTip("SNR threshold for calibration reference stars (applied in both global fit and per-frame ZP)")
+        gaia_form.addRow("Calib star SNR min:", self.param_gaia_snr)
 
         self.param_gi_min = QDoubleSpinBox()
-        self.param_gi_min.setRange(-2.0, 10.0)
+        self.param_gi_min.setRange(-2.0, 5.0)
+        self.param_gi_min.setDecimals(2)
         self.param_gi_min.setValue(float(getattr(self.params.P, "gaia_gi_min", -0.5)))
-        form.addRow("Gaia g-i min:", self.param_gi_min)
+        self.param_gi_min.setToolTip("Global lower bound for Gaia BP-RP color. Stars outside this range are excluded from all Jordi fits.")
+        gaia_form.addRow("BP-RP min:", self.param_gi_min)
 
         self.param_gi_max = QDoubleSpinBox()
-        self.param_gi_max.setRange(-2.0, 10.0)
-        self.param_gi_max.setValue(float(getattr(self.params.P, "gaia_gi_max", 4.5)))
-        form.addRow("Gaia g-i max:", self.param_gi_max)
+        self.param_gi_max.setRange(0.5, 6.0)
+        self.param_gi_max.setDecimals(2)
+        self.param_gi_max.setValue(float(getattr(self.params.P, "gaia_gi_max", 3.5)))
+        self.param_gi_max.setToolTip("Global upper bound for Gaia BP-RP color. Stars outside this range are excluded from all Jordi fits.")
+        gaia_form.addRow("BP-RP max:", self.param_gi_max)
 
-        self.param_gz_slope = QDoubleSpinBox()
-        self.param_gz_slope.setRange(0.1, 5.0)
-        self.param_gz_slope.setValue(float(getattr(self.params.P, "gaia_zp_slope_absmax", 1.0)))
-        form.addRow("Gaia G slope abs max:", self.param_gz_slope)
-
-        self.param_gc_slope = QDoubleSpinBox()
-        self.param_gc_slope.setRange(0.1, 10.0)
-        self.param_gc_slope.setValue(float(getattr(self.params.P, "gaia_color_slope_absmax", 2.0)))
-        form.addRow("Gaia color slope abs max:", self.param_gc_slope)
-
-        layout.addLayout(form)
-        buttons = QDialogButtonBox(QDialogButtonBox.Save | QDialogButtonBox.Cancel)
+        layout.addWidget(gaia_group)
+        layout.addStretch(1)
         buttons.accepted.connect(lambda: self.save_parameters(dialog))
         buttons.rejected.connect(dialog.reject)
-        layout.addWidget(buttons)
         dialog.exec_()
 
     def save_parameters(self, dialog):
@@ -2854,8 +3147,6 @@ class ZeropointCalibrationWindow(StepWindowBase):
         self.params.P.gaia_snr_calib_min = self.param_gaia_snr.value()
         self.params.P.gaia_gi_min = self.param_gi_min.value()
         self.params.P.gaia_gi_max = self.param_gi_max.value()
-        self.params.P.gaia_zp_slope_absmax = self.param_gz_slope.value()
-        self.params.P.gaia_color_slope_absmax = self.param_gc_slope.value()
         self.save_state()
         saved = self.persist_params()
         msg = "Parameters saved to TOML." if saved else "Parameters saved (TOML save failed)."

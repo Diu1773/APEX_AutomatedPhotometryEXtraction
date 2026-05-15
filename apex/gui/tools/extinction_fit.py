@@ -58,12 +58,11 @@ from apex.utils.step_paths_lc import (
 K2_SIGNIFICANCE = 0.005        # quadratic extinction term significance threshold
 KCOLOR_SIGNIFICANCE = 0.01    # color-extinction term significance threshold
 
-# Gaia DR3 -> SDSS polynomial transforms (Evans+ 2018, A&A 616, A4)
-GAIA_TO_SDSS = {
-    "g": {"coeffs": [0.2199, -0.6365, -0.1548, 0.0064], "color_range": (0.3, 3.0)},
-    "r": {"coeffs": [-0.09837, 0.08592, 0.1907, -0.1701, 0.02263], "color_range": (0.0, 3.0)},
-    "i": {"coeffs": [-0.293, 0.6404, -0.09609, -0.002104], "color_range": (0.5, 2.0)},
-}
+from apex.utils.gaia_transforms import (
+    GAIA_TO_BAND as _GAIA_TO_BAND,
+    FILTER_COLOR_PREF as _FILTER_COLOR_PREF,
+    BAND_ALIASES as _BAND_ALIASES,
+)
 
 
 def _ext_group_key(date_val: str, filt: str) -> str:
@@ -1823,57 +1822,73 @@ class ExtinctionFitWorker(QThread):
             xcol = out_cal["gaia_BP_RP"].to_numpy(float)
             G = out_cal["gaia_G"].to_numpy(float)
 
-            G_minus = {}
-            for band, info in GAIA_TO_SDSS.items():
-                lo, hi = info["color_range"]
+            clip_sigma = self._fit_clip_sigma()
+            fit_iters  = self._fit_iters()
+            min_match  = self._fit_min_points()
+
+            # Gaia → filter ref magnitudes for all detected filters
+            data_filters = sorted(all_df["FILTER"].dropna().unique())
+            ref_col_map: dict[str, str] = {}
+            for filt in data_filters:
+                key = _BAND_ALIASES.get(filt, filt)
+                if key not in _GAIA_TO_BAND:
+                    continue
+                coeffs, lo, hi, source, sig = _GAIA_TO_BAND[key]
                 m = np.isfinite(xcol) & (xcol >= lo) & (xcol <= hi)
                 arr = np.full_like(G, np.nan)
-                arr[m] = self._poly_eval(xcol[m], info["coeffs"])
-                G_minus[band] = arr
+                arr[m] = self._poly_eval(xcol[m], coeffs)
+                col_name = f"ref_{filt}"
+                out_cal[col_name] = G - arr
+                ref_col_map[filt] = col_name
 
-            out_cal["sdss_g_ref"] = G - G_minus["g"]
-            out_cal["sdss_r_ref"] = G - G_minus["r"]
-            out_cal["sdss_i_ref"] = G - G_minus["i"]
+            # Color terms per filter
+            def _inst_arr(col):
+                if col in out_cal.columns:
+                    return out_cal[col].to_numpy(float)
+                return np.full(len(out_cal), np.nan)
 
-            g_inst = out_cal.get("mag_inst_g", pd.Series(np.full(len(out_cal), np.nan))).to_numpy(float)
-            r_inst = out_cal.get("mag_inst_r", pd.Series(np.full(len(out_cal), np.nan))).to_numpy(float)
-            i_inst = out_cal.get("mag_inst_i", pd.Series(np.full(len(out_cal), np.nan))).to_numpy(float)
+            def _color_pair(fa, fb):
+                a, b = _inst_arr(f"mag_inst_{fa}"), _inst_arr(f"mag_inst_{fb}")
+                return a - b
 
-            color_gr = g_inst - r_inst
-            color_ri = r_inst - i_inst
+            color_terms: dict[str, float] = {}
+            color_col_map: dict[str, str] = {}
+            for filt in data_filters:
+                if filt not in ref_col_map:
+                    continue
+                key = _BAND_ALIASES.get(filt, filt)
+                prefs = _FILTER_COLOR_PREF.get(key, _FILTER_COLOR_PREF.get(filt, []))
+                color_x = np.full(len(out_cal), np.nan)
+                color_col_name = "none"
+                for (ca, cb) in prefs:
+                    cidx = _color_pair(ca, cb)
+                    if np.isfinite(cidx).sum() >= min_match:
+                        color_x = cidx
+                        color_col_name = f"{ca}_{cb}"
+                        break
 
-            clip_sigma = self._fit_clip_sigma()
-            fit_iters = self._fit_iters()
-            min_match = self._fit_min_points()
-
-            delta_g = out_cal["sdss_g_ref"].to_numpy(float) - g_inst
-            mg = np.isfinite(delta_g) & np.isfinite(color_gr) & np.isfinite(g_inst)
-            ct_g = self._robust_linfit(color_gr[mg], delta_g[mg], clip_sigma=clip_sigma, iters=fit_iters, min_n=min_match)[0]
-            if not np.isfinite(ct_g):
-                ct_g = 0.0
-
-            delta_r = out_cal["sdss_r_ref"].to_numpy(float) - r_inst
-            mr = np.isfinite(delta_r) & np.isfinite(color_gr) & np.isfinite(r_inst)
-            ct_r = self._robust_linfit(color_gr[mr], delta_r[mr], clip_sigma=clip_sigma, iters=fit_iters, min_n=min_match)[0]
-            if not np.isfinite(ct_r):
-                ct_r = 0.0
-
-            delta_i = out_cal["sdss_i_ref"].to_numpy(float) - i_inst
-            mi = np.isfinite(delta_i) & np.isfinite(color_ri) & np.isfinite(i_inst)
-            ct_i = self._robust_linfit(color_ri[mi], delta_i[mi], clip_sigma=clip_sigma, iters=fit_iters, min_n=min_match)[0]
-            if not np.isfinite(ct_i):
-                ct_i = 0.0
-
-            out_cal["color_gr"] = color_gr
-            out_cal["color_ri"] = color_ri
+                inst_arr = _inst_arr(f"mag_inst_{filt}")
+                delta = _inst_arr(ref_col_map[filt]) - inst_arr
+                m_fit = np.isfinite(delta) & np.isfinite(color_x) & np.isfinite(inst_arr)
+                if m_fit.sum() >= min_match:
+                    ct = self._robust_linfit(color_x[m_fit], delta[m_fit],
+                                             clip_sigma=clip_sigma, iters=fit_iters, min_n=min_match)[0]
+                    color_terms[filt] = float(ct) if np.isfinite(ct) else 0.0
+                else:
+                    color_terms[filt] = 0.0
+                color_col_map[filt] = color_col_name
+                if color_col_name != "none":
+                    ccol = f"color_{color_col_name}"
+                    if ccol not in out_cal.columns:
+                        out_cal[ccol] = color_x
 
             frame_airmass = self._build_frame_airmass(idx)
             if frame_airmass is None or frame_airmass.empty:
                 raise RuntimeError("frame_airmass.csv missing and airmass computation failed")
 
-            cal_cols = ["ID", "sdss_g_ref", "sdss_r_ref", "sdss_i_ref", "color_gr", "color_ri", "gaia_BP_RP"]
-            obs = all_df.merge(out_cal[cal_cols], on="ID", how="left")
-            # date 컬럼도 함께 merge
+            cal_merge = ["ID"] + [c for c in out_cal.columns
+                                  if c.startswith("ref_") or c.startswith("color_") or c == "gaia_BP_RP"]
+            obs = all_df.merge(out_cal[cal_merge], on="ID", how="left")
             merge_cols = ["file", "filter", "airmass"]
             if "date" in frame_airmass.columns:
                 merge_cols.append("date")
@@ -1882,21 +1897,31 @@ class ExtinctionFitWorker(QThread):
                 obs["date"] = "unknown"
 
             obs["ref_mag"] = np.nan
-            obs.loc[obs["FILTER"] == "g", "ref_mag"] = obs.loc[obs["FILTER"] == "g", "sdss_g_ref"]
-            obs.loc[obs["FILTER"] == "r", "ref_mag"] = obs.loc[obs["FILTER"] == "r", "sdss_r_ref"]
-            obs.loc[obs["FILTER"] == "i", "ref_mag"] = obs.loc[obs["FILTER"] == "i", "sdss_i_ref"]
-
             obs["color_term"] = np.nan
-            obs.loc[obs["FILTER"] == "g", "color_term"] = ct_g * obs.loc[obs["FILTER"] == "g", "color_gr"]
-            obs.loc[obs["FILTER"] == "r", "color_term"] = ct_r * obs.loc[obs["FILTER"] == "r", "color_gr"]
-            obs.loc[obs["FILTER"] == "i", "color_term"] = ct_i * obs.loc[obs["FILTER"] == "i", "color_ri"]
+            for filt in data_filters:
+                m_f = obs["FILTER"] == filt
+                rc = ref_col_map.get(filt)
+                if rc and rc in obs.columns:
+                    obs.loc[m_f, "ref_mag"] = obs.loc[m_f, rc]
+                ccol_name = color_col_map.get(filt, "none")
+                if ccol_name != "none":
+                    ccol = f"color_{ccol_name}"
+                    if ccol in obs.columns:
+                        obs.loc[m_f, "color_term"] = color_terms.get(filt, 0.0) * obs.loc[m_f, ccol].to_numpy(float)
+                    else:
+                        obs.loc[m_f, "color_term"] = 0.0
+                else:
+                    obs.loc[m_f, "color_term"] = 0.0
 
             obs["delta"] = obs["ref_mag"] - (obs["mag_inst"] + obs["color_term"])
             obs["cal_ok"] = False
-            bp = obs["gaia_BP_RP"].to_numpy(float)
-            obs.loc[(obs["FILTER"] == "g") & np.isfinite(bp) & (bp >= 0.3) & (bp <= 3.0), "cal_ok"] = True
-            obs.loc[(obs["FILTER"] == "r") & np.isfinite(bp) & (bp >= 0.0) & (bp <= 3.0), "cal_ok"] = True
-            obs.loc[(obs["FILTER"] == "i") & np.isfinite(bp) & (bp >= 0.5) & (bp <= 2.0), "cal_ok"] = True
+            bp = obs["gaia_BP_RP"].to_numpy(float) if "gaia_BP_RP" in obs.columns else np.full(len(obs), np.nan)
+            for filt in data_filters:
+                key = _BAND_ALIASES.get(filt, filt)
+                entry = _GAIA_TO_BAND.get(key)
+                if entry:
+                    _, lo, hi, _, _ = entry
+                    obs.loc[(obs["FILTER"] == filt) & np.isfinite(bp) & (bp >= lo) & (bp <= hi), "cal_ok"] = True
 
             snr_cut = self._as_float(getattr(P, "cmd_snr_calib_min", 20.0), 20.0)
             obs["snr_ok"] = True

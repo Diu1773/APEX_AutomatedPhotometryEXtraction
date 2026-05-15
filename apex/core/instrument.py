@@ -4,6 +4,7 @@ Instrument configuration (Telescope + Camera).
 
 from __future__ import annotations
 import math
+import re
 import numpy as np
 import pandas as pd
 from pathlib import Path
@@ -12,6 +13,9 @@ import astropy.units as u
 from typing import Optional
 
 from apex.utils.step_paths import step1_dir
+from apex.utils.ssl_certificates import configure_ssl_certificates
+
+configure_ssl_certificates()
 
 try:
     from astroquery.simbad import Simbad
@@ -19,6 +23,53 @@ try:
 except Exception as e:
     print(f"[SIMBAD] astroquery.simbad import failed → SIMBAD unavailable: {e}")
     _HAS_SIMBAD = False
+
+
+_CATALOG_ALIASES = {
+    "M3": ["NGC 5272"],
+    "MESSIER3": ["NGC 5272"],
+    "M5": ["NGC 5904"],
+    "MESSIER5": ["NGC 5904"],
+}
+
+_OFFLINE_TARGETS = {
+    "M3": {
+        "ra_hms": "13:42:11.62",
+        "dec_dms": "+28:22:38.2",
+        "otype": "GlCl",
+        "canonical": "M 3",
+    },
+    "MESSIER3": {
+        "ra_hms": "13:42:11.62",
+        "dec_dms": "+28:22:38.2",
+        "otype": "GlCl",
+        "canonical": "M 3",
+    },
+    "NGC5272": {
+        "ra_hms": "13:42:11.62",
+        "dec_dms": "+28:22:38.2",
+        "otype": "GlCl",
+        "canonical": "NGC 5272",
+    },
+    "M5": {
+        "ra_hms": "15:18:33.22",
+        "dec_dms": "+02:04:51.7",
+        "otype": "GlCl",
+        "canonical": "M 5",
+    },
+    "MESSIER5": {
+        "ra_hms": "15:18:33.22",
+        "dec_dms": "+02:04:51.7",
+        "otype": "GlCl",
+        "canonical": "M 5",
+    },
+    "NGC5904": {
+        "ra_hms": "15:18:33.22",
+        "dec_dms": "+02:04:51.7",
+        "otype": "GlCl",
+        "canonical": "NGC 5904",
+    },
+}
 
 
 class InstrumentConfig:
@@ -77,6 +128,8 @@ class InstrumentConfig:
         self.targets_resolved = []
         self.primary_target = None
         self.primary_coord = None
+        self.last_target_attempts = []
+        self.last_target_errors = []
 
     def _pixel_scale_arcsec(self, binning: int = 1) -> float:
         return 206.265 * self.pix_size_um * float(binning) / float(self.focal_length_mm)
@@ -99,11 +152,56 @@ class InstrumentConfig:
         if arcmax is not None and np.isfinite(arcmax):
             P.fwhm_px_max = min(float(P.fwhm_px_max), float(arcmax) / self.pix_scale_bin)
 
-    def resolve_targets(self, target_names: Optional[list] = None):
-        if not _HAS_SIMBAD:
-            print("[SIMBAD] astroquery not available, skipping target resolution")
-            return
+    @staticmethod
+    def _target_query_aliases(name: str) -> list[str]:
+        raw = " ".join(str(name or "").strip().split())
+        aliases: list[str] = []
 
+        def add(value: str) -> None:
+            value = " ".join(str(value or "").strip().split())
+            if value and value not in aliases:
+                aliases.append(value)
+
+        add(raw)
+        compact = raw.replace(" ", "")
+
+        messier = re.fullmatch(r"(?i)(?:m|messier)0*([0-9]+[a-z]?)", compact)
+        if messier:
+            number = messier.group(1).upper()
+            add(f"M {number}")
+            add(f"Messier {number}")
+            for alias in _CATALOG_ALIASES.get(f"M{number}", []):
+                add(alias)
+
+        catalog = re.fullmatch(r"(?i)(ngc|ic)0*([0-9]+[a-z]?)", compact)
+        if catalog:
+            prefix = catalog.group(1).upper()
+            number = catalog.group(2).upper()
+            add(f"{prefix} {number}")
+
+        return aliases
+
+    @classmethod
+    def _offline_target_record(cls, name: str) -> Optional[dict]:
+        for alias in cls._target_query_aliases(name):
+            key = alias.replace(" ", "").upper()
+            rec = _OFFLINE_TARGETS.get(key)
+            if not rec:
+                continue
+            coord = SkyCoord(rec["ra_hms"], rec["dec_dms"], unit=(u.hourangle, u.deg))
+            return {
+                "name": name,
+                "ra_deg": float(coord.ra.deg),
+                "dec_deg": float(coord.dec.deg),
+                "ra_str": coord.ra.to_string(unit="hour", sep=":", precision=2),
+                "dec_str": coord.dec.to_string(unit="deg", sep=":", precision=1, alwayssign=True),
+                "vmag": np.nan,
+                "otype": rec.get("otype", ""),
+                "simbad_query": f"offline:{rec.get('canonical', alias)}",
+            }
+        return None
+
+    def resolve_targets(self, target_names: Optional[list] = None):
         raw_targets = list(target_names or [])
 
         if hasattr(self.params.P, "_raw"):
@@ -128,17 +226,55 @@ class InstrumentConfig:
                 seen.add(name)
                 targets.append(name)
 
-        Simbad.reset_votable_fields()
-        Simbad.add_votable_fields("ra(d)", "dec(d)", "flux(V)", "otype")
+        simbad_ready = bool(_HAS_SIMBAD)
+        self.last_target_errors = []
+        if simbad_ready:
+            try:
+                Simbad.reset_votable_fields()
+                Simbad.add_votable_fields("ra(d)", "dec(d)", "flux(V)", "otype")
+            except Exception as e:
+                simbad_ready = False
+                self.last_target_errors.append(f"SIMBAD setup: {type(e).__name__}: {e}")
+        else:
+            self.last_target_errors.append("astroquery.simbad is not importable")
 
         print("\n=== SIMBAD Target Resolution ===")
+        self.last_target_attempts = []
         for name in targets:
-            try:
-                res = Simbad.query_object(name)
-                if res is None or len(res) == 0:
-                    print(f"[SIMBAD] Not found: {name}")
+            res = None
+            query_used = None
+            aliases = self._target_query_aliases(name)
+            self.last_target_attempts.extend(aliases)
+            if simbad_ready:
+                for query_name in aliases:
+                    try:
+                        res = Simbad.query_object(query_name)
+                        if res is not None and len(res) > 0:
+                            query_used = query_name
+                            break
+                    except Exception as e:
+                        self.last_target_errors.append(
+                            f"{query_name}: {type(e).__name__}: {e}"
+                        )
+
+            if res is None or len(res) == 0:
+                offline = self._offline_target_record(name)
+                if offline is not None:
+                    self.targets_resolved.append(offline)
+                    print(
+                        f"[SIMBAD] {name:20s} ({offline['simbad_query']}) -> "
+                        f"RA={offline['ra_str']}  DEC={offline['dec_str']}  "
+                        f"({offline['ra_deg']:9.5f} deg, {offline['dec_deg']:9.5f} deg)  "
+                        f"V~n/a  [{offline['otype']}]"
+                    )
                     continue
 
+                err_txt = "; ".join(self.last_target_errors[-3:])
+                suffix = f" errors: {err_txt}" if err_txt else ""
+                print(f"[SIMBAD] Not found: {name} (tried: {', '.join(aliases)}){suffix}")
+                continue
+
+            try:
                 ra_deg = float(res["RA_d"][0])
                 dec_deg = float(res["DEC_d"][0])
                 ra_str = str(res["RA"][0])
@@ -147,13 +283,15 @@ class InstrumentConfig:
                 otype = str(res["OTYPE"][0]) if "OTYPE" in res.colnames else ""
 
                 rec = dict(name=name, ra_deg=ra_deg, dec_deg=dec_deg,
-                           ra_str=ra_str, dec_str=dec_str, vmag=vmag, otype=otype)
+                           ra_str=ra_str, dec_str=dec_str, vmag=vmag, otype=otype,
+                           simbad_query=query_used or name)
                 self.targets_resolved.append(rec)
                 print(
-                    f"[SIMBAD] {name:20s} → RA={ra_str}  DEC={dec_str}  "
+                    f"[SIMBAD] {name:20s} ({query_used or name}) → RA={ra_str}  DEC={dec_str}  "
                     f"({ra_deg:9.5f}°, {dec_deg:9.5f}°)  V~{vmag if np.isfinite(vmag) else 'n/a'}  [{otype}]"
                 )
             except Exception as e:
+                self.last_target_errors.append(f"{name}: {type(e).__name__}: {e}")
                 print(f"[SIMBAD] ERROR for '{name}': {e}")
 
         if self.targets_resolved:

@@ -471,8 +471,12 @@ class MainWindowWorkflow(QMainWindow):
             tools_menu.addAction(action_cluster)
 
         help_menu = menubar.addMenu("&Help")
+        action_wcs_help = QAction("WCS Solver Installation Help...", self)
+        action_wcs_help.triggered.connect(self.show_wcs_solver_help)
         action_about = QAction("&About", self)
         action_about.triggered.connect(self.show_about)
+        help_menu.addAction(action_wcs_help)
+        help_menu.addSeparator()
         help_menu.addAction(action_about)
 
     # ── Step button state ────────────────────────────────────────────────────
@@ -691,6 +695,104 @@ class MainWindowWorkflow(QMainWindow):
             "<p>KNUEMAO Observatory — CDK500 + Moravian C3-61000</p>"
             "<p>Version 2.0.0</p>"
         )
+
+    def show_wcs_solver_help(self):
+        from PyQt5.QtWidgets import QDialog, QDialogButtonBox, QTextBrowser
+
+        dialog = QDialog(self)
+        dialog.setWindowTitle("WCS Solver Installation Help")
+        dialog.resize(760, 620)
+
+        layout = QVBoxLayout(dialog)
+        browser = QTextBrowser(dialog)
+        browser.setOpenExternalLinks(True)
+        browser.setHtml(
+            """
+            <h2>WCS Solver Installation Help</h2>
+            <p>
+            APEX does not bundle external WCS solvers or their star/index
+            databases. Install at least ASTAP for normal Step 5 operation;
+            local astrometry.net is an optional fallback when ASTAP fails.
+            </p>
+
+            <h3>ASTAP (recommended first solver)</h3>
+            <ol>
+              <li>Install ASTAP for Windows.</li>
+              <li>
+                Install one ASTAP star database matching the APEX parameter.
+                APEX currently passes <b>D80</b> or <b>D50</b> to ASTAP.
+                Use D80 as the default; D50 is smaller and is normally useful
+                when the field of view is comfortably above about 0.2 deg.
+              </li>
+              <li>
+                In Step 5 &gt; ASTAP Parameters, set <b>ASTAP CLI Path</b>
+                to <code>astap_cli.exe</code> if it is not already on PATH,
+                and set <b>ASTAP Star DB</b> to the installed database.
+              </li>
+            </ol>
+            <p>
+              ASTAP:
+              <a href="https://www.hnsky.org/astap.htm">https://www.hnsky.org/astap.htm</a><br>
+              ASTAP star databases:
+              <a href="https://sourceforge.net/projects/astap-program/files/star_databases/">
+              https://sourceforge.net/projects/astap-program/files/star_databases/</a>
+            </p>
+
+            <h3>Local astrometry.net / solve-field (optional fallback)</h3>
+            <ol>
+              <li>Install WSL/Ubuntu or another local Linux environment.</li>
+              <li>
+                Install astrometry.net so that <code>solve-field</code> runs
+                from the shell APEX will call.
+              </li>
+              <li>
+                Install astrometry.net index files that match the image field
+                of view. Missing or mismatched indexes are the most common
+                cause of no-solution failures.
+              </li>
+              <li>
+                In Step 5 &gt; Astrometry.net Parameters, enable
+                <b>Use WSL</b> for Windows/WSL setups and leave the command as
+                <code>solve-field</code> unless your installation needs a
+                different wrapper.
+              </li>
+            </ol>
+            <p>
+              Astrometry.net README:
+              <a href="https://astrometry.net/doc/readme.html">
+              https://astrometry.net/doc/readme.html</a><br>
+              Astrometry.net index files:
+              <a href="https://data.astrometry.net/">
+              https://data.astrometry.net/</a>
+            </p>
+
+            <h3>APEX solve flow</h3>
+            <p>
+            Step 5 tries ASTAP first. If ASTAP fails or does not leave a valid
+            WCS header, and local astrometry.net is enabled, APEX calls
+            <code>solve-field</code> as a fallback. Both solvers then pass
+            through the same WCS header validation and QC summary path.
+            </p>
+
+            <h3>Startup checks</h3>
+            <p>
+            Before solving, APEX checks whether <code>astap_cli.exe</code> is
+            reachable and whether <code>solve-field</code> is reachable in the
+            configured local/WSL environment. APEX also checks whether
+            <code>astroquery.gaia</code> is importable for Gaia attach, WCS
+            refine, and residual statistics. Star databases and astrometry.net
+            index coverage are still external data requirements; if the solver
+            executable is found but solving fails, check the selected D80/D50
+            database or the installed index-file scales.
+            </p>
+            """
+        )
+        layout.addWidget(browser, 1)
+
+        buttons = QDialogButtonBox(QDialogButtonBox.Close)
+        buttons.rejected.connect(dialog.reject)
+        layout.addWidget(buttons)
+        dialog.exec_()
 
     # ── Tool launchers ───────────────────────────────────────────────────────
 

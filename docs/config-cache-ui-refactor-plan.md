@@ -81,7 +81,8 @@ available.
 - Keep legacy cache readers active during migration.
 - Use explicit invalidation reasons instead of silently accepting stale files.
 - Start with Step 4 detection because it already has cache schema handling.
-- Then migrate Step 5/Forced Aperture, WCS, MasterBuild, and downstream steps.
+- Then migrate the current shared chain in order: Step 5 WCS, Step 6
+  Reference Build, Step 7 Forced Aperture Photometry, and downstream steps.
 
 Deliverables:
 
@@ -135,13 +136,20 @@ Log/progress UI behavior:
 
 Migration order:
 
-1. Step 4 Detection
-2. Step 5 Aperture and Forced Aperture
-3. Step 6 WCS
-4. Step 7 MasterBuild
-5. PSF Photometry
-6. Zeropoint/CMD/Isochrone
-7. Tools
+1. Step 4 Source Detection
+2. Step 5 WCS Plate Solving
+3. Step 6 Reference Build
+4. Step 7 Forced Aperture Photometry
+5. CMD Step 8 PSF Photometry has an initial output-reuse implementation:
+   `psf_output_signature.json` guards selected frames, Step 4/7 input mtimes,
+   crop mode, PSF parameters, and required PSF products. Continue migrating it
+   toward the shared manifest API after Step 4-7 are stable.
+6. LC Step 9 comparison-star QC cache if user-facing recompute control is
+   needed; the current cache is signature guarded and automatic.
+7. LC Step 8 target selection, CMD Step 9 editor, and plot-heavy tools should
+   keep their in-memory UI caches internal unless a stale-data path is found.
+8. Zeropoint/CMD/Isochrone and tools; Step 12 isochrone folder cache is an
+   external data parsing cache, not a workflow recompute cache.
 
 ## Validation Strategy
 

@@ -2135,8 +2135,8 @@ class TargetComparisonSelectionWindow(StepWindowBase):
         if self._flip_y:
             data = np.flipud(data)
         self._viewer.set_data(data)
+        self._viewer.auto_stf()
         if not keep_view:
-            self._viewer.auto_stf()
             self._viewer.fit_in_view()
 
     def _on_viewer_click(self, x, y, btn):

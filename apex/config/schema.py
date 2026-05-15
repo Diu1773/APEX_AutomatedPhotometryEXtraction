@@ -244,7 +244,7 @@ class AlignmentConfig(BaseModel):
     )
     global_ref_filter: str = Field(
         default="r",
-        description="Reference filter for global alignment (g, r, i)"
+        description="Reference filter for global alignment (any filter name present in data)"
     )
     global_ref_index: int = Field(
         default=0,
@@ -743,8 +743,8 @@ class WCSConfig(BaseModel):
         description="ASTAP search radius in degrees"
     )
     astap_database: str = Field(
-        default="D50",
-        description="ASTAP star database (e.g., D50, H18)"
+        default="D80",
+        description="ASTAP star database (e.g., D80, D50, H18)"
     )
     astap_fov_fudge: float = Field(
         default=1.0,
@@ -903,6 +903,11 @@ class GAIAConfig(BaseModel):
         ge=10.0, le=25.0,
         description="Maximum GAIA magnitude"
     )
+    wcs_mag_max: float = Field(
+        default=18.0,
+        ge=10.0, le=21.0,
+        description="Maximum GAIA G magnitude used for WCS refinement/QC queries"
+    )
     g_limit: float = Field(
         default=18.0,
         ge=10.0, le=25.0,
@@ -912,6 +917,11 @@ class GAIAConfig(BaseModel):
         default=2,
         ge=0, le=10,
         description="Retry attempts for GAIA queries"
+    )
+    timeout_s: float = Field(
+        default=30.0,
+        ge=5.0, le=300.0,
+        description="Timeout for each GAIA/VizieR TAP query attempt"
     )
     backoff_s: float = Field(
         default=6.0,

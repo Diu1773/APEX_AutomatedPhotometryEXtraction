@@ -81,19 +81,26 @@ for package in (
     binaries += package_binaries
     hiddenimports += _filter_hidden(package_hidden)
 
-# astroquery is large. Only collect the query clients APEX imports dynamically.
-datas += _collect_data_files("astroquery")
-datas += _copy_metadata("astroquery")
+# astroquery imports TAP/VOTable helpers dynamically. Collect the full package
+# so installed builds can resolve Gaia/SIMBAD on clean machines.
+package_datas, package_binaries, package_hidden = _collect_all("astroquery")
+datas += package_datas
+binaries += package_binaries
+hiddenimports += _filter_hidden(package_hidden)
 hiddenimports += [
     "astroquery.gaia",
     "astroquery.simbad",
     "astroquery.nasa_exoplanet_archive",
     "astroquery.utils.tap.core",
+    "astroquery.utils.tap.conn.tapconn",
+    "astroquery.utils.tap.model.job",
+    "astroquery.utils.tap.xmlparser",
+    "astroquery.vizier",
 ]
 
 # Optional GUI tools. These are small compared with the core scientific stack
 # and prevent post-install menu actions from failing due to hidden imports.
-for package in ("batman", "emcee", "PIL", "requests"):
+for package in ("batman", "emcee", "PIL", "requests", "certifi"):
     package_datas, package_binaries, package_hidden = _collect_all(package)
     datas += package_datas
     binaries += package_binaries
@@ -107,6 +114,12 @@ hiddenimports += [
     "matplotlib.backends.backend_agg",
     "mpl_toolkits.mplot3d",
     "scipy.sparse.csgraph._validation",
+    "scipy.ndimage",
+    "scipy.ndimage._filters",
+    "astropy.visualization",
+    "astropy.visualization.interval",
+    "astropy.visualization.stretch",
+    "certifi",
 ]
 
 # APEX uses mode-specific windows and tool windows through lazy imports. Collect

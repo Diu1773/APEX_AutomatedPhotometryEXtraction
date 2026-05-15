@@ -53,6 +53,11 @@ from PyQt5.QtGui import QKeySequence, QColor
 from PyQt5.QtWidgets import QShortcut, QStyle, QStyleOptionSlider, QSplitter, QProgressBar
 
 from apex.gui.workflow.step_window_base import StepWindowBase
+from apex.gui.workflow.ui_helpers import (
+    build_scroll_param_dialog,
+    create_collapsible_section,
+    create_parameter_button,
+)
 from apex.utils.common_helpers import safe_float as _safe_float, normalize_filter_key as _normalize_filter_key, parse_jd as _parse_jd
 from apex.utils.io_utils import (
     read_csv_int64_source_id,
@@ -1233,8 +1238,7 @@ class LightCurveBuilderWindow(StepWindowBase):
         btn_row = QHBoxLayout()
 
         # Parameters 버튼
-        btn_params = QPushButton("Parameters")
-        btn_params.setStyleSheet("QPushButton { background-color: #2196F3; color: white; font-weight: bold; padding: 4px 10px; }")
+        btn_params = create_parameter_button("Light Curve Parameters")
         btn_params.clicked.connect(self.show_parameters_dialog)
         btn_row.addWidget(btn_params)
 
@@ -1349,8 +1353,7 @@ class LightCurveBuilderWindow(StepWindowBase):
         qc_layout = QVBoxLayout(qc_group)
 
         qc_btn_row = QHBoxLayout()
-        btn_qc_params = QPushButton("QC Parameters")
-        btn_qc_params.setStyleSheet("QPushButton { background-color: #2196F3; color: white; font-weight: bold; padding: 4px 10px; }")
+        btn_qc_params = create_parameter_button("QC Parameters")
         btn_qc_params.clicked.connect(self.show_qc_parameters_dialog)
         qc_btn_row.addWidget(btn_qc_params)
 
@@ -1583,16 +1586,16 @@ class LightCurveBuilderWindow(StepWindowBase):
         self.log_window.activateWindow()
 
     def show_parameters_dialog(self):
-        """파라미터 설정 다이얼로그"""
-        dialog = QDialog(self)
-        dialog.setWindowTitle("Light Curve Parameters")
-        dialog.setMinimumWidth(400)
-        layout = QVBoxLayout(dialog)
+        dialog, layout, buttons = build_scroll_param_dialog(
+            self, "Light Curve Parameters",
+            info_text="Adjust QC thresholds and phase-folding range. Changes apply immediately.",
+            size=(460, 580),
+        )
 
-        layout.addWidget(QLabel("─" * 40))
-        layout.addWidget(QLabel("QC 자동 선택 기준:"))
+        qc_group, qc_container = create_collapsible_section("QC Auto-selection", initial_expanded=True)
+        form_qc = QFormLayout(qc_container)
+        form_qc.setContentsMargins(0, 0, 0, 0)
 
-        form_qc = QFormLayout()
         spin_qc_rms = QDoubleSpinBox()
         spin_qc_rms.setDecimals(4)
         spin_qc_rms.setRange(0.0, 1.0)
@@ -1618,12 +1621,12 @@ class LightCurveBuilderWindow(StepWindowBase):
         spin_qc_n.setValue(self.qc_min_points)
         form_qc.addRow("최소 포인트:", spin_qc_n)
 
-        layout.addLayout(form_qc)
+        layout.addWidget(qc_group)
 
-        layout.addWidget(QLabel("─" * 40))
-        layout.addWidget(QLabel("QC Preview Y-Scale:"))
+        scale_group, scale_container = create_collapsible_section("QC Preview Y-Scale", initial_expanded=True)
+        form_scale = QFormLayout(scale_container)
+        form_scale.setContentsMargins(0, 0, 0, 0)
 
-        form_scale = QFormLayout()
         combo_scale = QComboBox()
         combo_scale.addItems(["Auto", "Robust(MAD)", "Fixed"])
         combo_scale.setCurrentText(self.qc_scale_mode)
@@ -1641,14 +1644,12 @@ class LightCurveBuilderWindow(StepWindowBase):
         spin_scale_fixed.setValue(self.qc_scale_fixed_value)
         form_scale.addRow("±mag:", spin_scale_fixed)
 
-        layout.addLayout(form_scale)
+        layout.addWidget(scale_group)
 
-        layout.addWidget(QLabel("─" * 40))
-        layout.addWidget(QLabel("Phase Folding 슬라이더 범위 설정:"))
+        phase_group, phase_container = create_collapsible_section("Phase Folding", initial_expanded=True)
+        form2 = QFormLayout(phase_container)
+        form2.setContentsMargins(0, 0, 0, 0)
 
-        form2 = QFormLayout()
-
-        # 주기 최소값
         spin_period_min = QDoubleSpinBox()
         spin_period_min.setDecimals(4)
         spin_period_min.setRange(0.001, 100.0)
@@ -1656,7 +1657,6 @@ class LightCurveBuilderWindow(StepWindowBase):
         spin_period_min.setSuffix(" days")
         form2.addRow("Period 최소:", spin_period_min)
 
-        # 주기 최대값
         spin_period_max = QDoubleSpinBox()
         spin_period_max.setDecimals(4)
         spin_period_max.setRange(0.01, 1000.0)
@@ -1664,7 +1664,6 @@ class LightCurveBuilderWindow(StepWindowBase):
         spin_period_max.setSuffix(" days")
         form2.addRow("Period 최대:", spin_period_max)
 
-        # Phase 표시 범위 (사이클 수)
         spin_phase_cycles = QDoubleSpinBox()
         spin_phase_cycles.setDecimals(2)
         spin_phase_cycles.setRange(1.0, 5.0)
@@ -1673,21 +1672,10 @@ class LightCurveBuilderWindow(StepWindowBase):
         spin_phase_cycles.setSuffix(" cycles")
         form2.addRow("Phase 범위:", spin_phase_cycles)
 
-        layout.addLayout(form2)
+        layout.addWidget(phase_group)
+        layout.addStretch(1)
 
-        # 버튼
-        btn_row = QHBoxLayout()
-        btn_save = QPushButton("Save")
-        btn_save.setStyleSheet("QPushButton { background-color: #4CAF50; color: white; font-weight: bold; }")
-        btn_save.clicked.connect(dialog.accept)
-        btn_cancel = QPushButton("Cancel")
-        btn_cancel.clicked.connect(dialog.reject)
-        btn_row.addStretch()
-        btn_row.addWidget(btn_save)
-        btn_row.addWidget(btn_cancel)
-        layout.addLayout(btn_row)
-
-        if dialog.exec_() == QDialog.Accepted:
+        def _save():
             self.qc_rms_max = float(spin_qc_rms.value())
             self.qc_sigma = float(spin_qc_sigma.value())
             self.qc_outlier_frac_max = float(spin_qc_frac.value())
@@ -1707,22 +1695,27 @@ class LightCurveBuilderWindow(StepWindowBase):
                 f"phase_cycles={self.phase_cycles}"
             )
             self.save_state()
-            # 슬라이더 업데이트
             self._update_sliders_from_values()
             self._update_qc_threshold_label()
             self._on_qc_preview_changed()
             if self.x_axis_mode == "phase":
                 self.plot_current_comparison()
+            dialog.accept()
+
+        buttons.accepted.connect(_save)
+        buttons.rejected.connect(dialog.reject)
+        dialog.exec_()
 
     def show_qc_parameters_dialog(self):
-        """QC 파라미터 설정 다이얼로그 (QC 전용)"""
-        dialog = QDialog(self)
-        dialog.setWindowTitle("QC Parameters")
-        dialog.setMinimumWidth(360)
-        layout = QVBoxLayout(dialog)
+        dialog, layout, buttons = build_scroll_param_dialog(
+            self, "QC Parameters",
+            info_text="Adjust QC auto-selection thresholds and preview Y-scale.",
+            size=(420, 480),
+        )
 
-        layout.addWidget(QLabel("QC 자동 선택 기준:"))
-        form_qc = QFormLayout()
+        qc_group, qc_container = create_collapsible_section("QC Auto-selection", initial_expanded=True)
+        form_qc = QFormLayout(qc_container)
+        form_qc.setContentsMargins(0, 0, 0, 0)
 
         spin_qc_rms = QDoubleSpinBox()
         spin_qc_rms.setDecimals(4)
@@ -1749,10 +1742,12 @@ class LightCurveBuilderWindow(StepWindowBase):
         spin_qc_n.setValue(self.qc_min_points)
         form_qc.addRow("최소 포인트:", spin_qc_n)
 
-        layout.addLayout(form_qc)
+        layout.addWidget(qc_group)
 
-        layout.addWidget(QLabel("QC Preview Y-Scale:"))
-        form_scale = QFormLayout()
+        scale_group, scale_container = create_collapsible_section("QC Preview Y-Scale", initial_expanded=True)
+        form_scale = QFormLayout(scale_container)
+        form_scale.setContentsMargins(0, 0, 0, 0)
+
         combo_scale = QComboBox()
         combo_scale.addItems(["Auto", "Robust(MAD)", "Fixed"])
         combo_scale.setCurrentText(self.qc_scale_mode)
@@ -1770,20 +1765,10 @@ class LightCurveBuilderWindow(StepWindowBase):
         spin_scale_fixed.setValue(self.qc_scale_fixed_value)
         form_scale.addRow("±mag:", spin_scale_fixed)
 
-        layout.addLayout(form_scale)
+        layout.addWidget(scale_group)
+        layout.addStretch(1)
 
-        btn_row = QHBoxLayout()
-        btn_save = QPushButton("Save")
-        btn_save.setStyleSheet("QPushButton { background-color: #4CAF50; color: white; font-weight: bold; }")
-        btn_save.clicked.connect(dialog.accept)
-        btn_cancel = QPushButton("Cancel")
-        btn_cancel.clicked.connect(dialog.reject)
-        btn_row.addStretch()
-        btn_row.addWidget(btn_save)
-        btn_row.addWidget(btn_cancel)
-        layout.addLayout(btn_row)
-
-        if dialog.exec_() == QDialog.Accepted:
+        def _save():
             self.qc_rms_max = float(spin_qc_rms.value())
             self.qc_sigma = float(spin_qc_sigma.value())
             self.qc_outlier_frac_max = float(spin_qc_frac.value())
@@ -1800,6 +1785,11 @@ class LightCurveBuilderWindow(StepWindowBase):
             self.save_state()
             self._update_qc_threshold_label()
             self._on_qc_preview_changed()
+            dialog.accept()
+
+        buttons.accepted.connect(_save)
+        buttons.rejected.connect(dialog.reject)
+        dialog.exec_()
 
     def _on_xaxis_changed(self, idx: int):
         """X축 모드 변경"""
