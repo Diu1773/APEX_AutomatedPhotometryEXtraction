@@ -309,8 +309,19 @@ class MasterIdEditorWindow(StepWindowBase):
         forced_dir = step7_forced_phot_dir(self.params.P.result_dir)
         if forced_dir.exists():
             before_idm = len(files)
-            files = [f for f in files if (forced_dir / f"photometry_{f}.tsv").exists()]
+            missing_forced = []
+            kept_files = []
+            for f in files:
+                if self._resolve_forced_phot_path(f) is not None:
+                    kept_files.append(f)
+                else:
+                    missing_forced.append(f)
+            files = kept_files
             self.log(f"Step 9 frame filter (forced phot tsv): {len(files)}/{before_idm} kept")
+            if missing_forced:
+                sample = ", ".join(missing_forced[:5])
+                suffix = "..." if len(missing_forced) > 5 else ""
+                self.log(f"Step 9 skipped frames without forced TSV: {sample}{suffix}")
 
         self.file_list = list(files)
         self.file_combo.clear()
@@ -390,6 +401,32 @@ class MasterIdEditorWindow(StepWindowBase):
             fkey = self._infer_filter_from_filename(fname)
         self._file_filter_map[fname] = fkey
         return fkey
+
+    def _forced_phot_candidates(self, filename: str) -> list[Path]:
+        forced_dir = step7_forced_phot_dir(self.params.P.result_dir)
+        names = [str(filename)]
+        low = str(filename).lower()
+        if low.startswith("crop_"):
+            names.append(str(filename)[5:])
+        if low.startswith("cropped_"):
+            names.append(str(filename)[8:])
+        names.append(f"crop_{filename}")
+        names.append(f"cropped_{filename}")
+
+        out = []
+        seen = set()
+        for name in names:
+            if not name or name in seen:
+                continue
+            seen.add(name)
+            out.append(forced_dir / f"photometry_{name}.tsv")
+        return out
+
+    def _resolve_forced_phot_path(self, filename: str) -> Path | None:
+        for path in self._forced_phot_candidates(filename):
+            if path.exists():
+                return path
+        return None
 
     def load_master_ids(self):
         master_path = step9_selection_dir(self.params.P.result_dir) / "master_star_ids.csv"
@@ -1250,9 +1287,8 @@ class MasterIdEditorWindow(StepWindowBase):
             else:
                 self._auto_add_detections_to_master(self.phot_df)
             return
-        phot_dir = step7_forced_phot_dir(self.params.P.result_dir)
-        phot_path = phot_dir / f"photometry_{filename}.tsv"
-        if phot_path.exists():
+        phot_path = self._resolve_forced_phot_path(filename)
+        if phot_path is not None and phot_path.exists():
             try:
                 sep = "\t" if phot_path.suffix.lower() == ".tsv" else ","
                 df = read_csv_int64_source_id(phot_path, sep=sep)
@@ -1295,14 +1331,18 @@ class MasterIdEditorWindow(StepWindowBase):
                     self.phot_df = result
                     self._auto_add_detections_to_master(self.phot_df, sid_arr)
                     return
-            except Exception:
-                pass
+            except Exception as exc:
+                self.log(f"[{filename}] failed to load forced photometry {phot_path.name}: {exc}")
+        else:
+            tried = ", ".join(p.name for p in self._forced_phot_candidates(filename)[:3])
+            self.log(f"[{filename}] forced photometry TSV not found (tried: {tried})")
         empty = pd.DataFrame(columns=["x", "y", "source_id"])
         self._phot_cache[filename] = empty
         self._phot_arr_cache[filename] = (
             np.array([], dtype=float),
             np.array([], dtype=float),
             np.array([], dtype=np.int64),
+            np.array([], dtype=bool),
         )
         self.phot_df = empty
 

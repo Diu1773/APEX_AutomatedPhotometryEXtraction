@@ -63,7 +63,6 @@ _DEFAULT_MAG_BANDS   = ["g", "r", "i", "V", "B", "R", "I"]
 
 def _bands_from_df(df: "pd.DataFrame") -> tuple[list[tuple[str, str]], list[str]]:
     """Return (color_pairs, mag_bands) derived from mag_std_* columns in df."""
-    import pandas as _pd
     bands = sorted({c[len("mag_std_"):] for c in df.columns if c.startswith("mag_std_")})
     if not bands:
         return _DEFAULT_COLOR_PAIRS[:3], _DEFAULT_MAG_BANDS[:3]
@@ -1123,7 +1122,8 @@ class IsochroneModelWindow(StepWindowBase):
             return None, None, None
 
         # ---- cache check ----
-        cache_key = (iso_cache_token, str(wide_path))
+        wide_stat = wide_path.stat()
+        cache_key = (iso_cache_token, str(wide_path), wide_stat.st_size, wide_stat.st_mtime_ns)
         if (
             self._cache_key == cache_key
             and self._cached_df is not None

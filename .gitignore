@@ -11,3 +11,7 @@ dist/
 release/Setup/*.exe
 release/Setup/*.zip
 .DS_Store
+
+# User/runtime state
+parameters.toml
+apex/.state/
