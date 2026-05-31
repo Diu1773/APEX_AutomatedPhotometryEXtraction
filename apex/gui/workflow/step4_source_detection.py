@@ -2574,9 +2574,16 @@ class SourceDetectionWindow(StepWindowBase):
         # Results table - updated columns
         self.results_table = QTableWidget()
         self.results_table.setColumnCount(6)
-        self.results_table.setHorizontalHeaderLabels(['File', 'Sources', 'FWHM', 'Bkg', 'Filter', 'Sigma'])
-        self.results_table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeToContents)
-        self.results_table.horizontalHeader().setStretchLastSection(True)
+        self.results_table.setHorizontalHeaderLabels(['File', 'N', 'FWHM', 'Bkg', 'Filt', 'Sig'])
+        results_header = self.results_table.horizontalHeader()
+        results_header.setStretchLastSection(False)
+        results_header.setSectionResizeMode(0, QHeaderView.Stretch)
+        for col, width in ((1, 42), (2, 92), (3, 52), (4, 42), (5, 42)):
+            results_header.setSectionResizeMode(col, QHeaderView.Fixed)
+            self.results_table.setColumnWidth(col, width)
+        self.results_table.setWordWrap(False)
+        self.results_table.setTextElideMode(Qt.ElideMiddle)
+        self.results_table.verticalHeader().setDefaultSectionSize(22)
         self.results_table.setSelectionBehavior(QAbstractItemView.SelectRows)
         self.results_table.setEditTriggers(QAbstractItemView.NoEditTriggers)
         self.results_table.cellClicked.connect(self.on_table_cell_clicked)
@@ -3254,7 +3261,9 @@ class SourceDetectionWindow(StepWindowBase):
         # Add to table - with detection method in FWHM column
         row = self.results_table.rowCount()
         self.results_table.insertRow(row)
-        self.results_table.setItem(row, 0, QTableWidgetItem(filename))
+        filename_item = QTableWidgetItem(filename)
+        filename_item.setToolTip(filename)
+        self.results_table.setItem(row, 0, filename_item)
         self.results_table.setItem(row, 1, QTableWidgetItem(str(result['n_sources'])))
         # FWHM with detection method
         fwhm_px = float(result.get("fwhm_px", 0.0))
@@ -3359,7 +3368,9 @@ class SourceDetectionWindow(StepWindowBase):
         for filename, result in self.detection_results.items():
             row = self.results_table.rowCount()
             self.results_table.insertRow(row)
-            self.results_table.setItem(row, 0, QTableWidgetItem(filename))
+            filename_item = QTableWidgetItem(filename)
+            filename_item.setToolTip(filename)
+            self.results_table.setItem(row, 0, filename_item)
             self.results_table.setItem(row, 1, QTableWidgetItem(str(result.get('n_sources', 0))))
             fwhm_arcsec = float(result.get('fwhm_arcsec', 0.0))
             fwhm_px = float(result.get('fwhm_px', 0.0))
