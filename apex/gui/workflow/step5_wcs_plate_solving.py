@@ -24,17 +24,6 @@ from astropy.wcs import WCS
 from astropy.wcs.utils import proj_plane_pixel_scales
 from astropy.coordinates import SkyCoord
 import astropy.units as u
-from astropy.table import Table
-
-from apex.utils.ssl_certificates import configure_ssl_certificates, ssl_error_reason
-
-_SSL_CERT_OK, _SSL_CERT_DETAIL = configure_ssl_certificates()
-
-try:
-    from astroquery.gaia import Gaia
-    _HAS_GAIA = True
-except Exception:
-    _HAS_GAIA = False
 
 from scipy.spatial import cKDTree as KDTree
 
@@ -52,10 +41,13 @@ from .step_window_base import StepWindowBase
 from .run_control import RunControlBar, format_duration, progress_status_text
 from .log_panel import WorkflowLogWindow, WorkerStatusPanel, append_timestamped_log, show_raised
 from .ui_helpers import (
+    add_parameter_reset_button,
     create_cache_checkbox,
     create_collapsible_section,
     create_parameter_button,
     configure_parameter_dialog,
+    set_table_row_background,
+    status_row_background,
 )
 from apex.core.cache_manager import StepCacheManager
 from apex.utils.step_paths import (
@@ -64,10 +56,14 @@ from apex.utils.step_paths import (
     crop_rect_path,
     step4_dir,
     step5_wcs_dir,
+    step1_dir,
 )
-from apex.utils.constants import get_parallel_workers
-from apex.utils.io_utils import coerce_int64_source_id
-from apex.utils.qc_utils import filter_files_by_qc
+from apex.utils.constants import get_parallel_workers, MAD_TO_SIGMA
+from apex.utils.gaia_catalog_service import (
+    GaiaCatalogService,
+    gaia_runtime_available,
+)
+from apex.utils.qc_utils import filter_files_by_qc, resolve_frame_quality_path, frame_name
 from apex.utils.cache_utils import (
     norm_path_key,
     build_file_signature,
@@ -163,6 +159,350 @@ def _local_executable_available(exe: str) -> tuple[bool, str]:
     return False, f"not found: {exe}"
 
 
+# ── APEX-managed WCS provenance/quality keys ─────────────────────────────────
+# These are written by each solver to identify itself and surface quality stats.
+# We clear them at the start of every per-frame solve so a re-run with a
+# different solver cannot leave stale metadata behind (e.g. ASTAP RMS lingering
+# in a frame re-solved by the Internal Python engine).
+_APEX_WCS_META_KEYS: tuple[str, ...] = (
+    "WCSSRC",   # solver tag: APEX_INTERNAL / ASTAP / ASTNET_WSL / ASTNET_REFINED
+    "WCS_OK",   # bool — last solve success
+    "WCSPIXI",  # input pixel scale (arcsec/px)
+    "WCSPIXF",  # fitted pixel scale
+    "WCSREFN",  # refine note
+    "WCSRMD",   # residual median (arcsec)
+    "WCSRMAX",  # residual max (arcsec)
+    "WCSROT",   # rotation (deg, E of N)
+    "WCSCRA",   # center RA (deg)
+    "WCSCDEC",  # center Dec (deg)
+    "WCSMOD",   # TAN / SIPn
+    "WCSSIP",   # SIP order
+    "WCSNST",   # number of matched stars
+)
+
+
+def _load_simbad_target_coord(result_dir) -> "SkyCoord | None":
+    """Read Step 1's targets_simbad.tsv and return the first row's SkyCoord.
+
+    Step 1 writes the SIMBAD-resolved target to
+    ``<result_dir>/step1_file_selection/targets_simbad.tsv``. We trust this
+    over a FITS-header OBJCTRA/OBJCTDEC because mount logs are sometimes
+    wrong (e.g. a previous slew target gets stamped into the headers).
+    Returns None on any failure so callers can fall back.
+    """
+    try:
+        path = step1_dir(Path(result_dir)) / "targets_simbad.tsv"
+        if not path.exists():
+            return None
+        df = pd.read_csv(path, sep="\t")
+        if df.empty:
+            return None
+        cols = {c.lower(): c for c in df.columns}
+        ra_col = cols.get("ra_deg")
+        dec_col = cols.get("dec_deg")
+        if ra_col is None or dec_col is None:
+            return None
+        ra = float(df[ra_col].iloc[0])
+        dec = float(df[dec_col].iloc[0])
+        if not (np.isfinite(ra) and np.isfinite(dec)):
+            return None
+        return SkyCoord(ra * u.deg, dec * u.deg)
+    except Exception:
+        return None
+
+
+def _reset_apex_wcs_meta(hdr) -> None:
+    """Remove APEX-managed WCS provenance/quality keys from *hdr* in place.
+
+    Raw WCS keywords (CRVAL/CRPIX/CTYPE/CD/PC/CDELT/PV/...) are intentionally
+    not cleared — the calling solver will overwrite them with its own values.
+    """
+    for key in _APEX_WCS_META_KEYS:
+        try:
+            if key in hdr:
+                del hdr[key]
+        except Exception:
+            pass
+
+
+def _shared_wcs_center_coords(w: WCS, nx: int, ny: int) -> tuple[float, float]:
+    try:
+        if not w.has_celestial:
+            return (float("nan"), float("nan"))
+        sky = w.pixel_to_world(nx / 2.0, ny / 2.0)
+        return (float(sky.ra.deg), float(sky.dec.deg))
+    except Exception:
+        return (float("nan"), float("nan"))
+
+
+def _shared_empty_wcs_qc_metrics(n_detect: int = 0) -> dict:
+    return {
+        "n_detect": int(max(0, n_detect)),
+        "n_catalog_in_fov": 0,
+        "n_match": 0,
+        "n_inlier": 0,
+        "match_rate": np.nan,
+        "match_rate_cat": np.nan,
+        "match_rate_eff": np.nan,
+        "match_radius_arcsec": np.nan,
+        "match_radius_px": np.nan,
+        "dx_med_px": np.nan,
+        "dy_med_px": np.nan,
+        "resid_med_px": np.nan,
+        "resid_mad_px": np.nan,
+        "resid_peak_px": np.nan,
+        "resid_p99_px": np.nan,
+        "rms_px": np.nan,
+        "inlier_rate": np.nan,
+        "resid_vs_radius_slope": np.nan,
+        "edge_resid_ratio": np.nan,
+        "center_offset_arcsec": np.nan,
+        "pix_scale_input_arcsec": np.nan,
+        "pix_scale_fit_arcsec": np.nan,
+        "scale_delta_pct": np.nan,
+        "gaia_available": False,
+    }
+
+
+def _shared_compute_wcs_qc_metrics(
+    params,
+    *,
+    w: WCS | None,
+    det_xy: np.ndarray,
+    nx: int,
+    ny: int,
+    gaia_ra_deg: np.ndarray,
+    gaia_dec_deg: np.ndarray,
+    pix_input_arcsec: float,
+    pix_fit_arcsec: float,
+    center_coord: SkyCoord | None,
+) -> dict:
+    det_xy = np.asarray(det_xy, dtype=float)
+    if det_xy.ndim != 2 or det_xy.shape[1] != 2:
+        det_xy = np.zeros((0, 2), dtype=float)
+    out = _shared_empty_wcs_qc_metrics(n_detect=len(det_xy))
+    gaia_ra_deg = np.asarray(gaia_ra_deg, dtype=float)
+    gaia_dec_deg = np.asarray(gaia_dec_deg, dtype=float)
+    out["gaia_available"] = bool(len(gaia_ra_deg) > 0 and len(gaia_dec_deg) > 0)
+    if np.isfinite(pix_input_arcsec):
+        out["pix_scale_input_arcsec"] = float(pix_input_arcsec)
+    if np.isfinite(pix_fit_arcsec):
+        out["pix_scale_fit_arcsec"] = float(pix_fit_arcsec)
+    if np.isfinite(pix_input_arcsec) and pix_input_arcsec > 0 and np.isfinite(pix_fit_arcsec):
+        out["scale_delta_pct"] = float((pix_fit_arcsec - pix_input_arcsec) / pix_input_arcsec * 100.0)
+
+    if w is not None and w.has_celestial and center_coord is not None:
+        try:
+            c_ra, c_dec = _shared_wcs_center_coords(w, nx, ny)
+            if np.isfinite(c_ra) and np.isfinite(c_dec):
+                c_sky = SkyCoord(c_ra * u.deg, c_dec * u.deg, frame="icrs")
+                out["center_offset_arcsec"] = float(c_sky.separation(center_coord).arcsec)
+        except Exception:
+            pass
+
+    if w is None or (not w.has_celestial) or len(det_xy) == 0:
+        return out
+    if gaia_ra_deg.size == 0 or gaia_dec_deg.size == 0:
+        return out
+
+    try:
+        xg, yg = w.celestial.all_world2pix(gaia_ra_deg, gaia_dec_deg, 0)
+        xg = np.asarray(xg, float)
+        yg = np.asarray(yg, float)
+    except Exception:
+        return out
+
+    ok_g = (
+        np.isfinite(xg)
+        & np.isfinite(yg)
+        & (xg >= 0.0)
+        & (xg < float(nx))
+        & (yg >= 0.0)
+        & (yg < float(ny))
+    )
+    if not np.any(ok_g):
+        return out
+
+    gaia_xy = np.column_stack((xg[ok_g], yg[ok_g]))
+    out["n_catalog_in_fov"] = int(len(gaia_xy))
+
+    pix_use = pix_fit_arcsec if np.isfinite(pix_fit_arcsec) and pix_fit_arcsec > 0 else pix_input_arcsec
+    match_r_arcsec = float(getattr(params.P, "wcs_qc_match_radius_arcsec", 2.0))
+    if not np.isfinite(match_r_arcsec) or match_r_arcsec <= 0:
+        match_r_arcsec = 2.0
+    if np.isfinite(pix_use) and pix_use > 0:
+        match_r_px = float(match_r_arcsec / pix_use)
+    else:
+        match_r_px = float(getattr(params.P, "wcs_qc_match_radius_px", 2.5))
+    match_r_px = float(np.clip(match_r_px, 1.0, 25.0))
+    out["match_radius_arcsec"] = float(match_r_arcsec)
+    out["match_radius_px"] = float(match_r_px)
+
+    tree = KDTree(gaia_xy)
+    d, j = tree.query(det_xy, k=1)
+    d = np.asarray(d, float)
+    j = np.asarray(j, int)
+    ok = np.isfinite(d) & (d <= match_r_px) & (j >= 0) & (j < len(gaia_xy))
+    if not np.any(ok):
+        return out
+
+    det_candidates = np.where(ok)[0]
+    order = np.argsort(d[det_candidates])
+    used_gaia = set()
+    keep_det = []
+    keep_gaia = []
+    for ord_idx in order:
+        det_i = int(det_candidates[ord_idx])
+        gaia_i = int(j[det_i])
+        if gaia_i in used_gaia:
+            continue
+        used_gaia.add(gaia_i)
+        keep_det.append(det_i)
+        keep_gaia.append(gaia_i)
+    if not keep_det:
+        return out
+
+    det_keep = np.asarray(keep_det, dtype=int)
+    gaia_keep = np.asarray(keep_gaia, dtype=int)
+    dx = det_xy[det_keep, 0] - gaia_xy[gaia_keep, 0]
+    dy = det_xy[det_keep, 1] - gaia_xy[gaia_keep, 1]
+    r = np.hypot(dx, dy)
+    finite_r = np.isfinite(r)
+    if not np.any(finite_r):
+        return out
+    if not np.all(finite_r):
+        dx = dx[finite_r]
+        dy = dy[finite_r]
+        r = r[finite_r]
+        gaia_keep = gaia_keep[finite_r]
+
+    n_match = int(len(r))
+    out["n_match"] = n_match
+    out["match_rate"] = float(n_match / max(int(len(det_xy)), 1))
+    out["match_rate_cat"] = float(n_match / max(int(len(gaia_xy)), 1))
+    out["match_rate_eff"] = float(max(out["match_rate"], out["match_rate_cat"]))
+    if n_match == 0:
+        return out
+
+    out["dx_med_px"] = float(np.nanmedian(dx)) if len(dx) else np.nan
+    out["dy_med_px"] = float(np.nanmedian(dy)) if len(dy) else np.nan
+    resid_med = float(np.nanmedian(r))
+    resid_mad = float(MAD_TO_SIGMA * np.nanmedian(np.abs(r - resid_med)))
+    resid_p99 = float(np.nanpercentile(r, 99))
+    out["resid_med_px"] = resid_med
+    out["resid_mad_px"] = resid_mad
+    out["resid_p99_px"] = resid_p99
+    out["resid_peak_px"] = resid_p99
+
+    clip_sigma = float(getattr(params.P, "wcs_qc_clip_sigma", 3.0))
+    if not np.isfinite(clip_sigma) or clip_sigma <= 0:
+        clip_sigma = 3.0
+    if np.isfinite(resid_mad) and resid_mad > 0:
+        inlier = np.abs(r - resid_med) <= clip_sigma * resid_mad
+    else:
+        resid_std = float(np.nanstd(r))
+        if np.isfinite(resid_std) and resid_std > 0:
+            inlier = np.abs(r - float(np.nanmean(r))) <= clip_sigma * resid_std
+        else:
+            inlier = np.ones(len(r), dtype=bool)
+    n_inlier = int(np.sum(inlier))
+    r_in = r[inlier] if n_inlier > 0 else r
+    out["n_inlier"] = n_inlier
+    out["inlier_rate"] = float(n_inlier / max(n_match, 1))
+    out["rms_px"] = float(np.sqrt(np.nanmean(r_in ** 2))) if len(r_in) else np.nan
+
+    if len(det_keep) >= 8:
+        cx = float(nx) / 2.0
+        cy = float(ny) / 2.0
+        rr = np.hypot(gaia_xy[gaia_keep, 0] - cx, gaia_xy[gaia_keep, 1] - cy)
+        max_rr = max(float(np.hypot(max(cx, 1.0), max(cy, 1.0))), 1.0)
+        rho = rr / max_rr
+        if np.isfinite(np.nanstd(rho)) and float(np.nanstd(rho)) > 1e-6:
+            try:
+                out["resid_vs_radius_slope"] = float(np.polyfit(rho, r, 1)[0])
+            except Exception:
+                out["resid_vs_radius_slope"] = np.nan
+        core = r[rho <= 0.4]
+        edge = r[rho >= 0.8]
+        if len(core) >= 3 and len(edge) >= 3:
+            core_med = float(np.nanmedian(core))
+            if np.isfinite(core_med) and core_med > 1e-9:
+                out["edge_resid_ratio"] = float(np.nanmedian(edge) / core_med)
+
+    return out
+
+
+def _shared_evaluate_wcs_qc_pass(params, metrics: dict, *, wcs_ok: bool) -> tuple[bool, list[str]]:
+    def _num(key: str) -> float:
+        try:
+            return float(metrics.get(key, np.nan))
+        except Exception:
+            return np.nan
+
+    reasons: list[str] = []
+    gaia_available = bool(metrics.get("gaia_available", True))
+
+    require_wcs_ok = bool(getattr(params.P, "wcs_qc_require_wcs_ok", True))
+    if require_wcs_ok and not wcs_ok:
+        reasons.append("wcs_fail")
+
+    n_detect = int(metrics.get("n_detect", 0) or 0)
+    n_match = int(metrics.get("n_match", 0) or 0)
+    if n_detect <= 0:
+        reasons.append("no_detect_data")
+
+    if not gaia_available:
+        reasons.append("gaia_unavailable")
+    else:
+        min_match_n = int(getattr(params.P, "wcs_qc_min_match_n", 20))
+        if min_match_n > 0 and n_match < min_match_n:
+            reasons.append("low_match_n")
+
+        min_match_rate = float(getattr(params.P, "wcs_qc_min_match_rate", 0.20))
+        mrate_det = _num("match_rate")
+        mrate_cat = _num("match_rate_cat")
+        mrate_eff = _num("match_rate_eff")
+        if not np.isfinite(mrate_eff):
+            finite_rates = [v for v in [mrate_det, mrate_cat] if np.isfinite(v)]
+            if finite_rates:
+                mrate_eff = float(np.nanmax(finite_rates))
+        if np.isfinite(min_match_rate) and min_match_rate > 0:
+            if (not np.isfinite(mrate_eff)) or (mrate_eff < min_match_rate):
+                reasons.append("low_match_rate")
+
+    max_rms_px = float(getattr(params.P, "wcs_qc_max_rms_px", 2.5))
+    if n_match > 0 and np.isfinite(max_rms_px) and max_rms_px > 0:
+        rms_px = _num("rms_px")
+        if (not np.isfinite(rms_px)) or (rms_px > max_rms_px):
+            reasons.append("high_rms")
+
+    max_p99_px = float(getattr(params.P, "wcs_qc_max_p99_px", 5.0))
+    if n_match > 0 and np.isfinite(max_p99_px) and max_p99_px > 0:
+        p99_px = _num("resid_p99_px")
+        if (not np.isfinite(p99_px)) or (p99_px > max_p99_px):
+            reasons.append("high_p99")
+
+    min_inlier_rate = float(getattr(params.P, "wcs_qc_min_inlier_rate", 0.50))
+    if n_match > 0 and np.isfinite(min_inlier_rate) and min_inlier_rate > 0:
+        inlier_rate = _num("inlier_rate")
+        if (not np.isfinite(inlier_rate)) or (inlier_rate < min_inlier_rate):
+            reasons.append("low_inlier")
+
+    max_edge_ratio = float(getattr(params.P, "wcs_qc_max_edge_ratio", 0.0))
+    edge_ratio = _num("edge_resid_ratio")
+    if np.isfinite(max_edge_ratio) and max_edge_ratio > 0:
+        if np.isfinite(edge_ratio) and edge_ratio > max_edge_ratio:
+            reasons.append("edge_resid")
+
+    max_center_off = float(getattr(params.P, "wcs_qc_max_center_offset_arcsec", 0.0))
+    center_off = _num("center_offset_arcsec")
+    if np.isfinite(max_center_off) and max_center_off > 0:
+        if (not np.isfinite(center_off)) or (center_off > max_center_off):
+            reasons.append("center_offset")
+
+    return len(reasons) == 0, reasons
+
+
 def _check_astap_available(params) -> tuple[bool, str]:
     exe = str(getattr(params.P, "astap_exe", "astap_cli.exe") or "astap_cli.exe").strip()
     ok, detail = _local_executable_available(exe)
@@ -212,39 +552,6 @@ def _classify_astap_failure(rc: int, stdout: str | None, stderr: str | None) -> 
     return f"astap_rc_{rc}"
 
 
-def _gaia_failure_reason(exc: Exception | None) -> str:
-    if exc is None:
-        return "unknown"
-    ssl_reason = ssl_error_reason(exc)
-    if ssl_reason:
-        return ssl_reason
-    text = _exc_brief(exc, limit=180)
-    low = text.lower()
-    if "timeout" in low or "timed out" in low:
-        return "timeout"
-    if "connection" in low or "unreachable" in low or "refused" in low:
-        return "network_error"
-    if "server_down" in low or "503" in low or "502" in low or "500" in low:
-        return "server_down"
-    if "vizier fallback" in low:
-        return "vizier_fallback_failed"
-    return text or "unknown"
-
-
-def _tap_launch_job_async(service, adql: str, *, timeout_s: float | None = None, **kwargs):
-    if timeout_s is not None and np.isfinite(timeout_s) and timeout_s > 0:
-        try:
-            setattr(service, "TIMEOUT", float(timeout_s))
-        except Exception:
-            pass
-        try:
-            return service.launch_job_async(adql, timeout=float(timeout_s), **kwargs)
-        except TypeError as exc:
-            if "timeout" not in str(exc).lower():
-                raise
-    return service.launch_job_async(adql, **kwargs)
-
-
 def _check_astnet_available(params) -> tuple[bool, str]:
     cmd_text = str(getattr(params.P, "astnet_local_command", "solve-field") or "solve-field").strip()
     cmd_base = _split_command(cmd_text)
@@ -292,21 +599,7 @@ def _check_astnet_available(params) -> tuple[bool, str]:
 
 
 def _check_gaia_runtime_available() -> tuple[bool, str]:
-    ssl_detail = f" SSL: {_SSL_CERT_DETAIL}"
-    if not _HAS_GAIA:
-        return (
-            False,
-            "astroquery.gaia is not importable. Gaia catalog attach, WCS refine, "
-            f"resid_med, and Step 6 Gaia stats require astroquery in the packaged build.{ssl_detail}",
-        )
-    try:
-        from astroquery.utils.tap.core import TapPlus  # noqa: F401
-    except Exception as exc:
-        return (
-            True,
-            f"astroquery.gaia is importable, but VizieR TAP fallback is unavailable: {_exc_brief(exc)}.{ssl_detail}",
-        )
-    return True, f"astroquery.gaia and TAP fallback imports are available.{ssl_detail}"
+    return gaia_runtime_available()
 
 
 def _astnet_center_candidates(
@@ -394,18 +687,6 @@ def _solution_header_shape(solution_hdr: fits.Header, fallback_hdr: fits.Header 
         nx = int(fallback_hdr.get("NAXIS1", 0) or 0)
         ny = int(fallback_hdr.get("NAXIS2", 0) or 0)
     return float(nx), float(ny)
-
-
-def _coerce_source_id_int64(df: "pd.DataFrame") -> "pd.DataFrame":
-    """Normalize Gaia source_id as signed int64 without float precision loss."""
-    if df is None or df.empty or "source_id" not in df.columns:
-        return df
-    out = df.copy()
-    sid = coerce_int64_source_id(out["source_id"])
-    valid = sid.notna()
-    out = out.loc[valid].copy()
-    out["source_id"] = sid.loc[valid].astype("int64")
-    return out
 
 
 class WcsWorker(QThread):
@@ -1070,7 +1351,7 @@ class WcsWorker(QThread):
         out["dy_med_px"] = dy_med
 
         resid_med = float(np.nanmedian(r))
-        resid_mad = float(1.4826 * np.nanmedian(np.abs(r - resid_med)))
+        resid_mad = float(MAD_TO_SIGMA * np.nanmedian(np.abs(r - resid_med)))
         resid_p99 = float(np.nanpercentile(r, 99))
         out["resid_med_px"] = resid_med
         out["resid_mad_px"] = resid_mad
@@ -1183,307 +1464,14 @@ class WcsWorker(QThread):
 
         return len(reasons) == 0, reasons
 
-    def _load_gaia_cache_if_ok(self, path: Path):
-        if not path.exists():
-            return None
-        try:
-            tab = Table.read(path, format="ascii.ecsv")
-            cols = [c.lower() for c in tab.colnames]
-            missing_var_flag = "phot_variable_flag" not in cols
-            for need in ("source_id", "ra", "dec"):
-                if need not in cols:
-                    return None
-            tab.rename_columns(tab.colnames, cols)
-            df = _coerce_source_id_int64(tab.to_pandas())
-            if df is not None and "phot_variable_flag" not in df.columns:
-                df["phot_variable_flag"] = ""
-            if df is not None:
-                df.attrs["missing_phot_variable_flag"] = bool(missing_var_flag)
-            return df
-        except Exception:
-            return None
-
-    def _query_gaia_vizier(self, center: SkyCoord, radius_deg: float, mag_max: float, timeout_s: float):
-        """VizieR mirror fallback (Strasbourg CDS). Used when ESA server is unavailable/blocked."""
-        try:
-            from astroquery.utils.tap.core import TapPlus
-        except ImportError:
-            raise RuntimeError("astroquery.utils.tap not available")
-        mag_where = f'AND "I/355/gaiadr3".Gmag <= {mag_max:.4f}' if np.isfinite(mag_max) and mag_max > 0 else ""
-        adql = f"""
-SELECT
-  "I/355/gaiadr3".Source AS source_id,
-  "I/355/gaiadr3".RA_ICRS AS ra,
-  "I/355/gaiadr3".DE_ICRS AS dec,
-  "I/355/gaiadr3".Gmag AS phot_g_mean_mag,
-  "I/355/gaiadr3".BPmag AS phot_bp_mean_mag,
-  "I/355/gaiadr3".RPmag AS phot_rp_mean_mag,
-  "I/355/gaiadr3".RUWE AS ruwe,
-  "I/355/gaiadr3".Plx AS parallax,
-  "I/355/gaiadr3".e_Plx AS parallax_error,
-  "I/355/gaiadr3".pmRA AS pmra,
-  "I/355/gaiadr3".e_pmRA AS pmra_error,
-  "I/355/gaiadr3".pmDE AS pmdec,
-  "I/355/gaiadr3".e_pmDE AS pmdec_error
-FROM "I/355/gaiadr3"
-WHERE 1=CONTAINS(
-    POINT('ICRS', "I/355/gaiadr3".RA_ICRS, "I/355/gaiadr3".DE_ICRS),
-    CIRCLE('ICRS', {center.ra.deg:.8f}, {center.dec.deg:.8f}, {radius_deg:.8f})
-)
-{mag_where}
-        """.strip()
-        tap = TapPlus(url="https://tapvizier.cds.unistra.fr/TAPVizieR/tap")
-        try:
-            # async mode: no MAXREC=2000 server-side cap (sync mode silently truncates)
-            job = _tap_launch_job_async(tap, adql, timeout_s=timeout_s)
-            tab = job.get_results()
-        except Exception as e:
-            raise RuntimeError(f"VizieR fallback query failed: {_exc_brief(e)}") from e
-        df = tab.to_pandas()
-        df.columns = [c.lower() for c in df.columns]
-        if "phot_variable_flag" not in df.columns:
-            df["phot_variable_flag"] = ""
-        if "bp_rp" not in df.columns and "phot_bp_mean_mag" in df.columns and "phot_rp_mean_mag" in df.columns:
-            bp = pd.to_numeric(df["phot_bp_mean_mag"], errors="coerce")
-            rp = pd.to_numeric(df["phot_rp_mean_mag"], errors="coerce")
-            df["bp_rp"] = bp - rp
-        if "phot_g_mean_mag" in df.columns and np.isfinite(mag_max):
-            g = pd.to_numeric(df["phot_g_mean_mag"], errors="coerce")
-            df = df[g.notna() & (g <= float(mag_max))]
-        return _coerce_source_id_int64(df)
-
-    def _query_gaia(self, center: SkyCoord, radius_deg: float, mag_max: float):
-        if not _HAS_GAIA:
-            raise RuntimeError("astroquery.gaia not available")
-        if self._stop_requested:
-            raise RuntimeError("stopped")
-        timeout_s = float(getattr(self.params.P, "gaia_timeout_s", 30.0))
-        mag_where = f"AND phot_g_mean_mag <= {mag_max:.4f}" if np.isfinite(mag_max) and mag_max > 0 else ""
-        adql = f"""
-    SELECT
-      source_id, ra, dec,
-      phot_g_mean_mag, phot_bp_mean_mag, phot_rp_mean_mag,
-      phot_variable_flag,
-      pmra, pmdec, pmra_error, pmdec_error,
-      parallax, parallax_error
-    FROM gaiadr3.gaia_source
-    WHERE 1=CONTAINS(
-        POINT('ICRS', ra, dec),
-        CIRCLE('ICRS', {center.ra.deg:.8f}, {center.dec.deg:.8f}, {radius_deg:.8f})
-    )
-    {mag_where}
-        """.strip()
-        Gaia.ROW_LIMIT = -1
-        if self._stop_requested:
-            raise RuntimeError("stopped")
-        try:
-            job = _tap_launch_job_async(Gaia, adql, timeout_s=timeout_s, dump_to_file=False)
-            tab = job.get_results()
-        except Exception as e:
-            err_str = str(e).lower()
-            if "ip" in err_str and any(w in err_str for w in ("disabled", "blocked", "banned", "heavy")):
-                cause = "IP_BANNED"
-            elif "404" in err_str or "job not found" in err_str:
-                cause = "SERVER_JOB_LOST"
-            elif any(c in err_str for c in ("503", "502", "500")):
-                cause = "SERVER_DOWN"
-            elif "timeout" in err_str or "timed out" in err_str:
-                cause = "TIMEOUT"
-            elif any(w in err_str for w in ("connection", "refused", "unreachable")):
-                cause = "NETWORK_ERROR"
-            elif ssl_error_reason(e):
-                cause = "SSL_CERTIFICATE_VERIFY_FAILED"
-            else:
-                cause = "UNKNOWN"
-            # ESA down/blocked: auto-fallback to VizieR mirror
-            if cause in ("IP_BANNED", "SERVER_JOB_LOST", "SERVER_DOWN", "TIMEOUT", "NETWORK_ERROR"):
-                self.log_message.emit(f"[Gaia][WARN] ESA TAP failed [{cause}], trying VizieR fallback.")
-                try:
-                    df_viz = self._query_gaia_vizier(center, radius_deg, mag_max, timeout_s)
-                    self.log_message.emit(
-                        f"[Gaia][WARN] ESA TAP failed [{cause}] → VizieR fallback 사용 (N={len(df_viz)}). "
-                        f"N이 2000 이하면 catalog truncation — Step 5(WCS) 재실행 권장."
-                    )
-                    df_viz.attrs["gaia_source"] = "vizier_fallback"
-                    return df_viz
-                except Exception as e2:
-                    self.log_message.emit(f"[Gaia][WARN] VizieR fallback failed: {_gaia_failure_reason(e2)}")
-                    raise RuntimeError(
-                        f"Gaia TAP async query failed [{cause}]: {_exc_brief(e)}; "
-                        f"VizieR fallback also failed: {_exc_brief(e2)}"
-                    ) from e
-            raise RuntimeError(f"Gaia TAP async query failed [{cause}]: {_exc_brief(e)}") from e
-        if "phot_g_mean_mag" in tab.colnames and np.isfinite(mag_max):
-            tab = tab[np.isfinite(tab["phot_g_mean_mag"]) & (tab["phot_g_mean_mag"] <= mag_max)]
-        return _coerce_source_id_int64(tab.to_pandas())
-
     def _load_or_query_gaia(self, center: SkyCoord, radius_deg: float):
-        step5_out = step5_wcs_dir(self.result_dir)
-        step5_out.mkdir(parents=True, exist_ok=True)
-        cache_path = step5_out / "gaia_fov.ecsv"
-        meta_path = step5_out / "gaia_fov_meta.json"
-        retry = int(getattr(self.params.P, "gaia_retry", 2))
-        backoff_s = float(getattr(self.params.P, "gaia_backoff_s", 6.0))
-        mag_max_cfg = float(getattr(self.params.P, "gaia_mag_max", 18.0))
-        wcs_mag_max = float(getattr(self.params.P, "gaia_wcs_mag_max", 18.0))
-        if np.isfinite(mag_max_cfg) and np.isfinite(wcs_mag_max) and wcs_mag_max > 0:
-            mag_max = float(min(mag_max_cfg, wcs_mag_max))
-        else:
-            mag_max = mag_max_cfg
-        allow_no_cache = bool(getattr(self.params.P, "gaia_allow_no_cache", True))
-
-        def _cache_mag_max(df_in: pd.DataFrame, meta_in) -> float:
-            try:
-                if isinstance(meta_in, dict) and ("mag_max" in meta_in):
-                    v = float(meta_in.get("mag_max"))
-                    if np.isfinite(v):
-                        return v
-            except Exception:
-                pass
-            try:
-                if "phot_g_mean_mag" in df_in.columns:
-                    g = pd.to_numeric(df_in["phot_g_mean_mag"], errors="coerce")
-                    if g.notna().any():
-                        return float(g.max())
-            except Exception:
-                pass
-            return np.nan
-
-        def _filter_cache_by_mag(df_in: pd.DataFrame) -> pd.DataFrame:
-            if not np.isfinite(mag_max):
-                return df_in
-            if "phot_g_mean_mag" not in df_in.columns:
-                return df_in
-            g = pd.to_numeric(df_in["phot_g_mean_mag"], errors="coerce")
-            keep = g.notna() & (g <= float(mag_max))
-            return df_in.loc[keep].copy()
-
-        def _cache_covers_field(df_in: pd.DataFrame, ctr: SkyCoord, rad_deg: float) -> bool:
-            """Guard against stale/misaligned Gaia caches that cover only part of the field."""
-            try:
-                ra = pd.to_numeric(df_in.get("ra"), errors="coerce")
-                dec = pd.to_numeric(df_in.get("dec"), errors="coerce")
-            except Exception:
-                return False
-            m = ra.notna() & dec.notna()
-            n = int(m.sum())
-            if n <= 0:
-                return False
-            if n < 50:
-                return True
-            ra_v = ra[m].to_numpy(float)
-            dec_v = dec[m].to_numpy(float)
-            cos_dec = float(np.cos(np.deg2rad(float(ctr.dec.deg))))
-            if not np.isfinite(cos_dec) or cos_dec <= 0:
-                cos_dec = 1.0
-            dx = (ra_v - float(ctr.ra.deg)) * cos_dec
-            dy = dec_v - float(ctr.dec.deg)
-            if dx.size == 0 or dy.size == 0:
-                return False
-            side_frac = 0.60 if n >= 200 else 0.45
-            need = float(rad_deg) * side_frac
-            min_x = float(np.nanmin(dx))
-            max_x = float(np.nanmax(dx))
-            min_y = float(np.nanmin(dy))
-            max_y = float(np.nanmax(dy))
-            return bool(
-                np.isfinite(min_x) and np.isfinite(max_x)
-                and np.isfinite(min_y) and np.isfinite(max_y)
-                and (min_x <= -need) and (max_x >= need)
-                and (min_y <= -need) and (max_y >= need)
-            )
-
-        # 캐시 유효성 체크 - 좌표가 맞는지 확인
-        cache_valid = False
-        df_cache = None
-        meta_probe = None
-        for cpath, mpath in [(cache_path, meta_path)]:
-            df_cache = self._load_gaia_cache_if_ok(cpath)
-            if df_cache is not None:
-                if bool(getattr(df_cache, "attrs", {}).get("missing_phot_variable_flag", False)) and _HAS_GAIA:
-                    df_cache = None
-                    continue
-                meta_probe = mpath
-                break
-
-        if df_cache is not None and meta_probe is not None and meta_probe.exists():
-            try:
-                meta = json.loads(meta_probe.read_text(encoding="utf-8"))
-                cached_ra = float(meta.get("center_ra_deg", 0))
-                cached_dec = float(meta.get("center_dec_deg", 0))
-                cached_radius = float(meta.get("radius_deg", 0))
-                cached_mag_max = _cache_mag_max(df_cache, meta)
-                dist_deg = np.hypot(center.ra.deg - cached_ra, center.dec.deg - cached_dec)
-                same_field = bool(dist_deg < 0.03 and cached_radius >= radius_deg * 0.9)
-                mag_ok = (not np.isfinite(mag_max)) or (not np.isfinite(cached_mag_max)) or (cached_mag_max + 1e-6 >= mag_max)
-                coverage_ok = _cache_covers_field(df_cache, center, radius_deg)
-                if same_field and mag_ok and coverage_ok:
-                    cache_valid = True
-            except Exception:
-                pass
-        elif df_cache is not None:
-            # 메타 파일이 없으면 일단 캐시 사용 (이전 버전 호환)
-            cached_mag_max = _cache_mag_max(df_cache, None)
-            mag_ok = (not np.isfinite(mag_max)) or (not np.isfinite(cached_mag_max)) or (cached_mag_max + 1e-6 >= mag_max)
-            coverage_ok = _cache_covers_field(df_cache, center, radius_deg)
-            if mag_ok and coverage_ok:
-                cache_valid = True
-
-        if cache_valid and df_cache is not None:
-            return _filter_cache_by_mag(df_cache), "cache"
-        if not _HAS_GAIA:
-            if allow_no_cache:
-                return pd.DataFrame(), "no_gaia_module"
-            raise RuntimeError("astroquery.gaia not available and no cache")
-
-        last_err = None
-        for att in range(1, max(1, retry) + 1):
-            if self._stop_requested:
-                raise RuntimeError("stopped")
-            try:
-                df = self._query_gaia(center, radius_deg, mag_max)
-                df.columns = [c.lower() for c in df.columns]
-                try:
-                    df_out = _coerce_source_id_int64(df.copy())
-                    Table.from_pandas(df_out).write(cache_path, format="ascii.ecsv", overwrite=True)
-                    # 메타데이터 저장
-                    gaia_src_tag = df.attrs.get("gaia_source", "esa") if hasattr(df, "attrs") else "esa"
-                    meta_path.write_text(json.dumps({
-                        "center_ra_deg": float(center.ra.deg),
-                        "center_dec_deg": float(center.dec.deg),
-                        "radius_deg": float(radius_deg),
-                        "mag_max": float(mag_max),
-                        "n_stars": len(df),
-                        "gaia_source": gaia_src_tag,
-                    }, indent=2), encoding="utf-8")
-                except Exception:
-                    pass
-                gaia_src_tag = df.attrs.get("gaia_source", "esa") if hasattr(df, "attrs") else "esa"
-                return df, gaia_src_tag
-            except Exception as e:
-                if self._stop_requested:
-                    raise RuntimeError("stopped")
-                last_err = e
-                if att < retry:
-                    slept = 0.0
-                    while slept < backoff_s:
-                        if self._stop_requested:
-                            raise RuntimeError("stopped")
-                        dt = min(0.25, backoff_s - slept)
-                        time.sleep(dt)
-                        slept += dt
-
-        df_cache = self._load_gaia_cache_if_ok(cache_path)
-        if df_cache is not None:
-            cached_mag_max = _cache_mag_max(df_cache, None)
-            mag_ok = (not np.isfinite(mag_max)) or (not np.isfinite(cached_mag_max)) or (cached_mag_max + 1e-6 >= mag_max)
-            if mag_ok:
-                return _filter_cache_by_mag(df_cache), "cache(after_fail)"
-        if allow_no_cache:
-            if last_err is None:
-                return pd.DataFrame(), "fail_no_cache:unknown"
-            return pd.DataFrame(), f"fail_no_cache:{_gaia_failure_reason(last_err)}"
-        raise RuntimeError(f"Gaia query failed: {last_err}")
+        service = GaiaCatalogService(
+            self.params,
+            self.result_dir,
+            log_fn=self.log_message.emit,
+            stop_fn=lambda: self._stop_requested,
+        )
+        return service.load_or_query(center, radius_deg)
 
     def _refine_crpix_by_match(self, w: WCS, hdr: fits.Header, det_xy: np.ndarray,
                                gaia_df: pd.DataFrame, fwhm_px: float, max_match: int):
@@ -1696,7 +1684,11 @@ WHERE 1=CONTAINS(
                     self.log_message.emit(msg)
 
             def log_cmd_failure(tag, fname, reason, cmd=None, stdout=None, stderr=None):
-                L(f"{fname}: {tag} fail reason={reason}")
+                # Surface the one-line reason in the GUI panel too, otherwise a
+                # silent ASTAP failure looks like "nothing happened, then astnet
+                # results appeared". Verbose cmd / stdout / stderr tails stay
+                # file-only to keep the panel readable.
+                L(f"{fname}: {tag} fail reason={reason}", gui=True)
                 if cmd:
                     L(f"{fname}: {tag} cmd={' '.join(str(c) for c in cmd)}")
                 out_tail = _tail_text(stdout, limit=1600, max_lines=12)
@@ -1731,8 +1723,15 @@ WHERE 1=CONTAINS(
                 f"blind_retry={astnet_blind_retry} blind_cpulimit_s={astnet_blind_cpulimit_s}"
             )
 
-            # Determine Gaia center - PRIORITY: FITS header > project_state
-            # FITS header OBJCTRA/OBJCTDEC is more reliable as it comes from the actual observation
+            # Determine Gaia center.  PRIORITY:
+            #   1. self.target_coord (project_state, set by Step 1)
+            #   2. targets_simbad.tsv (Step 1's SIMBAD resolution sidecar)
+            #   3. FITS header OBJCTRA/OBJCTDEC (mount log — least trusted)
+            #
+            # Mount logs occasionally carry the previous slew target's
+            # coords (we have seen M3 stamped into M13 frames).  SIMBAD-
+            # resolved values always describe the science target, so they
+            # are the authoritative fallback.
             header_coord = None
             try:
                 sample = files[0]
@@ -1749,23 +1748,43 @@ WHERE 1=CONTAINS(
             except Exception:
                 header_coord = None
 
-            # Decide which coordinate to use
+            simbad_coord = _load_simbad_target_coord(self.result_dir)
+
+            # Choose center, layered fallback with cross-checks against header
             center_coord = None
-            if header_coord is not None and self.target_coord is not None:
-                # Both available - check if they match
-                sep_deg = float(header_coord.separation(self.target_coord).deg)
-                if sep_deg > 5.0:
-                    L(f"[WCS] WARNING: FITS header coords differ by {sep_deg:.2f}deg from project_state, using header")
-                    center_coord = header_coord
-                else:
-                    center_coord = self.target_coord
+            center_source = "missing"
+
+            if self.target_coord is not None:
+                center_coord = self.target_coord
+                center_source = "project_state"
+            elif simbad_coord is not None:
+                center_coord = simbad_coord
+                center_source = "simbad_tsv"
             elif header_coord is not None:
                 center_coord = header_coord
-            elif self.target_coord is not None:
-                center_coord = self.target_coord
+                center_source = "fits_header"
+
+            # If a trusted target (project_state/simbad) and header disagree
+            # by more than 5 deg, warn loudly — keep the trusted target.
+            trusted_coord = self.target_coord or simbad_coord
+            if trusted_coord is not None and header_coord is not None:
+                sep_deg = float(header_coord.separation(trusted_coord).deg)
+                if sep_deg > 5.0:
+                    L(
+                        f"[WCS] WARNING: FITS header (OBJCTRA/DEC) differs by "
+                        f"{sep_deg:.2f}deg from {center_source}. Using "
+                        f"{center_source} center; header is likely a stale "
+                        f"mount log.",
+                        gui=True,
+                    )
 
             if center_coord is None:
-                raise RuntimeError("Target coordinate not set (SIMBAD/OBJCTRA/OBJCTDEC missing).")
+                raise RuntimeError(
+                    "Target coordinate not set. Resolve target in Step 1 "
+                    "(writes targets_simbad.tsv) or set parameters.toml "
+                    "target.ra_deg / target.dec_deg."
+                )
+            L(f"[WCS] Gaia center source = {center_source} ({center_coord.ra.deg:.6f}, {center_coord.dec.deg:.6f})")
 
             # Gaia query/cache
             if self._stop_requested:
@@ -2116,10 +2135,20 @@ WHERE 1=CONTAINS(
                             center_coord=center_coord,
                         )
 
+                        # Wipe APEX-managed meta from any previous solver before
+                        # writing this run's tags (raw WCS keys are overwritten
+                        # naturally by the solver).
+                        _reset_apex_wcs_meta(hdr)
+                        if solver == "astnet_wsl":
+                            hdr["WCSSRC"] = ("ASTNET_WSL", "WCS source (apex)")
+                        else:
+                            hdr["WCSSRC"] = ("ASTAP", "WCS source (apex)")
                         hdr["WCS_OK"] = (True, "WCS solve success")
                         hdr["WCSPIXI"] = (float(pix_arc), "pixscale input (arcsec/pix)")
                         if np.isfinite(pix_fit):
                             hdr["WCSPIXF"] = (float(pix_fit), "pixscale fit (arcsec/pix)")
+                        if isinstance(match_n, (int, float)) and int(match_n) > 0:
+                            hdr["WCSNST"] = (int(match_n), "WCS matched stars")
                         if refine_note:
                             hdr["WCSREFN"] = (str(refine_note)[:68], "refine note")
                         if np.isfinite(resid_med):
@@ -2385,230 +2414,14 @@ class AstrometryNetWorker(QThread):
         except Exception:
             return float("nan")
 
-    def _load_gaia_cache_if_ok(self, path: Path):
-        if not path.exists():
-            return None
-        try:
-            tab = Table.read(path, format="ascii.ecsv")
-            cols = [c.lower() for c in tab.colnames]
-            missing_var_flag = "phot_variable_flag" not in cols
-            for need in ("source_id", "ra", "dec"):
-                if need not in cols:
-                    return None
-            tab.rename_columns(tab.colnames, cols)
-            df = _coerce_source_id_int64(tab.to_pandas())
-            if df is not None and "phot_variable_flag" not in df.columns:
-                df["phot_variable_flag"] = ""
-            if df is not None:
-                df.attrs["missing_phot_variable_flag"] = bool(missing_var_flag)
-            return df
-        except Exception:
-            return None
-
-    def _query_gaia_vizier(self, center: SkyCoord, radius_deg: float, mag_max: float, timeout_s: float):
-        """VizieR mirror fallback (Strasbourg CDS). Used when ESA server is unavailable/blocked."""
-        try:
-            from astroquery.utils.tap.core import TapPlus
-        except ImportError:
-            raise RuntimeError("astroquery.utils.tap not available")
-        mag_where = f'AND "I/355/gaiadr3".Gmag <= {mag_max:.4f}' if np.isfinite(mag_max) and mag_max > 0 else ""
-        adql = f"""
-SELECT
-  "I/355/gaiadr3".Source AS source_id,
-  "I/355/gaiadr3".RA_ICRS AS ra,
-  "I/355/gaiadr3".DE_ICRS AS dec,
-  "I/355/gaiadr3".Gmag AS phot_g_mean_mag,
-  "I/355/gaiadr3".BPmag AS phot_bp_mean_mag,
-  "I/355/gaiadr3".RPmag AS phot_rp_mean_mag,
-  "I/355/gaiadr3".RUWE AS ruwe,
-  "I/355/gaiadr3".Plx AS parallax,
-  "I/355/gaiadr3".e_Plx AS parallax_error,
-  "I/355/gaiadr3".pmRA AS pmra,
-  "I/355/gaiadr3".e_pmRA AS pmra_error,
-  "I/355/gaiadr3".pmDE AS pmdec,
-  "I/355/gaiadr3".e_pmDE AS pmdec_error
-FROM "I/355/gaiadr3"
-WHERE 1=CONTAINS(
-    POINT('ICRS', "I/355/gaiadr3".RA_ICRS, "I/355/gaiadr3".DE_ICRS),
-    CIRCLE('ICRS', {center.ra.deg:.8f}, {center.dec.deg:.8f}, {radius_deg:.8f})
-)
-{mag_where}
-        """.strip()
-        tap = TapPlus(url="https://tapvizier.cds.unistra.fr/TAPVizieR/tap")
-        try:
-            # async mode: no MAXREC=2000 server-side cap (sync mode silently truncates)
-            job = _tap_launch_job_async(tap, adql, timeout_s=timeout_s)
-            tab = job.get_results()
-        except Exception as e:
-            raise RuntimeError(f"VizieR fallback query failed: {_exc_brief(e)}") from e
-        df = tab.to_pandas()
-        df.columns = [c.lower() for c in df.columns]
-        if "phot_variable_flag" not in df.columns:
-            df["phot_variable_flag"] = ""
-        if "bp_rp" not in df.columns and "phot_bp_mean_mag" in df.columns and "phot_rp_mean_mag" in df.columns:
-            bp = pd.to_numeric(df["phot_bp_mean_mag"], errors="coerce")
-            rp = pd.to_numeric(df["phot_rp_mean_mag"], errors="coerce")
-            df["bp_rp"] = bp - rp
-        if "phot_g_mean_mag" in df.columns and np.isfinite(mag_max):
-            g = pd.to_numeric(df["phot_g_mean_mag"], errors="coerce")
-            df = df[g.notna() & (g <= float(mag_max))]
-        return _coerce_source_id_int64(df)
-
-    def _query_gaia(self, center: SkyCoord, radius_deg: float, mag_max: float):
-        if not _HAS_GAIA:
-            raise RuntimeError("astroquery.gaia not available")
-        if self._stop_requested:
-            raise RuntimeError("stopped")
-        timeout_s = float(getattr(self.params.P, "gaia_timeout_s", 30.0))
-        mag_where = f"AND phot_g_mean_mag <= {mag_max:.4f}" if np.isfinite(mag_max) and mag_max > 0 else ""
-        adql = f"""
-    SELECT
-      source_id, ra, dec,
-      phot_g_mean_mag, phot_bp_mean_mag, phot_rp_mean_mag,
-      phot_variable_flag,
-      pmra, pmdec, pmra_error, pmdec_error,
-      parallax, parallax_error
-    FROM gaiadr3.gaia_source
-    WHERE 1=CONTAINS(
-        POINT('ICRS', ra, dec),
-        CIRCLE('ICRS', {center.ra.deg:.8f}, {center.dec.deg:.8f}, {radius_deg:.8f})
-    )
-    {mag_where}
-        """.strip()
-        Gaia.ROW_LIMIT = -1
-        if self._stop_requested:
-            raise RuntimeError("stopped")
-        try:
-            job = _tap_launch_job_async(Gaia, adql, timeout_s=timeout_s, dump_to_file=False)
-            tab = job.get_results()
-        except Exception as e:
-            err_str = str(e).lower()
-            if "ip" in err_str and any(w in err_str for w in ("disabled", "blocked", "banned", "heavy")):
-                cause = "IP_BANNED"
-            elif "404" in err_str or "job not found" in err_str:
-                cause = "SERVER_JOB_LOST"
-            elif any(c in err_str for c in ("503", "502", "500")):
-                cause = "SERVER_DOWN"
-            elif "timeout" in err_str or "timed out" in err_str:
-                cause = "TIMEOUT"
-            elif any(w in err_str for w in ("connection", "refused", "unreachable")):
-                cause = "NETWORK_ERROR"
-            elif ssl_error_reason(e):
-                cause = "SSL_CERTIFICATE_VERIFY_FAILED"
-            else:
-                cause = "UNKNOWN"
-            if cause in ("IP_BANNED", "SERVER_JOB_LOST", "SERVER_DOWN", "TIMEOUT", "NETWORK_ERROR"):
-                self.log_message.emit(f"[Gaia][WARN] ESA TAP failed [{cause}], trying VizieR fallback.")
-                try:
-                    df_viz = self._query_gaia_vizier(center, radius_deg, mag_max, timeout_s)
-                    self.log_message.emit(
-                        f"[Gaia][WARN] ESA TAP failed [{cause}] → VizieR fallback 사용 (N={len(df_viz)}). "
-                        f"mag_max={mag_max:.2f}. WCS-QC match rate가 예상보다 낮을 수 있음."
-                    )
-                    df_viz.attrs["gaia_source"] = "vizier_fallback"
-                    return df_viz
-                except Exception as e2:
-                    self.log_message.emit(f"[Gaia][WARN] VizieR fallback failed: {_gaia_failure_reason(e2)}")
-                    raise RuntimeError(
-                        f"Gaia TAP async query failed [{cause}]: {_exc_brief(e)}; "
-                        f"VizieR fallback also failed: {_exc_brief(e2)}"
-                    ) from e
-            raise RuntimeError(f"Gaia TAP async query failed [{cause}]: {_exc_brief(e)}") from e
-        if "phot_g_mean_mag" in tab.colnames and np.isfinite(mag_max):
-            tab = tab[np.isfinite(tab["phot_g_mean_mag"]) & (tab["phot_g_mean_mag"] <= mag_max)]
-        return _coerce_source_id_int64(tab.to_pandas())
-
     def _load_or_query_gaia(self, center: SkyCoord, radius_deg: float):
-        step5_out = step5_wcs_dir(self.result_dir)
-        step5_out.mkdir(parents=True, exist_ok=True)
-        cache_path = step5_out / "gaia_fov.ecsv"
-        meta_path = step5_out / "gaia_fov_meta.json"
-        retry = int(getattr(self.params.P, "gaia_retry", 2))
-        backoff_s = float(getattr(self.params.P, "gaia_backoff_s", 6.0))
-        mag_max_cfg = float(getattr(self.params.P, "gaia_mag_max", 18.0))
-        wcs_mag_max = float(getattr(self.params.P, "gaia_wcs_mag_max", 18.0))
-        if np.isfinite(mag_max_cfg) and np.isfinite(wcs_mag_max) and wcs_mag_max > 0:
-            mag_max = float(min(mag_max_cfg, wcs_mag_max))
-        else:
-            mag_max = mag_max_cfg
-        allow_no_cache = bool(getattr(self.params.P, "gaia_allow_no_cache", True))
-
-        cache_valid = False
-        df_cache = None
-        meta_probe = None
-        for cpath, mpath in [(cache_path, meta_path)]:
-            df_cache = self._load_gaia_cache_if_ok(cpath)
-            if df_cache is not None:
-                if bool(getattr(df_cache, "attrs", {}).get("missing_phot_variable_flag", False)) and _HAS_GAIA:
-                    df_cache = None
-                    continue
-                meta_probe = mpath
-                break
-
-        if df_cache is not None and meta_probe is not None and meta_probe.exists():
-            try:
-                meta = json.loads(meta_probe.read_text(encoding="utf-8"))
-                cached_ra = float(meta.get("center_ra_deg", 0))
-                cached_dec = float(meta.get("center_dec_deg", 0))
-                cached_radius = float(meta.get("radius_deg", 0))
-                dist_deg = np.hypot(center.ra.deg - cached_ra, center.dec.deg - cached_dec)
-                if dist_deg < 0.1 and cached_radius >= radius_deg * 0.9:
-                    cache_valid = True
-            except Exception:
-                pass
-        elif df_cache is not None:
-            cache_valid = True
-
-        if cache_valid and df_cache is not None:
-            return df_cache, "cache"
-        if not _HAS_GAIA:
-            if allow_no_cache:
-                return pd.DataFrame(), "no_gaia_module"
-            raise RuntimeError("astroquery.gaia not available and no cache")
-
-        last_err = None
-        for att in range(1, max(1, retry) + 1):
-            if self._stop_requested:
-                raise RuntimeError("stopped")
-            try:
-                df = self._query_gaia(center, radius_deg, mag_max)
-                df.columns = [c.lower() for c in df.columns]
-                try:
-                    df_out = _coerce_source_id_int64(df.copy())
-                    Table.from_pandas(df_out).write(cache_path, format="ascii.ecsv", overwrite=True)
-                    gaia_src_tag2 = df.attrs.get("gaia_source", "esa") if hasattr(df, "attrs") else "esa"
-                    meta_path.write_text(json.dumps({
-                        "center_ra_deg": float(center.ra.deg),
-                        "center_dec_deg": float(center.dec.deg),
-                        "radius_deg": float(radius_deg),
-                        "mag_max": float(mag_max),
-                        "n_stars": len(df),
-                        "gaia_source": gaia_src_tag2,
-                    }, indent=2), encoding="utf-8")
-                except Exception:
-                    pass
-                return df, df.attrs.get("gaia_source", "query") if hasattr(df, "attrs") else "query"
-            except Exception as e:
-                if self._stop_requested:
-                    raise RuntimeError("stopped")
-                last_err = e
-                if att < retry:
-                    slept = 0.0
-                    while slept < backoff_s:
-                        if self._stop_requested:
-                            raise RuntimeError("stopped")
-                        dt = min(0.25, backoff_s - slept)
-                        time.sleep(dt)
-                        slept += dt
-
-        df_cache = self._load_gaia_cache_if_ok(cache_path)
-        if df_cache is not None:
-            return df_cache, "cache(after_fail)"
-        if allow_no_cache:
-            if last_err is None:
-                return pd.DataFrame(), "fail_no_cache:unknown"
-            return pd.DataFrame(), f"fail_no_cache:{_gaia_failure_reason(last_err)}"
-        raise RuntimeError(f"Gaia query failed: {last_err}")
+        service = GaiaCatalogService(
+            self.params,
+            self.result_dir,
+            log_fn=self.log_message.emit,
+            stop_fn=lambda: self._stop_requested,
+        )
+        return service.load_or_query(center, radius_deg)
 
     def _load_fwhm_for_frame(self, fname: str):
         meta_json = self.cache_dir / f"detect_{fname}.json"
@@ -2826,7 +2639,7 @@ WHERE 1=CONTAINS(
         out["dx_med_px"] = float(np.nanmedian(dx)) if len(dx) else np.nan
         out["dy_med_px"] = float(np.nanmedian(dy)) if len(dy) else np.nan
         resid_med = float(np.nanmedian(r))
-        resid_mad = float(1.4826 * np.nanmedian(np.abs(r - resid_med)))
+        resid_mad = float(MAD_TO_SIGMA * np.nanmedian(np.abs(r - resid_med)))
         out["resid_med_px"] = resid_med
         out["resid_mad_px"] = resid_mad
         out["resid_p99_px"] = float(np.nanpercentile(r, 99))
@@ -3270,6 +3083,9 @@ WHERE 1=CONTAINS(
             try:
                 with fits.open(fits_path, mode="update", memmap=False) as hdul:
                     hdr = hdul[0].header
+                    # Wipe APEX-managed meta from a previous solver before
+                    # stamping our own. Raw WCS keys are overwritten below.
+                    _reset_apex_wcs_meta(hdr)
                     for key in new_hdr.keys():
                         if key.startswith(("CRVAL", "CRPIX", "CTYPE", "CUNIT", "CDELT",
                                            "CD1_", "CD2_", "PC1_", "PC2_", "CROTA",
@@ -3279,7 +3095,7 @@ WHERE 1=CONTAINS(
                             except Exception:
                                 pass
                     hdr["WCS_OK"] = (True, "WCS solve by astrometry.net (local)")
-                    hdr["WCSSRC"] = ("ASTNET_WSL", "WCS source")
+                    hdr["WCSSRC"] = ("ASTNET_WSL", "WCS source (apex)")
                 return
             except Exception:
                 time.sleep(0.4 * (i + 1))
@@ -3906,6 +3722,738 @@ WHERE 1=CONTAINS(
         self.finished.emit(summary)
 
 
+class InternalWcsWorker(QThread):
+    """WCS solver using the built-in Python engine (no external executables)."""
+
+    progress      = pyqtSignal(int, int, str)
+    log_message   = pyqtSignal(str)
+    frame_done    = pyqtSignal(str, dict)   # (fname, result_info)
+    finished      = pyqtSignal(dict)
+    error         = pyqtSignal(str)
+    worker_status = pyqtSignal(int, str, str, int)  # (slot, fname, status, pct)
+
+    def __init__(self, file_list, params, data_dir, result_dir,
+                 use_cropped=False,
+                 min_matches=8,
+                 rms_max_arcsec=2.0,
+                 advanced_params=None):
+        super().__init__()
+        self.file_list         = list(file_list)
+        self.params            = params
+        self.data_dir          = Path(data_dir)
+        self.result_dir        = Path(result_dir)
+        self.use_cropped       = use_cropped
+        self.min_matches       = int(min_matches)
+        self.rms_max_arcsec    = float(rms_max_arcsec)
+        self.advanced_params   = dict(advanced_params) if advanced_params else {}
+        self._stop             = False
+
+    def stop(self):
+        self._stop = True
+
+    def _log(self, msg: str) -> None:
+        self.log_message.emit(str(msg))
+
+    def _load_or_fetch_gaia(
+        self,
+        step5_out: Path,
+        approx_ra: float,
+        approx_dec: float,
+        P,
+        radius_deg: float | None = None,
+    ):
+        """Load Gaia catalog from cache, or query it if not present.
+
+        Returns ``(gaia_ra, gaia_dec, gaia_g, gaia_pmra, gaia_pmdec)`` numpy
+        arrays, or all-None on failure. PM columns are NaN-replaced with 0.0
+        so the solver can apply ``ra + pmra·dt/cos(dec)`` without branching on
+        missing data per star — Gaia DR3 has ≳20 % of faint sources without
+        PM, and treating those as zero-motion is the safe default at the
+        catalogue-fit residual level.
+        """
+        try:
+            service = GaiaCatalogService(
+                self.params,
+                self.result_dir,
+                log_fn=self._log,
+                stop_fn=lambda: self._stop,
+            )
+            center = SkyCoord(float(approx_ra) * u.deg, float(approx_dec) * u.deg)
+            radius_use = float(radius_deg) if radius_deg is not None else float("nan")
+            if not (0.05 < radius_use < 5.0):
+                fov_w = float(getattr(P, "fov_w_deg", 0.0))
+                fov_h = float(getattr(P, "fov_h_deg", 0.0))
+                radius_use = float(np.hypot(fov_w, fov_h)) / 2.0
+            if not (0.05 < radius_use < 5.0):
+                radius_use = 0.4
+            df, source = service.load_or_query(center, radius_use)
+            self._log(f"[Internal WCS] Gaia catalog source={source} N={len(df)}")
+            if df is None or df.empty:
+                return None, None, None, None, None
+            col_ra = "ra" if "ra" in df.columns else "ra_deg" if "ra_deg" in df.columns else None
+            col_dec = "dec" if "dec" in df.columns else "dec_deg" if "dec_deg" in df.columns else None
+            if col_ra is None or col_dec is None:
+                self._log("[Internal WCS] Gaia catalog has no RA/Dec columns.")
+                return None, None, None, None, None
+            ra = pd.to_numeric(df[col_ra], errors="coerce").to_numpy(float)
+            dec = pd.to_numeric(df[col_dec], errors="coerce").to_numpy(float)
+            if "phot_g_mean_mag" in df.columns:
+                g = pd.to_numeric(df["phot_g_mean_mag"], errors="coerce").to_numpy(float)
+            else:
+                g = None
+
+            def _col_zero_filled(name: str):
+                if name not in df.columns:
+                    return None
+                v = pd.to_numeric(df[name], errors="coerce").to_numpy(float)
+                v = np.where(np.isfinite(v), v, 0.0)
+                return v
+
+            pmra = _col_zero_filled("pmra")
+            pmdec = _col_zero_filled("pmdec")
+
+            ok = np.isfinite(ra) & np.isfinite(dec)
+            if g is not None and len(g) == len(ok):
+                g = g[ok]
+            if pmra is not None and len(pmra) == len(ok):
+                pmra = pmra[ok]
+            if pmdec is not None and len(pmdec) == len(ok):
+                pmdec = pmdec[ok]
+            return ra[ok], dec[ok], g, pmra, pmdec
+        except Exception as exc:
+            self._log(f"[Internal WCS] Shared Gaia service failed: {exc}")
+            return None, None, None, None, None
+
+    def _fits_path(self, fname: str) -> Path:
+        if self.use_cropped:
+            p = step2_cropped_dir(self.result_dir) / fname
+            if p.exists():
+                return p
+        return self.data_dir / fname
+
+    def _detect_sources_from_fits(self, fits_path: Path, max_sources: int = 2500):
+        """Small internal fallback detector for the WCS solver.
+
+        Step 5 normally consumes Step 4 detections, but a plate solver should not
+        become unusable just because the detection cache was not produced or was
+        too sparse.  This intentionally stays simple: robust background,
+        local-maxima, and brightest peaks.
+        """
+        try:
+            from scipy.ndimage import maximum_filter
+
+            data = fits.getdata(fits_path)
+            data = np.asarray(data, dtype=float)
+            if data.ndim > 2:
+                data = np.squeeze(data)
+            if data.ndim != 2:
+                return None, None
+
+            finite = np.isfinite(data)
+            if not finite.any():
+                return None, None
+            vals = data[finite]
+            med = float(np.nanmedian(vals))
+            mad = float(MAD_TO_SIGMA * np.nanmedian(np.abs(vals - med)))
+            if not np.isfinite(mad) or mad <= 0:
+                mad = float(np.nanstd(vals))
+            if not np.isfinite(mad) or mad <= 0:
+                return None, None
+
+            threshold = med + 5.0 * mad
+            local_max = maximum_filter(data, size=5, mode="nearest")
+            mask = finite & (data == local_max) & (data > threshold)
+            mask[:8, :] = False
+            mask[-8:, :] = False
+            mask[:, :8] = False
+            mask[:, -8:] = False
+            yy, xx = np.nonzero(mask)
+            if len(xx) == 0:
+                return None, None
+
+            flux = data[yy, xx] - med
+            order = np.argsort(np.where(np.isfinite(flux), flux, -np.inf))[::-1]
+            order = order[:max(1, int(max_sources))]
+            xy = np.column_stack([xx[order].astype(float), yy[order].astype(float)])
+            flux = flux[order].astype(float)
+            return xy, flux
+        except Exception as exc:
+            self._log(f"[Internal WCS] fallback detector failed: {exc}")
+            return None, None
+
+    def run(self):
+        """Solve WCS for every queued frame.
+
+        The entire body is wrapped in try/finally so that the worker
+        ALWAYS emits ``finished`` even when something silently explodes
+        (e.g. a missing PyInstaller hidden import for wcs_solver).
+        Without this guarantee the UI's Run button stays disabled and
+        the user has no way to recover short of closing the window.
+        """
+        import traceback as _tb_internal
+
+        crash_reason: str | None = None
+        n_ok = 0
+        total = len(self.file_list)
+        try:
+            self._run_body()
+            return
+        except ImportError as exc:
+            crash_reason = (
+                f"Internal solver dependency missing: {exc}.  "
+                "If this is an installed build, the wcs_solver module or one of "
+                "its scientific deps (scipy/astropy) was not bundled."
+            )
+            self._log(f"[Internal WCS] {crash_reason}")
+            self._log(_tb_internal.format_exc())
+        except Exception as exc:
+            crash_reason = f"Internal solver crashed: {exc}"
+            self._log(f"[Internal WCS] {crash_reason}")
+            self._log(_tb_internal.format_exc())
+        finally:
+            if crash_reason is not None:
+                try:
+                    self.error.emit(crash_reason)
+                except Exception:
+                    pass
+                try:
+                    self.finished.emit({
+                        "total": total,
+                        "ok": n_ok,
+                        "stopped": self._stop,
+                        "crashed": True,
+                    })
+                except Exception:
+                    pass
+
+    def _run_body(self):
+        from apex.analysis.astrometry import solve as solve_wcs_internal
+        from apex.utils.io_utils import read_ecsv_int64_source_id
+
+        P = self.params.P
+        result_dir = self.result_dir
+        step5_out  = step5_wcs_dir(result_dir)
+        step5_out.mkdir(parents=True, exist_ok=True)
+
+        # ── Pixel scale ───────────────────────────────────────────────────
+        approx_scale = float(getattr(P, "pixel_scale_arcsec", 0.0))
+        if not (approx_scale > 0):
+            self.error.emit(
+                "pixel_scale_arcsec not set in parameters.\n"
+                "Configure telescope/camera in parameters.toml first."
+            )
+            return
+
+        # ── Target coords ─────────────────────────────────────────────────
+        approx_ra  = float(getattr(P, "target_ra_deg",  float("nan")))
+        approx_dec = float(getattr(P, "target_dec_deg", float("nan")))
+
+        # Fallback: load from Step 1 SIMBAD-resolved targets file
+        if not (np.isfinite(approx_ra) and np.isfinite(approx_dec)):
+            from apex.utils.step_paths import step1_dir
+            simbad_path = step1_dir(result_dir) / "targets_simbad.tsv"
+            if simbad_path.exists():
+                try:
+                    sdf = pd.read_csv(simbad_path, sep="\t")
+                    if {"ra_deg", "dec_deg"} <= set(sdf.columns) and not sdf.empty:
+                        approx_ra  = float(sdf["ra_deg"].iloc[0])
+                        approx_dec = float(sdf["dec_deg"].iloc[0])
+                        name = str(sdf.get("name", pd.Series([""])).iloc[0])
+                        self._log(
+                            f"[Internal WCS] Target loaded from Step 1: "
+                            f"{name} ({approx_ra:.4f}, {approx_dec:.4f})"
+                        )
+                except Exception as exc:
+                    self._log(f"[Internal WCS] Step 1 SIMBAD read error: {exc}")
+
+        if not (np.isfinite(approx_ra) and np.isfinite(approx_dec)):
+            self.error.emit(
+                "Target RA/Dec not found.\n\n"
+                "Resolve the target in Step 1 first (writes step1_file_selection/targets_simbad.tsv)."
+            )
+            return
+
+        # ── Load Gaia catalog (download if not cached) ───────────────────
+        gaia_radius_deg = None
+        try:
+            for probe_name in self.file_list:
+                probe_path = self._fits_path(probe_name)
+                if not probe_path.exists():
+                    continue
+                with fits.open(probe_path, memmap=False) as hdul:
+                    ph = hdul[0].header
+                    pny = int(ph.get("NAXIS2", 0))
+                    pnx = int(ph.get("NAXIS1", 0))
+                if pnx > 0 and pny > 0:
+                    diag_deg = float(np.hypot(pnx, pny) * approx_scale / 3600.0)
+                    gaia_fudge = float(getattr(P, "gaia_radius_fudge", 1.35))
+                    gaia_radius_deg = max(0.4, 0.5 * diag_deg * max(gaia_fudge, 1.0) * 1.25)
+                    self._log(f"[Internal WCS] Gaia query radius={gaia_radius_deg:.4f}deg")
+                    break
+        except Exception as exc:
+            self._log(f"[Internal WCS] Gaia radius estimate failed: {exc}")
+        gaia_ra, gaia_dec, gaia_g, gaia_pmra, gaia_pmdec = self._load_or_fetch_gaia(
+            step5_out, approx_ra, approx_dec, P, radius_deg=gaia_radius_deg,
+        )
+        if gaia_ra is None:
+            self.error.emit(
+                "Gaia catalog unavailable and download failed.\n\n"
+                "Check internet connection or run the ASTAP tab once to cache "
+                "the Gaia catalogue."
+            )
+            return
+
+        # ── Per-frame solve (parallel across frames) ─────────────────────
+        # Matches the ASTAP / astnet worker pattern: extract per-frame work
+        # into a method, submit to ThreadPoolExecutor sized by
+        # get_parallel_workers(self.params). The heavy CPU inside the solver
+        # (KDTree builds, RANSAC, lstsq) is numpy/scipy and releases the GIL,
+        # so threads actually overlap. Each frame has its own FITS path so
+        # the in-place header write is race-free.
+        total   = len(self.file_list)
+        n_ok    = 0
+        n_qc_pass = 0
+        n_qc_not_evaluated = 0
+        results = {}
+
+        max_workers = get_parallel_workers(self.params)
+        max_workers = max(1, int(max_workers))
+        self._log(f"[Internal WCS] Solving {total} frames with {max_workers} worker(s)")
+
+        bundle = dict(
+            gaia_ra=gaia_ra, gaia_dec=gaia_dec, gaia_g=gaia_g,
+            gaia_pmra=gaia_pmra, gaia_pmdec=gaia_pmdec,
+            approx_ra=approx_ra, approx_dec=approx_dec,
+            approx_scale=approx_scale,
+            result_dir=result_dir,
+            solve_fn=solve_wcs_internal,
+        )
+
+        # Per-thread slot index for the Worker Status panel, same pattern as the
+        # ASTAP / astnet workers: a bounded queue hands each running thread a
+        # stable slot number so the panel shows one row per worker.
+        from queue import Queue as _Queue
+        _slot_q: _Queue = _Queue()
+        for _i in range(max_workers):
+            _slot_q.put(_i)
+
+        def _slotted_solve(filename: str):
+            slot = _slot_q.get()
+            try:
+                self.worker_status.emit(slot, filename, "Solving", 5)
+                out = self._solve_one_internal_frame(filename, bundle)
+                status = "Done" if out.get("ok") else "Failed"
+                self.worker_status.emit(slot, filename, status, 100)
+                return out
+            finally:
+                _slot_q.put(slot)
+
+        done_count = 0
+        with ThreadPoolExecutor(max_workers=max_workers) as ex:
+            fut_to_name = {
+                ex.submit(_slotted_solve, f): f
+                for f in self.file_list
+            }
+            for fut in as_completed(fut_to_name):
+                if self._stop:
+                    # Best-effort cancellation: outstanding futures still run
+                    # to completion (no way to interrupt a numpy kernel) but
+                    # we stop emitting progress and break out so the worker
+                    # exits promptly once they wind down.
+                    break
+                fname = fut_to_name[fut]
+                try:
+                    info = fut.result()
+                except Exception as exc:
+                    info = {"ok": False, "reason": f"unhandled: {exc}"}
+                    self._log(f"[Internal WCS] Unhandled error {fname}: {exc}")
+                results[fname] = info
+                if info.get("ok"):
+                    n_ok += 1
+                    if not bool(info.get("gaia_available", True)):
+                        n_qc_not_evaluated += 1
+                    elif bool(info.get("wcs_qc_pass", False)):
+                        n_qc_pass += 1
+                done_count += 1
+                self.progress.emit(done_count, total, fname)
+                self.frame_done.emit(fname, info)
+
+        self.finished.emit({
+            "total": total,
+            "ok": n_ok,
+            "wcs_qc_pass": n_qc_pass,
+            "wcs_qc_not_evaluated": n_qc_not_evaluated,
+            "stopped": self._stop,
+        })
+
+    def _solve_one_internal_frame(self, fname: str, bundle: dict) -> dict:
+        """Solve WCS for one frame. Thread-safe — only touches the per-frame
+        FITS file and uses signal-based logging back to the main thread.
+        """
+        gaia_ra      = bundle["gaia_ra"]
+        gaia_dec     = bundle["gaia_dec"]
+        gaia_g       = bundle["gaia_g"]
+        gaia_pmra    = bundle["gaia_pmra"]
+        gaia_pmdec   = bundle["gaia_pmdec"]
+        approx_ra    = bundle["approx_ra"]
+        approx_dec   = bundle["approx_dec"]
+        approx_scale = bundle["approx_scale"]
+        result_dir   = bundle["result_dir"]
+        solve_wcs_internal = bundle["solve_fn"]
+
+        _t_frame_start = time.time()
+
+        fits_path = self._fits_path(fname)
+        if not fits_path.exists():
+            self._log(f"[Internal WCS] Missing: {fname}")
+            return {"ok": False, "reason": "fits_not_found",
+                    "elapsed_s": time.time() - _t_frame_start}
+
+        # Load FITS shape + observation epoch (J-year) for Gaia PM update.
+        obs_epoch_jyear: float | None = None
+        try:
+            with fits.open(fits_path, memmap=False) as hdul:
+                hdr = hdul[0].header.copy()
+                _date_obs = hdr.get("DATE-OBS")
+                if _date_obs:
+                    try:
+                        from astropy.time import Time as _AT
+                        obs_epoch_jyear = float(_AT(_date_obs, scale="utc").jyear)
+                    except Exception:
+                        obs_epoch_jyear = None
+                ny = int(hdr.get("NAXIS2", 0))
+                nx = int(hdr.get("NAXIS1", 0))
+        except Exception as exc:
+            self._log(f"[Internal WCS] FITS read error {fname}: {exc}")
+            return {"ok": False, "reason": "fits_error",
+                    "elapsed_s": time.time() - _t_frame_start}
+
+        if ny == 0 or nx == 0:
+            return {"ok": False, "reason": "bad_shape",
+                    "elapsed_s": time.time() - _t_frame_start}
+
+        # Load Step 4 detections (with isolation weighting for dense fields).
+        det_candidates = [
+            self.params.P.cache_dir / f"detect_{fname}.csv",
+            step4_dir(result_dir) / f"detect_{fname}.csv",
+        ]
+        src_xy = None
+        src_flux = None
+        det_xy_for_qc = np.zeros((0, 2), dtype=float)
+        for dp in det_candidates:
+            if not dp.exists():
+                continue
+            try:
+                ddf = pd.read_csv(dp)
+                if not ({"x", "y"} <= set(ddf.columns)):
+                    continue
+
+                xy_all = ddf[["x", "y"]].to_numpy(float)
+                det_xy_for_qc = xy_all[np.isfinite(xy_all).all(axis=1)]
+
+                if "anchor_candidate" in ddf.columns:
+                    anchors = ddf[ddf["anchor_candidate"].astype(str)
+                                 .str.strip().str.lower()
+                                 .isin({"1", "true", "t", "yes", "y"})]
+                    if len(anchors) >= 12:
+                        ddf = anchors
+                        self._log(
+                            f"[Internal WCS] Using {len(anchors)} anchor stars "
+                            f"(isolated) for {fname}"
+                        )
+                elif "nearest_neighbor_fwhm" in ddf.columns:
+                    nn = pd.to_numeric(ddf["nearest_neighbor_fwhm"], errors="coerce")
+                    isolated = ddf[nn >= 3.0]
+                    if len(isolated) >= 12:
+                        ddf = isolated
+
+                xy = ddf[["x", "y"]].to_numpy(float)
+                valid = np.isfinite(xy).all(axis=1)
+                src_xy = xy[valid]
+                flux_col = next(
+                    (c for c in ("dao_flux", "flux", "peak_adu") if c in ddf.columns),
+                    None,
+                )
+                flux_arr = (
+                    pd.to_numeric(ddf[flux_col], errors="coerce").to_numpy(float)[valid]
+                    if flux_col else np.ones(valid.sum())
+                )
+                if "nearest_neighbor_fwhm" in ddf.columns:
+                    nn = pd.to_numeric(ddf["nearest_neighbor_fwhm"],
+                                       errors="coerce").to_numpy(float)[valid]
+                    nn = np.where(np.isfinite(nn) & (nn > 0), nn, 1.0)
+                    iso_weight = np.clip(nn / np.nanmedian(nn), 0.3, 3.0)
+                    src_flux = flux_arr * iso_weight
+                else:
+                    src_flux = flux_arr if flux_col else None
+                break
+            except Exception:
+                pass
+
+        if src_xy is None or len(src_xy) < 8:
+            src_xy_fb, src_flux_fb = self._detect_sources_from_fits(fits_path)
+            if src_xy_fb is not None and len(src_xy_fb) >= 8:
+                src_xy = src_xy_fb
+                src_flux = src_flux_fb
+                det_xy_for_qc = src_xy_fb
+                self._log(
+                    f"[Internal WCS] Step 4 detections missing/sparse; "
+                    f"fallback detector found {len(src_xy)} peaks for {fname}"
+                )
+            else:
+                self._log(f"[Internal WCS] No usable detections for {fname}")
+                return {"ok": False, "reason": "no_detections",
+                        "elapsed_s": time.time() - _t_frame_start}
+        if len(det_xy_for_qc) == 0:
+            det_xy_for_qc = np.asarray(src_xy, dtype=float)
+
+        # Solve. Normal mode trusts the Step 1 target centre enough to crop Gaia
+        # to the projected field. If that produces no robust solution, retry
+        # once in local-blind mode: same target tangent plane and pixel scale,
+        # but a wider Gaia window so RANSAC can solve translation.
+        solve_params = dict(self.advanced_params)
+        local_blind_fallback = bool(solve_params.pop("local_blind_fallback", True))
+        solve_params["local_blind"] = bool(solve_params.get("local_blind", False))
+        try:
+            result = solve_wcs_internal(
+                src_xy,
+                src_flux,
+                gaia_ra, gaia_dec, gaia_g,
+                approx_ra, approx_dec, approx_scale,
+                (ny, nx),
+                min_matches=self.min_matches,
+                log_fn=self._log,
+                gaia_pmra=gaia_pmra,
+                gaia_pmdec=gaia_pmdec,
+                obs_epoch_jyear=obs_epoch_jyear,
+                **solve_params,
+            )
+            retry_reason = None
+            if not result.converged:
+                retry_reason = "no_solution"
+            elif np.isfinite(result.rms_arcsec) and result.rms_arcsec > self.rms_max_arcsec:
+                retry_reason = f"rms_exceeded_{result.rms_arcsec:.2f}"
+            if (
+                local_blind_fallback
+                and retry_reason
+                and not bool(solve_params.get("local_blind", False))
+            ):
+                self._log(
+                    f"[Internal WCS] Local-blind retry for {fname} "
+                    f"after {retry_reason}"
+                )
+                retry_params = dict(solve_params)
+                retry_params["local_blind"] = True
+                retry_result = solve_wcs_internal(
+                    src_xy,
+                    src_flux,
+                    gaia_ra, gaia_dec, gaia_g,
+                    approx_ra, approx_dec, approx_scale,
+                    (ny, nx),
+                    min_matches=self.min_matches,
+                    log_fn=self._log,
+                    gaia_pmra=gaia_pmra,
+                    gaia_pmdec=gaia_pmdec,
+                    obs_epoch_jyear=obs_epoch_jyear,
+                    **retry_params,
+                )
+                if retry_result.converged or not result.converged:
+                    result = retry_result
+        except Exception as exc:
+            self._log(f"[Internal WCS] Solver error {fname}: {exc}")
+            return {"ok": False, "reason": f"solver_exception: {exc}",
+                    "elapsed_s": time.time() - _t_frame_start}
+
+        if not result.converged:
+            reason_line = ""
+            try:
+                for entry in reversed(result.log or []):
+                    s = str(entry).strip()
+                    low = s.lower()
+                    if any(tok in low for tok in (
+                        "ransac", "match_too_small", "no candidates",
+                        "no quad", "code matches", "rejected",
+                        "fit failed", "too few",
+                    )):
+                        reason_line = s
+                        break
+                if not reason_line and result.log:
+                    reason_line = str(result.log[-1]).strip()
+            except Exception:
+                reason_line = ""
+            reason_short = reason_line[:200] if reason_line else "no_solution"
+            self._log(f"[Internal WCS] No solution: {fname}  ({reason_short})")
+            return {"ok": False, "reason": reason_short,
+                    "elapsed_s": time.time() - _t_frame_start}
+
+        if np.isfinite(result.rms_arcsec) and result.rms_arcsec > self.rms_max_arcsec:
+            self._log(
+                f"[Internal WCS] RMS={result.rms_arcsec:.3f}\" > limit={self.rms_max_arcsec}\" → rejected: {fname}"
+            )
+            return {"ok": False, "reason": f"rms_exceeded_{result.rms_arcsec:.2f}",
+                    "elapsed_s": time.time() - _t_frame_start}
+
+        center_ra_deg = float("nan")
+        center_dec_deg = float("nan")
+        qc_metrics = _shared_empty_wcs_qc_metrics(n_detect=len(det_xy_for_qc))
+        qc_pass = False
+        qc_reason = "not_evaluated"
+        try:
+            wcs_hdr = result.wcs.to_header(relax=True)
+            try:
+                cx = (nx - 1) / 2.0
+                cy = (ny - 1) / 2.0
+                sky_c = result.wcs.pixel_to_world(cx, cy)
+                center_ra_deg = float(sky_c.ra.deg)
+                center_dec_deg = float(sky_c.dec.deg)
+            except Exception:
+                pass
+            try:
+                target_coord = SkyCoord(approx_ra * u.deg, approx_dec * u.deg, frame="icrs")
+                qc_metrics = _shared_compute_wcs_qc_metrics(
+                    self.params,
+                    w=result.wcs,
+                    det_xy=det_xy_for_qc,
+                    nx=nx,
+                    ny=ny,
+                    gaia_ra_deg=gaia_ra,
+                    gaia_dec_deg=gaia_dec,
+                    pix_input_arcsec=float(approx_scale),
+                    pix_fit_arcsec=float(result.scale_arcsec_per_px),
+                    center_coord=target_coord,
+                )
+                qc_pass, qc_reasons = _shared_evaluate_wcs_qc_pass(
+                    self.params, qc_metrics, wcs_ok=True,
+                )
+                qc_reason = ",".join(qc_reasons)
+            except Exception as exc:
+                qc_reason = f"qc_error:{exc}"
+            with fits.open(fits_path, mode="update", memmap=False) as hdul:
+                hdr_out = hdul[0].header
+                _reset_apex_wcs_meta(hdr_out)
+                for key, val in wcs_hdr.items():
+                    try:
+                        hdr_out[key] = val
+                    except Exception:
+                        pass
+                hdr_out["WCSSRC"] = ("APEX_INTERNAL", "WCS source (apex)")
+                hdr_out["WCS_OK"] = (True, "WCS solve success (APEX Internal)")
+                hdr_out["WCSPIXI"] = (float(approx_scale), "pixscale input (arcsec/pix)")
+                if np.isfinite(result.scale_arcsec_per_px):
+                    hdr_out["WCSPIXF"] = (float(result.scale_arcsec_per_px), "pixscale fit (arcsec/pix)")
+                if np.isfinite(result.rms_arcsec):
+                    hdr_out["WCSRMD"] = (float(result.rms_arcsec), "ref resid med (arcsec)")
+                if np.isfinite(result.rotation_deg):
+                    hdr_out["WCSROT"] = (float(result.rotation_deg), "WCS rotation (deg, E of N)")
+                if np.isfinite(center_ra_deg):
+                    hdr_out["WCSCRA"] = (float(center_ra_deg), "WCS center RA (deg)")
+                if np.isfinite(center_dec_deg):
+                    hdr_out["WCSCDEC"] = (float(center_dec_deg), "WCS center Dec (deg)")
+                if result.n_matches > 0:
+                    hdr_out["WCSNST"] = (int(result.n_matches), "WCS matched stars")
+                if getattr(result, "sip_order", 0):
+                    hdr_out["WCSSIP"] = (int(result.sip_order), "SIP distortion order")
+                hdr_out["WCSMOD"] = (str(getattr(result, "model", "TAN"))[:16], "WCS model")
+                hdul.flush()
+        except Exception as exc:
+            self._log(f"[Internal WCS] Header write error {fname}: {exc}")
+            return {"ok": False, "reason": f"header_write: {exc}",
+                    "elapsed_s": time.time() - _t_frame_start}
+
+        self._log(
+            f"[Internal WCS] ✓ {fname}  "
+            f"matches={result.n_matches}  RMS={result.rms_arcsec:.3f}\"  "
+            f"rot={result.rotation_deg:.1f}°  "
+            f"model={getattr(result, 'model', 'TAN')}  "
+            f"wcs_qc={'PASS' if qc_pass else 'FAIL'}"
+        )
+        info = {
+            "ok": True,
+            "wcs_ok": True,
+            "status": "ok",
+            "n_matches": result.n_matches,
+            "rms_arcsec": result.rms_arcsec,
+            "resid_med": result.rms_arcsec,
+            "rotation_deg": result.rotation_deg,
+            "flip_x": result.flip_x,
+            "flip_y": result.flip_y,
+            "model": getattr(result, "model", "TAN"),
+            "sip_order": int(getattr(result, "sip_order", 0) or 0),
+            "scale_arcsec_per_px": result.scale_arcsec_per_px,
+            "pix_fit": result.scale_arcsec_per_px,
+            "refine": f"m={int(result.n_matches)}",
+            "match_n": int(qc_metrics.get("n_match", 0) or 0),
+            "center_ra_deg": center_ra_deg,
+            "center_dec_deg": center_dec_deg,
+            "solver": "apex_internal",
+            "wcssrc": "APEX_INTERNAL",
+            "wcs_qc_pass": bool(qc_pass),
+            "wcs_qc_reason": qc_reason,
+            "elapsed_s": time.time() - _t_frame_start,
+        }
+        info.update(qc_metrics)
+        self._write_internal_sidecar(fname, info, approx_scale)
+        return info
+
+    def _write_internal_sidecar(self, fname: str, info: dict, pix_input: float) -> None:
+        """Write per-frame WCS metadata sidecar to cache_dir/wcs_solve/.
+
+        Mirrors the ASTAP/AstNet path so downstream steps (Step 6 QC,
+        diagnostics) can read solver provenance & residuals uniformly.
+        """
+        try:
+            meta_dir = Path(self.params.P.cache_dir) / "wcs_solve"
+            meta_dir.mkdir(parents=True, exist_ok=True)
+            payload = {
+                "fname": fname,
+                "ok": bool(info.get("ok", False)),
+                "wcs_ok": bool(info.get("ok", False)),
+                "solver": "apex_internal",
+                "wcssrc": info.get("wcssrc", "APEX_INTERNAL"),
+                "model": str(info.get("model", "TAN") or "TAN"),
+                "sip_order": int(info.get("sip_order", 0) or 0),
+                "pix_input_arcsec": float(pix_input) if np.isfinite(pix_input) else None,
+                "pix_fit_arcsec": (float(info["scale_arcsec_per_px"])
+                                    if np.isfinite(info.get("scale_arcsec_per_px", np.nan)) else None),
+                "rms_arcsec": (float(info["rms_arcsec"])
+                                if np.isfinite(info.get("rms_arcsec", np.nan)) else None),
+                "rotation_deg": (float(info["rotation_deg"])
+                                  if np.isfinite(info.get("rotation_deg", np.nan)) else None),
+                "center_ra_deg": (float(info["center_ra_deg"])
+                                   if np.isfinite(info.get("center_ra_deg", np.nan)) else None),
+                "center_dec_deg": (float(info["center_dec_deg"])
+                                    if np.isfinite(info.get("center_dec_deg", np.nan)) else None),
+                "n_matches": int(info.get("n_matches", 0) or 0),
+                "flip_x": bool(info.get("flip_x", False)),
+                "flip_y": bool(info.get("flip_y", False)),
+                "wcs_qc_pass": bool(info.get("wcs_qc_pass", False)),
+                "wcs_qc_reason": str(info.get("wcs_qc_reason", "") or ""),
+            }
+            for key in (
+                "n_detect", "n_catalog_in_fov", "n_match", "n_inlier",
+                "match_rate", "match_rate_cat", "match_rate_eff",
+                "match_radius_arcsec", "match_radius_px",
+                "resid_med_px", "resid_mad_px", "resid_p99_px",
+                "rms_px", "inlier_rate", "center_offset_arcsec",
+                "scale_delta_pct", "gaia_available",
+            ):
+                if key in info:
+                    value = info.get(key)
+                    try:
+                        if isinstance(value, (np.integer,)):
+                            value = int(value)
+                        elif isinstance(value, (np.floating, float)):
+                            value = float(value) if np.isfinite(value) else None
+                    except Exception:
+                        pass
+                    payload[key] = value
+            (meta_dir / f"wcs_{fname}.json").write_text(
+                json.dumps(payload, indent=2), encoding="utf-8"
+            )
+        except Exception as exc:
+            self._log(f"[Internal WCS] sidecar write skipped for {fname}: {exc}")
+
+
 class WcsPlateSolvingWindow(StepWindowBase):
     """Step 5: WCS Plate Solving"""
 
@@ -3932,9 +4480,29 @@ class WcsPlateSolvingWindow(StepWindowBase):
         self.restore_state()
 
     def setup_step_ui(self):
+        # ── Persistent "which solver ran each file?" banner ─────────────────
+        # The three tabs each only render their own solver's runs, so after a
+        # project re-open it is otherwise invisible which engine produced the
+        # current WCS for each frame. This banner reads self.results (loaded
+        # from wcs_solve_summary.csv) and prints a per-solver tally above the
+        # tabs so the answer is one glance away, regardless of which tab is
+        # active.
+        self.solver_breakdown_label = QLabel("")
+        self.solver_breakdown_label.setWordWrap(True)
+        self.solver_breakdown_label.setStyleSheet(
+            "QLabel { background-color: #ECEFF1; padding: 6px 10px;"
+            " border-radius: 4px; color: #37474F; }"
+        )
+        self.content_layout.addWidget(self.solver_breakdown_label)
+
         # Create tab widget
         self.tab_widget = QTabWidget()
         self.content_layout.addWidget(self.tab_widget)
+
+        # Internal (Python) Tab — first, no external tools required
+        self.internal_tab = QWidget()
+        self.setup_internal_tab()
+        self.tab_widget.addTab(self.internal_tab, "Internal (Python)")
 
         # ASTAP Tab
         self.astap_tab = QWidget()
@@ -3948,6 +4516,564 @@ class WcsPlateSolvingWindow(StepWindowBase):
 
         self.setup_log_window()
         self.populate_file_list()
+
+    def setup_internal_tab(self):
+        """Internal (Python) WCS solver — no external executables needed."""
+        layout = QVBoxLayout(self.internal_tab)
+
+        info = QLabel(
+            "Solve WCS using the built-in astnet-style quad-hash matcher and "
+            "Gaia refinement (numpy/scipy/astropy only — no external binary). "
+            "Needs Step 1 target RA/Dec and the Instrument pixel scale."
+        )
+        info.setWordWrap(True)
+        info.setStyleSheet("QLabel { background-color: #E8F5E9; padding: 10px; border-radius: 5px; }")
+        layout.addWidget(info)
+
+        # All Internal-solver parameters live in one dict edited by the
+        # parameter dialog — same pattern as ASTAP/astnet so the three tabs
+        # behave consistently.
+        self._internal_params = {
+            "min_matches": 8,
+            "rms_max_arcsec": 2.0,
+            "n_brightest_src": 350,
+            "n_brightest_cat": 900,
+            "quad_k_neighbor": 10,
+            "quad_neighbor_pool_factor": 3,
+            "quad_code_tol": 0.020,
+            "quad_scale_ratio_tol": 0.25,
+            "quad_max_per_side": 3000,
+            "ransac_inlier_radius_px": 4.0,
+            "ransac_max_trials": 4000,
+            "ransac_keep_candidates": 8,
+            "allow_reflection": True,
+            "local_blind_fallback": True,
+            "local_blind_radius_factor": 2.5,
+            "sip_degree": 3,
+            "sip_min_pairs": 30,
+            "sip_holdout_fraction": 0.25,
+            "sip_min_improvement": 0.10,
+        }
+
+        control_layout = QHBoxLayout()
+        btn_int_params = create_parameter_button("Internal Parameters")
+        btn_int_params.clicked.connect(self._open_internal_parameters_dialog)
+        control_layout.addWidget(btn_int_params)
+
+        self.run_bar_internal = RunControlBar(
+            "Run Internal Solver", "Log",
+            run_cb=self.run_wcs_internal_solver,
+            stop_cb=self.stop_wcs_internal_solver,
+            log_cb=self.show_log_window,
+        )
+        control_layout.addWidget(self.run_bar_internal)
+        layout.addLayout(control_layout)
+
+        progress_layout = QHBoxLayout()
+        self.internal_progress = QProgressBar()
+        self.internal_progress.setMinimum(0)
+        self.internal_progress.setMaximum(100)
+        self.internal_progress.setValue(0)
+        progress_layout.addWidget(self.internal_progress)
+
+        self.internal_status = QLabel("Ready")
+        self.internal_status.setMinimumWidth(350)
+        progress_layout.addWidget(self.internal_status)
+        layout.addLayout(progress_layout)
+
+        results_group = QGroupBox("Internal Solver Results")
+        results_layout = QVBoxLayout(results_group)
+
+        self.internal_results_table = QTableWidget()
+        self.internal_results_table.setColumnCount(8)
+        self.internal_results_table.setHorizontalHeaderLabels([
+            "File", "Status", "RA", "Dec", "PixScale", "Refine", "Resid(\")", "Elapsed (s)"
+        ])
+        self.internal_results_table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeToContents)
+        self.internal_results_table.horizontalHeader().setStretchLastSection(True)
+        self.internal_results_table.setSelectionBehavior(QAbstractItemView.SelectRows)
+        self.internal_results_table.setEditTriggers(QAbstractItemView.NoEditTriggers)
+        results_layout.addWidget(self.internal_results_table)
+
+        layout.addWidget(results_group)
+
+    # ── Shared run front-matter (all three solver tabs) ──────────────────
+    def _qc_filter_and_log(self, file_list=None):
+        """Apply the Step 4 QC frame filter and log the outcome.
+
+        Shared by the ASTAP / astrometry.net / Internal tabs so the QC line is
+        computed and worded identically everywhere. Returns the filtered file
+        list, or ``None`` when nothing remains (the caller should abort — a
+        warning dialog has already been shown).
+        """
+        src = list(self.file_list if file_list is None else file_list)
+        require_qc = bool(getattr(self.params.P, "wcs_require_qc_pass", True))
+        filtered, qc_info = filter_files_by_qc(
+            Path(self.params.P.result_dir), src, require_qc=require_qc,
+        )
+        if require_qc:
+            if qc_info.get("applied"):
+                self.log(f"[WCS][QC] Frame QC filter: {qc_info['kept']}/{qc_info['total']} kept.")
+            elif qc_info.get("path") is None:
+                self.log("[WCS][QC] frame_quality.csv not found; using all frames.")
+            else:
+                self.log(f"[WCS][QC] frame_quality.csv ignored ({qc_info['reason']}); using all frames.")
+        if not filtered:
+            QMessageBox.warning(self, "Warning", "No frames remain after Step 4 QC filtering.")
+            return None
+        return filtered
+
+    def _log_preflight(self, *, astap=False, astnet=False, gaia=False):
+        """Log a uniform ``[WCS][Preflight]`` header and return availability.
+
+        Each tab requests only the backends it actually uses, so no slow probe
+        runs unnecessarily (e.g. the Internal tab never spins up the WSL
+        astrometry.net check). The wording/format is shared so the preflight
+        header reads the same regardless of which tab launched the run.
+
+        Returns a dict like ``{"astap": (ok, detail), ...}`` for requested
+        backends only.
+        """
+        out: dict[str, tuple[bool, str]] = {}
+        if astap:
+            ok, detail = _check_astap_available(self.params)
+            self.log(f"[WCS][Preflight] ASTAP: {detail}")
+            out["astap"] = (ok, detail)
+        if astnet:
+            ok, detail = _check_astnet_available(self.params)
+            self.log(f"[WCS][Preflight] astrometry.net: {detail}")
+            out["astnet"] = (ok, detail)
+        if gaia:
+            ok, detail = _check_gaia_runtime_available()
+            self.log(f"[WCS][Preflight] Gaia: {detail}")
+            out["gaia"] = (ok, detail)
+        return out
+
+    def run_wcs_internal_solver(self):
+        if not self.file_list:
+            QMessageBox.warning(self, "Warning", "No files to process")
+            return
+        if hasattr(self, "_internal_worker") and self._internal_worker and \
+                self._internal_worker.isRunning():
+            return
+
+        self.log_text.clear()
+        file_list = self._qc_filter_and_log()
+        if file_list is None:
+            return
+
+        # Internal can still solve from a cached gaia_fov.ecsv even when the
+        # runtime probe is unavailable, so this is informational — no early
+        # return.
+        self._log_preflight(gaia=True)
+
+        self.internal_results_table.setRowCount(0)
+        # Drop any prior run's rows so a fresh Internal run starts from a
+        # clean slate. ASTAP / astnet handlers reset implicitly through their
+        # own paths; we do it explicitly here so cache writers below see only
+        # the current solver's output and never accidentally pick up stale
+        # ASTAP/astnet rows that share filenames.
+        self.results = {}
+        self._internal_run_results = {}
+
+        p = dict(self._internal_params)
+        min_matches = int(p.pop("min_matches"))
+        rms_max = float(p.pop("rms_max_arcsec"))
+
+        use_cropped = bool(getattr(self, "use_cropped", False))
+        self._internal_worker = InternalWcsWorker(
+            file_list,
+            self.params,
+            self.params.P.data_dir,
+            self.params.P.result_dir,
+            use_cropped=use_cropped,
+            min_matches=min_matches,
+            rms_max_arcsec=rms_max,
+            advanced_params=p,
+        )
+        self._internal_worker.progress.connect(self._on_internal_progress)
+        self._internal_worker.log_message.connect(self.log)
+        self._internal_worker.frame_done.connect(self._on_internal_frame_done)
+        self._internal_worker.finished.connect(self._on_internal_finished)
+        self._internal_worker.error.connect(self._on_internal_error)
+
+        # Wire the shared Worker Status panel so the Internal tab shows one row
+        # per parallel worker, just like the ASTAP / astnet tabs.
+        self.setup_log_window()
+        if hasattr(self, "_worker_panel") and self._worker_panel is not None:
+            self._worker_panel.clear()
+            self._internal_worker.worker_status.connect(self._worker_panel.update_worker)
+
+        self.run_bar_internal.set_running(True)
+        self.internal_progress.setValue(0)
+        self.internal_progress.setMaximum(len(file_list))
+        self.internal_status.setText("Solving…")
+        self._internal_worker.start()
+
+    def _on_internal_progress(self, i: int, total: int, fname: str):
+        self.internal_progress.setMaximum(max(total, 1))
+        self.internal_progress.setValue(int(i))
+        self.internal_status.setText(f"{i}/{total}  {fname}")
+
+    def stop_wcs_internal_solver(self):
+        if hasattr(self, "_internal_worker") and self._internal_worker:
+            self._internal_worker.stop()
+
+    def _open_internal_parameters_dialog(self):
+        """Edit Internal Solver parameters in a single dialog.
+
+        Same styling pattern as ASTAP / Astrometry.net parameter dialogs
+        (configure_parameter_dialog + grouped form).
+        """
+        from PyQt5.QtWidgets import (
+            QDialog, QFormLayout, QVBoxLayout, QSpinBox, QDoubleSpinBox,
+            QCheckBox, QDialogButtonBox, QGroupBox,
+        )
+
+        d = QDialog(self)
+        configure_parameter_dialog(d, "Internal Parameters", 560, 780)
+        root = QVBoxLayout(d)
+        p = self._internal_params
+
+        basic = QGroupBox("Basic")
+        bf = QFormLayout(basic)
+        sp_min = QSpinBox(); sp_min.setRange(4, 100); sp_min.setValue(int(p["min_matches"]))
+        sp_min.setToolTip("Reject solutions with fewer than this many matched stars")
+        bf.addRow("min_matches:", sp_min)
+        sp_rms = QDoubleSpinBox(); sp_rms.setRange(0.1, 10.0); sp_rms.setDecimals(2)
+        sp_rms.setSingleStep(0.1); sp_rms.setSuffix(" \"")
+        sp_rms.setValue(float(p["rms_max_arcsec"]))
+        sp_rms.setToolTip("Reject solutions with residual RMS above this")
+        bf.addRow("rms_max:", sp_rms)
+        root.addWidget(basic)
+
+        quad = QGroupBox("Quad matching")
+        qf = QFormLayout(quad)
+        sp_src = QSpinBox(); sp_src.setRange(20, 2000); sp_src.setValue(int(p["n_brightest_src"]))
+        sp_src.setToolTip("Brightest detected sources fed into quad construction")
+        qf.addRow("n_brightest_src:", sp_src)
+        sp_cat = QSpinBox(); sp_cat.setRange(20, 5000); sp_cat.setValue(int(p["n_brightest_cat"]))
+        sp_cat.setToolTip("Brightest in-field Gaia stars fed into quad construction. "
+                          "Crowded fields may need ≥500 so that halo stars enter the pool.")
+        qf.addRow("n_brightest_cat:", sp_cat)
+        sp_k = QSpinBox(); sp_k.setRange(4, 30); sp_k.setValue(int(p["quad_k_neighbor"]))
+        sp_k.setToolTip("Neighbour sample size per star for quad construction")
+        qf.addRow("quad_k_neighbor:", sp_k)
+        sp_pool = QSpinBox(); sp_pool.setRange(1, 8); sp_pool.setValue(int(p["quad_neighbor_pool_factor"]))
+        sp_pool.setToolTip("Sample neighbours from a wider pool; higher values add long baselines in crowded fields")
+        qf.addRow("quad_neighbor_pool_factor:", sp_pool)
+        sp_tol = QDoubleSpinBox(); sp_tol.setRange(0.001, 0.20); sp_tol.setDecimals(4)
+        sp_tol.setSingleStep(0.005); sp_tol.setValue(float(p["quad_code_tol"]))
+        sp_tol.setToolTip("L2 tolerance in 4-D code space for two quads to be a match")
+        qf.addRow("quad_code_tol:", sp_tol)
+        sp_sr = QDoubleSpinBox(); sp_sr.setRange(0.02, 1.0); sp_sr.setDecimals(3)
+        sp_sr.setSingleStep(0.05); sp_sr.setValue(float(p["quad_scale_ratio_tol"]))
+        sp_sr.setToolTip("Allowed |log(src_side / cat_side)| between matched quads")
+        qf.addRow("quad_scale_ratio_tol:", sp_sr)
+        sp_mq = QSpinBox(); sp_mq.setRange(100, 10000); sp_mq.setValue(int(p["quad_max_per_side"]))
+        sp_mq.setSingleStep(100)
+        sp_mq.setToolTip("Cap on quads kept per side (larger = slower but more thorough)")
+        qf.addRow("quad_max_per_side:", sp_mq)
+        root.addWidget(quad)
+
+        ransac = QGroupBox("RANSAC verification")
+        rf = QFormLayout(ransac)
+        sp_ir = QDoubleSpinBox(); sp_ir.setRange(0.5, 20.0); sp_ir.setDecimals(2)
+        sp_ir.setSingleStep(0.5); sp_ir.setValue(float(p["ransac_inlier_radius_px"]))
+        sp_ir.setSuffix(" px"); sp_ir.setToolTip("Inlier radius for the candidate similarity")
+        rf.addRow("ransac_inlier_radius_px:", sp_ir)
+        sp_mt = QSpinBox(); sp_mt.setRange(50, 20000); sp_mt.setValue(int(p["ransac_max_trials"]))
+        sp_mt.setSingleStep(100)
+        sp_mt.setToolTip("Maximum quad-pair candidates to test (runtime cap)")
+        rf.addRow("ransac_max_trials:", sp_mt)
+        sp_keep = QSpinBox(); sp_keep.setRange(1, 20); sp_keep.setValue(int(p["ransac_keep_candidates"]))
+        sp_keep.setToolTip("Distinct RANSAC candidates carried into final WCS fitting")
+        rf.addRow("ransac_keep_candidates:", sp_keep)
+        cb_refl = QCheckBox("Allow mirrored transform (image/sky parity flip)")
+        cb_refl.setChecked(bool(p["allow_reflection"]))
+        rf.addRow(cb_refl)
+        root.addWidget(ransac)
+
+        fallback = QGroupBox("Fallback")
+        lf = QFormLayout(fallback)
+        cb_lb = QCheckBox("Retry local-blind when normal solve fails")
+        cb_lb.setChecked(bool(p.get("local_blind_fallback", True)))
+        cb_lb.setToolTip(
+            "Retry once with a wider Gaia tangent-plane window. This is not "
+            "all-sky blind solving; Step 1 target RA/Dec and pixel scale are "
+            "still required."
+        )
+        lf.addRow(cb_lb)
+        sp_lb = QDoubleSpinBox(); sp_lb.setRange(1.0, 8.0); sp_lb.setDecimals(2)
+        sp_lb.setSingleStep(0.25); sp_lb.setValue(float(p.get("local_blind_radius_factor", 2.5)))
+        sp_lb.setToolTip("Gaia window radius in half-image-diagonal units for local-blind retry")
+        lf.addRow("local_blind_radius_factor:", sp_lb)
+        root.addWidget(fallback)
+
+        refine = QGroupBox("Refine")
+        ff = QFormLayout(refine)
+        sp_sip = QSpinBox(); sp_sip.setRange(0, 5); sp_sip.setValue(int(p["sip_degree"]))
+        sp_sip.setToolTip("SIP polynomial degree for distortion correction. "
+                          "0 = pure TAN. 2–3 typical. Needs ≥30 matched pairs to engage.")
+        ff.addRow("sip_degree:", sp_sip)
+        sp_sip_min = QSpinBox(); sp_sip_min.setRange(12, 300)
+        sp_sip_min.setValue(int(p.get("sip_min_pairs", 30)))
+        sp_sip_min.setToolTip("Minimum matched pairs required before SIP validation is attempted")
+        ff.addRow("sip_min_pairs:", sp_sip_min)
+        sp_sip_hold = QDoubleSpinBox(); sp_sip_hold.setRange(0.05, 0.50)
+        sp_sip_hold.setDecimals(2); sp_sip_hold.setSingleStep(0.05)
+        sp_sip_hold.setValue(float(p.get("sip_holdout_fraction", 0.25)))
+        sp_sip_hold.setToolTip("Fraction of matched pairs held out for SIP-vs-TAN validation")
+        ff.addRow("sip_holdout_fraction:", sp_sip_hold)
+        sp_sip_imp = QDoubleSpinBox(); sp_sip_imp.setRange(0.00, 0.50)
+        sp_sip_imp.setDecimals(2); sp_sip_imp.setSingleStep(0.05)
+        sp_sip_imp.setValue(float(p.get("sip_min_improvement", 0.10)))
+        sp_sip_imp.setToolTip("Minimum holdout RMS improvement required to adopt SIP")
+        ff.addRow("sip_min_improvement:", sp_sip_imp)
+        root.addWidget(refine)
+
+        bb = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
+        add_parameter_reset_button(
+            bb,
+            [
+                (sp_min, 8),
+                (sp_rms, 2.0),
+                (sp_src, 350),
+                (sp_cat, 900),
+                (sp_k, 10),
+                (sp_pool, 3),
+                (sp_tol, 0.020),
+                (sp_sr, 0.25),
+                (sp_mq, 3000),
+                (sp_ir, 4.0),
+                (sp_mt, 4000),
+                (sp_keep, 8),
+                (cb_refl, True),
+                (cb_lb, True),
+                (sp_lb, 2.5),
+                (sp_sip, 3),
+                (sp_sip_min, 30),
+                (sp_sip_hold, 0.25),
+                (sp_sip_imp, 0.10),
+            ],
+        )
+        bb.accepted.connect(d.accept)
+        bb.rejected.connect(d.reject)
+        root.addWidget(bb)
+
+        if d.exec_() != QDialog.Accepted:
+            return
+
+        self._internal_params.update({
+            "min_matches": int(sp_min.value()),
+            "rms_max_arcsec": float(sp_rms.value()),
+            "n_brightest_src": int(sp_src.value()),
+            "n_brightest_cat": int(sp_cat.value()),
+            "quad_k_neighbor": int(sp_k.value()),
+            "quad_neighbor_pool_factor": int(sp_pool.value()),
+            "quad_code_tol": float(sp_tol.value()),
+            "quad_scale_ratio_tol": float(sp_sr.value()),
+            "quad_max_per_side": int(sp_mq.value()),
+            "ransac_inlier_radius_px": float(sp_ir.value()),
+            "ransac_max_trials": int(sp_mt.value()),
+            "ransac_keep_candidates": int(sp_keep.value()),
+            "allow_reflection": bool(cb_refl.isChecked()),
+            "local_blind_fallback": bool(cb_lb.isChecked()),
+            "local_blind_radius_factor": float(sp_lb.value()),
+            "sip_degree": int(sp_sip.value()),
+            "sip_min_pairs": int(sp_sip_min.value()),
+            "sip_holdout_fraction": float(sp_sip_hold.value()),
+            "sip_min_improvement": float(sp_sip_imp.value()),
+        })
+
+    def _on_internal_frame_done(self, fname: str, info: dict):
+        """Add one row to the results table as each frame completes.
+
+        Column layout mirrors the Astrometry.net tab so the three solver tabs
+        present comparable data side-by-side. Also records the result into
+        ``self.results`` so that ``validate_step()`` recognises the step as
+        complete and the Next Step button enables — the ASTAP and astnet
+        worker callbacks already do the same.
+        """
+        from PyQt5.QtWidgets import QTableWidgetItem
+
+        if not hasattr(self, "_internal_run_results"):
+            self._internal_run_results = {}
+        self._internal_run_results[fname] = info
+        if bool(info.get("ok", False)):
+            self.results[fname] = info
+        else:
+            self.results.pop(fname, None)
+        # Cache writes (parity with ASTAP/astnet on_file_done):
+        #   * StepCacheManager manifest per successful frame
+        #   * Navigation refresh so the Next Step button enables as soon as
+        #     at least one frame is solved.
+        # Both are wrapped in broad try/except — a cache hiccup must never
+        # stop the per-frame loop from displaying results.
+        try:
+            if bool(info.get("ok", False)):
+                self._write_wcs_manifest(fname, info)
+        except Exception:
+            pass
+        try:
+            self.update_navigation_buttons()
+        except Exception:
+            pass
+        try:
+            self._refresh_solver_breakdown_label()
+        except Exception:
+            pass
+
+        t = self.internal_results_table
+        row = t.rowCount()
+        t.insertRow(row)
+        ok = bool(info.get("ok", False))
+
+        def _fmt_num(key, fmt):
+            v = info.get(key)
+            if v is None or not np.isfinite(float(v)):
+                return ""
+            return fmt.format(float(v))
+
+        if ok:
+            ra_s = _fmt_num("center_ra_deg", "{:.4f}")
+            dec_s = _fmt_num("center_dec_deg", "{:.4f}")
+            pix_s = _fmt_num("scale_arcsec_per_px", "{:.4f}\"/px")
+            model_s = str(info.get("model", "") or "").strip()
+            refine_s = f"{model_s} m={int(info.get('n_matches', 0) or 0)}".strip()
+            resid_s = _fmt_num("rms_arcsec", "{:.3f}")
+            status_s = "✓ QC" if self._boolish(info.get("wcs_qc_pass")) else "✓ QC?"
+        else:
+            ra_s = dec_s = pix_s = refine_s = resid_s = ""
+            status_s = "✗ " + str(info.get("reason", "fail"))
+
+        elapsed_s = _fmt_num("elapsed_s", "{:.2f}")
+
+        values = [fname, status_s, ra_s, dec_s, pix_s, refine_s, resid_s, elapsed_s]
+        for col, val in enumerate(values):
+            t.setItem(row, col, QTableWidgetItem(val))
+        set_table_row_background(t, row, self._wcs_result_row_background(info))
+        t.scrollToBottom()
+
+    def _on_internal_finished(self, summary: dict):
+        self.run_bar_internal.set_running(False)
+        ok = int(summary.get("ok", 0) or 0)
+        total = int(summary.get("total", 0) or 0)
+        stopped = bool(summary.get("stopped", False))
+        msg = f"Internal solver: {ok}/{total} solved"
+        if stopped:
+            msg += " (stopped)"
+        self.internal_status.setText(msg)
+        qc_not_eval = int(summary.get("wcs_qc_not_evaluated", 0) or 0)
+        qc_text = (
+            f"WCS-QC not evaluated: {qc_not_eval} (Gaia unavailable)"
+            if qc_not_eval
+            else f"WCS-QC pass: {summary.get('wcs_qc_pass', 0)}"
+        )
+        self.log(f"[Internal WCS] {msg} | {qc_text}")
+
+        # Final cache layer: write the solver-agnostic summary CSV. Without
+        # this, _restore_success_results_from_summary() on the next project
+        # open finds no rows for Internal-solved frames, the Next Step button
+        # stays disabled, and downstream QC tools that read this CSV miss the
+        # frames entirely. Wrapped so a write failure is logged but does not
+        # break the user-visible "N/N solved" completion.
+        try:
+            self._write_internal_summary_csv()
+        except Exception as exc:
+            self.log(f"[Internal WCS] summary CSV write failed: {exc}")
+
+    def _refresh_solver_breakdown_label(self) -> None:
+        """Re-tally ``self.results`` by WCS solver and update the banner.
+
+        Source of truth for the per-frame tag is, in order:
+          1. ``info["wcssrc"]``  (the FITS-header keyword written by the
+             worker — survives across project re-opens because it's also in
+             the summary CSV)
+          2. ``info["solver"]`` (legacy / Internal-native key)
+
+        Frames whose result row doesn't carry either key are bucketed under
+        ``"unknown"`` rather than silently dropped, so a missing tag is
+        visible instead of pretending everything was solved.
+        """
+        label = getattr(self, "solver_breakdown_label", None)
+        if label is None:
+            return
+        results = getattr(self, "results", {}) or {}
+        if not results:
+            label.setText("No WCS results yet — run a solver tab below.")
+            return
+        counts: dict[str, int] = {}
+        for info in results.values():
+            if not isinstance(info, dict):
+                continue
+            tag = info.get("wcssrc") or info.get("solver") or "unknown"
+            tag = str(tag).strip() or "unknown"
+            counts[tag] = counts.get(tag, 0) + 1
+        total = sum(counts.values())
+        parts = [f"<b>{tag}</b>: {n}" for tag, n in sorted(counts.items())]
+        label.setText(
+            f"Solved frames ({total}) — " + ",&nbsp; ".join(parts)
+        )
+
+    def _write_internal_summary_csv(self):
+        """Persist ``self.results`` to ``step5/wcs_solve_summary.csv``.
+
+        Schema-aligned with the ASTAP and astrometry.net writers so the same
+        downstream loaders (project re-open, Step 6 QC, diagnostics) work
+        unchanged. The Internal solver's native result dict uses slightly
+        different field names than ASTAP's, so we map the common columns:
+
+        ============================ ==========================================
+        Internal key                  Aliased to (for cross-solver consumers)
+        ============================ ==========================================
+        ``rms_arcsec``                ``resid_med``
+        ``scale_arcsec_per_px``       ``pix_fit``
+        ``elapsed_s``                 ``elapsed``
+        ``n_matches``                 ``refine`` (formatted as ``m={N}``)
+        ============================ ==========================================
+
+        We never drop the original field — the alias is added alongside so
+        Internal-specific consumers and the cross-solver loader both see what
+        they expect. ``file`` and ``fname`` are both written for the same
+        reason (``_restore_success_results_from_summary`` accepts either).
+        """
+        source_results = getattr(self, "_internal_run_results", None) or self.results
+        if not source_results:
+            return
+        rows: list[dict] = []
+        for fname, info in source_results.items():
+            row = dict(info) if isinstance(info, dict) else {}
+            row.setdefault("file", str(fname))
+            row.setdefault("fname", str(fname))
+            ok = bool(row.get("ok", False))
+            row["ok"] = ok
+            row.setdefault("status", "ok" if ok else "fail")
+            row.setdefault("solver", "apex_internal")
+            row.setdefault("wcssrc", "APEX_INTERNAL")
+            if "rms_arcsec" in row and "resid_med" not in row:
+                row["resid_med"] = row["rms_arcsec"]
+            if "scale_arcsec_per_px" in row and "pix_fit" not in row:
+                row["pix_fit"] = row["scale_arcsec_per_px"]
+            if "elapsed_s" in row and "elapsed" not in row:
+                row["elapsed"] = row["elapsed_s"]
+            if "n_matches" in row and "refine" not in row:
+                try:
+                    row["refine"] = f"m={int(row.get('n_matches', 0) or 0)}"
+                except Exception:
+                    row["refine"] = ""
+            rows.append(row)
+        step5_out = step5_wcs_dir(self.params.P.result_dir)
+        step5_out.mkdir(parents=True, exist_ok=True)
+        df = pd.DataFrame(rows)
+        out_path = step5_out / "wcs_solve_summary.csv"
+        df.to_csv(out_path, index=False)
+        self.log(f"[Internal WCS] Summary CSV: {len(df)} rows → {out_path.name}")
+
+    def _on_internal_error(self, msg: str):
+        self.run_bar_internal.set_running(False)
+        self.log(f"[Internal WCS] ERROR: {msg}")
+        QMessageBox.warning(self, "Internal WCS Solver Error", msg)
 
     def setup_astap_tab(self):
         """Setup ASTAP tab UI"""
@@ -4086,20 +5212,23 @@ class WcsPlateSolvingWindow(StepWindowBase):
         best_frame = None
         best_count = 0
 
+        # Use the shared QC summary instead of re-reading every detect_*.csv.
+        nsrc_map: dict[str, int] = {}
+        fq_path = resolve_frame_quality_path(self.params.P.result_dir)
+        if fq_path is not None:
+            try:
+                fq_df = pd.read_csv(fq_path, usecols=["file", "n_sources"])
+                for f, n in zip(fq_df["file"], fq_df["n_sources"]):
+                    if pd.notna(n):
+                        nsrc_map[frame_name(f)] = int(n)
+            except Exception:
+                pass
+
         for fname in self.file_list:
-            detect_csv = self.params.P.cache_dir / f"detect_{fname}.csv"
-            if not detect_csv.exists():
-                alt = step4_dir(self.params.P.result_dir) / f"detect_{fname}.csv"
-                if alt.exists():
-                    detect_csv = alt
-            if detect_csv.exists():
-                try:
-                    df = pd.read_csv(detect_csv)
-                    if len(df) > best_count:
-                        best_count = len(df)
-                        best_frame = fname
-                except Exception:
-                    pass
+            n = nsrc_map.get(fname)
+            if n is not None and n > best_count:
+                best_count = n
+                best_frame = fname
 
         if best_frame:
             for i in range(self.ref_frame_list.count()):
@@ -4119,26 +5248,15 @@ class WcsPlateSolvingWindow(StepWindowBase):
         if not self.file_list:
             QMessageBox.warning(self, "Warning", "No frames found to solve")
             return
-        file_list = list(self.file_list)
-        require_qc = bool(getattr(self.params.P, "wcs_require_qc_pass", True))
-        file_list, qc_info = filter_files_by_qc(
-            Path(self.params.P.result_dir),
-            file_list,
-            require_qc=require_qc,
-        )
-        if require_qc:
-            if qc_info.get("applied"):
-                self.log(f"[WCS][QC] Frame QC filter: {qc_info['kept']}/{qc_info['total']} kept.")
-            elif qc_info.get("path") is None:
-                self.log("[WCS][QC] frame_quality.csv not found; using all frames.")
-            else:
-                self.log(f"[WCS][QC] frame_quality.csv ignored ({qc_info['reason']}); using all frames.")
-        if not file_list:
-            QMessageBox.warning(self, "Warning", "No frames remain after Step 4 QC filtering.")
+
+        self.log_text.clear()
+        file_list = self._qc_filter_and_log()
+        if file_list is None:
             return
 
-        astnet_ok, astnet_detail = _check_astnet_available(self.params)
-        self.log(f"[WCS][Preflight] astrometry.net: {astnet_detail}")
+        pf = self._log_preflight(astnet=True, gaia=True)
+        astnet_ok, astnet_detail = pf["astnet"]
+        gaia_ok, gaia_detail = pf["gaia"]
         if not astnet_ok:
             self.astrometrynet_status.setText("solve-field not found or not configured")
             QMessageBox.warning(
@@ -4150,8 +5268,6 @@ class WcsPlateSolvingWindow(StepWindowBase):
             )
             return
 
-        gaia_ok, gaia_detail = _check_gaia_runtime_available()
-        self.log(f"[WCS][Preflight] Gaia: {gaia_detail}")
         if not gaia_ok:
             QMessageBox.warning(
                 self,
@@ -4238,10 +5354,19 @@ class WcsPlateSolvingWindow(StepWindowBase):
         self.astrometrynet_results_table.setItem(row, 5, QTableWidgetItem(str(refine) if refine else "-"))
         self.astrometrynet_results_table.setItem(row, 6, QTableWidgetItem(f"{resid_med:.2f}" if np.isfinite(resid_med) else "-"))
         self.astrometrynet_results_table.setItem(row, 7, QTableWidgetItem(f"{elapsed:.1f}" if np.isfinite(elapsed) and elapsed > 0 else "-"))
+        set_table_row_background(
+            self.astrometrynet_results_table,
+            row,
+            self._wcs_result_row_background(result),
+        )
 
         if result.get("ok"):
             self.results[filename] = result
             self.log(f"Astrometry.net solved: {filename} (RA={result.get('ra', 0):.4f}, Dec={result.get('dec', 0):.4f})")
+        try:
+            self._refresh_solver_breakdown_label()
+        except Exception:
+            pass
 
     def on_astrometrynet_error(self, filename, error):
         self.log(f"Astrometry.net ERROR {filename}: {error}")
@@ -4259,6 +5384,14 @@ class WcsPlateSolvingWindow(StepWindowBase):
                 # results에도 업데이트
                 if filename in self.results:
                     self.results[filename].update(result)
+                    row_result = self.results[filename]
+                else:
+                    row_result = result
+                set_table_row_background(
+                    self.astrometrynet_results_table,
+                    row,
+                    self._wcs_result_row_background(row_result),
+                )
                 break
 
     def on_astrometrynet_finished(self, summary):
@@ -4324,22 +5457,27 @@ class WcsPlateSolvingWindow(StepWindowBase):
 
         self.file_list = list(files)
 
+        # Source counts for tooltips come from step4's frame_quality.csv (the
+        # shared QC SSOT) — one read instead of opening every detect_*.csv on
+        # the main thread, which used to add multiple seconds to window open.
+        nsrc_map: dict[str, int] = {}
+        fq_path = resolve_frame_quality_path(self.params.P.result_dir)
+        if fq_path is not None:
+            try:
+                fq_df = pd.read_csv(fq_path, usecols=["file", "n_sources"])
+                for f, n in zip(fq_df["file"], fq_df["n_sources"]):
+                    if pd.notna(n):
+                        nsrc_map[frame_name(f)] = int(n)
+            except Exception:
+                pass
+
         # Also populate ref_frame_list for Astrometry.net tab
         self.ref_frame_list.clear()
         for fname in self.file_list:
             item = QListWidgetItem(fname)
-            # Add star count info if available
-            detect_csv = self.params.P.cache_dir / f"detect_{fname}.csv"
-            if not detect_csv.exists():
-                alt = step4_dir(self.params.P.result_dir) / f"detect_{fname}.csv"
-                if alt.exists():
-                    detect_csv = alt
-            if detect_csv.exists():
-                try:
-                    df = pd.read_csv(detect_csv)
-                    item.setToolTip(f"{len(df)} sources detected")
-                except Exception:
-                    pass
+            n = nsrc_map.get(fname)
+            if n is not None:
+                item.setToolTip(f"{n} sources detected")
             self.ref_frame_list.addItem(item)
 
     def open_parameters_dialog(self):
@@ -4528,6 +5666,34 @@ class WcsPlateSolvingWindow(StepWindowBase):
         gaia_form.addRow("Gaia cache miss:", self.param_gaia_allow_no_cache)
 
         buttons = QDialogButtonBox(QDialogButtonBox.Save | QDialogButtonBox.Cancel)
+        add_parameter_reset_button(
+            buttons,
+            [
+                (self.param_astap_exe, "C:/Program Files/astap/astap_cli.exe"),
+                (self.param_timeout, 120.0),
+                (self.param_radius, 8.0),
+                (self.param_astap_db, "D50"),
+                (self.param_annotate_variables, False),
+                (self.param_fov_fudge, 1.0),
+                (self.param_downsample, 2),
+                (self.param_max_stars, 500),
+                (self.param_max_workers, 4),
+                (self.param_require_qc, True),
+                (self.param_refine_enable, True),
+                (self.param_refine_max_match, 600),
+                (self.param_refine_match_r, 2.0),
+                (self.param_refine_min_match, 25),
+                (self.param_gaia_fudge, 1.35),
+                (self.param_gaia_mag_max, 25.0),
+                (self.param_gaia_wcs_mag_max, 18.0),
+                (self.param_ref_gaia_match_tol, 2.0),
+                (self.param_gaia_g_limit, 25.0),
+                (self.param_gaia_retry, 2),
+                (self.param_gaia_timeout, 30.0),
+                (self.param_gaia_backoff, 6.0),
+                (self.param_gaia_allow_no_cache, True),
+            ],
+        )
         buttons.accepted.connect(lambda: self.save_parameters(dialog))
         buttons.rejected.connect(dialog.reject)
         layout.addWidget(buttons)
@@ -4641,6 +5807,25 @@ class WcsPlateSolvingWindow(StepWindowBase):
         retry_form.addRow("Blind CPU Limit:", self.param_astnet_blind_cpulimit)
 
         buttons = QDialogButtonBox(QDialogButtonBox.Save | QDialogButtonBox.Cancel)
+        add_parameter_reset_button(
+            buttons,
+            [
+                (self.param_astnet_enable, True),
+                (self.param_astnet_use_wsl, True),
+                (self.param_astnet_command, "solve-field"),
+                (self.param_astnet_timeout, 300.0),
+                (self.param_astnet_downsample, 2),
+                (self.param_astnet_scale_low, 0.3),
+                (self.param_astnet_scale_high, 0.5),
+                (self.param_astnet_radius, 30.0),
+                (self.param_astnet_keep_outputs, True),
+                (self.param_astnet_use_cache, True),
+                (self.param_astnet_max_objs, 2000),
+                (self.param_astnet_cpulimit, 30.0),
+                (self.param_astnet_blind_retry, True),
+                (self.param_astnet_blind_cpulimit, 120.0),
+            ],
+        )
         buttons.accepted.connect(lambda: self.save_astrometrynet_parameters(dialog))
         buttons.rejected.connect(dialog.reject)
         layout.addWidget(buttons)
@@ -4713,38 +5898,21 @@ class WcsPlateSolvingWindow(StepWindowBase):
             return
         if self.worker and self.worker.isRunning():
             return
-        file_list = list(self.file_list)
-        require_qc = bool(getattr(self.params.P, "wcs_require_qc_pass", True))
-        file_list, qc_info = filter_files_by_qc(
-            Path(self.params.P.result_dir),
-            file_list,
-            require_qc=require_qc,
-        )
-        qc_log = None
-        if require_qc:
-            if qc_info.get("applied"):
-                qc_log = f"[WCS][QC] Frame QC filter: {qc_info['kept']}/{qc_info['total']} kept."
-            elif qc_info.get("path") is None:
-                qc_log = "[WCS][QC] frame_quality.csv not found; using all frames."
-            else:
-                qc_log = f"[WCS][QC] frame_quality.csv ignored ({qc_info['reason']}); using all frames."
-        if not file_list:
-            QMessageBox.warning(self, "Warning", "No frames remain after Step 4 QC filtering.")
-            return
 
         self.results = {}
         self.results_table.setRowCount(0)
         self.log_text.clear()
-        if qc_log:
-            self.log(qc_log)
+        file_list = self._qc_filter_and_log()
+        if file_list is None:
+            return
         self.stop_requested = False
 
-        astap_ok, astap_detail = _check_astap_available(self.params)
+        astap_ok, astap_detail = self._log_preflight(astap=True)["astap"]
         astnet_enabled = bool(getattr(self.params.P, "astnet_local_enable", False))
-        self.log(f"[WCS][Preflight] ASTAP: {astap_detail}")
+        # astrometry.net is a fallback for ASTAP: only probe it (slow WSL spin-up)
+        # when ASTAP is unavailable, otherwise log a deferred note instead.
         if astnet_enabled and not astap_ok:
-            astnet_ok, astnet_detail = _check_astnet_available(self.params)
-            self.log(f"[WCS][Preflight] astrometry.net: {astnet_detail}")
+            astnet_ok, astnet_detail = self._log_preflight(astnet=True)["astnet"]
         else:
             astnet_ok = False
             astnet_detail = (
@@ -4755,8 +5923,7 @@ class WcsPlateSolvingWindow(StepWindowBase):
             if not astap_ok:
                 self.log(f"[WCS][Preflight] astrometry.net: {astnet_detail}")
 
-        gaia_ok, gaia_detail = _check_gaia_runtime_available()
-        self.log(f"[WCS][Preflight] Gaia: {gaia_detail}")
+        gaia_ok, gaia_detail = self._log_preflight(gaia=True)["gaia"]
         if not gaia_ok:
             QMessageBox.warning(
                 self,
@@ -4862,6 +6029,18 @@ class WcsPlateSolvingWindow(StepWindowBase):
         status = str(result.get("status", "")).strip().lower()
         return status in {"ok", "ok_astnet_wsl", "solved"}
 
+    @classmethod
+    def _wcs_result_row_background(cls, result: dict) -> str:
+        ok = cls._is_successful_wcs_result(result)
+        warning = False
+        if ok and isinstance(result, dict):
+            if "wcs_qc_pass" in result and not cls._boolish(result.get("wcs_qc_pass")):
+                warning = True
+            refine = str(result.get("refine", "") or "").strip().lower()
+            if refine.startswith("match_too_small") or refine.startswith("error"):
+                warning = True
+        return status_row_background(ok, warning=warning)
+
     def _restore_success_results_from_summary(self):
         summary_path = step5_wcs_dir(self.params.P.result_dir) / "wcs_solve_summary.csv"
         if not summary_path.exists():
@@ -4888,6 +6067,10 @@ class WcsPlateSolvingWindow(StepWindowBase):
 
         if restored:
             self.results = restored
+        try:
+            self._refresh_solver_breakdown_label()
+        except Exception:
+            pass
 
     def _get_wcs_cache_mgr(self) -> StepCacheManager:
         if self._wcs_cache_mgr is None:
@@ -4952,6 +6135,10 @@ class WcsPlateSolvingWindow(StepWindowBase):
             self.results[filename] = result
         else:
             self.results.pop(filename, None)
+        try:
+            self._refresh_solver_breakdown_label()
+        except Exception:
+            pass
         row = self.results_table.rowCount()
         self.results_table.insertRow(row)
         self.results_table.setItem(row, 0, QTableWidgetItem(filename))
@@ -4975,6 +6162,8 @@ class WcsPlateSolvingWindow(StepWindowBase):
         self.results_table.setItem(row, 4, QTableWidgetItem(resid_str))
         elapsed = result.get("elapsed", 0.0)
         self.results_table.setItem(row, 5, QTableWidgetItem(f"{elapsed:.1f}"))
+        set_table_row_background(self.results_table, row, self._wcs_result_row_background(result))
+        self.results_table.scrollToBottom()
         pix_fit_log = result.get("pix_fit")
         pix_log = f"{pix_fit_log:.4f}" if isinstance(pix_fit_log, float) and np.isfinite(pix_fit_log) else "-"
         resid_log = result.get("resid_med")
@@ -5045,6 +6234,7 @@ class WcsPlateSolvingWindow(StepWindowBase):
             "gaia_timeout_s": getattr(self.params.P, "gaia_timeout_s", 30.0),
             "gaia_backoff_s": getattr(self.params.P, "gaia_backoff_s", 6.0),
             "gaia_allow_no_cache": getattr(self.params.P, "gaia_allow_no_cache", True),
+            "internal_params": dict(getattr(self, "_internal_params", {}) or {}),
         }
         self.project_state.store_step_data("wcs_plate_solve", state_data)
 
@@ -5054,5 +6244,10 @@ class WcsPlateSolvingWindow(StepWindowBase):
             for key, val in state_data.items():
                 if hasattr(self.params.P, key):
                     setattr(self.params.P, key, val)
+            internal_params = state_data.get("internal_params")
+            if isinstance(internal_params, dict) and hasattr(self, "_internal_params"):
+                for key, val in internal_params.items():
+                    if key in self._internal_params:
+                        self._internal_params[key] = val
         self._restore_success_results_from_summary()
         self.update_navigation_buttons()
