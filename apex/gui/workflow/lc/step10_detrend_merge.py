@@ -133,10 +133,10 @@ def _load_headers_table(result_dir: Path) -> pd.DataFrame:
 
 
 def _load_check_star_for_plot(result_dir: Path, filt: str | None = None):
-    """Load check star CSV from step10 output for plotting. Returns (check_id, df_or_None)."""
+    """Load check star CSV from lc_lightcurve/ for plotting. Returns (check_id, df_or_None)."""
     try:
-        from .step9_lightcurve_builder import _load_check_star_csv
-        check_id, df = _load_check_star_csv(result_dir, filt=filt)
+        from apex.analysis.light_curve.check_star_io import load_check_star_csv
+        check_id, df = load_check_star_csv(result_dir, filt=filt)
         return check_id, (df if not df.empty else None)
     except Exception:
         return None, None

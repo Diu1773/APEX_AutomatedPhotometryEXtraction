@@ -45,6 +45,7 @@ from apex.analysis.light_curve.period_io_service import (
     load_period_lightcurve_csv,
     save_period_analysis_outputs,
 )
+from apex.utils.common_helpers import normalize_filter_key as _normalize_filter_key
 from apex.utils.io_utils import read_csv_int64_source_id, coerce_int64_source_id
 from apex.utils.step_paths_lc import (
     step8_selection_dir,
@@ -56,10 +57,10 @@ from apex.utils.step_paths_lc import (
 
 
 def _load_check_star_for_plot(result_dir: Path, filt: str | None = None):
-    """Load check star CSV from step10 output for plotting. Returns (check_id, df_or_None)."""
+    """Load check star CSV from lc_lightcurve/ for plotting. Returns (check_id, df_or_None)."""
     try:
-        from .step9_lightcurve_builder import _load_check_star_csv
-        check_id, df = _load_check_star_csv(result_dir, filt=filt)
+        from apex.analysis.light_curve.check_star_io import load_check_star_csv
+        check_id, df = load_check_star_csv(result_dir, filt=filt)
         return check_id, (df if not df.empty else None)
     except Exception:
         return None, None
@@ -70,7 +71,7 @@ def _load_step9_source_to_id_map(result_dir: Path, flt: str | None = None) -> di
     if not step9_out.exists():
         return {}
 
-    key = str(flt or "").strip().lower()
+    key = _normalize_filter_key(flt)
     candidates: list[tuple[Path, str]] = []
     if key:
         candidates.extend(
@@ -409,6 +410,25 @@ class PeriodAnalysisWindow(StepWindowBase):
         self.results_table.horizontalHeader().setStretchLastSection(True)
         results_layout.addWidget(self.results_table)
 
+        # Bootstrap FAP controls
+        bsfap_row = QHBoxLayout()
+        bsfap_row.addWidget(QLabel("Bootstrap FAP (LS only):"))
+        self.spin_bootstrap_n = QSpinBox()
+        self.spin_bootstrap_n.setRange(100, 10000)
+        self.spin_bootstrap_n.setSingleStep(100)
+        self.spin_bootstrap_n.setValue(1000)
+        self.spin_bootstrap_n.setToolTip("Monte-Carlo 반복 수 (많을수록 정확, 느림)")
+        bsfap_row.addWidget(self.spin_bootstrap_n)
+        self.btn_bootstrap = QPushButton("Bootstrap FAP 계산")
+        self.btn_bootstrap.setToolTip("분석 완료 후 LS 피크에 대한 Bootstrap FAP를 계산합니다")
+        self.btn_bootstrap.setEnabled(False)
+        self.btn_bootstrap.clicked.connect(self._run_bootstrap_fap)
+        bsfap_row.addWidget(self.btn_bootstrap)
+        self.bootstrap_progress = QLabel("")
+        bsfap_row.addWidget(self.bootstrap_progress)
+        bsfap_row.addStretch()
+        results_layout.addLayout(bsfap_row)
+
         self.tabs.addTab(results_tab, "Results")
 
         self.content_layout.addWidget(self.tabs)
@@ -446,9 +466,10 @@ class PeriodAnalysisWindow(StepWindowBase):
             try:
                 df_head = pd.read_csv(lc_path, nrows=500)
                 if "filter" in df_head.columns:
-                    for flt in df_head["filter"].dropna().astype(str).str.strip().str.lower().unique():
-                        if flt and flt != "nan":
-                            filters_found.add(flt)
+                    for flt in df_head["filter"].dropna().astype(str).unique():
+                        fkey = _normalize_filter_key(flt)
+                        if fkey and fkey.lower() != "nan":
+                            filters_found.add(fkey)
             except Exception:
                 pass
         else:
@@ -621,6 +642,95 @@ class PeriodAnalysisWindow(StepWindowBase):
         self._save_results()
         self._log_alias_warnings()
         self.log("Analysis complete")
+
+        # Enable Bootstrap FAP if LS result is available
+        has_ls = any("ls" in k for k in results if "error" not in results.get(k, {}))
+        self.btn_bootstrap.setEnabled(has_ls)
+
+    def _run_bootstrap_fap(self):
+        """Run Bootstrap FAP for the best LS result in a background thread."""
+        from apex.analysis.light_curve.period_analysis_service import bootstrap_fap
+
+        # Find best LS result
+        ls_key = next(
+            (k for k in self.results if "ls" in k and "error" not in self.results[k]),
+            None,
+        )
+        if ls_key is None:
+            QMessageBox.information(self, "Bootstrap FAP", "LS 결과가 없습니다.")
+            return
+
+        data = self.results[ls_key]
+        best_power = float(data["best_power"])
+        time_arr   = data.get("time")
+        mag_arr    = data.get("mag")
+        mag_err    = data.get("mag_err")
+
+        if time_arr is None or mag_arr is None:
+            QMessageBox.warning(self, "Bootstrap FAP", "LS 데이터가 없습니다. 분석을 다시 실행하세요.")
+            return
+
+        n_bootstrap = int(self.spin_bootstrap_n.value())
+        min_period  = float(self.min_period_spin.value())
+        max_period  = float(self.max_period_spin.value())
+        spp         = int(self.samples_spin.value())
+
+        self.btn_bootstrap.setEnabled(False)
+        self.bootstrap_progress.setText("계산 중…")
+
+        class _BootstrapWorker(QThread):
+            finished = pyqtSignal(float)
+            progress = pyqtSignal(int, int)
+            error    = pyqtSignal(str)
+
+            def __init__(self, t, m, e, bp, minp, maxp, spp_, n):
+                super().__init__()
+                self._t, self._m, self._e = t, m, e
+                self._bp = bp
+                self._minp, self._maxp, self._spp = minp, maxp, spp_
+                self._n = n
+
+            def run(self):
+                try:
+                    fap = bootstrap_fap(
+                        self._t, self._m, self._e,
+                        self._bp,
+                        self._minp, self._maxp,
+                        samples_per_peak=self._spp,
+                        n_bootstrap=self._n,
+                        progress_cb=self.progress.emit,
+                    )
+                    self.finished.emit(fap)
+                except Exception as exc:
+                    self.error.emit(str(exc))
+
+        self._bsworker = _BootstrapWorker(
+            time_arr, mag_arr, mag_err,
+            best_power, min_period, max_period, spp, n_bootstrap,
+        )
+        self._bsworker.progress.connect(
+            lambda cur, tot: self.bootstrap_progress.setText(f"{cur}/{tot}")
+        )
+        self._bsworker.finished.connect(self._on_bootstrap_done)
+        self._bsworker.error.connect(
+            lambda e: (self.bootstrap_progress.setText("오류"), self.btn_bootstrap.setEnabled(True))
+        )
+        self._bsworker.start()
+
+    def _on_bootstrap_done(self, fap: float):
+        self.btn_bootstrap.setEnabled(True)
+        fap_str = f"{fap:.4f}" if np.isfinite(fap) else "N/A"
+        self.bootstrap_progress.setText(f"Bootstrap FAP = {fap_str}")
+        self.log(f"[Bootstrap FAP] {fap_str}  (LS best peak)")
+
+        # Update FAP column in results table for LS rows
+        for row in range(self.results_table.rowCount()):
+            method_item = self.results_table.item(row, 0)
+            if method_item and "LS" in method_item.text():
+                self.results_table.setItem(
+                    row, 4,
+                    QTableWidgetItem(f"{fap:.2e} (BS)" if np.isfinite(fap) else "-"),
+                )
 
     # ------------------------------------------------------------------
     # Plots

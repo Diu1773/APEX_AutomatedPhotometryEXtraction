@@ -342,6 +342,13 @@ def bootstrap_fap(
         samples_per_peak=samples_per_peak,
     )
 
+    # Pre-compute the frequency grid once from the *observed* data so all
+    # permutations use the identical grid — avoids recomputing it 1000 times.
+    _ls_ref = LombScargle(t, y, dy) if dy is not None else LombScargle(t, y)
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore")
+        _frequency_grid, _ = _ls_ref.autopower(**freq_kw)
+
     # Pre-generate permutations sequentially so a fixed seed gives reproducible
     # results regardless of worker count or completion order.
     perms = [rng.permutation(y) for _ in range(n_bootstrap)]
@@ -350,7 +357,8 @@ def bootstrap_fap(
         ls = LombScargle(t, y_perm, dy) if dy is not None else LombScargle(t, y_perm)
         with warnings.catch_warnings():
             warnings.simplefilter("ignore")
-            _, power_perm = ls.autopower(**freq_kw)
+            # ls.power() uses the pre-computed grid — no grid recomputation per perm
+            power_perm = ls.power(_frequency_grid)
         return float(np.max(power_perm))
 
     # LombScargle._unscaled_periodogram is a C extension that releases the GIL,
