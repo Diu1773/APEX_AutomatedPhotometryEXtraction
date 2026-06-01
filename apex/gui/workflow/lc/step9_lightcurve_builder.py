@@ -2988,7 +2988,11 @@ class LightCurveBuilderWindow(StepWindowBase):
     def _get_frame_exclude_map(self, result_dir: Path) -> dict[str, set[str]]:
         key = str(result_dir)
         if key not in self._frame_exclude_cache:
-            self._frame_exclude_cache[key] = load_frame_excludes(result_dir)
+            # LC excludes live in lc_lightcurve/ (mode-specific); falls back to
+            # result_dir/ for backward compat with projects saved before this change.
+            self._frame_exclude_cache[key] = load_frame_excludes(
+                result_dir, exclude_dir=step9_lc_dir(result_dir)
+            )
         return self._frame_exclude_cache[key]
 
     def _set_selected_frame(self, fname: str | None, result_dir: Path | None) -> None:
@@ -3215,7 +3219,11 @@ class LightCurveBuilderWindow(StepWindowBase):
             return
         exclude_map = self._get_frame_exclude_map(result_dir)
         try:
-            saved_path = save_frame_excludes_file(result_dir, exclude_map)
+            # Save to LC-specific subdirectory so CMD/LC excludes don't collide
+            saved_path = save_frame_excludes_file(
+                result_dir, exclude_map,
+                exclude_dir=step9_lc_dir(result_dir),
+            )
             if str(result_dir) in self._frame_exclude_dirty:
                 self._frame_exclude_dirty.remove(str(result_dir))
             self._mark_frame_qc_done(result_dir)

@@ -284,9 +284,19 @@ def load_frame_excludes(
     result_dir: Path,
     exclude_dir: Optional[Path] = None,
 ) -> Dict[str, set]:
+    """Load frame exclusion map from frame_exclude.csv.
+
+    When *exclude_dir* is provided (e.g. ``step9_lc_dir(result_dir)``), that
+    path is tried first; on miss the legacy ``result_dir/frame_exclude.csv``
+    is used as a fallback so existing projects are not broken.
+    """
     path = frame_exclude_path(result_dir, exclude_dir)
     if not path.exists():
-        return {}
+        # Fallback: check result_dir root for legacy location
+        if exclude_dir is not None:
+            path = frame_exclude_path(result_dir, None)
+        if not path.exists():
+            return {}
     try:
         df = pd.read_csv(path)
     except Exception:

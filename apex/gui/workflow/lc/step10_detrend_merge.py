@@ -1287,7 +1287,7 @@ Step 10은 여러 밤의 관측을 합칠 때 기준선을 맞추는 단계입�
     def _apply_frame_excludes(self, df: pd.DataFrame, result_dir: Path, label: str) -> pd.DataFrame:
         if df.empty or "file" not in df.columns:
             return df
-        exclude_map = load_frame_excludes(result_dir)
+        exclude_map = load_frame_excludes(result_dir, exclude_dir=step9_lc_dir(result_dir))
         if not exclude_map:
             return df
         before = len(df)
@@ -1718,7 +1718,8 @@ Step 10은 여러 밤의 관측을 합칠 때 기준선을 맞추는 단계입�
                     self.log(f"[GLOBAL] Frame QC: {qc_info['kept']}/{qc_info['total']} frames kept")
 
             # Apply manual frame exclusions (D-key in step9)
-            exclude_map = load_frame_excludes(result_dir)
+            # LC excludes live in lc_lightcurve/; falls back to result_dir/ for compat.
+            exclude_map = load_frame_excludes(result_dir, exclude_dir=step9_lc_dir(result_dir))
             if exclude_map:
                 before = len(idx)
                 idx = idx[~idx["file"].astype(str).isin(exclude_map.keys())].reset_index(drop=True)
@@ -2966,8 +2967,22 @@ Step 10은 여러 밤의 관측을 합칠 때 기준선을 맞추는 단계입�
 
             tgt_corr = apply_sysrem(tgt_inst, tgt_err, result, n_components=n_apply)
 
-            # Convert instrumental to differential via comp mean
-            comp_mean_inst = np.nanmean(mag_mat, axis=0)       # (n_frames,)
+            # Weighted mean of comp stars per frame (consistent with _build_ensemble_series).
+            # err_mat rows where err≤0 are NaN; those positions get weight=0.
+            w_mat = np.where(np.isfinite(err_mat) & (err_mat > 0), 1.0 / err_mat**2, 0.0)
+            w_sum = w_mat.sum(axis=0)                              # (n_frames,)
+            has_weight = w_sum > 0
+            comp_mean_inst = np.full(n_f, np.nan)
+            if has_weight.any():
+                comp_mean_inst[has_weight] = (
+                    np.nansum(w_mat[:, has_weight] * mag_mat[:, has_weight], axis=0)
+                    / w_sum[has_weight]
+                )
+            # Fall back to unweighted nanmean for frames with no valid errors
+            no_weight = ~has_weight
+            if no_weight.any():
+                comp_mean_inst[no_weight] = np.nanmean(mag_mat[:, no_weight], axis=0)
+
             diff_raw  = tgt_inst - comp_mean_inst
             diff_corr = tgt_corr - comp_mean_inst
 

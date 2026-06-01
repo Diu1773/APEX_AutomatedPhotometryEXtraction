@@ -172,6 +172,18 @@ def materialize_merged_workspace(
         headers_df = load_headers_table(folder)
         header_lookup: dict[str, dict] = {}
         if not headers_df.empty and "Filename" in headers_df.columns:
+            # Warn on duplicates: set_index silently keeps last; log which files collide.
+            dup_mask = headers_df["Filename"].duplicated(keep=False)
+            if dup_mask.any():
+                dup_names = sorted(headers_df.loc[dup_mask, "Filename"].astype(str).unique().tolist())
+                import warnings
+                warnings.warn(
+                    f"[workspace_build] {folder.name}: {len(dup_names)} duplicate Filename(s) "
+                    f"in headers.csv — keeping last occurrence. Duplicates: {dup_names[:5]}"
+                    + (" …" if len(dup_names) > 5 else ""),
+                    UserWarning,
+                    stacklevel=4,
+                )
             header_lookup = {str(fn): row.to_dict() for fn, row in headers_df.set_index("Filename").iterrows()}
 
         night_map_raw = load_night_assignments(folder)
