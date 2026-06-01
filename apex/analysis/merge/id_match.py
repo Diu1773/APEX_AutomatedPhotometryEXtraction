@@ -59,7 +59,10 @@ def best_positional_match(row: pd.Series, canonical_df: pd.DataFrame, tol_arcsec
     if not np.isfinite(best_sep) or best_sep > tol_arcsec:
         return None, best_sep
     best_rows = cand.loc[mask].reset_index(drop=True)
-    return int(pd.to_numeric(best_rows.loc[best_i, "source_id"], errors="coerce")), best_sep
+    sid_val = pd.to_numeric(best_rows.loc[best_i, "source_id"], errors="coerce")
+    if pd.isna(sid_val):
+        return None, best_sep
+    return int(sid_val), best_sep
 
 
 def canonicalize_catalog_row(

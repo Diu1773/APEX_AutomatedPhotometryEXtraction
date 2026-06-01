@@ -54,6 +54,7 @@ from PyQt5.QtWidgets import QShortcut, QStyle, QStyleOptionSlider, QSplitter, QP
 
 from apex.gui.workflow.step_window_base import StepWindowBase
 from apex.gui.workflow.ui_helpers import (
+    add_parameter_reset_button,
     build_scroll_param_dialog,
     create_collapsible_section,
     create_parameter_button,
@@ -243,9 +244,14 @@ def _load_night_assignments(result_dir: Path) -> dict[str, int]:
 
 
 def _parse_color_index(expr: str | None) -> tuple[str, str] | None:
+    """Parse ``"B-V"``/``"g_r"`` into canonical bands via :func:`normalize_filter_key`.
+
+    Case is preserved through :func:`normalize_filter_key`, so Johnson ``B``/``V``/``R``
+    stays uppercase and SDSS ``g``/``r``/``i`` stays lowercase.
+    """
     if not expr:
         return None
-    s = str(expr).strip().lower().replace(" ", "")
+    s = str(expr).strip().replace(" ", "")
     if "-" in s:
         parts = [p for p in s.split("-") if p]
     elif "_" in s:
@@ -254,7 +260,11 @@ def _parse_color_index(expr: str | None) -> tuple[str, str] | None:
         return None
     if len(parts) != 2:
         return None
-    return parts[0], parts[1]
+    a = _normalize_filter_key(parts[0])
+    b = _normalize_filter_key(parts[1])
+    if not a or not b:
+        return None
+    return a, b
 
 
 def _normalize_color_index_by_filter(mapping) -> dict[str, str]:
@@ -269,24 +279,18 @@ def _normalize_color_index_by_filter(mapping) -> dict[str, str]:
     return out
 
 
-# Standard color index combinations (blue filter - red filter)
-COLOR_INDEX_PAIRS = [
-    ("g", "r"),  # SDSS
-    ("b", "v"),  # Johnson
-    ("v", "r"),  # Johnson
-    ("r", "i"),  # SDSS
-    ("v", "i"),  # Johnson-Cousins
-    ("b", "r"),  # Extended
-]
-
-
 def _auto_detect_color_index(available_filters: set[str]) -> tuple[str, str] | None:
-    """Automatically detect the best color index pair from available filters."""
-    filters_lower = {_normalize_filter_key(f) for f in available_filters}
-    for f1, f2 in COLOR_INDEX_PAIRS:
-        if f1 in filters_lower and f2 in filters_lower:
-            return (f1, f2)
-    return None
+    """Auto-detect the best adjacent color index pair from available filters.
+
+    Delegates to :func:`apex.utils.gaia_transforms.build_color_pairs` so any
+    filter system (Johnson, SDSS, mixed, narrow-band) works without hardcoding.
+    """
+    from apex.utils.gaia_transforms import build_color_pairs
+    bands = [b for b in (_normalize_filter_key(f) for f in available_filters) if b]
+    if len(bands) < 2:
+        return None
+    pairs = build_color_pairs(list(set(bands)), adjacent_only=True)
+    return pairs[0] if pairs else None
 
 
 def _compute_star_median_mags(
@@ -1123,7 +1127,10 @@ class LightCurveBuilderWindow(StepWindowBase):
         self.log_window = QWidget(self, Qt.Window)
         self.log_window.setWindowTitle("Light Curve Log & Workers")
         log_layout = QVBoxLayout(self.log_window)
-        self._worker_panel = WorkerStatusPanel(get_parallel_workers(self.params), self.log_window)
+        # WorkerStatusPanel grows rows lazily as workers report in via
+        # ``update_worker``; it doesn't need an up-front count. The old call
+        # passed (n_workers, parent) which broke the signature.
+        self._worker_panel = WorkerStatusPanel(self.log_window)
         log_layout.addWidget(self._worker_panel)
         self.log_text = QTextEdit()
         self.log_text.setReadOnly(True)
@@ -1533,7 +1540,10 @@ class LightCurveBuilderWindow(StepWindowBase):
         self.log_window.setWindowTitle("Light Curve Log & Workers")
         self.log_window.resize(800, 450)
         log_layout = QVBoxLayout(self.log_window)
-        self._worker_panel = WorkerStatusPanel(get_parallel_workers(self.params), self.log_window)
+        # WorkerStatusPanel grows rows lazily as workers report in via
+        # ``update_worker``; it doesn't need an up-front count. The old call
+        # passed (n_workers, parent) which broke the signature.
+        self._worker_panel = WorkerStatusPanel(self.log_window)
         log_layout.addWidget(self._worker_panel)
         self.log_text = QTextEdit()
         self.log_text.setReadOnly(True)
@@ -1675,6 +1685,22 @@ class LightCurveBuilderWindow(StepWindowBase):
         layout.addWidget(phase_group)
         layout.addStretch(1)
 
+        add_parameter_reset_button(
+            buttons,
+            [
+                (spin_qc_rms, 0.02),
+                (spin_qc_sigma, 3.0),
+                (spin_qc_frac, 0.1),
+                (spin_qc_n, 10),
+                (combo_scale, "Robust(MAD)"),
+                (spin_scale_mad, 5.0),
+                (spin_scale_fixed, 0.2),
+                (spin_period_min, 0.01),
+                (spin_period_max, 10.0),
+                (spin_phase_cycles, 1.0),
+            ],
+        )
+
         def _save():
             self.qc_rms_max = float(spin_qc_rms.value())
             self.qc_sigma = float(spin_qc_sigma.value())
@@ -1767,6 +1793,19 @@ class LightCurveBuilderWindow(StepWindowBase):
 
         layout.addWidget(scale_group)
         layout.addStretch(1)
+
+        add_parameter_reset_button(
+            buttons,
+            [
+                (spin_qc_rms, 0.02),
+                (spin_qc_sigma, 3.0),
+                (spin_qc_frac, 0.1),
+                (spin_qc_n, 10),
+                (combo_scale, "Robust(MAD)"),
+                (spin_scale_mad, 5.0),
+                (spin_scale_fixed, 0.2),
+            ],
+        )
 
         def _save():
             self.qc_rms_max = float(spin_qc_rms.value())
@@ -2230,12 +2269,12 @@ class LightCurveBuilderWindow(StepWindowBase):
         idx_path = step7_forced_phot_dir(result_dir) / "photometry_index.csv"
         if not idx_path.exists():
             if verbose:
-                self.log(f"[DEBUG] photometry_index.csv not found in {result_dir}")
+                self.log(f"[WARN] photometry_index.csv not found in {result_dir}")
             return pd.DataFrame()
         idx = pd.read_csv(idx_path)
         if "file" not in idx.columns:
             if verbose:
-                self.log(f"[DEBUG] photometry_index.csv missing 'file' column")
+                self.log(f"[WARN] photometry_index.csv missing 'file' column")
             return pd.DataFrame()
         exclude_map = self._get_frame_exclude_map(result_dir)
         if exclude_map and not include_excluded:
@@ -2346,7 +2385,7 @@ class LightCurveBuilderWindow(StepWindowBase):
 
         if verbose:
             total = len(files)
-            self.log(f"[DEBUG] Star series ID={star_id} found in {n_found}/{total} frames")
+            self.log(f"Star series ID={star_id}: {n_found}/{total} frames")
 
         return pd.DataFrame({
             "file": files,
@@ -2369,13 +2408,20 @@ class LightCurveBuilderWindow(StepWindowBase):
         idx_path = step7_forced_phot_dir(result_dir) / "photometry_index.csv"
         if not idx_path.exists():
             if verbose:
-                self.log(f"[DEBUG] photometry_index.csv not found in {result_dir}")
+                self.log(f"[WARN] photometry_index.csv not found in {result_dir}")
             return pd.DataFrame()
         idx = pd.read_csv(idx_path)
         if "file" not in idx.columns:
             if verbose:
-                self.log(f"[DEBUG] photometry_index.csv missing 'file' column")
+                self.log(f"[WARN] photometry_index.csv missing 'file' column")
             return pd.DataFrame()
+        # Apply frame exclusions (manual QC from step9 D-key) before building series
+        exclude_map = self._get_frame_exclude_map(result_dir)
+        if exclude_map:
+            before = len(idx)
+            idx = idx[~idx["file"].astype(str).isin(exclude_map.keys())].reset_index(drop=True)
+            if verbose and before != len(idx):
+                self.log(f"[Frame QC] Excluded {before - len(idx)} frame(s) from ensemble series")
         files = idx["file"].astype(str).tolist()
         self._preload_photometry_cache(result_dir, files)
         headers_map = _load_headers_map(result_dir)
@@ -2572,9 +2618,7 @@ class LightCurveBuilderWindow(StepWindowBase):
 
         if verbose:
             total = len(files)
-            self.log(f"[DEBUG] Ensemble series (Target={target_id}) frames={total}")
-            self.log(f"[DEBUG] Target found: {n_target_found}/{total}")
-            self.log(f"[DEBUG] Comp ensemble available: {n_comp_found}/{total}")
+            self.log(f"Ensemble series (Target={target_id}): frames={total}, target={n_target_found}, comp={n_comp_found}")
             if np.any(np.isfinite(bjd_arr)):
                 delta = np.nanmedian(bjd_arr - tarr) * 86400
                 self.log(f"[BJD] BJD_TDB computed, median correction {delta:+.1f}s")
@@ -2662,12 +2706,12 @@ class LightCurveBuilderWindow(StepWindowBase):
         idx_path = step7_forced_phot_dir(result_dir) / "photometry_index.csv"
         if not idx_path.exists():
             if verbose:
-                self.log(f"[DEBUG] photometry_index.csv not found in {result_dir}")
+                self.log(f"[WARN] photometry_index.csv not found in {result_dir}")
             return pd.DataFrame()
         idx = pd.read_csv(idx_path)
         if "file" not in idx.columns:
             if verbose:
-                self.log(f"[DEBUG] photometry_index.csv missing 'file' column")
+                self.log(f"[WARN] photometry_index.csv missing 'file' column")
             return pd.DataFrame()
         # Apply frame exclusions to the series computation
         exclude_map = self._get_frame_exclude_map(result_dir)
@@ -2682,7 +2726,7 @@ class LightCurveBuilderWindow(StepWindowBase):
         # 필터별 selection 로드 (source_id 사용)
         filter_selections = _load_selection_ids_by_filter(result_dir)
         if verbose and filter_selections:
-            self.log(f"[DEBUG] Filter-specific selections loaded: {list(filter_selections.keys())}")
+            self.log(f"Filter selections: {list(filter_selections.keys())}")
 
         filter_map = {}
         if "filter" in idx.columns:
@@ -2824,14 +2868,10 @@ class LightCurveBuilderWindow(StepWindowBase):
             else:
                 diffs.append(np.nan)
 
-        # 디버깅 로그 출력
         if verbose:
             total = len(files)
-            self.log(f"[DEBUG] === Diff Series Build (Target={target_id}, Comp={comp_id}) ===")
-            self.log(f"[DEBUG] Total frames: {total}, FITS headers read: {n_fits_read}")
-            self.log(f"[DEBUG] Target ID={target_id} found in: {n_target_found}/{total} frames ({100*n_target_found/max(total,1):.1f}%)")
-            self.log(f"[DEBUG] Comp ID={comp_id} found in: {n_comp_found}/{total} frames ({100*n_comp_found/max(total,1):.1f}%)")
-            self.log(f"[DEBUG] Both found (valid points): {n_both_found}/{total} frames")
+            self.log(f"Diff series (Target={target_id}, Comp={comp_id}): {n_both_found}/{total} valid frames "
+                     f"(target={n_target_found}, comp={n_comp_found}, headers_read={n_fits_read})")
             if n_phot_missing > 0:
                 self.log(f"[WARN] Photometry TSV missing for {n_phot_missing} frames")
             if missing_target_frames and len(missing_target_frames) <= 10:

@@ -83,7 +83,7 @@ from apex.utils.io_utils import (
     load_headers_table as _load_headers_table_util,
 )
 from apex.utils.photometry_loader import load_frame_photometry
-from apex.utils.qc_utils import load_frame_excludes
+from apex.utils.qc_utils import load_frame_excludes, filter_frame_df_by_qc
 from apex.utils.astro_utils import (
     compute_airmass_from_header,
     compute_bjd_tdb_array,
@@ -109,9 +109,10 @@ def _fmt_float(value, default: str = "") -> str:
 
 
 def _parse_color_expr(expr: str | None) -> tuple[str, str] | None:
+    """Parse ``"B-V"``/``"g_r"`` into canonical bands (case preserved via normalize)."""
     if not expr:
         return None
-    s = str(expr).strip().lower().replace(" ", "")
+    s = str(expr).strip().replace(" ", "")
     if "-" in s:
         parts = [p for p in s.split("-") if p]
     elif "_" in s:
@@ -120,7 +121,11 @@ def _parse_color_expr(expr: str | None) -> tuple[str, str] | None:
         return None
     if len(parts) != 2:
         return None
-    return parts[0], parts[1]
+    a = _normalize_filter_key(parts[0])
+    b = _normalize_filter_key(parts[1])
+    if not a or not b:
+        return None
+    return a, b
 
 
 def _load_headers_table(result_dir: Path) -> pd.DataFrame:
@@ -242,7 +247,7 @@ class DetrendNightMergeWindow(StepWindowBase):
         self.comp_candidate_ids: list[int] = []
         self.color_map_by_filter: dict[str, str] = {}
         self.color_by = "Date"
-        self.mode = "offset"  # "offset" | "color" | "global"
+        self.mode = "offset"  # "offset" | "color" | "global" | "sysrem"
         self.sigma_clip = True
         self.clip_sigma = 3.0
         self.clip_iters = 2
@@ -571,13 +576,47 @@ class DetrendNightMergeWindow(StepWindowBase):
         global_layout.addWidget(global_desc)
         mode_group_layout.addWidget(global_frame)
 
+        # SYSREM mode
+        sysrem_frame = QFrame()
+        sysrem_frame.setStyleSheet("QFrame { border: 1px solid #E0E0E0; border-radius: 4px; padding: 4px; }")
+        sysrem_layout = QVBoxLayout(sysrem_frame)
+        sysrem_layout.setSpacing(2)
+        self.mode_sysrem = QRadioButton("SYSREM (Tamuz+2005)")
+        self.mode_sysrem.setStyleSheet("QRadioButton { font-weight: bold; }")
+        sysrem_layout.addWidget(self.mode_sysrem)
+        sysrem_desc = QLabel(
+            "비교성 집합에서 공통 체계오차 벡터를 반복 추출하여 제거\n"
+            "• 외부 영향(대기, 측기 변화)에 강인\n"
+            "• Step 7 강제측광 데이터 직접 사용"
+        )
+        sysrem_desc.setStyleSheet("QLabel { color: #616161; font-size: 8pt; margin-left: 16px; }")
+        sysrem_layout.addWidget(sysrem_desc)
+        sysrem_params_layout = QHBoxLayout()
+        sysrem_params_layout.addWidget(QLabel("반복 수:"))
+        self.spin_sysrem_iter = QSpinBox()
+        self.spin_sysrem_iter.setRange(1, 20)
+        self.spin_sysrem_iter.setValue(5)
+        self.spin_sysrem_iter.setToolTip("추출할 체계오차 성분 수 (보통 3–7)")
+        sysrem_params_layout.addWidget(self.spin_sysrem_iter)
+        sysrem_params_layout.addWidget(QLabel("적용 수:"))
+        self.spin_sysrem_apply = QSpinBox()
+        self.spin_sysrem_apply.setRange(1, 20)
+        self.spin_sysrem_apply.setValue(3)
+        self.spin_sysrem_apply.setToolTip("타겟에 적용할 성분 수 (≤ 반복 수, 너무 많으면 신호 제거됨)")
+        sysrem_params_layout.addWidget(self.spin_sysrem_apply)
+        sysrem_params_layout.addStretch()
+        sysrem_layout.addLayout(sysrem_params_layout)
+        mode_group_layout.addWidget(sysrem_frame)
+
         self.mode_group.addButton(self.mode_offset)
         self.mode_group.addButton(self.mode_color)
         self.mode_group.addButton(self.mode_global)
+        self.mode_group.addButton(self.mode_sysrem)
         self.mode_offset.setChecked(True)
         self.mode_offset.toggled.connect(lambda checked: checked and self._set_mode("offset"))
         self.mode_color.toggled.connect(lambda checked: checked and self._set_mode("color"))
         self.mode_global.toggled.connect(lambda checked: checked and self._set_mode("global"))
+        self.mode_sysrem.toggled.connect(lambda checked: checked and self._set_mode("sysrem"))
 
         self.color_status_label = QLabel("")
         self.color_status_label.setStyleSheet("QLabel { color: #D32F2F; font-size: 9pt; }")
@@ -1048,6 +1087,16 @@ Step 10은 여러 밤의 관측을 합칠 때 기준선을 맞추는 단계입�
             self.recommendation_label.setText("")
             self.recommendation_label.setVisible(False)
             return
+        if self.mode == "sysrem":
+            n_points = len(self.raw_df)
+            n_dates = self.raw_df["date"].nunique() if "date" in self.raw_df.columns else 0
+            filters = sorted({_normalize_filter_key(f) for f in self.raw_df.get("filter", []) if str(f).strip()})
+            self.analysis_text.setText(
+                f"<b>SYSREM:</b> {n_points}점, {n_dates}일, 필터: {', '.join(filters) or 'N/A'}"
+            )
+            self.recommendation_label.setText("")
+            self.recommendation_label.setVisible(False)
+            return
 
         lines = []
 
@@ -1403,7 +1452,7 @@ Step 10은 여러 밤의 관측을 합칠 때 기준선을 맞추는 단계입�
         return True
 
     def _sync_mode_controls_from_state(self) -> None:
-        is_global = self.mode == "global"
+        is_global = self.mode in ("global", "sysrem")
         self.color_map_group.setEnabled(not is_global)
         self.chk_global_k2.setEnabled(not is_global)
         blockers = [
@@ -1411,11 +1460,15 @@ Step 10은 여러 밤의 관측을 합칠 때 기준선을 맞추는 단계입�
             QSignalBlocker(self.mode_color),
             QSignalBlocker(self.mode_global),
         ]
+        if hasattr(self, "mode_sysrem"):
+            blockers.append(QSignalBlocker(self.mode_sysrem))
         try:
             if self.mode == "color":
                 self.mode_color.setChecked(True)
             elif self.mode == "global":
                 self.mode_global.setChecked(True)
+            elif self.mode == "sysrem" and hasattr(self, "mode_sysrem"):
+                self.mode_sysrem.setChecked(True)
             else:
                 self.mode = "offset"
                 self.mode_offset.setChecked(True)
@@ -1453,13 +1506,13 @@ Step 10은 여러 밤의 관측을 합칠 때 기준선을 맞추는 단계입�
             vals = corrected_df["correction_mode"].dropna().astype(str).str.strip().str.lower()
             if not vals.empty:
                 mode = vals.iloc[0]
-        if mode not in ("global", "color", "offset"):
+        if mode not in ("global", "color", "offset", "sysrem"):
             try:
                 mode = str(load_detrend_preference(result_root, target_id=target_id) or "").strip().lower()
             except Exception:
                 mode = ""
-        if mode not in ("global", "color", "offset"):
-            mode = self.mode if self.mode in ("global", "color", "offset") else "offset"
+        if mode not in ("global", "color", "offset", "sysrem"):
+            mode = self.mode if self.mode in ("global", "color", "offset", "sysrem") else "offset"
 
         for col in ("JD", "jd", "BJD_TDB", "airmass", "diff_mag_raw", "diff_mag_corr", "diff_err", "diff_err_corr", "residual", "fit_value"):
             if col in corrected_df.columns:
@@ -1657,6 +1710,21 @@ Step 10은 여러 밤의 관측을 합칠 때 기준선을 맞추는 단계입�
                 self.log("[GLOBAL] photometry_index.csv missing 'file'")
                 continue
 
+            # Apply step4 QC pass filter (frame_quality.csv) if the parameter is enabled
+            use_qc = bool(getattr(self.params.P, "phot_use_qc_pass_only", False))
+            if use_qc:
+                idx, qc_info = filter_frame_df_by_qc(result_dir, idx, file_col="file", require_qc=True)
+                if qc_info.get("applied"):
+                    self.log(f"[GLOBAL] Frame QC: {qc_info['kept']}/{qc_info['total']} frames kept")
+
+            # Apply manual frame exclusions (D-key in step9)
+            exclude_map = load_frame_excludes(result_dir)
+            if exclude_map:
+                before = len(idx)
+                idx = idx[~idx["file"].astype(str).isin(exclude_map.keys())].reset_index(drop=True)
+                if before != len(idx):
+                    self.log(f"[GLOBAL] Frame excludes: removed {before - len(idx)} frame(s)")
+
             headers_df = _load_headers_table(result_dir)
             jd_map = {}
             filt_map = {}
@@ -1668,7 +1736,7 @@ Step 10은 여러 밤의 관측을 합칠 때 기준선을 맞추는 단계입�
                             pd.to_numeric(headers_df["JD"], errors="coerce"),
                         )
                     )
-                if "DATE-OBS" in headers_df.columns:
+                elif "DATE-OBS" in headers_df.columns:
                     jd_map = dict(
                         zip(
                             headers_df["Filename"].astype(str),
@@ -2022,24 +2090,27 @@ Step 10은 여러 밤의 관측을 합칠 때 기준선을 맞추는 단계입�
             return pd.DataFrame()
 
     def _available_color_expressions(self, result_dir: Path, bands_hint: list[str] | None = None) -> list[str]:
+        """Return color-index expressions built from filters present in the median table.
+
+        Uses :func:`filter_bands_from_columns` so case (Johnson uppercase vs SDSS
+        lowercase) is preserved and derived columns like ``mag_inst_err_B`` are skipped.
+        """
+        from apex.utils.gaia_transforms import filter_bands_from_columns, build_color_pairs
         df = self._load_color_median_table(result_dir)
-        bands = set()
+        bands: list[str] = []
         if not df.empty:
-            for col in df.columns:
-                if col.startswith("mag_std_"):
-                    bands.add(col.replace("mag_std_", "").strip().lower())
-                elif col.startswith("mag_inst_"):
-                    bands.add(col.replace("mag_inst_", "").strip().lower())
+            bands = filter_bands_from_columns(df.columns, "mag_std_") \
+                 or filter_bands_from_columns(df.columns, "mag_inst_")
         if not bands and bands_hint:
-            bands = {str(b).strip().lower() for b in bands_hint if str(b).strip()}
-        bands = sorted({b for b in bands if b})
+            bands = [_normalize_filter_key(b) for b in bands_hint if str(b).strip()]
+            bands = sorted({b for b in bands if b})
+        # All adjacent pairs in both directions (blue-red and red-blue) for UI choice
+        pairs = build_color_pairs(bands, adjacent_only=True)
         exprs = []
-        for a in bands:
-            for b in bands:
-                if a == b:
-                    continue
-                exprs.append(f"{a}-{b}")
-        return sorted(set(exprs))
+        for a, b in pairs:
+            exprs.append(f"{a}-{b}")
+            exprs.append(f"{b}-{a}")
+        return exprs
 
     def _compute_delta_c_map_from_median(
         self,
@@ -2187,7 +2258,7 @@ Step 10은 여러 밤의 관측을 합칠 때 기준선을 맞추는 단계입�
         out: dict[str, str] = {}
         for key, value in mapping.items():
             fkey = _normalize_filter_key(key)
-            expr = str(value).strip().lower()
+            expr = str(value).strip()
             if fkey and expr:
                 out[fkey] = expr
         return out
@@ -2197,8 +2268,8 @@ Step 10은 여러 밤의 관측을 합칠 때 기준선을 맞추는 단계입�
             return
         mapping: dict[str, str] = {}
         for fkey, combo in self.color_map_combos.items():
-            expr = combo.currentText().strip().lower()
-            if expr and expr != "none":
+            expr = combo.currentText().strip()
+            if expr and expr.lower() != "none":
                 mapping[fkey] = expr
         self.color_map_by_filter = mapping
         self._refresh_delta_c_map()
@@ -2346,7 +2417,7 @@ Step 10은 여러 밤의 관측을 합칠 때 기준선을 맞추는 단계입�
         if self.mode == mode:
             return
         self.mode = mode
-        is_global = mode == "global"
+        is_global = mode in ("global", "sysrem")
         self.color_map_group.setEnabled(not is_global)
         self.chk_global_k2.setEnabled(not is_global)
         self.mode_color.setEnabled(True)
@@ -2382,6 +2453,8 @@ Step 10은 여러 밤의 관측을 합칠 때 기준선을 맞추는 단계입�
             self.mode = "color"
         if self.mode_global.isChecked():
             self.mode = "global"
+        if hasattr(self, "mode_sysrem") and self.mode_sysrem.isChecked():
+            self.mode = "sysrem"
         self.sigma_clip = bool(self.chk_clip.isChecked())
         self.clip_sigma = float(self.spin_clip.value())
         self.clip_iters = int(self.spin_iters.value())
@@ -2415,6 +2488,9 @@ Step 10은 여러 밤의 관측을 합칠 때 기준선을 맞추는 단계입�
             self.global_normalize = bool(self.chk_global_normalize.isChecked())
         if hasattr(self, "chk_global_rescale_err"):
             self.global_rescale_errors = bool(self.chk_global_rescale_err.isChecked())
+        if hasattr(self, "spin_sysrem_apply") and hasattr(self, "spin_sysrem_iter"):
+            if self.spin_sysrem_apply.value() > self.spin_sysrem_iter.value():
+                self.spin_sysrem_apply.setValue(self.spin_sysrem_iter.value())
 
     def _auto_set_t0(self):
         """Set T0 to min(JD) from loaded data."""
@@ -2454,6 +2530,14 @@ Step 10은 여러 밤의 관측을 합칠 때 기준선을 맞추는 단계입�
                 target_id_override=target_id_override,
                 comp_ids_override=comp_ids_override,
                 sync_controls=False,
+            )
+            return
+        if self.mode == "sysrem":
+            self._run_sysrem(
+                update_ui=update_ui,
+                save_outputs=save_outputs,
+                target_id_override=target_id_override,
+                comp_ids_override=comp_ids_override,
             )
             return
         if self.raw_df.empty:
@@ -2680,8 +2764,17 @@ Step 10은 여러 밤의 관측을 합칠 때 기준선을 맞추는 단계입�
                 self._set_busy_state(False)
 
     def _apply_bjd_to_raw_df(self, target_id: int | None = None) -> None:
-        """Convert raw_df["JD"] (plain JD_UTC) to BJD_TDB in-place when possible."""
+        """Convert raw_df["JD"] (plain JD_UTC) to BJD_TDB and store in BJD_TDB column.
+
+        Idempotent: if BJD_TDB is already populated (non-NaN), skips to avoid
+        double-applying the light-travel correction.
+        JD column is intentionally left as original JD_UTC so downstream
+        consumers that expect plain JD are not surprised.
+        """
         if self.raw_df.empty or "JD" not in self.raw_df.columns:
+            return
+        # Idempotent guard: skip if BJD_TDB already filled
+        if "BJD_TDB" in self.raw_df.columns and self.raw_df["BJD_TDB"].notna().any():
             return
         site_lat = float(getattr(self.params.P, "site_lat_deg", np.nan))
         site_lon = float(getattr(self.params.P, "site_lon_deg", np.nan))
@@ -2718,9 +2811,175 @@ Step 10은 여러 밤의 관측을 합칠 때 기준선을 맞추는 단계입�
             if "BJD_TDB" not in self.raw_df.columns:
                 self.raw_df["BJD_TDB"] = np.nan
             self.raw_df.loc[valid, "BJD_TDB"] = bjd_arr[valid]
-            self.raw_df.loc[valid, "JD"] = bjd_arr[valid]
+            # JD column is kept as original JD_UTC — do not overwrite
             delta = np.nanmedian(bjd_arr[valid] - jd_arr[valid]) * 86400
-            self.log(f"[BJD] JD → BJD_TDB applied ({valid.sum()} pts, median correction {delta:+.1f}s)")
+            self.log(f"[BJD] BJD_TDB computed ({valid.sum()} pts, median correction {delta:+.1f}s)")
+
+    def _run_sysrem(
+        self,
+        update_ui: bool = True,
+        save_outputs: bool = True,
+        target_id_override: int | None = None,
+        comp_ids_override: list[int] | None = None,
+    ) -> None:
+        """SYSREM systematic-noise removal (Tamuz, Mazeh & Zucker 2005)."""
+        from apex.analysis.light_curve.sysrem import sysrem, apply_sysrem
+
+        if update_ui:
+            self._set_busy_state(True, "Loading Step 7 data for SYSREM...")
+        try:
+            df_all = self._load_global_ensemble_df(
+                target_id_override=target_id_override,
+                comp_ids_override=comp_ids_override,
+            )
+        except Exception as exc:
+            if update_ui:
+                QMessageBox.warning(self, "SYSREM", str(exc))
+            else:
+                raise
+            return
+        finally:
+            if update_ui:
+                self._set_busy_state(False)
+
+        target_id = int(target_id_override or self.target_edit.text().strip())
+        if comp_ids_override is not None:
+            comp_ids = [int(c) for c in comp_ids_override if int(c) != target_id]
+        else:
+            comp_ids = self.comp_active_ids or self.comp_candidate_ids
+            comp_ids = [int(c) for c in comp_ids if int(c) != target_id]
+
+        if not comp_ids:
+            if update_ui:
+                QMessageBox.warning(self, "SYSREM", "비교성 ID가 없습니다.")
+            return
+
+        n_iter  = int(self.spin_sysrem_iter.value())
+        n_apply = min(int(self.spin_sysrem_apply.value()), n_iter)
+
+        filters = sorted(df_all["filter"].astype(str).map(_normalize_filter_key).unique())
+        if not filters:
+            filters = [""]
+
+        corrected_rows: list[pd.DataFrame] = []
+        params_rows: list[dict] = []
+
+        for fkey in filters:
+            if update_ui:
+                self._set_busy_message(f"SYSREM filter={fkey or 'all'}...")
+
+            sub = df_all
+            if fkey:
+                sub = df_all[df_all["filter"].astype(str).map(_normalize_filter_key) == fkey]
+            if sub.empty:
+                continue
+
+            frames = sorted(sub["time_id"].astype(str).unique())
+            if len(frames) < 5:
+                self.log(f"[SYSREM] {fkey or 'all'}: too few frames ({len(frames)}), skipping")
+                continue
+
+            n_f = len(frames)
+            frame_idx = {f: i for i, f in enumerate(frames)}
+
+            # Build comp star matrix (n_comps × n_frames)
+            comp_data = sub[sub["star_id"].isin(comp_ids)]
+            n_s = len(comp_ids)
+            mag_mat = np.full((n_s, n_f), np.nan)
+            err_mat = np.full((n_s, n_f), np.nan)
+
+            for ci, cid in enumerate(comp_ids):
+                rows_c = comp_data[comp_data["star_id"] == cid]
+                for _, row in rows_c.iterrows():
+                    j = frame_idx.get(str(row["time_id"]))
+                    if j is not None and np.isfinite(float(row["mag_inst"])):
+                        mag_mat[ci, j] = float(row["mag_inst"])
+                        err_val = float(row.get("err", np.nan))
+                        err_mat[ci, j] = err_val if (np.isfinite(err_val) and err_val > 0) else np.nan
+
+            # Run SYSREM on comp stars
+            result = sysrem(mag_mat, err_mat, n_iter=n_iter)
+
+            rms_info = " → ".join(
+                f"{c.rms_before:.4f}→{c.rms_after:.4f}" for c in result.components
+            )
+            self.log(f"[SYSREM] {fkey or 'all'}: RMS per iter: {rms_info}")
+
+            for comp in result.components:
+                params_rows.append({
+                    "filter": fkey,
+                    "iteration": comp.iteration,
+                    "rms_before": comp.rms_before,
+                    "rms_after": comp.rms_after,
+                })
+
+            # Apply to target
+            tgt_data = sub[sub["star_id"] == target_id]
+            tgt_inst = np.full(n_f, np.nan)
+            tgt_err  = np.full(n_f, np.nan)
+            tgt_jd   = np.full(n_f, np.nan)
+            tgt_tid  = np.array([""] * n_f, dtype=object)
+
+            for _, row in tgt_data.iterrows():
+                j = frame_idx.get(str(row["time_id"]))
+                if j is not None:
+                    tgt_inst[j] = float(row["mag_inst"])
+                    tgt_err[j]  = float(row.get("err", np.nan))
+                    tgt_jd[j]   = float(row.get("jd", np.nan))
+                    tgt_tid[j]  = str(row["time_id"])
+
+            tgt_corr = apply_sysrem(tgt_inst, tgt_err, result, n_components=n_apply)
+
+            # Convert instrumental to differential via comp mean
+            comp_mean_inst = np.nanmean(mag_mat, axis=0)       # (n_frames,)
+            diff_raw  = tgt_inst - comp_mean_inst
+            diff_corr = tgt_corr - comp_mean_inst
+
+            valid = np.isfinite(tgt_inst) & np.isfinite(comp_mean_inst)
+            if not valid.any():
+                self.log(f"[SYSREM] {fkey or 'all'}: no valid target frames")
+                continue
+
+            fdf = pd.DataFrame({
+                "JD":            tgt_jd[valid],
+                "time_id":       tgt_tid[valid],
+                "filter":        fkey,
+                "ID":            target_id,
+                "diff_mag_raw":  diff_raw[valid],
+                "diff_mag_corr": diff_corr[valid],
+                "diff_err":      tgt_err[valid],
+                "diff_err_corr": tgt_err[valid],   # SYSREM doesn't propagate formal errors
+            })
+
+            # Merge date/airmass from raw_df if available
+            if not self.raw_df.empty and "JD" in self.raw_df.columns:
+                merge_cols = [c for c in ("date", "airmass") if c in self.raw_df.columns]
+                if merge_cols:
+                    extra = self.raw_df[["JD"] + merge_cols].drop_duplicates("JD")
+                    fdf = fdf.merge(extra, on="JD", how="left")
+
+            corrected_rows.append(fdf)
+
+        if not corrected_rows:
+            if update_ui:
+                QMessageBox.warning(self, "SYSREM", "유효한 결과가 없습니다.")
+            return
+
+        corrected = pd.concat(corrected_rows, ignore_index=True)
+        corrected["correction_mode"] = "sysrem"
+        corrected["correction_formula"] = f"SYSREM n_iter={n_iter} n_apply={n_apply}"
+
+        self.corrected_df = corrected
+        self.params_df    = pd.DataFrame(params_rows)
+
+        if update_ui:
+            self._update_results_table()
+            self._update_plots()
+            n_pts = len(corrected)
+            self.log(f"[SYSREM] Done: {n_pts} corrected points, {len(result.components)} components")
+
+        if save_outputs:
+            self._save_comprehensive_results()
 
     def _run_global_ensemble(
         self,
@@ -3072,13 +3331,15 @@ Step 10은 여러 밤의 관측을 합칠 때 기준선을 맞추는 단계입�
                     continue
                 x = x * float(delta_c_const)
 
-            out.loc[idx, "diff_mag_corr"] = out.loc[idx, "diff_mag_raw"] - zp - slope * x
+            # For offset mode slope=0; guard against 0*NaN=NaN when airmass missing.
+            slope_term = np.where(slope == 0.0, 0.0, slope * x)
+            out.loc[idx, "diff_mag_corr"] = out.loc[idx, "diff_mag_raw"] - zp - slope_term
 
             raw_err = out.loc[idx, "diff_err"].to_numpy(float)
             raw_var = np.where(np.isfinite(raw_err), raw_err**2, 0.0)
-            zp_var = zp_err**2 if np.isfinite(zp_err) else 0.0
+            zp_var    = zp_err**2    if np.isfinite(zp_err)    else 0.0
             slope_var = slope_err**2 if np.isfinite(slope_err) else 0.0
-            corr_var = raw_var + zp_var + (x**2) * slope_var
+            corr_var = raw_var + zp_var + (np.where(slope == 0.0, 0.0, x)**2) * slope_var
             out.loc[idx, "diff_err_corr"] = np.sqrt(corr_var)
 
         return out
@@ -3091,6 +3352,23 @@ Step 10은 여러 밤의 관측을 합칠 때 기준선을 맞추는 단계입�
         self.result_table.clearContents()
         self.result_table.setRowCount(0)
         if self.params_df.empty:
+            self.result_table.setUpdatesEnabled(True)
+            self.result_table.blockSignals(False)
+            return
+
+        if self.mode == "sysrem":
+            self.result_table.setColumnCount(4)
+            self.result_table.setHorizontalHeaderLabels(
+                ["Filter", "Iter", "RMS 전", "RMS 후"]
+            )
+            for _, row in self.params_df.iterrows():
+                r = self.result_table.rowCount()
+                self.result_table.insertRow(r)
+                ftext = str(row.get("filter", "")).strip()
+                self.result_table.setItem(r, 0, QTableWidgetItem(ftext if ftext else "all"))
+                self.result_table.setItem(r, 1, QTableWidgetItem(str(int(row.get("iteration", 0)))))
+                self.result_table.setItem(r, 2, QTableWidgetItem(_fmt_float(row.get("rms_before"))))
+                self.result_table.setItem(r, 3, QTableWidgetItem(_fmt_float(row.get("rms_after"))))
             self.result_table.setUpdatesEnabled(True)
             self.result_table.blockSignals(False)
             return
@@ -3522,8 +3800,21 @@ Step 10은 여러 밤의 관측을 합칠 때 기준선을 맞추는 단계입�
         target_id = int(target_text)
         out_dir = step10_detrend_dir(self.params.P.result_dir)
         out_dir.mkdir(parents=True, exist_ok=True)
-        mode_tag = self.mode if self.mode in ("offset", "color") else "mode"
-        formula = "Δm_corr = Δm_raw - ZP₀" if self.mode == "offset" else "Δm_corr = Δm_raw - ZP₀ - k''·ΔC·X"
+        mode_tag = self.mode if self.mode in ("offset", "color", "sysrem") else "mode"
+        if self.mode == "offset":
+            formula = "Δm_corr = Δm_raw - ZP₀"
+        elif self.mode == "sysrem":
+            formula = str(
+                self.corrected_df.get(
+                    "correction_formula",
+                    pd.Series(["SYSREM systematic-component correction"]),
+                ).dropna().iloc[0]
+                if "correction_formula" in self.corrected_df.columns
+                and not self.corrected_df["correction_formula"].dropna().empty
+                else "SYSREM systematic-component correction"
+            )
+        else:
+            formula = "Δm_corr = Δm_raw - ZP₀ - k''·ΔC·X"
         lc_path = step10_current_lc_path(self.params.P.result_dir, target_id)
         params_path = step10_current_params_path(self.params.P.result_dir, target_id)
         summary_path = step10_current_summary_path(self.params.P.result_dir, target_id)
@@ -3848,6 +4139,10 @@ Step 10은 여러 밤의 관측을 합칠 때 기준선을 맞추는 단계입�
             "global_normalize": self.global_normalize,
             "global_rescale_errors": self.global_rescale_errors,
         }
+        if hasattr(self, "spin_sysrem_iter"):
+            state_data["sysrem_iter"] = int(self.spin_sysrem_iter.value())
+        if hasattr(self, "spin_sysrem_apply"):
+            state_data["sysrem_apply"] = int(self.spin_sysrem_apply.value())
         self.project_state.store_step_data("detrend_merge", state_data)
 
     def restore_state(self):
@@ -3876,6 +4171,10 @@ Step 10은 여러 밤의 관측을 합칠 때 기준선을 맞추는 단계입�
             self.global_interp_missing = bool(state_data.get("global_interp_missing", self.global_interp_missing))
             self.global_normalize = bool(state_data.get("global_normalize", self.global_normalize))
             self.global_rescale_errors = bool(state_data.get("global_rescale_errors", self.global_rescale_errors))
+            if hasattr(self, "spin_sysrem_iter"):
+                self.spin_sysrem_iter.setValue(int(state_data.get("sysrem_iter", self.spin_sysrem_iter.value())))
+            if hasattr(self, "spin_sysrem_apply"):
+                self.spin_sysrem_apply.setValue(int(state_data.get("sysrem_apply", self.spin_sysrem_apply.value())))
 
         if not self.color_map_by_filter:
             self.color_map_by_filter = self._normalize_color_map(
