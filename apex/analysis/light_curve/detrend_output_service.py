@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import datetime, timezone
 import json
 from pathlib import Path
 
@@ -39,7 +39,7 @@ def write_step10_current_meta(
         "target_id": int(target_id),
         "mode": str(mode_tag),
         "formula": str(formula),
-        "saved_at_utc": datetime.utcnow().isoformat(timespec="seconds") + "Z",
+        "saved_at_utc": datetime.now(timezone.utc).isoformat(timespec="seconds"),
         "lightcurve_file": lc_path.name,
         "params_file": params_path.name if params_path is not None else "",
         "summary_file": summary_path.name if summary_path is not None else "",
@@ -96,6 +96,9 @@ def build_detrend_summary_report_text(
     if mode == "offset":
         lines.append("  Formula: Δm_corr = Δm_raw - ZP₀")
         lines.append("  (Nightly zero-point offset only)")
+    elif mode == "sysrem":
+        lines.append("  Formula: SYSREM systematic-component correction")
+        lines.append("  (Common trends are extracted from comparison stars and applied to the target)")
     else:
         lines.append("  Formula: Δm_corr = Δm_raw - ZP₀ - k''·ΔC·X")
         lines.append("  (Color-dependent extinction correction)")
@@ -127,12 +130,21 @@ def build_detrend_summary_report_text(
     if not params_df.empty:
         lines.append("[Fit Parameters by Date/Filter]")
         lines.append("-" * 60)
-        if mode == "offset":
+        if mode == "sysrem":
+            lines.append(f"{'Filter':<8} {'Iter':>5} {'RMS_before':>12} {'RMS_after':>12}")
+        elif mode == "offset":
             lines.append(f"{'Date':<12} {'Filter':<6} {'N':>5} {'ZP₀':>10} {'±σ':>8} {'RMS_before':>10} {'RMS_after':>10}")
         else:
             lines.append(f"{'Date':<12} {'Filter':<6} {'N':>5} {'ZP₀':>10} {'k\"':>10} {'RMS_before':>10} {'RMS_after':>10}")
         lines.append("-" * 60)
         for _, row in params_df.iterrows():
+            if mode == "sysrem":
+                filt = str(row.get("filter", "") or "all")[:8]
+                iteration = int(row.get("iteration", 0))
+                rms_b = row.get("rms_before", np.nan)
+                rms_a = row.get("rms_after", np.nan)
+                lines.append(f"{filt:<8} {iteration:>5} {rms_b:>12.5f} {rms_a:>12.5f}")
+                continue
             date = str(row.get("date", ""))[:12]
             filt = str(row.get("filter", "") or "all")[:6]
             n = int(row.get("n_used", 0))

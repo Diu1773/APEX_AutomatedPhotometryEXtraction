@@ -177,10 +177,16 @@ def compute_pdm(
         }
 
     baseline = t.max() - t.min()
-    n_trials = min(
-        50000,
-        int(samples_per_peak * baseline / min_period)
-    )
+    n_trials_raw = int(samples_per_peak * baseline / min_period)
+    n_trials = min(50000, n_trials_raw)
+    if n_trials_raw > 50000:
+        warnings.warn(
+            f"PDM [{label}]: requested {n_trials_raw} trial periods capped to 50000. "
+            f"Consider increasing min_period (current={min_period:.4f} d) or "
+            f"reducing baseline ({baseline:.1f} d) to improve period resolution.",
+            UserWarning,
+            stacklevel=3,
+        )
     # Linear frequency spacing gives uniform resolution across all periods.
     # Period-linear spacing over-samples long periods and under-samples short ones.
     trial_freqs = np.linspace(1.0 / max_period, 1.0 / min_period, n_trials)

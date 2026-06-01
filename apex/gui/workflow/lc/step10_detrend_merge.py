@@ -2730,6 +2730,7 @@ Step 10은 여러 밤의 관측을 합칠 때 기준선을 맞추는 단계입�
                         "ext_slope": slope,
                         "ext_slope_err": slope_err,
                         "cov_zp_slope": cov_zp_slope,
+                        "fit_slope": self.mode == "color",  # True = slope was fitted
                         "n_used": int(np.sum(used_mask)),
                         "rms_before": rms_before,
                         "rms_after": rms_after,
@@ -3322,7 +3323,7 @@ Step 10은 여러 밤의 관측을 합칠 때 기준선을 맞추는 단계입�
                 Aw = A * np.sqrt(ww[:, None])
                 yw = yy * np.sqrt(ww)
                 try:
-                    coeff, residuals, rank, s = np.linalg.lstsq(Aw, yw, rcond=None)
+                    coeff, residuals, rank, s = np.linalg.lstsq(Aw, yw, rcond=1e-10)
                     zp = float(coeff[0])
                     slope = float(coeff[1])
 
@@ -3381,19 +3382,22 @@ Step 10은 여러 밤의 관측을 합칠 때 기준선을 맞추는 단계입�
                     continue
                 x = x * float(delta_c_const)
 
-            # For offset mode slope=0; guard against 0*NaN=NaN when airmass missing.
-            slope_term = np.where(slope == 0.0, 0.0, slope * x)
+            # fit_slope flag (stored in params_df) is the authoritative indicator of
+            # whether a slope was actually fitted.  Avoids float equality pitfalls
+            # where a legitimate near-zero fitted slope would be treated as "no slope".
+            fit_slope_flag = bool(row.get("fit_slope", False))
+            slope_term = slope * x if fit_slope_flag else np.zeros_like(x)
             out.loc[idx, "diff_mag_corr"] = out.loc[idx, "diff_mag_raw"] - zp - slope_term
 
             raw_err = out.loc[idx, "diff_err"].to_numpy(float)
             raw_var = np.where(np.isfinite(raw_err), raw_err**2, 0.0)
             zp_var    = zp_err**2    if np.isfinite(zp_err)    else 0.0
-            slope_var = slope_err**2 if np.isfinite(slope_err) else 0.0
+            slope_var = slope_err**2 if (fit_slope_flag and np.isfinite(slope_err)) else 0.0
             # Load ZP-k'' covariance (stored by color-mode fits; zero for offset mode)
             cov_zp_slope = _safe_float(row.get("cov_zp_slope", 0.0))
             if not np.isfinite(cov_zp_slope):
                 cov_zp_slope = 0.0
-            x_eff = np.where(slope == 0.0, 0.0, x)   # zero out unused slope axis
+            x_eff = x if fit_slope_flag else np.zeros_like(x)  # zero axis when slope not fitted
             # Full variance: σ²_raw + σ²_ZP + x²σ²_k'' + 2x·Cov(ZP,k'')
             corr_var = (
                 raw_var

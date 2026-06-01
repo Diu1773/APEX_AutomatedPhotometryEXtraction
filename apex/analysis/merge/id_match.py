@@ -203,6 +203,9 @@ def reconcile_workspace_catalogs(
                         canon_sid_map[int(sid_val)] = idx_row
 
             used_canonical_sids: set[int] = set()
+            # Collect new rows in a list; concat once at the end to avoid O(N²) copies
+            new_canon_rows: list[dict] = []
+
             for _, row in df.iterrows():
                 local_id = pd.to_numeric(pd.Series([row.get("ID")]), errors="coerce").iloc[0]
                 if not np.isfinite(local_id):
@@ -263,8 +266,9 @@ def reconcile_workspace_catalogs(
                     next_negative_sid -= 1
 
                 new_row = canonicalize_catalog_row(row, merged_id, merged_source_id, folder_tag)
-                canon = pd.concat([canon, pd.DataFrame([new_row])], ignore_index=True, sort=False)
-                canon_sid_map[int(merged_source_id)] = len(canon) - 1
+                # Defer concat: track position in final merged df (len(canon) + pending rows)
+                canon_sid_map[int(merged_source_id)] = len(canon) + len(new_canon_rows)
+                new_canon_rows.append(new_row)
                 local_map[local_id] = {
                     "merged_id": merged_id,
                     "merged_source_id": int(merged_source_id),
@@ -282,6 +286,13 @@ def reconcile_workspace_catalogs(
                     "sep_arcsec": np.nan,
                     "status": "new",
                 })
+
+            # Single concat for all new rows in this folder/filter
+            if new_canon_rows:
+                canon = pd.concat(
+                    [canon, pd.DataFrame(new_canon_rows)],
+                    ignore_index=True, sort=False,
+                )
 
             canon = canon.sort_values("ID").reset_index(drop=True)
             canonical_by_filter[flt] = canon
