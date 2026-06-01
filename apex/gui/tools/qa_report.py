@@ -24,9 +24,12 @@ from typing import Optional, Dict, List, Tuple, Any
 import numpy as np
 import pandas as pd
 
+from apex.utils.common_helpers import normalize_filter_key
+from apex.utils.constants import MAD_TO_SIGMA
 from apex.utils.photometry_loader import load_frame_photometry
 from apex.utils.step_paths import step7_forced_phot_dir
-from apex.utils.step_paths_lc import step10_dir
+from apex.utils.step_paths_cmd import step10_zp_dir
+from apex.utils.step_paths_lc import step9_lc_dir as step10_lc_dir
 
 from matplotlib.backends.backend_qt5agg import FigureCanvasQTAgg as FigureCanvas
 from matplotlib.backends.backend_qt5agg import NavigationToolbar2QT as NavigationToolbar
@@ -56,6 +59,46 @@ except Exception:
     tomli_w = None
 
 
+def _qa_filter_key(value: Any) -> str:
+    try:
+        if pd.isna(value):
+            return ""
+    except Exception:
+        pass
+    raw = str(value).strip()
+    if not raw or raw.lower() in {"nan", "none", "null"}:
+        return ""
+    return normalize_filter_key(raw)
+
+
+def _qa_filter_list(values: Any) -> list[str]:
+    if values is None:
+        return []
+    if isinstance(values, (str, bytes)):
+        values = [values]
+    out: list[str] = []
+    for value in values:
+        key = _qa_filter_key(value)
+        if key and key not in out:
+            out.append(key)
+    return out
+
+
+def _frame_zeropoint_candidates(result_dir: Path) -> list[Path]:
+    return [
+        step10_zp_dir(result_dir) / "frame_zeropoint.csv",
+        step10_lc_dir(result_dir) / "frame_zeropoint.csv",
+        result_dir / "frame_zeropoint.csv",
+    ]
+
+
+def _find_frame_zeropoint_path(result_dir: Path) -> Path | None:
+    for path in _frame_zeropoint_candidates(result_dir):
+        if path.exists():
+            return path
+    return None
+
+
 class QAReportWorker(QThread):
     """Worker thread for QA report generation"""
     progress = pyqtSignal(int, int, str)
@@ -75,7 +118,8 @@ class QAReportWorker(QThread):
         self.max_chi2_nu = self.params.get("max_chi2_nu", 100.0)
         self.max_delta_r = self.params.get("max_delta_r", 10.0)
         self.exclude_saturated = self.params.get("exclude_saturated", False)
-        self.enabled_filters = self.params.get("enabled_filters", None)  # None = all
+        enabled_filters = _qa_filter_list(self.params.get("enabled_filters", None))
+        self.enabled_filters = enabled_filters or None  # None = all
         self.selected_frames = self.params.get("selected_frames", None)  # None = all frames
         self.skip_frame_flagging = self.params.get("skip_frame_flagging", False)  # Skip re-flagging when frames selected
 
@@ -87,20 +131,24 @@ class QAReportWorker(QThread):
 
     def _apply_frame_zp(self, df: pd.DataFrame) -> pd.DataFrame:
         """Apply frame ZP correction to magnitudes if available."""
-        zp_path = step10_dir(self.result_dir) / "frame_zeropoint.csv"
-        if not zp_path.exists():
-            zp_path = self.result_dir / "frame_zeropoint.csv"
-        if not zp_path.exists():
+        zp_path = _find_frame_zeropoint_path(self.result_dir)
+        if zp_path is None:
             return df
         try:
             zp_df = pd.read_csv(zp_path)
             if not {"file", "filter", "zp_frame"}.issubset(zp_df.columns):
                 return df
-            zp_df["filter"] = zp_df["filter"].astype(str).str.strip().str.lower()
+            zp_df["filter"] = zp_df["filter"].map(_qa_filter_key)
             out = df.copy()
-            out["FILTER"] = out["FILTER"].astype(str).str.strip().str.lower()
+            if "FILTER" not in out.columns:
+                return df
+            out["FILTER"] = out["FILTER"].map(_qa_filter_key)
+            keep_cols = ["file", "filter", "zp_frame"]
+            for optional in ("zp_scatter", "n_ref"):
+                if optional in zp_df.columns:
+                    keep_cols.append(optional)
             out = out.merge(
-                zp_df[["file", "filter", "zp_frame", "zp_scatter", "n_ref"]],
+                zp_df[keep_cols],
                 left_on=["frame", "FILTER"],
                 right_on=["file", "filter"],
                 how="left"
@@ -108,10 +156,11 @@ class QAReportWorker(QThread):
             out["zp_frame"] = out["zp_frame"].fillna(0.0)
             out["mag_zp"] = out["mag"] + out["zp_frame"]
             out["zp_sigma"] = np.nan
-            nref = pd.to_numeric(out.get("n_ref"), errors="coerce")
-            zpsc = pd.to_numeric(out.get("zp_scatter"), errors="coerce")
-            m = np.isfinite(nref) & (nref > 0) & np.isfinite(zpsc)
-            out.loc[m, "zp_sigma"] = zpsc[m] / np.sqrt(nref[m])
+            if "n_ref" in out.columns and "zp_scatter" in out.columns:
+                nref = pd.to_numeric(out.get("n_ref"), errors="coerce")
+                zpsc = pd.to_numeric(out.get("zp_scatter"), errors="coerce")
+                m = np.isfinite(nref) & (nref > 0) & np.isfinite(zpsc)
+                out.loc[m, "zp_sigma"] = zpsc[m] / np.sqrt(nref[m])
             return out
         except Exception:
             return df
@@ -167,22 +216,23 @@ class QAReportWorker(QThread):
                 raise FileNotFoundError("No readable Step 7 forced photometry frames found")
 
             big = pd.concat(all_rows, ignore_index=True)
+            if "FILTER" in big.columns:
+                big["FILTER"] = big["FILTER"].map(_qa_filter_key)
             self._log(f"Loaded {len(all_rows)} frames, {len(big)} measurements")
 
             # Store original data for frame quality (BEFORE any filtering)
             big_original = big.copy()
 
-            # Apply filter exclusions (preserve original case)
+            # Apply filter exclusions using canonical filter keys.
             if self.enabled_filters is not None and len(self.enabled_filters) > 0:
                 if "FILTER" in big.columns:
-                    big["FILTER_clean"] = big["FILTER"].astype(str).str.strip()
+                    enabled = set(self.enabled_filters)
                     before = len(big)
-                    big = big[big["FILTER_clean"].isin(self.enabled_filters)].copy()
-                    big = big.drop(columns=["FILTER_clean"])
+                    big = big[big["FILTER"].isin(enabled)].copy()
                     excluded = before - len(big)
                     self._log(f"Filter exclusion: {before} → {len(big)} ({excluded} excluded, enabled: {self.enabled_filters})")
                     # Also filter original for frame quality
-                    big_original = big_original[big_original["FILTER"].astype(str).str.strip().isin(self.enabled_filters)].copy()
+                    big_original = big_original[big_original["FILTER"].isin(enabled)].copy()
 
             # Apply frame selection (from Frames tab checkboxes) - BEFORE other filters
             if self.selected_frames is not None and len(self.selected_frames) > 0:
@@ -207,7 +257,12 @@ class QAReportWorker(QThread):
             # Apply saturation exclusion
             if self.exclude_saturated and "is_saturated" in big.columns:
                 before = len(big)
-                big = big[big["is_saturated"] != True].copy()
+                sat = big["is_saturated"]
+                if sat.dtype == object:
+                    sat_mask = sat.astype(str).str.strip().str.lower().isin({"1", "true", "yes", "y"})
+                else:
+                    sat_mask = sat.fillna(False).astype(bool)
+                big = big[~sat_mask].copy()
                 self._log(f"Exclude saturated: {before} → {len(big)}")
 
             # 2. Error Model Validation (on filtered data)
@@ -274,9 +329,13 @@ class QAReportWorker(QThread):
             (df["mag_err"] > 0)
         ].copy()
 
-        if "delta_r" in valid.columns and np.isfinite(self.max_delta_r):
+        centroid_col = "delta_r" if "delta_r" in valid.columns else (
+            "center_error_px" if "center_error_px" in valid.columns else None
+        )
+        if centroid_col and np.isfinite(self.max_delta_r):
             before = len(valid)
-            valid = valid[valid["delta_r"] <= self.max_delta_r].copy()
+            valid[centroid_col] = pd.to_numeric(valid[centroid_col], errors="coerce")
+            valid = valid[valid[centroid_col] <= self.max_delta_r].copy()
             removed = before - len(valid)
             if removed > 0:
                 self._log(f"Centroid filter (Δr <= {self.max_delta_r:.2f}px): removed {removed} rows")
@@ -290,6 +349,8 @@ class QAReportWorker(QThread):
 
         if len(valid) < 10:
             return {"error": "Insufficient valid data"}
+        if "FILTER" not in valid.columns:
+            valid["FILTER"] = ""
 
         err_col = "mag_err"
         if mag_col == "mag_zp" and "zp_sigma" in valid.columns:
@@ -298,16 +359,46 @@ class QAReportWorker(QThread):
             mag_err = valid["mag_err"].to_numpy(float)
             valid[err_col] = np.sqrt(mag_err**2 + np.where(np.isfinite(zp_sig), zp_sig**2, 0.0))
 
-        # Group by ID and FILTER
-        grp = valid.groupby(["ID", "FILTER"]).agg(
-            mag_mean=(mag_col, "mean"),
-            mag_med=(mag_col, "median"),
-            mag_std=(mag_col, "std"),
-            mag_mad=(mag_col, lambda x: 1.4826 * np.median(np.abs(x - np.median(x)))),
-            mag_err_med=(err_col, "median"),
-            snr_med=("snr", "median"),
-            n_obs=(mag_col, "count")
-        ).reset_index()
+        # Per-star repeated-observation statistics.  RMS/mag_err is a quick
+        # scale diagnostic, while chi2_nu uses each measurement's own error.
+        rows = []
+        for (source_id, filt), sub in valid.groupby(["ID", "FILTER"], dropna=False):
+            y = pd.to_numeric(sub[mag_col], errors="coerce").to_numpy(float)
+            e = pd.to_numeric(sub[err_col], errors="coerce").to_numpy(float)
+            snr = pd.to_numeric(sub["snr"], errors="coerce").to_numpy(float)
+            ok = np.isfinite(y) & np.isfinite(e) & (e > 0)
+            y = y[ok]
+            e = e[ok]
+            snr = snr[ok]
+            n_obs = int(len(y))
+            if n_obs == 0:
+                continue
+            weights = 1.0 / np.square(e)
+            mag_mean = float(np.average(y, weights=weights)) if np.isfinite(weights).any() else float(np.nanmean(y))
+            mag_med = float(np.nanmedian(y))
+            mag_std = float(np.nanstd(y, ddof=1)) if n_obs > 1 else np.nan
+            mag_mad = float(MAD_TO_SIGMA * np.nanmedian(np.abs(y - mag_med)))
+            mag_err_med = float(np.nanmedian(e))
+            snr_med = float(np.nanmedian(snr)) if np.isfinite(snr).any() else np.nan
+            chi2_nu = np.nan
+            if n_obs > 1 and np.isfinite(mag_mean):
+                chi2_nu = float(np.nansum(np.square((y - mag_mean) / e)) / max(n_obs - 1, 1))
+            rows.append({
+                "ID": source_id,
+                "FILTER": filt,
+                "mag_mean": mag_mean,
+                "mag_med": mag_med,
+                "mag_std": mag_std,
+                "mag_mad": mag_mad,
+                "mag_err_med": mag_err_med,
+                "snr_med": snr_med,
+                "n_obs": n_obs,
+                "chi2_nu_raw": chi2_nu,
+            })
+
+        grp = pd.DataFrame(rows)
+        if grp.empty:
+            return {"error": "No finite per-star error-model groups"}
 
         # Filter by minimum observations
         grp = grp[grp["n_obs"] >= self.min_n_frames].copy()
@@ -315,9 +406,8 @@ class QAReportWorker(QThread):
         if len(grp) == 0:
             return {"error": f"No stars with >= {self.min_n_frames} observations"}
 
-        # Compute chi2_nu early for filtering
+        # Compute diagnostics before filtering
         grp["rms_over_pred_raw"] = grp["mag_std"] / grp["mag_err_med"]
-        grp["chi2_nu_raw"] = (grp["mag_std"]**2 / grp["mag_err_med"]**2)
 
         self._log(f"Before chi2 cut: {len(grp)} stars, chi2_nu max={grp['chi2_nu_raw'].max():.1f}, threshold={self.max_chi2_nu}")
 
@@ -327,12 +417,12 @@ class QAReportWorker(QThread):
             grp = grp[grp["chi2_nu_raw"] <= self.max_chi2_nu].copy()
             removed = before - len(grp)
             self._log(f"χ²/ν <= {self.max_chi2_nu}: {before} → {len(grp)} stars ({removed} outliers removed)")
-
+        if len(grp) == 0:
+            return {"error": "No stars left after χ²/ν filtering"}
         # Compute validation metrics
         grp["rms_over_pred"] = grp["mag_std"] / grp["mag_err_med"]
         grp["mad_over_pred"] = grp["mag_mad"] / grp["mag_err_med"]
-        grp["chi2_per_obs"] = (grp["mag_std"]**2 / grp["mag_err_med"]**2) * (grp["n_obs"] - 1)
-        grp["chi2_nu"] = grp["chi2_per_obs"] / np.maximum(grp["n_obs"] - 1, 1)
+        grp["chi2_nu"] = grp["chi2_nu_raw"]
 
         # Per-filter summary
         summary_by_filter = grp.groupby("FILTER").agg(
@@ -380,20 +470,35 @@ class QAReportWorker(QThread):
 
     def _compute_centroid_qa(self, df: pd.DataFrame) -> Dict:
         """Compute centroid shift statistics"""
-        required = {"x_init", "y_init", "xcenter", "ycenter"}
-        if not required.issubset(df.columns):
-            return {"error": "Missing centroid columns (x_init, y_init, xcenter, ycenter)"}
+        if "center_error_px" in df.columns:
+            valid = df[pd.to_numeric(df["center_error_px"], errors="coerce").notna()].copy()
+            valid["delta_r"] = pd.to_numeric(valid["center_error_px"], errors="coerce")
+            if {"x_fit", "y_fit", "x_pred", "y_pred"}.issubset(valid.columns):
+                valid["delta_x"] = pd.to_numeric(valid["x_fit"], errors="coerce") - pd.to_numeric(valid["x_pred"], errors="coerce")
+                valid["delta_y"] = pd.to_numeric(valid["y_fit"], errors="coerce") - pd.to_numeric(valid["y_pred"], errors="coerce")
+            elif {"x", "y", "x_pred", "y_pred"}.issubset(valid.columns):
+                valid["delta_x"] = pd.to_numeric(valid["x"], errors="coerce") - pd.to_numeric(valid["x_pred"], errors="coerce")
+                valid["delta_y"] = pd.to_numeric(valid["y"], errors="coerce") - pd.to_numeric(valid["y_pred"], errors="coerce")
+            else:
+                valid["delta_x"] = np.nan
+                valid["delta_y"] = np.nan
+        else:
+            required = {"x_init", "y_init", "xcenter", "ycenter"}
+            if not required.issubset(df.columns):
+                return {"error": "Missing centroid columns (center_error_px or x_init/y_init/xcenter/ycenter)"}
 
-        valid = df[
-            np.isfinite(df["x_init"]) & np.isfinite(df["y_init"]) &
-            np.isfinite(df["xcenter"]) & np.isfinite(df["ycenter"])
-        ].copy()
+            valid = df[
+                np.isfinite(df["x_init"]) & np.isfinite(df["y_init"]) &
+                np.isfinite(df["xcenter"]) & np.isfinite(df["ycenter"])
+            ].copy()
 
-        valid["delta_x"] = valid["xcenter"] - valid["x_init"]
-        valid["delta_y"] = valid["ycenter"] - valid["y_init"]
-        valid["delta_r"] = np.sqrt(valid["delta_x"]**2 + valid["delta_y"]**2)
+            valid["delta_x"] = valid["xcenter"] - valid["x_init"]
+            valid["delta_y"] = valid["ycenter"] - valid["y_init"]
+            valid["delta_r"] = np.sqrt(valid["delta_x"]**2 + valid["delta_y"]**2)
 
         dr = valid["delta_r"].dropna()
+        if dr.empty:
+            return {"error": "No finite centroid measurements"}
 
         summary = {
             "n_measurements": int(len(dr)),
@@ -409,8 +514,10 @@ class QAReportWorker(QThread):
         }
 
         data_cols = ["ID", "frame", "delta_x", "delta_y", "delta_r"]
-        if "FILTER" in valid.columns:
-            data_cols.append("FILTER")
+        for col in ("FILTER", "detected_flag", "recentered_flag", "centroid_outlier", "centering_quality"):
+            if col in valid.columns and col not in data_cols:
+                data_cols.append(col)
+        data_cols = [col for col in data_cols if col in valid.columns]
 
         return {
             "data": valid[data_cols],
@@ -466,6 +573,12 @@ class QAReportWorker(QThread):
                     on="frame_base", how="left"
                 )
 
+        if "fwhm_used" in frame_stats.columns:
+            frame_stats["fwhm_used"] = pd.to_numeric(frame_stats["fwhm_used"], errors="coerce")
+            pixscale = float(self.params.get("pixel_scale_arcsec", np.nan))
+            if np.isfinite(pixscale) and pixscale > 0:
+                frame_stats["fwhm_arcsec"] = frame_stats["fwhm_used"] * pixscale
+
         # Identify outlier frames (skip if frames already selected by user)
         if self.skip_frame_flagging:
             # Don't re-flag - all selected frames are considered good
@@ -493,7 +606,10 @@ class QAReportWorker(QThread):
                     fwhm_mode = str(self.params.get("frame_fwhm_mode", "scale")).lower()
                     if fwhm_mode == "absolute":
                         fwhm_abs = float(self.params.get("frame_fwhm_abs", 8.0))
-                        frame_stats["fwhm_flag"] = frame_stats["fwhm_used"] > fwhm_abs
+                        if "fwhm_arcsec" in frame_stats.columns:
+                            frame_stats["fwhm_flag"] = frame_stats["fwhm_arcsec"] > fwhm_abs
+                        else:
+                            self._log("FWHM absolute flag skipped: pixel_scale_arcsec is not set")
                     else:
                         fwhm_scale = float(self.params.get("frame_fwhm_scale", 1.5))
                         fwhm_med = np.nanmedian(frame_stats["fwhm_used"])
@@ -516,6 +632,9 @@ class QAReportWorker(QThread):
         if "fwhm_used" in frame_stats.columns:
             summary["fwhm_med"] = float(np.nanmedian(frame_stats["fwhm_used"]))
             summary["fwhm_p90"] = float(np.nanpercentile(frame_stats["fwhm_used"], 90))
+        if "fwhm_arcsec" in frame_stats.columns:
+            summary["fwhm_arcsec_med"] = float(np.nanmedian(frame_stats["fwhm_arcsec"]))
+            summary["fwhm_arcsec_p90"] = float(np.nanpercentile(frame_stats["fwhm_arcsec"], 90))
 
         return {
             "data": frame_stats,
@@ -524,15 +643,37 @@ class QAReportWorker(QThread):
 
     def _compute_background_qa(self, df: pd.DataFrame) -> Dict:
         """Compute background estimation quality"""
+        df = df.copy()
+        alias_map = {
+            "bkg_median_adu": ("bkg_median_adu", "sky", "sky_median", "sky_median_adu"),
+            "bkg_std_adu": ("bkg_std_adu", "sky_std", "bkg_std", "sky_sigma", "sky_sigma_adu"),
+            "n_sky": ("n_sky", "n_sky_pix", "sky_npix"),
+        }
+        missing = []
+        for target, candidates in alias_map.items():
+            if target in df.columns:
+                df[target] = pd.to_numeric(df[target], errors="coerce")
+                continue
+            source = next((col for col in candidates if col in df.columns), None)
+            if source is None:
+                missing.append(target)
+            else:
+                df[target] = pd.to_numeric(df[source], errors="coerce")
+
         required = {"bkg_median_adu", "bkg_std_adu", "n_sky"}
         if not required.issubset(df.columns):
-            return {"error": "Missing background columns"}
-
+            return {
+                "error": "Missing background columns",
+                "missing": missing,
+                "recommendation": "Regenerate Step 7 forced photometry so bkg_median_adu, bkg_std_adu, and n_sky are written.",
+            }
         valid = df[
             np.isfinite(df["bkg_median_adu"]) &
             np.isfinite(df["bkg_std_adu"]) &
             (df["n_sky"] > 0)
         ].copy()
+        if valid.empty:
+            return {"error": "No finite background measurements"}
 
         # Per-frame background statistics
         agg_dict = dict(
@@ -596,13 +737,22 @@ class QAReportWorker(QThread):
                 "recommendation": "Add is_saturated to Step 7 forced photometry TSV output."
             }
 
-        n_total = len(df)
-        n_sat = int(df["is_saturated"].sum())
+        sat = df["is_saturated"]
+        if sat.dtype == object:
+            sat = sat.astype(str).str.strip().str.lower().isin({"1", "true", "yes", "y"})
+        else:
+            sat = sat.fillna(False).astype(bool)
+
+        data = df.copy()
+        data["is_saturated_bool"] = sat.to_numpy(bool)
+
+        n_total = len(data)
+        n_sat = int(data["is_saturated_bool"].sum())
 
         # Per-star saturation
-        star_sat = df.groupby("ID").agg(
-            n_obs=("mag", "count"),
-            n_sat=("is_saturated", "sum")
+        star_sat = data.groupby("ID").agg(
+            n_obs=("ID", "count"),
+            n_sat=("is_saturated_bool", "sum")
         ).reset_index()
         star_sat["sat_fraction"] = star_sat["n_sat"] / star_sat["n_obs"]
 
@@ -624,10 +774,71 @@ class QAReportWorker(QThread):
 
     def _compute_apcorr_validation(self, df: pd.DataFrame) -> Dict:
         """Validate aperture correction effectiveness"""
-        if "apcorr_applied" not in df.columns:
-            return {"error": "apcorr_applied column not found"}
+        if "apcorr" in df.columns:
+            valid = df[np.isfinite(pd.to_numeric(df["apcorr"], errors="coerce"))].copy()
+            if valid.empty:
+                return {"error": "No finite apcorr values"}
+            valid["apcorr"] = pd.to_numeric(valid["apcorr"], errors="coerce")
+            group_cols = ["frame"]
+            if "FILTER" in valid.columns:
+                group_cols.append("FILTER")
+            by_frame = valid.groupby(group_cols).agg(
+                apcorr=("apcorr", "median"),
+                n_measurements=("apcorr", "count"),
+            ).reset_index()
 
+            apcorr_path = step7_forced_phot_dir(self.result_dir) / "apcorr_summary.csv"
+            if apcorr_path.exists():
+                try:
+                    ap_sum = pd.read_csv(apcorr_path)
+                    if "file" in ap_sum.columns:
+                        ap_sum = ap_sum.rename(columns={"file": "frame"})
+                    if "filter" in ap_sum.columns:
+                        ap_sum["filter"] = ap_sum["filter"].map(_qa_filter_key)
+                    merge_left = ["frame"]
+                    merge_right = ["frame"]
+                    if "FILTER" in by_frame.columns and "filter" in ap_sum.columns:
+                        merge_left.append("FILTER")
+                        merge_right.append("filter")
+                    extra_cols = [
+                        col for col in (
+                            "frame", "filter", "n_apcorr_stars", "n_apcorr_candidates",
+                            "n_step4_quality_reject", "n_step4_apcorr_reject",
+                            "n_center_outlier_reject",
+                        )
+                        if col in ap_sum.columns
+                    ]
+                    by_frame = by_frame.merge(
+                        ap_sum[extra_cols],
+                        left_on=merge_left,
+                        right_on=merge_right,
+                        how="left",
+                    )
+                except Exception as exc:
+                    self._log(f"apcorr_summary.csv read skipped: {exc}")
+
+            vals = by_frame["apcorr"].to_numpy(float)
+            summary = {
+                "mode": "current_apcorr",
+                "n_frames": int(len(by_frame)),
+                "apcorr_med": float(np.nanmedian(vals)),
+                "apcorr_p10": float(np.nanpercentile(vals, 10)),
+                "apcorr_p90": float(np.nanpercentile(vals, 90)),
+                "n_frames_nonunity": int(np.sum(np.isfinite(vals) & (np.abs(vals - 1.0) > 1e-6))),
+            }
+            for col in ("n_apcorr_stars", "n_apcorr_candidates"):
+                if col in by_frame.columns:
+                    summary[f"{col}_med"] = float(np.nanmedian(pd.to_numeric(by_frame[col], errors="coerce")))
+            return {
+                "by_frame": by_frame,
+                "summary": summary,
+            }
+
+        if "apcorr_applied" not in df.columns:
+            return {"error": "apcorr/apcorr_applied column not found"}
         valid = df[np.isfinite(df["mag"]) & np.isfinite(df["mag_err"])].copy()
+        if "FILTER" not in valid.columns:
+            valid["FILTER"] = ""
 
         # Separate applied vs not applied
         applied = valid[valid["apcorr_applied"] == True]
@@ -642,8 +853,8 @@ class QAReportWorker(QThread):
                     "mode": "applied_only",
                     "n_applied": int(len(applied)),
                     "n_not_applied": int(len(not_applied)),
-                    "star_rms_med": float(star_rms.median()),
-                    "star_rms_p90": float(np.percentile(star_rms, 90)),
+                    "star_rms_med": float(star_rms.median()) if len(star_rms) else np.nan,
+                    "star_rms_p90": float(np.percentile(star_rms, 90)) if len(star_rms) else np.nan,
                 }
             else:
                 star_rms = not_applied.groupby(["ID", "FILTER"])["mag"].std().dropna()
@@ -651,8 +862,8 @@ class QAReportWorker(QThread):
                     "mode": "not_applied_only",
                     "n_applied": int(len(applied)),
                     "n_not_applied": int(len(not_applied)),
-                    "star_rms_med": float(star_rms.median()),
-                    "star_rms_p90": float(np.percentile(star_rms, 90)),
+                    "star_rms_med": float(star_rms.median()) if len(star_rms) else np.nan,
+                    "star_rms_p90": float(np.percentile(star_rms, 90)) if len(star_rms) else np.nan,
                 }
 
         # Compare RMS for same stars in both modes
@@ -726,6 +937,37 @@ class QAReportWorker(QThread):
                 "SNR_med": f"{fq['snr_med_med']:.1f}",
             })
 
+        # Background quality
+        if "background" in results and "summary" in results["background"]:
+            bg = results["background"]["summary"]
+            rows.append({
+                "Metric": "Background",
+                "Value": f"σ_sky,med = {bg['bkg_std_global']:.2f} ADU",
+                "N_outliers": f"{bg['n_frames_low_nsky']} low n_sky frame(s)",
+            })
+
+        # Saturation summary
+        if "saturation" in results and "summary" in results["saturation"]:
+            sat = results["saturation"]["summary"]
+            rows.append({
+                "Metric": "Saturation",
+                "Value": f"{100.0 * sat['saturation_fraction']:.2f}% saturated",
+                "N_outliers": f"{sat['n_stars_any_sat']} star(s)",
+            })
+
+        # Aperture correction summary
+        if "apcorr" in results and "summary" in results["apcorr"]:
+            ap = results["apcorr"]["summary"]
+            if "apcorr_med" in ap:
+                value = f"median = {ap['apcorr_med']:.4f}"
+            else:
+                value = str(ap.get("mode", "N/A"))
+            rows.append({
+                "Metric": "Aperture Correction",
+                "Value": value,
+                "N_outliers": f"{ap.get('n_frames', 'N/A')} frame(s)",
+            })
+
         return {
             "table": pd.DataFrame(rows) if rows else pd.DataFrame(),
             "latex": self._to_latex_table(rows) if rows else ""
@@ -745,13 +987,25 @@ class QAReportWorker(QThread):
             r"\hline",
         ]
 
-        # Check if it's error model data
-        if "Filter" in rows[0]:
+        filter_rows = [row for row in rows if "Filter" in row]
+        metric_rows = [row for row in rows if "Metric" in row]
+
+        if filter_rows:
             lines.append(r"Filter & $N_\mathrm{stars}$ & $N_\mathrm{obs}$ & RMS/$\sigma_\mathrm{pred}$ & $\chi^2/\nu$ \\")
             lines.append(r"\hline")
-            for row in rows:
-                if "Filter" in row:
-                    lines.append(f"{row['Filter']} & {row['N_stars']} & {row['N_obs']} & {row['RMS/σ_pred']} & {row['χ²/ν']} \\\\")
+            for row in filter_rows:
+                lines.append(f"{row['Filter']} & {row['N_stars']} & {row['N_obs']} & {row['RMS/σ_pred']} & {row['χ²/ν']} \\\\")
+
+        if metric_rows:
+            if filter_rows:
+                lines.append(r"\hline")
+            lines.append(r"\multicolumn{5}{l}{Additional QA metrics} \\")
+            lines.append(r"\hline")
+            for row in metric_rows:
+                metric = row.get("Metric", "")
+                value = row.get("Value", "")
+                detail = row.get("N_outliers") or row.get("SNR_med") or ""
+                lines.append(f"{metric} & \\multicolumn{{2}}{{l}}{{{value}}} & \\multicolumn{{2}}{{l}}{{{detail}}} \\\\")
 
         lines.extend([
             r"\hline",
@@ -803,6 +1057,27 @@ class QAReportWorker(QThread):
         if "background" in results and "by_frame" in results["background"]:
             if isinstance(results["background"]["by_frame"], pd.DataFrame):
                 results["background"]["by_frame"].to_csv(qa_dir / "qa_background.csv", index=False, na_rep="NaN")
+            if "summary" in results["background"]:
+                with open(qa_dir / "qa_background_summary.json", "w") as f:
+                    json.dump(results["background"]["summary"], f, indent=2)
+
+        # Saturation
+        if "saturation" in results:
+            if "by_star" in results["saturation"] and isinstance(results["saturation"]["by_star"], pd.DataFrame):
+                results["saturation"]["by_star"].to_csv(qa_dir / "qa_saturation_by_star.csv", index=False, na_rep="NaN")
+            if "summary" in results["saturation"]:
+                with open(qa_dir / "qa_saturation_summary.json", "w") as f:
+                    json.dump(results["saturation"]["summary"], f, indent=2)
+
+        # Aperture correction
+        if "apcorr" in results:
+            if "by_frame" in results["apcorr"] and isinstance(results["apcorr"]["by_frame"], pd.DataFrame):
+                results["apcorr"]["by_frame"].to_csv(qa_dir / "qa_apcorr_by_frame.csv", index=False, na_rep="NaN")
+            if "comparison" in results["apcorr"] and isinstance(results["apcorr"]["comparison"], pd.DataFrame):
+                results["apcorr"]["comparison"].to_csv(qa_dir / "qa_apcorr_comparison.csv", index=False, na_rep="NaN")
+            if "summary" in results["apcorr"]:
+                with open(qa_dir / "qa_apcorr_summary.json", "w") as f:
+                    json.dump(results["apcorr"]["summary"], f, indent=2)
 
         self._log(f"QA results saved to {qa_dir}")
 
@@ -821,6 +1096,7 @@ class QAReportWindow(QMainWindow):
         self.result_dir = Path(result_dir)
         self.worker = None
         self.results = {}
+        self.qa_status_cards = {}
 
         # QA Parameters (default: Publication Ready)
         self.qa_params = {
@@ -864,9 +1140,9 @@ class QAReportWindow(QMainWindow):
                 try:
                     idx = pd.read_csv(index_path)
                     if "filter" in idx.columns:
-                        filters_found.update(idx["filter"].astype(str).str.strip().tolist())
+                        filters_found.update(_qa_filter_list(idx["filter"].tolist()))
                     elif "FILTER" in idx.columns:
-                        filters_found.update(idx["FILTER"].astype(str).str.strip().tolist())
+                        filters_found.update(_qa_filter_list(idx["FILTER"].tolist()))
                 except Exception:
                     pass
             if not filters_found:
@@ -877,8 +1153,9 @@ class QAReportWindow(QMainWindow):
                     try:
                         df = pd.read_csv(tsv, sep="\t", nrows=1)
                         if "FILTER" in df.columns:
-                            filt = str(df["FILTER"].iloc[0]).strip()
-                            filters_found.add(filt)
+                            filt = _qa_filter_key(df["FILTER"].iloc[0])
+                            if filt:
+                                filters_found.add(filt)
                     except Exception:
                         pass
             self.available_filters = sorted(filters_found)
@@ -920,7 +1197,7 @@ class QAReportWindow(QMainWindow):
             if enabled_filters_all or not enabled_filters:
                 self.qa_params["enabled_filters"] = None
             elif isinstance(enabled_filters, list):
-                self.qa_params["enabled_filters"] = [str(f) for f in enabled_filters]
+                self.qa_params["enabled_filters"] = _qa_filter_list(enabled_filters) or None
             source = str(cfg.get("error_model_source", self.qa_params["error_model_source"])).lower()
             self.qa_params["error_model_source"] = source if source in ("raw", "zp") else "raw"
             for key in [
@@ -935,7 +1212,7 @@ class QAReportWindow(QMainWindow):
         if self.available_filters and self.qa_params["enabled_filters"]:
             allowed = set(self.available_filters)
             self.qa_params["enabled_filters"] = [
-                f for f in self.qa_params["enabled_filters"] if f in allowed
+                f for f in _qa_filter_list(self.qa_params["enabled_filters"]) if f in allowed
             ] or None
 
     def _save_qa_params(self):
@@ -979,6 +1256,97 @@ class QAReportWindow(QMainWindow):
         with path.open("wb") as f:
             tomli_w.dump(data, f)
 
+    def _make_status_card(self, key: str, title: str) -> QFrame:
+        frame = QFrame()
+        frame.setFrameShape(QFrame.StyledPanel)
+        frame.setMinimumWidth(180)
+        card_layout = QVBoxLayout(frame)
+        card_layout.setContentsMargins(10, 8, 10, 8)
+        card_layout.setSpacing(3)
+
+        title_label = QLabel(title)
+        title_label.setFont(QFont("Arial", 9, QFont.Bold))
+        detail_label = QLabel("Not checked")
+        detail_label.setWordWrap(True)
+        detail_label.setStyleSheet("QLabel { font-size: 11px; }")
+
+        card_layout.addWidget(title_label)
+        card_layout.addWidget(detail_label)
+        self.qa_status_cards[key] = (frame, detail_label)
+        self._set_status_card(key, "unknown", "Not checked")
+        return frame
+
+    def _set_status_card(self, key: str, state: str, detail: str):
+        card = self.qa_status_cards.get(key)
+        if not card:
+            return
+        frame, detail_label = card
+        palette = {
+            "ok": ("#E8F5E9", "#2E7D32", "#A5D6A7"),
+            "warn": ("#FFF8E1", "#F57F17", "#FFE082"),
+            "fail": ("#FFEBEE", "#C62828", "#EF9A9A"),
+            "unknown": ("#ECEFF1", "#455A64", "#CFD8DC"),
+        }
+        bg, fg, border = palette.get(state, palette["unknown"])
+        frame.setStyleSheet(
+            f"QFrame {{ background-color: {bg}; border: 1px solid {border}; border-radius: 6px; }}"
+            f"QLabel {{ color: {fg}; }}"
+        )
+        detail_label.setText(detail)
+
+    def _count_photometry_frames(self) -> tuple[int, str]:
+        phot_dir = step7_forced_phot_dir(self.result_dir)
+        if not phot_dir.exists():
+            return 0, "Step 7 output directory missing"
+
+        index_path = phot_dir / "photometry_index.csv"
+        if index_path.exists():
+            try:
+                idx = pd.read_csv(index_path)
+                if "file" in idx.columns:
+                    count = int(idx["file"].astype(str).str.strip().ne("").sum())
+                else:
+                    count = len(idx)
+                return count, "photometry_index.csv"
+            except Exception as exc:
+                return 0, f"photometry_index.csv read error: {exc}"
+
+        tsvs = sorted(phot_dir.glob("photometry_*.tsv"))
+        if not tsvs:
+            tsvs = sorted(phot_dir.glob("*_photometry.tsv"))
+        return len(tsvs), "TSV scan"
+
+    def _update_input_status_cards(self):
+        frame_count, source = self._count_photometry_frames()
+        if frame_count > 0:
+            self._set_status_card("photometry", "ok", f"{frame_count} frame(s) from {source}")
+        else:
+            self._set_status_card("photometry", "fail", source)
+
+        ap_path = step7_forced_phot_dir(self.result_dir) / "aperture_by_frame.csv"
+        if ap_path.exists():
+            try:
+                ap_rows = len(pd.read_csv(ap_path))
+                self._set_status_card("aperture", "ok", f"{ap_rows} aperture row(s)")
+            except Exception as exc:
+                self._set_status_card("aperture", "warn", f"Read error: {exc}")
+        else:
+            self._set_status_card("aperture", "warn", "Missing; FWHM QA will be limited")
+
+        zp_path = _find_frame_zeropoint_path(self.result_dir)
+        if zp_path is not None:
+            self._set_status_card("zeropoint", "ok", zp_path.name)
+        else:
+            self._set_status_card("zeropoint", "warn", "Optional; raw error model only")
+
+        self._scan_available_filters()
+        self._load_qa_params()
+        self._update_filter_status_label()
+        if self.available_filters:
+            self._set_status_card("filters", "ok", ", ".join(self.available_filters))
+        else:
+            self._set_status_card("filters", "warn", "No filters detected yet")
+
     def setup_ui(self):
         """Setup user interface"""
         central = QWidget()
@@ -1010,6 +1378,20 @@ class QAReportWindow(QMainWindow):
         """)
         self.btn_params.clicked.connect(self.open_parameters_dialog)
         control_layout.addWidget(self.btn_params)
+
+        self.btn_help = QPushButton("Help")
+        self.btn_help.setStyleSheet("""
+            QPushButton {
+                background-color: #455A64;
+                color: white;
+                font-weight: bold;
+                padding: 10px 15px;
+                font-size: 12px;
+            }
+            QPushButton:hover { background-color: #37474F; }
+        """)
+        self.btn_help.clicked.connect(self.open_help_dialog)
+        control_layout.addWidget(self.btn_help)
 
         self.btn_generate = QPushButton("Generate QA Report")
         self.btn_generate.setStyleSheet("""
@@ -1074,6 +1456,15 @@ class QAReportWindow(QMainWindow):
 
         layout.addWidget(control_group)
 
+        status_group = QGroupBox("Input Status")
+        status_layout = QHBoxLayout(status_group)
+        status_layout.addWidget(self._make_status_card("photometry", "Step 7 Photometry"))
+        status_layout.addWidget(self._make_status_card("aperture", "Aperture Table"))
+        status_layout.addWidget(self._make_status_card("zeropoint", "Frame Zeropoint"))
+        status_layout.addWidget(self._make_status_card("filters", "Filters"))
+        layout.addWidget(status_group)
+        self._update_input_status_cards()
+
         # === Progress ===
         progress_layout = QHBoxLayout()
         self.progress_bar = QProgressBar()
@@ -1130,6 +1521,70 @@ class QAReportWindow(QMainWindow):
         self.tabs.addTab(self.tab_log, "Log")
 
         layout.addWidget(self.tabs, stretch=1)
+
+    def open_help_dialog(self):
+        """Show practical guidance for the QA report."""
+        dialog = QDialog(self)
+        dialog.setWindowTitle("QA Report Help")
+        dialog.setMinimumSize(720, 620)
+
+        layout = QVBoxLayout(dialog)
+        help_text = QTextEdit()
+        help_text.setReadOnly(True)
+        help_text.setStyleSheet("QTextEdit { font-size: 12px; line-height: 1.35; }")
+        help_text.setHtml("""
+<h2>QA Report 사용 목적</h2>
+<p>
+QA Report는 Step 7 forced photometry 결과가 보고서나 논문에 쓸 만큼 안정적인지
+점검하는 과학 검증 도구입니다. 천체의 물리 해석을 대신하지는 않고, 측광값과
+오차, 중심, 프레임 품질, 배경, saturation, aperture correction이 서로 일관적인지
+확인합니다.
+</p>
+
+<h3>무엇을 볼 때 쓰나</h3>
+<ul>
+  <li><b>Error</b>: 반복 관측 RMS가 예측 오차(mag_err, SNR 기반)와 맞는지 확인합니다. RMS/σ_pred와 χ²/ν가 1에 가까울수록 오차 모델이 잘 맞습니다.</li>
+  <li><b>Centroid</b>: master/WCS 예측 위치와 실제 fitted 또는 recentered 위치 차이를 봅니다. Δr가 크면 matching, WCS, crowding, centroiding 문제 가능성이 있습니다.</li>
+  <li><b>Frames</b>: seeing/FWHM, median SNR, good magnitude fraction으로 나쁜 프레임을 찾고 제외한 뒤 다시 QA를 만들 수 있습니다.</li>
+  <li><b>Bkg</b>: sky annulus의 배경값, 배경 표준편차, n_sky를 점검합니다. n_sky가 낮거나 background noise가 튀면 crowding 또는 annulus 설정 문제일 수 있습니다.</li>
+  <li><b>Saturation</b>: saturated/nonlinear source가 결과에 섞였는지 확인합니다. publication preset에서는 saturated measurement를 제외합니다.</li>
+  <li><b>Aperture correction</b>: frame별 aperture correction 값과 reference star 수가 안정적인지 확인합니다.</li>
+  <li><b>Publish</b>: 논문/보고서에 옮기기 좋은 핵심 숫자, verdict, LaTeX table을 모읍니다.</li>
+</ul>
+
+<h3>권장 사용 흐름</h3>
+<ol>
+  <li>Step 7 forced photometry를 먼저 완료합니다. Frame zeropoint까지 검증하려면 CMD Step 10도 완료합니다.</li>
+  <li>상단 Input Status가 초록/노랑/빨강 중 어디인지 확인합니다.</li>
+  <li>Generate QA Report를 실행합니다.</li>
+  <li>Frames 탭에서 FWHM, SNR, good fraction이 나쁜 프레임을 제외하고 Apply &amp; Regenerate를 실행합니다.</li>
+  <li>Publish 탭의 RMS/σ_pred, χ²/ν, centroid, background, saturation, apcorr 요약을 보고 최종 사용 가능 여부를 판단합니다.</li>
+  <li>필요하면 Save All Plots와 Export LaTeX로 산출물을 저장합니다. CSV/JSON 결과는 result/qa_report/에 저장됩니다.</li>
+</ol>
+
+<h3>해석 기준</h3>
+<ul>
+  <li><b>RMS/σ_pred ≈ 1</b>: 관측 scatter와 예측 오차가 잘 맞습니다.</li>
+  <li><b>χ²/ν ≈ 1</b>: measurement별 오차를 고려했을 때 반복 관측 scatter가 적절합니다.</li>
+  <li><b>Δr가 작음</b>: 위치 매칭과 recentering이 안정적입니다.</li>
+  <li><b>FWHM/SNR/good fraction이 안정적</b>: 프레임 품질이 균일합니다.</li>
+  <li><b>n_sky 충분, background std 안정</b>: sky annulus가 배경을 충분히 샘플링합니다.</li>
+</ul>
+
+<h3>주의할 점</h3>
+<p>
+QA가 PASS라고 해서 표준성 보정, extinction/color-term 보정, 시간계, target 선택,
+천체물리 모델링까지 자동으로 검증되는 것은 아닙니다. QA는 photometry product의
+내부 일관성과 품질을 보는 단계입니다.
+</p>
+        """)
+        layout.addWidget(help_text)
+
+        buttons = QDialogButtonBox(QDialogButtonBox.Close)
+        buttons.rejected.connect(dialog.reject)
+        layout.addWidget(buttons)
+
+        dialog.exec_()
 
     def setup_error_model_tab(self):
         """Setup error model validation tab"""
@@ -1533,8 +1988,8 @@ class QAReportWindow(QMainWindow):
         self.spin_fwhm_abs.setRange(0.0, 20.0)
         self.spin_fwhm_abs.setSingleStep(0.1)
         self.spin_fwhm_abs.setValue(float(self.qa_params.get("frame_fwhm_abs", 8.0)))
-        self.spin_fwhm_abs.setToolTip("Flag frames with FWHM > absolute threshold")
-        frame_layout.addRow("FWHM abs:", self.spin_fwhm_abs)
+        self.spin_fwhm_abs.setToolTip("Flag frames with FWHM > absolute threshold in arcsec")
+        frame_layout.addRow("FWHM abs (arcsec):", self.spin_fwhm_abs)
 
         layout.addWidget(frame_group)
 
@@ -1642,6 +2097,7 @@ class QAReportWindow(QMainWindow):
         # Update status label
         self._update_filter_status_label()
         self._save_qa_params()
+        self._update_input_status_cards()
 
         self.log(f"Parameters updated: filters={self.qa_params['enabled_filters']}, "
                  f"min_snr={self.qa_params['min_snr']}, exclude_sat={self.qa_params['exclude_saturated']}")
@@ -1653,6 +2109,7 @@ class QAReportWindow(QMainWindow):
 
         self.log_text.clear()
         self.log("Starting QA report generation...")
+        self._update_input_status_cards()
         self._save_qa_params()
 
         # If not from frame selection, reset frame-specific params
@@ -1660,11 +2117,14 @@ class QAReportWindow(QMainWindow):
             self.qa_params["selected_frames"] = None
             self.qa_params["skip_frame_flagging"] = False
 
-        self.log(f"Parameters: {self.qa_params}")
+        worker_params = dict(self.qa_params)
+        worker_params["pixel_scale_arcsec"] = float(getattr(self.params.P, "pixel_scale_arcsec", np.nan))
+
+        self.log(f"Parameters: {worker_params}")
 
         self.worker = QAReportWorker(
             self.result_dir,
-            params=self.qa_params
+            params=worker_params
         )
         self.worker.progress.connect(self.on_progress)
         self.worker.log.connect(self.log)
@@ -1936,11 +2396,11 @@ Outliers:
             df = fq["data"].copy()
             if "filter" in df.columns:
                 if self.available_filters:
-                    order_filters = [f.strip().lower() for f in self.available_filters]
+                    order_filters = [normalize_filter_key(f) for f in self.available_filters]
                 else:
-                    order_filters = list(pd.unique(df.sort_values("frame")["filter"].astype(str).str.strip().str.lower()))
+                    order_filters = list(pd.unique(df.sort_values("frame")["filter"].map(normalize_filter_key)))
                 order = {f: i for i, f in enumerate(order_filters)}
-                df["_filter_rank"] = df["filter"].astype(str).str.strip().str.lower().map(order).fillna(99)
+                df["_filter_rank"] = df["filter"].map(normalize_filter_key).map(order).fillna(99)
                 df = df.sort_values(["_filter_rank", "frame"])
             self.frame_data = df.copy()
             self.frame_checkboxes = {}
@@ -2112,7 +2572,10 @@ Outliers:
 
         bg = self.results["background"]
         if "error" in bg:
-            self.background_summary.setText(f"Error: {bg['error']}")
+            text = f"Error: {bg['error']}"
+            if bg.get("recommendation"):
+                text += f"\n\nRecommendation: {bg['recommendation']}"
+            self.background_summary.setText(text)
             return
 
         if "summary" in bg:
@@ -2297,6 +2760,32 @@ Quality Flags:
             stats_lines.append("\n=== Frame Quality ===")
             stats_lines.append(f"N_frames: {fq.get('n_frames', 'N/A')}")
             stats_lines.append(f"Flagged frames: {fq.get('n_flagged', 'N/A')}")
+            if np.isfinite(fq.get("fwhm_arcsec_med", np.nan)):
+                stats_lines.append(f"FWHM median: {fq.get('fwhm_arcsec_med'):.3f} arcsec")
+
+        if "background" in self.results and "summary" in self.results["background"]:
+            bg = self.results["background"]["summary"]
+            stats_lines.append("\n=== Background QA ===")
+            stats_lines.append(f"Background std median: {bg.get('bkg_std_global', np.nan):.3f} ADU")
+            stats_lines.append(f"Low n_sky frames: {bg.get('n_frames_low_nsky', 'N/A')}")
+
+        if "saturation" in self.results and "summary" in self.results["saturation"]:
+            sat = self.results["saturation"]["summary"]
+            stats_lines.append("\n=== Saturation QA ===")
+            stats_lines.append(f"Saturated measurements: {sat.get('n_saturated', 'N/A')}/{sat.get('n_total', 'N/A')}")
+            frac = sat.get("saturation_fraction", np.nan)
+            if np.isfinite(frac):
+                stats_lines.append(f"Saturation fraction: {100.0 * frac:.2f}%")
+
+        if "apcorr" in self.results and "summary" in self.results["apcorr"]:
+            ap = self.results["apcorr"]["summary"]
+            stats_lines.append("\n=== Aperture Correction QA ===")
+            stats_lines.append(f"Mode: {ap.get('mode', 'N/A')}")
+            if np.isfinite(ap.get("apcorr_med", np.nan)):
+                stats_lines.append(
+                    f"apcorr median/p10/p90: "
+                    f"{ap.get('apcorr_med'):.4f}/{ap.get('apcorr_p10'):.4f}/{ap.get('apcorr_p90'):.4f}"
+                )
 
         self.stats_text.setText("\n".join(stats_lines))
 

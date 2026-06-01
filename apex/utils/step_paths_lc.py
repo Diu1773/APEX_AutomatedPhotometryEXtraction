@@ -51,22 +51,42 @@ def step11_period_dir(result_dir: PathLike) -> Path:
 
 
 def step9_selection_dir(result_dir: PathLike) -> Path:
-    """Legacy alias for Step 8 target/comparison selection."""
+    """DEPRECATED — step numbers shifted; use step8_selection_dir() directly."""
+    import warnings
+    warnings.warn(
+        "step9_selection_dir is deprecated; use step8_selection_dir()",
+        DeprecationWarning, stacklevel=2,
+    )
     return step8_selection_dir(result_dir)
 
 
 def step10_lc_dir(result_dir: PathLike) -> Path:
-    """Legacy alias for Step 9 light curve builder."""
+    """DEPRECATED — step numbers shifted; use step9_lc_dir() directly."""
+    import warnings
+    warnings.warn(
+        "step10_lc_dir is deprecated; use step9_lc_dir()",
+        DeprecationWarning, stacklevel=2,
+    )
     return step9_lc_dir(result_dir)
 
 
 def step11_detrend_dir(result_dir: PathLike) -> Path:
-    """Legacy alias for Step 10 detrend & night merge."""
+    """DEPRECATED — step numbers shifted; use step10_detrend_dir() directly."""
+    import warnings
+    warnings.warn(
+        "step11_detrend_dir is deprecated; use step10_detrend_dir()",
+        DeprecationWarning, stacklevel=2,
+    )
     return step10_detrend_dir(result_dir)
 
 
 def step12_period_dir(result_dir: PathLike) -> Path:
-    """Legacy alias for Step 11 period analysis."""
+    """DEPRECATED — step numbers shifted; use step11_period_dir() directly."""
+    import warnings
+    warnings.warn(
+        "step12_period_dir is deprecated; use step11_period_dir()",
+        DeprecationWarning, stacklevel=2,
+    )
     return step11_period_dir(result_dir)
 
 
@@ -91,12 +111,22 @@ def step5_photometry_dir(result_dir: PathLike) -> Path:
 # ── LC short-name aliases used by analysis modules ───────────────────────────
 
 def step10_dir(result_dir: PathLike) -> Path:
-    """Legacy alias for Step 9 light curve builder (lc_lightcurve/)."""
+    """DEPRECATED — misleading name; resolves to lc_lightcurve/ (step9). Use step9_lc_dir()."""
+    import warnings
+    warnings.warn(
+        "step10_dir is deprecated; use step9_lc_dir()",
+        DeprecationWarning, stacklevel=2,
+    )
     return step9_lc_dir(result_dir)
 
 
 def step11_dir(result_dir: PathLike) -> Path:
-    """Legacy alias for Step 10 detrend output (lc_detrend/)."""
+    """DEPRECATED — misleading name; resolves to lc_detrend/ (step10). Use step10_detrend_dir()."""
+    import warnings
+    warnings.warn(
+        "step11_dir is deprecated; use step10_detrend_dir()",
+        DeprecationWarning, stacklevel=2,
+    )
     return step10_detrend_dir(result_dir)
 
 
