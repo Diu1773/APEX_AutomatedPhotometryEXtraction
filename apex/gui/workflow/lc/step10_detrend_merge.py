@@ -2621,7 +2621,7 @@ Step 10은 여러 밤의 관측을 합칠 때 기준선을 맞추는 단계입�
                     if np.sum(base_mask) < 5:
                         continue
 
-                    zp, k2, zp_err, k2_err, _ = self._fit_linear(y, x, w, base_mask, fit_slope=True)
+                    zp, k2, zp_err, k2_err, _cov, _ = self._fit_linear(y, x, w, base_mask, fit_slope=True)
                     global_k2_by_filter[fkey] = (k2, k2_err)
                     self.log(f"[FIT] Global k'' ({fkey or 'all'}): {k2:.5f} ± {k2_err:.5f}")
 
@@ -2677,24 +2677,28 @@ Step 10은 여러 밤의 관측을 합칠 때 기준선을 맞추는 단계입�
                         )
                         continue
 
+                    cov_zp_slope = 0.0
                     if self.mode == "offset":
-                        zp, slope, zp_err, slope_err, used_mask = self._fit_linear(
+                        zp, slope, zp_err, slope_err, _cov, used_mask = self._fit_linear(
                             y, x, w, base_mask, fit_slope=False
                         )
                     elif self.mode == "color" and use_global_k2 and fkey in global_k2_by_filter:
                         k2_global, k2_global_err = global_k2_by_filter[fkey]
                         y_adjusted = y - k2_global * x
-                        zp, _, zp_err, _, used_mask = self._fit_linear(
+                        zp, _, zp_err, _, _cov, used_mask = self._fit_linear(
                             y_adjusted, x, w, base_mask, fit_slope=False
                         )
                         slope = k2_global
                         slope_err = k2_global_err
+                        # Sequential fit: ZP and global k'' are from separate regressions,
+                        # so the ZP-k'' covariance for this nightly group is zero.
+                        cov_zp_slope = 0.0
                     elif self.mode == "color":
-                        zp, slope, zp_err, slope_err, used_mask = self._fit_linear(
+                        zp, slope, zp_err, slope_err, cov_zp_slope, used_mask = self._fit_linear(
                             y, x, w, base_mask, fit_slope=True
                         )
                     else:
-                        zp, slope, zp_err, slope_err, used_mask = self._fit_linear(
+                        zp, slope, zp_err, slope_err, _cov, used_mask = self._fit_linear(
                             y, x, w, base_mask, fit_slope=False
                         )
 
@@ -2725,6 +2729,7 @@ Step 10은 여러 밤의 관측을 합칠 때 기준선을 맞추는 단계입�
                         "zp_offset_err": zp_err,
                         "ext_slope": slope,
                         "ext_slope_err": slope_err,
+                        "cov_zp_slope": cov_zp_slope,
                         "n_used": int(np.sum(used_mask)),
                         "rms_before": rms_before,
                         "rms_after": rms_after,
@@ -2880,22 +2885,34 @@ Step 10은 여러 밤의 관측을 합칠 때 기준선을 맞추는 단계입�
                 continue
 
             n_f = len(frames)
-            frame_idx = {f: i for i, f in enumerate(frames)}
 
-            # Build comp star matrix (n_comps × n_frames)
-            comp_data = sub[sub["star_id"].isin(comp_ids)]
-            n_s = len(comp_ids)
-            mag_mat = np.full((n_s, n_f), np.nan)
-            err_mat = np.full((n_s, n_f), np.nan)
+            # Build comp star matrix via pivot_table — avoids O(comps × rows) iterrows
+            comp_data = sub[sub["star_id"].isin(comp_ids)].copy()
+            comp_data["time_id"] = comp_data["time_id"].astype(str)
+            comp_data["star_id"] = comp_data["star_id"].astype(int)
 
-            for ci, cid in enumerate(comp_ids):
-                rows_c = comp_data[comp_data["star_id"] == cid]
-                for _, row in rows_c.iterrows():
-                    j = frame_idx.get(str(row["time_id"]))
-                    if j is not None and np.isfinite(float(row["mag_inst"])):
-                        mag_mat[ci, j] = float(row["mag_inst"])
-                        err_val = float(row.get("err", np.nan))
-                        err_mat[ci, j] = err_val if (np.isfinite(err_val) and err_val > 0) else np.nan
+            mag_wide = (
+                comp_data.pivot_table(
+                    index="star_id", columns="time_id",
+                    values="mag_inst", aggfunc="first"
+                )
+                .reindex(index=comp_ids, columns=frames)
+            )
+            mag_mat = mag_wide.to_numpy(float)   # (n_comps, n_frames)
+
+            if "err" in comp_data.columns:
+                err_wide = (
+                    comp_data.pivot_table(
+                        index="star_id", columns="time_id",
+                        values="err", aggfunc="first"
+                    )
+                    .reindex(index=comp_ids, columns=frames)
+                )
+                err_raw = err_wide.to_numpy(float)
+                # zero / negative errors → NaN so sysrem uses fallback weight
+                err_mat = np.where(err_raw > 0, err_raw, np.nan)
+            else:
+                err_mat = np.full_like(mag_mat, np.nan)
 
             # Run SYSREM on comp stars
             result = sysrem(mag_mat, err_mat, n_iter=n_iter)
@@ -2913,20 +2930,38 @@ Step 10은 여러 밤의 관측을 합칠 때 기준선을 맞추는 단계입�
                     "rms_after": comp.rms_after,
                 })
 
-            # Apply to target
-            tgt_data = sub[sub["star_id"] == target_id]
+            # Apply to target — build target vectors via pivot (same pattern)
+            tgt_data = sub[sub["star_id"] == target_id].copy()
+            tgt_data["time_id"] = tgt_data["time_id"].astype(str)
+
+            frame_idx = {f: i for i, f in enumerate(frames)}
+
             tgt_inst = np.full(n_f, np.nan)
             tgt_err  = np.full(n_f, np.nan)
             tgt_jd   = np.full(n_f, np.nan)
             tgt_tid  = np.array([""] * n_f, dtype=object)
 
-            for _, row in tgt_data.iterrows():
-                j = frame_idx.get(str(row["time_id"]))
-                if j is not None:
-                    tgt_inst[j] = float(row["mag_inst"])
-                    tgt_err[j]  = float(row.get("err", np.nan))
-                    tgt_jd[j]   = float(row.get("jd", np.nan))
-                    tgt_tid[j]  = str(row["time_id"])
+            if not tgt_data.empty:
+                tgt_pivot_mag = (
+                    tgt_data.pivot_table(index="time_id", values="mag_inst", aggfunc="first")
+                    .reindex(frames)
+                )
+                tgt_pivot_err = (
+                    tgt_data.pivot_table(index="time_id", values="err", aggfunc="first")
+                    .reindex(frames)
+                ) if "err" in tgt_data.columns else None
+                tgt_pivot_jd = (
+                    tgt_data.pivot_table(index="time_id", values="jd", aggfunc="first")
+                    .reindex(frames)
+                ) if "jd" in tgt_data.columns else None
+
+                tgt_inst = tgt_pivot_mag["mag_inst"].to_numpy(float)
+                if tgt_pivot_err is not None:
+                    tgt_err = tgt_pivot_err["err"].to_numpy(float)
+                if tgt_pivot_jd is not None:
+                    tgt_jd = tgt_pivot_jd["jd"].to_numpy(float)
+                for i, f in enumerate(frames):
+                    tgt_tid[i] = f
 
             tgt_corr = apply_sysrem(tgt_inst, tgt_err, result, n_components=n_apply)
 
@@ -3252,11 +3287,21 @@ Step 10은 여러 밤의 관측을 합칠 때 기준선을 맞추는 단계입�
                 alignment_ok = False
 
     def _fit_linear(self, y, x, w, base_mask, fit_slope: bool = True):
+        """Weighted linear fit  y = zp + slope * x  with iterative sigma clipping.
+
+        Returns
+        -------
+        zp, slope, zp_err, slope_err, cov_zp_slope, used_mask
+          cov_zp_slope : off-diagonal covariance Cov(zp, k'') from the WLS
+            solution — needed for correct error propagation in color mode.
+            NaN when unavailable (offset mode, or n ≤ 2).
+        """
         mask = base_mask.copy()
         zp = 0.0
         slope = 0.0
         zp_err = np.nan
         slope_err = np.nan
+        cov_zp_slope = 0.0   # offset mode: ZP and slope are independent by design
 
         for _ in range(self.clip_iters if self.sigma_clip else 1):
             if np.sum(mask) < 2:
@@ -3271,6 +3316,7 @@ Step 10은 여러 밤의 관측을 합칠 때 기준선을 맞추는 단계입�
                 if np.sum(ww) > 0:
                     zp_err = float(np.sqrt(1.0 / np.sum(ww)))
                 slope_err = 0.0
+                cov_zp_slope = 0.0
             else:
                 A = np.vstack([np.ones_like(xx), xx]).T
                 Aw = A * np.sqrt(ww[:, None])
@@ -3285,16 +3331,20 @@ Step 10은 여러 밤의 관측을 합칠 때 기준선을 맞추는 단계입�
                         resid_fit = yy - (zp + slope * xx)
                         mse = np.sum(ww * resid_fit**2) / (n - 2)
                         try:
-                            AtWA = A.T @ np.diag(ww) @ A
+                            # (A^T W A) via broadcasting — avoids O(N²) np.diag(ww)
+                            AtWA = (A * ww[:, None]).T @ A
                             cov = mse * np.linalg.inv(AtWA)
                             zp_err = float(np.sqrt(cov[0, 0]))
                             slope_err = float(np.sqrt(cov[1, 1]))
+                            cov_zp_slope = float(cov[0, 1])
                         except Exception:
                             zp_err = np.nan
                             slope_err = np.nan
+                            cov_zp_slope = np.nan
                 except Exception:
                     zp, slope = 0.0, 0.0
                     zp_err, slope_err = np.nan, np.nan
+                    cov_zp_slope = np.nan
 
             resid = y - (zp + slope * x)
             sigma = np.nanstd(resid[mask])
@@ -3302,7 +3352,7 @@ Step 10은 여러 밤의 관측을 합칠 때 기준선을 맞추는 단계입�
                 break
             mask = mask & (np.abs(resid) <= self.clip_sigma * sigma)
 
-        return zp, slope, zp_err, slope_err, mask
+        return zp, slope, zp_err, slope_err, cov_zp_slope, mask
 
     def _apply_params(self, df: pd.DataFrame, params_df: pd.DataFrame) -> pd.DataFrame:
         out = df.copy()
@@ -3339,7 +3389,20 @@ Step 10은 여러 밤의 관측을 합칠 때 기준선을 맞추는 단계입�
             raw_var = np.where(np.isfinite(raw_err), raw_err**2, 0.0)
             zp_var    = zp_err**2    if np.isfinite(zp_err)    else 0.0
             slope_var = slope_err**2 if np.isfinite(slope_err) else 0.0
-            corr_var = raw_var + zp_var + (np.where(slope == 0.0, 0.0, x)**2) * slope_var
+            # Load ZP-k'' covariance (stored by color-mode fits; zero for offset mode)
+            cov_zp_slope = _safe_float(row.get("cov_zp_slope", 0.0))
+            if not np.isfinite(cov_zp_slope):
+                cov_zp_slope = 0.0
+            x_eff = np.where(slope == 0.0, 0.0, x)   # zero out unused slope axis
+            # Full variance: σ²_raw + σ²_ZP + x²σ²_k'' + 2x·Cov(ZP,k'')
+            corr_var = (
+                raw_var
+                + zp_var
+                + x_eff**2 * slope_var
+                + 2.0 * x_eff * cov_zp_slope
+            )
+            # Clamp negative (can occur if cov term dominates near zero airmass range)
+            corr_var = np.where(corr_var >= 0, corr_var, raw_var)
             out.loc[idx, "diff_err_corr"] = np.sqrt(corr_var)
 
         return out

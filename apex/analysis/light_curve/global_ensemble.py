@@ -22,6 +22,9 @@ import pandas as pd
 from scipy.sparse import csr_matrix
 from scipy.sparse.linalg import lsqr
 
+from apex.utils.common_helpers import normalize_filter_key
+from apex.utils.constants import MAD_TO_SIGMA
+
 REQUIRED_COLS = {"time_id", "jd", "filter", "star_id", "mag_inst", "err"}
 
 
@@ -80,7 +83,8 @@ def solve_global_ensemble(
 
     data = df.copy()
     data["time_id"] = data["time_id"].astype(str)
-    data["filter"] = data["filter"].astype(str).str.strip().str.lower()
+    # Canonical case: Johnson uppercase (B/V/R/I), SDSS lowercase (g/r/i/z) — preserved.
+    data["filter"] = data["filter"].astype(str).map(normalize_filter_key)
     data["star_id"] = pd.to_numeric(data["star_id"], errors="coerce").astype("Int64")
     data["mag_inst"] = pd.to_numeric(data["mag_inst"], errors="coerce")
     data["err"] = pd.to_numeric(data["err"], errors="coerce")
@@ -213,8 +217,8 @@ def _solve_one_filter(
                     if np.sum(v) < 2:
                         return 1.0
                     return float(np.sum((r[v] / e[v]) ** 2) / max(int(np.sum(v)) - 1, 1))
-                chi2_map = comp_df.groupby("time_id").apply(
-                    _chi2_red_frame, include_groups=False
+                chi2_map = comp_df.groupby("time_id")[["resid", "err_orig"]].apply(
+                    _chi2_red_frame
                 )
                 scale = np.sqrt(np.clip(
                     comp_df["time_id"].map(chi2_map).to_numpy(float), 1.0, np.inf
@@ -428,7 +432,7 @@ def _build_zp_df(comp_df: pd.DataFrame, fit: dict, min_comps: int) -> pd.DataFra
     Z = fit["Z"]
     Z_err = fit["Z_err"]
 
-    stats = comp_df.groupby("time_id").apply(_frame_stats, include_groups=False)
+    stats = comp_df.groupby("time_id")[["resid", "err"]].apply(_frame_stats)
     stats = stats.reindex(time_ids)
     n_used = stats.get("n_used", pd.Series([0] * len(time_ids))).to_numpy(int)
     chi2_red = stats.get("chi2_red", pd.Series([np.nan] * len(time_ids))).to_numpy(float)
@@ -480,7 +484,7 @@ def _build_target_lc(
             w = 1.0 / (e[ok] ** 2)
             return float(np.sum(m[ok] * w) / np.sum(w))
         return float(np.nanmean(m))
-    comp_mean = comp_df.groupby("time_id").apply(_weighted_mean, include_groups=False)
+    comp_mean = comp_df.groupby("time_id")[["mag_inst", "err"]].apply(_weighted_mean)
     comp_n = comp_df.groupby("time_id")["mag_inst"].count()
 
     comp_ref = np.nan
@@ -555,7 +559,7 @@ def _frame_stats(group: pd.DataFrame) -> pd.Series:
     dof = max(int(np.sum(ok)) - 1, 1)
     return pd.Series(
         dict(
-            n_used=int(len(group)),
+            n_used=int(np.sum(ok)),   # measurements with finite resid AND positive err
             chi2_red=float(chi2 / dof) if np.isfinite(chi2) else np.nan,
         )
     )
@@ -579,7 +583,7 @@ def _robust_sigma(x: np.ndarray) -> float:
     med = np.nanmedian(x)
     mad = np.nanmedian(np.abs(x - med))
     if np.isfinite(mad) and mad > 0:
-        return float(1.4826 * mad)
+        return float(MAD_TO_SIGMA * mad)
     return float(np.nanstd(x))
 
 
