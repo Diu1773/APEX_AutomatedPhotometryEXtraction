@@ -139,6 +139,8 @@ TOML_KEY_MAP: list[tuple[Iterable[str], str]] = [
     (("photometry", "use_segm_mask"), "bkg_use_segm_mask"),
     (("photometry", "min_snr_for_mag"), "min_snr_for_mag"),
     (("photometry", "use_qc_pass_only"), "phot_use_qc_pass_only"),
+    (("photometry", "ref_require_apcorr_candidate"), "phot_ref_require_apcorr_candidate"),
+    (("photometry", "ref_apcorr_min_keep"), "phot_ref_apcorr_min_keep"),
     (("photometry", "scales", "aperture_scale"), "phot_aperture_scale"),
     (("photometry", "scales", "annulus_scale"), "fitsky_annulus_scale"),
     (("photometry", "scales", "dannulus_scale"), "fitsky_dannulus_scale"),
@@ -388,6 +390,9 @@ def _read_toml(path: Path) -> Dict[str, Any]:
         set_if("binning_default", inst.get("binning"))
         set_if("gain_e_per_adu", inst.get("gain_e_per_adu"))
         set_if("rdnoise_e", inst.get("rdnoise_e"))
+        set_if("noise_use_fits_header", inst.get("noise_use_fits_header"))
+        set_if("noise_reference_binning", inst.get("noise_reference_binning"))
+        set_if("noise_scale_by_binning", inst.get("noise_scale_by_binning"))
         set_if("saturation_adu", inst.get("saturation_adu"))
         set_if("zp_initial", inst.get("zp_initial"))
         set_if("datamin_adu", inst.get("datamin_adu"))
@@ -478,7 +483,7 @@ class Parameters:
 
             # I/O
             data_dir=raw.get("data_dir", "."),
-            filename_prefix=raw.get("filename_prefix", "pp_"),
+            filename_prefix=raw.get("filename_prefix", ""),
             result_dir=raw.get("result_dir", ""),
             cache_dir=raw.get("cache_dir", "cache"),
 
@@ -567,6 +572,9 @@ class Parameters:
             datamax_adu=_getf(raw, "datamax_adu", 60000.0),
             gain_e_per_adu=_getf(raw, "gain_e_per_adu", 0.1),
             rdnoise_e=float(rdnoise_candidate),
+            noise_use_fits_header=_as_bool(raw.get("noise_use_fits_header", "true"), True),
+            noise_reference_binning=_as_float_or_none(raw.get("noise_reference_binning", "")),
+            noise_scale_by_binning=_as_bool(raw.get("noise_scale_by_binning", "true"), True),
             zp_initial=_getf(raw, "zp_initial", 25.0),
             binning_default=_geti(raw, "binning_default", 2),
             site_lat_deg=_getf(raw, "site_lat_deg", 0.0),
@@ -639,6 +647,8 @@ class Parameters:
             apcorr_large_ref_scale=_getf(raw, "apcorr_large_scale", _getf(raw, "apcorr_large_ref_scale", 5.0)),
             apcorr_isolation_factor=_getf(raw, "apcorr_isolation_factor", 2.5),
             phot_use_qc_pass_only=_as_bool(raw.get("phot_use_qc_pass_only", "false"), False),
+            phot_ref_require_apcorr_candidate=_as_bool(raw.get("phot_ref_require_apcorr_candidate", "true"), True),
+            phot_ref_apcorr_min_keep=_geti(raw, "phot_ref_apcorr_min_keep", 8),
             source_quality_fwhm_ratio_lo=_getf(raw, "source_quality_fwhm_ratio_lo", 0.6),
             source_quality_fwhm_ratio_hi=_getf(raw, "source_quality_fwhm_ratio_hi", 1.6),
             source_quality_anchor_neighbor_fwhm_mult=_getf(raw, "source_quality_anchor_neighbor_fwhm_mult", 2.0),
@@ -721,6 +731,7 @@ class Parameters:
             ref_wcs_match_radius_arcsec=_getf(raw, "ref_wcs_match_radius_arcsec", 2.0),
             gaia_retry=_geti(raw, "gaia_retry", 2),
             gaia_timeout_s=_getf(raw, "gaia_timeout_s", 30.0),
+            simbad_timeout_s=_getf(raw, "simbad_timeout_s", 20.0),
             gaia_backoff_s=_getf(raw, "gaia_backoff_s", 6.0),
             gaia_allow_no_cache=_as_bool(raw.get("gaia_allow_no_cache", "true"), True),
             gaia_derived_enable=_as_bool(raw.get("gaia_derived_enable", "true"), True),
@@ -754,7 +765,7 @@ class Parameters:
             match_tol_px=_getf(raw, "match_tol_px", 1.0),
             min_master_gaia_matches=_geti(raw, "min_master_gaia_matches", 10),
             cmd_snr_calib_min=_getf(raw, "cmd_snr_calib_min", 20.0),
-            cmd_membership_mode=raw.get("cmd_membership_mode", "off"),
+            cmd_membership_mode=raw.get("cmd_membership_mode", "normal"),
             cmd_membership_compare=_as_bool(raw.get("cmd_membership_compare", "true"), True),
             zp_clip_sigma=_getf(raw, "zp_clip_sigma", 3.0),
             zp_fit_iters=_geti(raw, "zp_fit_iters", 5),

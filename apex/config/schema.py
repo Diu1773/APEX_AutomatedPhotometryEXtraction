@@ -85,8 +85,8 @@ class IOConfig(BaseModel):
         description="Input data directory containing FITS files"
     )
     filename_prefix: str = Field(
-        default="pp_",
-        description="Prefix pattern for matching FITS files"
+        default="",
+        description="Optional prefix pattern for matching FITS files"
     )
     result_dir: str = Field(
         default="",
@@ -203,6 +203,19 @@ class InstrumentConfig(BaseModel):
         ...,  # Required field
         gt=0,
         description="Read noise in electrons (REQUIRED)"
+    )
+    noise_use_fits_header: bool = Field(
+        default=True,
+        description="Use FITS EGAIN/RDNOISE keywords when available"
+    )
+    noise_reference_binning: Optional[int] = Field(
+        default=None,
+        ge=1,
+        description="Binning of manual gain/read-noise values; unset means values are already effective"
+    )
+    noise_scale_by_binning: bool = Field(
+        default=True,
+        description="Scale manual gain/read-noise from reference binning to image binning"
     )
     saturation_adu: float = Field(
         default=65000.0,
@@ -707,6 +720,15 @@ class PhotConfig(BaseModel):
         default=False,
         description="Only use QC-passed frames for photometry"
     )
+    ref_require_apcorr_candidate: bool = Field(
+        default=True,
+        description="Restrict ZP / extinction reference measurements to Step 4 apcorr-quality (isolated, unsaturated, high-flux) stars"
+    )
+    ref_apcorr_min_keep: int = Field(
+        default=8,
+        ge=1,
+        description="Minimum apcorr-quality measurements required before the ref filter is applied; below this the filter is skipped"
+    )
     use_original_frames: bool = Field(
         default=True,
         description="Use original frames for photometry"
@@ -1013,6 +1035,17 @@ class IDMatchConfig(BaseModel):
     )
 
 
+class SimbadConfig(BaseModel):
+    """SIMBAD TAP query configuration"""
+    model_config = ConfigDict(validate_assignment=True)
+
+    timeout_s: float = Field(
+        default=20.0,
+        ge=5.0, le=300.0,
+        description="Timeout for each SIMBAD TAP query (seconds)"
+    )
+
+
 class RefBuildConfig(BaseModel):
     """Reference-frame selection configuration"""
     model_config = ConfigDict(validate_assignment=True)
@@ -1309,6 +1342,14 @@ class CMDConfig(BaseModel):
         ge=100,
         description="Maximum sources for CMD"
     )
+    membership_mode: str = Field(
+        default="normal",
+        description="Default CMD viewer membership filter: off, loose, normal, or strict"
+    )
+    membership_compare: bool = Field(
+        default=True,
+        description="Show all stars as background when a CMD membership filter is active"
+    )
     zp: ZPConfig = Field(default_factory=ZPConfig)
     color: ColorConfig = Field(default_factory=ColorConfig)
 
@@ -1522,6 +1563,7 @@ class Parameters(BaseModel):
     wcs: WCSConfig = Field(default_factory=WCSConfig)
     wcs_refine: WCSRefineConfig = Field(default_factory=WCSRefineConfig)
     gaia: GAIAConfig = Field(default_factory=GAIAConfig)
+    simbad: SimbadConfig = Field(default_factory=SimbadConfig)
 
     # ID matching and catalogs
     refbuild: RefBuildConfig = Field(default_factory=RefBuildConfig)

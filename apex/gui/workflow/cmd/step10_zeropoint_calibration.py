@@ -18,6 +18,8 @@ from astropy.wcs.utils import proj_plane_pixel_scales
 from astropy.coordinates import SkyCoord
 import astropy.units as u
 
+from apex.utils.constants import MAG_ERR_COEFF, MAD_TO_SIGMA
+
 from matplotlib.backends.backend_qt5agg import FigureCanvasQTAgg as FigureCanvas
 from matplotlib.backends.backend_qt5agg import NavigationToolbar2QT as NavigationToolbar
 from matplotlib.figure import Figure
@@ -35,17 +37,23 @@ from apex.gui.workflow.step_window_base import StepWindowBase
 from apex.gui.workflow.run_control import RunControlBar
 from apex.gui.workflow.log_panel import WorkflowLogWindow, WorkerStatusPanel, append_timestamped_log, show_raised
 from apex.gui.workflow.ui_helpers import (
+    add_parameter_reset_button,
     build_scroll_param_dialog,
     create_collapsible_section,
     create_parameter_button,
+    install_parameter_wheel_guard,
 )
 from apex.utils.astro_utils import normalize_filter_name
+from apex.utils.common_helpers import format_cmd_title, photometric_system_label
+from apex.utils.cmd_gaia_enrichment import (
+    load_master_table as _load_master_table,
+    merge_gaia_columns_from_catalog as _merge_gaia_columns_from_catalog,
+)
 from apex.utils.step_paths import (
     step2_cropped_dir,
     crop_is_active,
     step7_forced_phot_dir,
     step5_wcs_dir,
-    step6_refbuild_dir,
     tool_extinction_dir,
 )
 from apex.utils.step_paths_cmd import step8_psf_dir, step9_selection_dir, step10_zp_dir
@@ -53,186 +61,15 @@ from apex.utils.io_utils import parse_int64_series, read_ecsv_int64_source_id
 from apex.utils.qc_utils import filter_frame_df_by_qc
 
 
-from apex.utils.gaia_transforms import GAIA_TO_BAND as _GAIA_TO_BAND
-from apex.utils.gaia_transforms import FILTER_COLOR_PREF as _FILTER_COLOR_PREF
-from apex.utils.gaia_transforms import BAND_ALIASES as _BAND_ALIASES
-
-
-def _first_existing_col(cols, candidates):
-    colset = set(cols)
-    for c in candidates:
-        if c in colset:
-            return c
-    return None
-
-
-def _normalize_master_columns(df: pd.DataFrame) -> pd.DataFrame:
-    out = df.copy()
-    ren = {}
-    id_col = _first_existing_col(out.columns, ["ID", "id", "Id", "star_id", "master_id"])
-    if id_col and id_col != "ID":
-        ren[id_col] = "ID"
-    sid_col = _first_existing_col(
-        out.columns, ["source_id", "gaia_source_id", "SOURCE_ID", "Source_ID"]
-    )
-    if sid_col and sid_col != "source_id":
-        ren[sid_col] = "source_id"
-    g_col = _first_existing_col(
-        out.columns, ["gaia_G", "gmag", "phot_g_mean_mag", "Gmag", "G_MAG"]
-    )
-    if g_col and g_col != "gaia_G":
-        ren[g_col] = "gaia_G"
-    bp_col = _first_existing_col(
-        out.columns, ["gaia_BP", "bpmag", "phot_bp_mean_mag", "BPmag", "BP_MAG"]
-    )
-    if bp_col and bp_col != "gaia_BP":
-        ren[bp_col] = "gaia_BP"
-    rp_col = _first_existing_col(
-        out.columns, ["gaia_RP", "rpmag", "phot_rp_mean_mag", "RPmag", "RP_MAG"]
-    )
-    if rp_col and rp_col != "gaia_RP":
-        ren[rp_col] = "gaia_RP"
-    if ren:
-        out = out.rename(columns=ren)
-    return out
-
-
-_GAIA_ENRICH_COLS = (
-    "phot_g_mean_mag",
-    "phot_bp_mean_mag",
-    "phot_rp_mean_mag",
-    "pmra",
-    "pmdec",
-    "pmra_error",
-    "pmdec_error",
-    "parallax",
-    "parallax_error",
-    "ruwe",
-    "visibility_periods_used",
-    "gaia_pmem",
-    "pmem_gaia",
-    "membership_prob_gaia",
+from apex.utils.gaia_transforms import (
+    GAIA_TO_BAND       as _GAIA_TO_BAND,
+    FILTER_COLOR_PREF  as _FILTER_COLOR_PREF,
+    BAND_ALIASES       as _BAND_ALIASES,
+    build_color_pairs  as _build_color_pairs,
+    teff_from_color    as _teff_from_color,
+    TEFF_COLOR_ANCHORS as _TEFF_COLOR_ANCHORS,
+    filter_bands_from_columns as _filter_bands_from_columns,
 )
-
-
-def _load_gaia_enrichment_table(result_dir: Path, needed_cols=None) -> pd.DataFrame | None:
-    result_dir = Path(result_dir)
-    needed = [c for c in (needed_cols or _GAIA_ENRICH_COLS) if c != "source_id"]
-    candidates = [
-        step5_wcs_dir(result_dir) / "gaia_derived.csv",
-        step5_wcs_dir(result_dir) / "gaia_fov.ecsv",
-        result_dir / "gaia_derived.csv",
-        result_dir / "gaia_fov.ecsv",
-    ]
-    best_df = None
-    best_score = -1
-    for path in candidates:
-        if not path.exists():
-            continue
-        try:
-            if path.suffix.lower() == ".ecsv":
-                gdf = read_ecsv_int64_source_id(path)
-            else:
-                gdf = pd.read_csv(path, dtype={"source_id": str})
-        except Exception:
-            continue
-        if gdf is None or gdf.empty or "source_id" not in gdf.columns:
-            continue
-        gdf = gdf.copy()
-        gdf["source_id"] = parse_int64_series(gdf["source_id"]).astype("Int64")
-        gdf = gdf[gdf["source_id"].notna()].copy()
-        if gdf.empty:
-            continue
-        keep_cols = ["source_id"] + [c for c in _GAIA_ENRICH_COLS if c in gdf.columns]
-        score = sum(1 for c in needed if c in gdf.columns)
-        if score > best_score:
-            best_score = score
-            best_df = gdf[keep_cols].drop_duplicates(subset=["source_id"], keep="first")
-    return best_df
-
-
-def _merge_gaia_columns_from_catalog(
-    df: pd.DataFrame,
-    result_dir: Path,
-    needed_cols=None,
-) -> pd.DataFrame:
-    if df is None or df.empty:
-        return df
-    requested_cols = [c for c in (needed_cols or _GAIA_ENRICH_COLS) if c != "source_id"]
-    gdf = _load_gaia_enrichment_table(result_dir, requested_cols)
-    if gdf is None or gdf.empty:
-        return df
-
-    add_cols = [c for c in (needed_cols or _GAIA_ENRICH_COLS) if c in gdf.columns and c != "source_id"]
-    if not add_cols:
-        return df
-
-    out = df.copy()
-    join_keys = []
-    if "gaia_source_id" in out.columns:
-        join_keys.append("gaia_source_id")
-    if "source_id" in out.columns:
-        join_keys.append("source_id")
-    if not join_keys:
-        return out
-
-    for left_key in join_keys:
-        join_col = f"__gaia_join_{left_key}"
-        out[join_col] = parse_int64_series(out[left_key]).astype("Int64")
-        use = gdf[["source_id"] + add_cols].rename(columns={"source_id": join_col})
-        before_cols = set(out.columns)
-        try:
-            merged = out.merge(use, on=join_col, how="left", suffixes=("", "__gaia"))
-        except Exception:
-            out = out.drop(columns=[join_col], errors="ignore")
-            continue
-
-        for col in add_cols:
-            if col in before_cols:
-                aux = f"{col}__gaia"
-                if aux not in merged.columns:
-                    continue
-                missing = merged[col].isna()
-                merged.loc[missing, col] = merged.loc[missing, aux]
-                merged = merged.drop(columns=[aux])
-            elif col in merged.columns:
-                pass
-        out = merged.drop(columns=[join_col], errors="ignore")
-
-    return out
-
-
-def _load_master_table(result_dir: Path) -> tuple[pd.DataFrame, str, Path]:
-    refbuild = step6_refbuild_dir(result_dir)
-    # Collect per-filter catalogs written by step6_ref_build
-    per_filter = sorted(refbuild.glob("ref_catalog_*.tsv")) if refbuild.exists() else []
-    candidates = [
-        # Step 6 ref-build writes ref_catalog.tsv and ref_catalog_{filter}.tsv.
-        ("ref_catalog",    refbuild / "ref_catalog.tsv",      "\t"),
-    ] + [
-        ("ref_catalog",    p,                                   "\t") for p in per_filter
-    ] + [
-        # legacy / fallback names
-        ("master_catalog", refbuild / "master_catalog.tsv",    "\t"),
-        ("master_catalog", result_dir / "master_catalog.tsv",  "\t"),
-        ("master_gaia_map", result_dir / "master_gaia_map.csv", ","),
-    ]
-    tried = []
-    for source_name, p, sep in candidates:
-        if not p.exists():
-            continue
-        tried.append(str(p))
-        try:
-            df = pd.read_csv(p, sep=sep)
-        except Exception:
-            continue
-        if df.empty:
-            continue
-        return _normalize_master_columns(df), source_name, p
-    msg = "master_catalog.tsv or master_gaia_map.csv missing/invalid"
-    if tried:
-        msg += f" (tried: {', '.join(tried)})"
-    raise FileNotFoundError(msg)
 
 
 class ZeropointCalibrationWorker(QThread):
@@ -297,7 +134,7 @@ class ZeropointCalibrationWorker(QThread):
             return (np.nan, np.nan, 0)
         med = float(np.median(x))
         mad = float(np.median(np.abs(x - med)))
-        err = float(1.4826 * mad / np.sqrt(max(len(x), 1)))
+        err = float(MAD_TO_SIGMA * mad / np.sqrt(max(len(x), 1)))
         return (med, err, int(len(x)))
 
     @staticmethod
@@ -312,7 +149,7 @@ class ZeropointCalibrationWorker(QThread):
         for _ in range(int(iters)):
             med = np.nanmedian(x)
             mad = np.nanmedian(np.abs(x - med))
-            sig = 1.4826 * mad if mad > 0 else np.nanstd(x)
+            sig = MAD_TO_SIGMA * mad if mad > 0 else np.nanstd(x)
             if not np.isfinite(sig) or sig <= 0:
                 break
             keep = np.abs(x - med) <= float(clip_sigma) * sig
@@ -337,7 +174,7 @@ class ZeropointCalibrationWorker(QThread):
             return (np.nan, np.nan, n)
         sigma_flux_w = float(np.sqrt(1.0 / wsum))
         mag_w = float(-2.5 * np.log10(flux_w))
-        mag_w_err = float(1.0857 * (sigma_flux_w / flux_w))
+        mag_w_err = float(MAG_ERR_COEFF * (sigma_flux_w / flux_w))
         return (mag_w, mag_w_err, n)
 
     @staticmethod
@@ -349,7 +186,7 @@ class ZeropointCalibrationWorker(QThread):
         for _ in range(int(iters)):
             med = np.nanmedian(x)
             mad = np.nanmedian(np.abs(x - med))
-            sig = 1.4826 * mad if mad > 0 else np.nanstd(x)
+            sig = MAD_TO_SIGMA * mad if mad > 0 else np.nanstd(x)
             if not np.isfinite(sig) or sig <= 0:
                 break
             keep = np.abs(x - med) <= float(clip_sigma) * sig
@@ -527,7 +364,7 @@ class ZeropointCalibrationWorker(QThread):
 
         def _scatter(yf, zp_, ct_, xf):
             r = yf - (zp_ + ct_ * xf)
-            return float(1.4826 * np.nanmedian(np.abs(r - np.nanmedian(r)))) if len(r) else np.nan
+            return float(MAD_TO_SIGMA * np.nanmedian(np.abs(r - np.nanmedian(r)))) if len(r) else np.nan
 
         if len(x) < min_n:
             med = float(np.nanmedian(y)) if len(y) else np.nan
@@ -550,7 +387,7 @@ class ZeropointCalibrationWorker(QThread):
             r = y - yhat
             med = np.nanmedian(r)
             mad = np.nanmedian(np.abs(r - med)) + 1e-12
-            sig = 1.4826 * mad
+            sig = MAD_TO_SIGMA * mad
             keep = np.abs(r - med) <= float(clip_sigma) * sig
             if keep.sum() < min_n:
                 break
@@ -639,6 +476,12 @@ class ZeropointCalibrationWorker(QThread):
                     self._log(f"Step4 QC: frame_quality.csv ignored ({qc_info['reason']}); using all frames.")
 
             min_snr_for_mag = float(getattr(P, "min_snr_for_mag", 0.0))
+            # Restrict calibration measurements to Step 4 apcorr-quality refs
+            # (isolated, unsaturated, high-flux). Per-measurement: a star is
+            # kept only on frames where it was an apcorr_candidate. Falls back
+            # to all measurements if too few survive (see below).
+            require_apcorr = bool(getattr(P, "phot_ref_require_apcorr_candidate", True))
+            apcorr_min_keep = int(getattr(P, "phot_ref_apcorr_min_keep", 8))
 
             # Pre-load sourceid_to_ID for fallback ID injection (det_uid → source_id → ID)
             _sid_map = None
@@ -733,8 +576,17 @@ class ZeropointCalibrationWorker(QThread):
 
                 snr_col = "snr" if "snr" in dfp.columns else ("snr_psf" if "snr_psf" in dfp.columns else None)
 
-                tmp = dfp[["ID", "FILTER", mag_col, err_col] + ([snr_col] if snr_col else [])].copy()
+                _keep_cols = ["ID", "FILTER", mag_col, err_col] + ([snr_col] if snr_col else [])
+                _has_apcorr_col = "step4_apcorr_candidate" in dfp.columns
+                if _has_apcorr_col:
+                    _keep_cols.append("step4_apcorr_candidate")
+                tmp = dfp[_keep_cols].copy()
                 tmp = tmp.rename(columns={mag_col: "mag_inst", err_col: "mag_err"})
+                if _has_apcorr_col:
+                    tmp["step4_apcorr_candidate"] = (
+                        tmp["step4_apcorr_candidate"].astype(str).str.strip()
+                        .str.lower().isin({"1", "true", "t", "yes", "y"})
+                    )
                 if snr_col is None:
                     tmp["snr"] = np.nan
                 else:
@@ -743,7 +595,7 @@ class ZeropointCalibrationWorker(QThread):
                     snr_vals = tmp["snr"].to_numpy(float)
                     if np.isfinite(snr_vals).any():
                         _snr_mask = np.isfinite(snr_vals) & (snr_vals > 0)
-                        tmp.loc[_snr_mask, "mag_err"] = 1.0857 / snr_vals[_snr_mask]
+                        tmp.loc[_snr_mask, "mag_err"] = MAG_ERR_COEFF / snr_vals[_snr_mask]
 
                 tmp["file"] = str(r.get("file", "")) if ("file" in idx.columns) else ""
 
@@ -765,6 +617,32 @@ class ZeropointCalibrationWorker(QThread):
                     "No readable photometry rows. "
                     f"missing_paths={n_missing}/{total}. "
                     "Check photometry_index.csv path column and Step5/Step6 photometry outputs."
+                )
+
+            # Per-measurement apcorr-quality filter. Each row is one star on one
+            # frame; we keep only rows the Step 4 quality pass flagged as an
+            # apcorr_candidate (isolated/unsaturated/high-flux). If that leaves
+            # too few measurements the filter is dropped so calibration still
+            # runs — better a noisier ZP than none.
+            if require_apcorr and "step4_apcorr_candidate" in all_df.columns:
+                mask = all_df["step4_apcorr_candidate"].fillna(False).to_numpy(bool)
+                n_before = len(all_df)
+                n_keep = int(mask.sum())
+                if n_keep >= apcorr_min_keep:
+                    all_df = all_df[mask].copy()
+                    self._log(
+                        f"[ZP] apcorr-quality ref filter: {n_keep}/{n_before} measurements kept "
+                        f"(per-measurement step4_apcorr_candidate)."
+                    )
+                else:
+                    self._log(
+                        f"[ZP] apcorr-quality ref filter skipped: only {n_keep}/{n_before} "
+                        f"measurements qualify (< {apcorr_min_keep}); using all measurements."
+                    )
+            elif require_apcorr:
+                self._log(
+                    "[ZP] apcorr-quality ref filter requested but step4_apcorr_candidate "
+                    "column is absent (re-run Step 7 forced phot to populate it); using all measurements."
                 )
 
             def _combine_group_raw(g):
@@ -978,11 +856,6 @@ class ZeropointCalibrationWorker(QThread):
                 ref_col_map[filt] = col_name
                 self._log(f"[ZP][{filt}] ref_mag valid: {np.isfinite(out_cal[col_name]).sum()}/{len(out_cal)}")
 
-            # Backwards-compat aliases for SDSS
-            for sdss_f, sdss_col in [("g", "sdss_g_ref"), ("r", "sdss_r_ref"), ("i", "sdss_i_ref")]:
-                if sdss_f in ref_col_map and sdss_col not in out_cal.columns:
-                    out_cal[sdss_col] = out_cal[ref_col_map[sdss_f]]
-
             if not ref_col_map:
                 raise RuntimeError("No supported filters found in photometry data for Gaia calibration")
 
@@ -1024,6 +897,12 @@ class ZeropointCalibrationWorker(QThread):
 
                 w_filt  = _wls_weights(f"mag_inst_err_{filt}")
                 s_max   = slope_absmax if key != "U" else max(slope_absmax, 3.0)
+
+                # When no color index is available, fall back to ZP-only fit (CT forced to 0)
+                if color_col_name == "none":
+                    self._log(f"[ZP][{filt}] No instrumental color index available — fitting ZP only (CT=0)")
+                    color_x = np.zeros(len(out_cal))
+
                 m_fit   = np.isfinite(delta) & np.isfinite(color_x) & np.isfinite(inst_arr) & m_snr_f
 
                 if m_fit.sum() < min_match:
@@ -1391,19 +1270,22 @@ class CmdViewerWindow(QWidget):
         # View mode: 0=inst, 1=std, 2=gaia, 3=all
         self.view_mode = 0
 
-        self.inst_bands = sorted({c.replace("mag_inst_", "") for c in df.columns if c.startswith("mag_inst_")})
-        self.std_bands = sorted({c.replace("mag_std_", "") for c in df.columns if c.startswith("mag_std_")})
+        self.inst_bands = _filter_bands_from_columns(df.columns, "mag_inst_")
+        self.std_bands  = _filter_bands_from_columns(df.columns, "mag_std_")
         self.has_std = (len(self.std_bands) > 0) and np.isfinite(df[[c for c in df.columns if c.startswith("mag_std_")]].to_numpy(float)).any()
 
         self.all_bands = sorted(set(self.inst_bands) | set(self.std_bands))
 
-        self.x_allowed = [("g", "r"), ("r", "i"), ("g", "i")]
-        self.y_allowed_scalars = ["g", "r", "i"]
-        self.y_allowed_colors = [("g", "r"), ("r", "i"), ("g", "i")]
+        # X axis: adjacent color pairs only (e.g. B-V, V-R — standard CMD indices)
+        # Y axis: scalar magnitudes only (CMD viewer convention)
+        x_allowed = _build_color_pairs(self.inst_bands, adjacent_only=True)
+        self.x_allowed         = x_allowed
+        self.y_allowed_scalars = self.inst_bands  # already wavelength-sorted
+        self.y_allowed_colors  = []
 
-        self.x_pairs = [(a, b) for (a, b) in self.x_allowed if (a in self.inst_bands and b in self.inst_bands)]
-        self.y_scalar_opts = [b for b in self.y_allowed_scalars if b in self.inst_bands]
-        self.y_color_pairs = [(a, b) for (a, b) in self.y_allowed_colors if (a in self.inst_bands and b in self.inst_bands)]
+        self.x_pairs       = x_allowed
+        self.y_scalar_opts = self.inst_bands
+        self.y_color_pairs = []
 
         self.snr_cols = [c for c in df.columns if c.startswith("snr_")]
         self.has_snr = len(self.snr_cols) > 0
@@ -1418,12 +1300,9 @@ class CmdViewerWindow(QWidget):
             and np.isfinite(df["gaia_G_syn"].to_numpy(float)).any()
             and np.isfinite(df["gaia_BP_RP_syn"].to_numpy(float)).any()
         )
-        if self.has_gaia_inst:
-            self.gaia_mode = "inst"
-        elif self.has_gaia_syn:
-            self.gaia_mode = "syn"
-        else:
-            self.gaia_mode = None
+        # Gaia CMD is a diagnostic-only view.  Keep Gaia columns available for
+        # membership and click details, but do not add a third CMD panel.
+        self.gaia_mode = None
 
         self.teff_vmin = 2400.0
         self.teff_vmax = 40000.0
@@ -1452,24 +1331,7 @@ class CmdViewerWindow(QWidget):
         )
         self.ob_cmap.set_bad("#777777")
 
-        self.color_anchors = {
-            "g-r": {
-                "x": np.array([-0.40, -0.20, 0.00, 0.30, 0.45, 0.80, 1.40, 1.80], float),
-                "t": np.array([35000, 20000, 10000, 7500, 6000, 4500, 3200, 2400], float),
-            },
-            "r-i": {
-                "x": np.array([-0.30, -0.20, -0.05, 0.10, 0.20, 0.40, 0.80, 1.10], float),
-                "t": np.array([35000, 20000, 10000, 7500, 6000, 4500, 3200, 2400], float),
-            },
-            "g-i": {
-                "x": np.array([-0.70, -0.45, 0.00, 0.50, 0.80, 1.50, 2.60, 3.20], float),
-                "t": np.array([35000, 20000, 10000, 7500, 6000, 4500, 3200, 2400], float),
-            },
-            "BP-RP": {
-                "x": np.array([-0.40, -0.20, 0.00, 0.40, 0.80, 1.30, 2.30, 3.50], float),
-                "t": np.array([35000, 20000, 10000, 7500, 6000, 4500, 3200, 2400], float),
-            },
-        }
+        self.color_anchors = _TEFF_COLOR_ANCHORS
 
         # Determine available views
         self.available_views = ["inst"]
@@ -1486,9 +1348,11 @@ class CmdViewerWindow(QWidget):
         self._membership_source = "none"
         self._membership_note = ""
         self._membership_ready = False
+        self._parallax_range_initialized = False
         self._roi_data: dict | None = None
         self._build_ui()
         self._load_roi()
+        self._initialize_parallax_range(force=True)
         self._build_figure()
         self._redraw()
         self.setFocusPolicy(Qt.StrongFocus)
@@ -1496,6 +1360,9 @@ class CmdViewerWindow(QWidget):
     def _build_ui(self):
         layout = QVBoxLayout(self)
 
+        # Top controls split across two rows so labels don't get clipped
+        # in narrow windows.  Row 1 = selection axes & filters; Row 2 =
+        # export buttons + current view label.
         controls = QHBoxLayout()
         controls.addWidget(QLabel("X(color):"))
         self.x_combo = QComboBox()
@@ -1540,18 +1407,25 @@ class CmdViewerWindow(QWidget):
             cmp_default = bool(getattr(self.params.P, "cmd_membership_compare", True))
         self.member_compare.setChecked(cmp_default)
         controls.addWidget(self.member_compare)
+        controls.addStretch()
+        layout.addLayout(controls)
 
+        controls_row2 = QHBoxLayout()
         self.btn_save_membership = QPushButton("Save Pmem CSV")
-        controls.addWidget(self.btn_save_membership)
+        controls_row2.addWidget(self.btn_save_membership)
+
+        self.btn_reset_filters = QPushButton("Reset View Filters")
+        self.btn_reset_filters.setToolTip("Restore CMD viewer filters to the project defaults.")
+        controls_row2.addWidget(self.btn_reset_filters)
 
         self.save_btn = QPushButton("Save PNG")
-        controls.addWidget(self.save_btn)
+        controls_row2.addWidget(self.save_btn)
 
-        controls.addStretch()
+        controls_row2.addStretch()
         self.view_label = QLabel("View: Instrumental")
         self.view_label.setStyleSheet("QLabel { color: #2196F3; font-weight: bold; }")
-        controls.addWidget(self.view_label)
-        layout.addLayout(controls)
+        controls_row2.addWidget(self.view_label)
+        layout.addLayout(controls_row2)
 
         self.info_text = QTextEdit()
         self.info_text.setReadOnly(True)
@@ -1559,21 +1433,30 @@ class CmdViewerWindow(QWidget):
         self.info_text.setStyleSheet("QTextEdit { font-family: monospace; font-size: 9pt; }")
         layout.addWidget(self.info_text)
 
-        self.figure = Figure(figsize=(12, 6), dpi=100)
+        # 10×6 instead of 12×6 — the wider aspect made the CMD look stretched
+        # on 1400px+ windows.
+        self.figure = Figure(figsize=(10, 6), dpi=100)
+        self.figure.subplots_adjust(bottom=0.14)
         self.canvas = FigureCanvas(self.figure)
-        self.canvas.setMinimumSize(800, 400)
-        self.toolbar = NavigationToolbar(self.canvas, self)
-        layout.addWidget(self.toolbar)
-        layout.addWidget(self.canvas, stretch=1)
+        self.canvas.setMinimumSize(800, 360)
+        self.canvas.setMaximumHeight(560)
 
-        view_controls = QHBoxLayout()
+        # Prev/Next View are mounted next to the matplotlib navigation
+        # toolbar (above the canvas) so they cannot visually collide with
+        # the X-axis label below.
         self.btn_prev_view = QPushButton("Prev View")
         self.btn_next_view = QPushButton("Next View")
-        view_controls.addStretch()
-        view_controls.addWidget(self.btn_prev_view)
-        view_controls.addWidget(self.btn_next_view)
-        view_controls.addStretch()
-        layout.addLayout(view_controls)
+        self.btn_prev_view.setFixedHeight(28)
+        self.btn_next_view.setFixedHeight(28)
+        self.toolbar = NavigationToolbar(self.canvas, self)
+        toolbar_row = QHBoxLayout()
+        toolbar_row.setContentsMargins(0, 0, 0, 0)
+        toolbar_row.addWidget(self.toolbar)
+        toolbar_row.addStretch()
+        toolbar_row.addWidget(self.btn_prev_view)
+        toolbar_row.addWidget(self.btn_next_view)
+        layout.addLayout(toolbar_row)
+        layout.addWidget(self.canvas, stretch=1)
 
         self.x_combo.currentTextChanged.connect(self._redraw)
         self.y_combo.currentTextChanged.connect(self._redraw)
@@ -1582,6 +1465,7 @@ class CmdViewerWindow(QWidget):
         self.member_mode_combo.currentIndexChanged.connect(self._on_membership_ui_changed)
         self.member_compare.stateChanged.connect(self._on_membership_ui_changed)
         self.btn_save_membership.clicked.connect(self._save_membership_csv)
+        self.btn_reset_filters.clicked.connect(self._reset_view_filters)
         self.save_btn.clicked.connect(self._save_png)
         self.btn_prev_view.clicked.connect(lambda: self._switch_view(-1))
         self.btn_next_view.clicked.connect(lambda: self._switch_view(1))
@@ -1627,6 +1511,52 @@ class CmdViewerWindow(QWidget):
         self.plx_max_spin.valueChanged.connect(self._redraw)
         self.roi_check.stateChanged.connect(self._redraw)
         self.btn_reload_roi.clicked.connect(self._on_reload_roi)
+        install_parameter_wheel_guard(self)
+
+    def _reset_view_filters(self):
+        for widget in (
+            self.snr_spin,
+            self.invert_y,
+            self.member_mode_combo,
+            self.member_compare,
+            self.plx_check,
+            self.plx_min_spin,
+            self.plx_max_spin,
+            self.roi_check,
+        ):
+            widget.blockSignals(True)
+
+        self.snr_spin.setValue(20)
+        self.invert_y.setChecked(True)
+        self.member_mode_combo.setCurrentIndex(2)  # Normal (P>=0.50)
+        self.member_compare.setChecked(True)
+        self.plx_check.setChecked(False)
+        self.plx_min_spin.setValue(-0.5)
+        self.plx_max_spin.setValue(0.5)
+        self._initialize_parallax_range(force=True)
+        self.roi_check.setChecked(False)
+
+        for widget in (
+            self.snr_spin,
+            self.invert_y,
+            self.member_mode_combo,
+            self.member_compare,
+            self.plx_check,
+            self.plx_min_spin,
+            self.plx_max_spin,
+            self.roi_check,
+        ):
+            widget.blockSignals(False)
+
+        if self.params is not None and hasattr(self.params, "P"):
+            self.params.P.cmd_membership_mode = "normal"
+            self.params.P.cmd_membership_compare = True
+            if hasattr(self.params, "save_toml"):
+                try:
+                    self.params.save_toml()
+                except Exception:
+                    pass
+        self._redraw()
 
     def _load_roi(self):
         """Load cmd_roi.json from step8 output directory and update UI."""
@@ -1655,6 +1585,61 @@ class CmdViewerWindow(QWidget):
         self._load_roi()
         self._redraw()
 
+    def _parallax_values(self):
+        if "parallax" not in self.df.columns:
+            self._ensure_membership_columns_from_master()
+        if "parallax" not in self.df.columns:
+            return None
+        return pd.to_numeric(self.df["parallax"], errors="coerce").to_numpy(float)
+
+    def _set_parallax_range(self, plx_min: float, plx_max: float):
+        if not np.isfinite(plx_min) or not np.isfinite(plx_max):
+            return
+        if plx_min > plx_max:
+            plx_min, plx_max = plx_max, plx_min
+        lo = max(float(self.plx_min_spin.minimum()), float(plx_min))
+        hi = min(float(self.plx_max_spin.maximum()), float(plx_max))
+        if lo >= hi:
+            pad = max(0.05, abs(float(plx_min)) * 0.05)
+            lo = max(float(self.plx_min_spin.minimum()), float(plx_min) - pad)
+            hi = min(float(self.plx_max_spin.maximum()), float(plx_max) + pad)
+        for widget in (self.plx_min_spin, self.plx_max_spin):
+            widget.blockSignals(True)
+        self.plx_min_spin.setValue(lo)
+        self.plx_max_spin.setValue(hi)
+        for widget in (self.plx_min_spin, self.plx_max_spin):
+            widget.blockSignals(False)
+
+    def _auto_set_parallax_range(self, preferred_mask=None) -> bool:
+        plx = self._parallax_values()
+        if plx is None:
+            return False
+        finite = np.isfinite(plx)
+        base = finite.copy()
+        if preferred_mask is not None and len(preferred_mask) == len(plx):
+            preferred = np.asarray(preferred_mask, bool) & finite
+            if int(preferred.sum()) >= 10:
+                base = preferred
+        if int(base.sum()) == 0:
+            return False
+
+        vals = plx[base]
+        center = float(np.nanmedian(vals))
+        mad = float(np.nanmedian(np.abs(vals - center)))
+        robust_sigma = MAD_TO_SIGMA * mad if np.isfinite(mad) and mad > 0 else 0.0
+        half_width = max(0.5, 4.0 * robust_sigma)
+        half_width = min(5.0, half_width)
+        self._set_parallax_range(center - half_width, center + half_width)
+        return True
+
+    def _initialize_parallax_range(self, force: bool = False) -> bool:
+        if self._parallax_range_initialized and not force:
+            return False
+        if self._auto_set_parallax_range():
+            self._parallax_range_initialized = True
+            return True
+        return False
+
     def _roi_mask(self):
         """Returns boolean mask selecting sources inside the CMD ROI circle (sky coords), or None if disabled."""
         if not self.roi_check.isChecked() or self._roi_data is None:
@@ -1672,22 +1657,12 @@ class CmdViewerWindow(QWidget):
             d_ra = (ra - roi_ra) * cos_dec * 3600.0   # arcsec
             d_dec = (dec - roi_dec) * 3600.0           # arcsec
             return valid & (d_ra ** 2 + d_dec ** 2 <= roi_r_arcsec ** 2)
-        # Fallback: pixel distance if RA/Dec unavailable (reference frame only)
-        if "x_pix" in self.df.columns and "y_pix" in self.df.columns:
-            ps = float(getattr(self.params.P, "pixel_scale_arcsec", 1.0)) if self.params else 1.0
-            x = pd.to_numeric(self.df["x_pix"], errors="coerce").to_numpy(float)
-            y = pd.to_numeric(self.df["y_pix"], errors="coerce").to_numpy(float)
-            valid = np.isfinite(x) & np.isfinite(y)
-            r_px = roi_r_arcsec / max(ps, 0.01)
-            # We don't have center in pixels without WCS — skip gracefully
-            _ = r_px  # suppress lint
         return None
 
     def _on_plx_filter_changed(self):
         if self.plx_check.isChecked():
-            if "parallax" not in self.df.columns:
-                self._ensure_membership_columns_from_master()
-            if "parallax" not in self.df.columns:
+            plx = self._parallax_values()
+            if plx is None:
                 self.plx_check.blockSignals(True)
                 self.plx_check.setChecked(False)
                 self.plx_check.blockSignals(False)
@@ -1696,17 +1671,22 @@ class CmdViewerWindow(QWidget):
                     "parallax column not found in CMD data or master_catalog.\n"
                     "Rerun Step 6 (Master Catalog Build) and Step 10 (ZP Calibration).")
                 return
+            plx_min = float(self.plx_min_spin.value())
+            plx_max = float(self.plx_max_spin.value())
+            finite = np.isfinite(plx)
+            selected = finite & (plx >= plx_min) & (plx <= plx_max)
+            if int(finite.sum()) > 0 and int(selected.sum()) < 5:
+                member_mask, _, _ = self._current_membership_mask()
+                self._auto_set_parallax_range(member_mask)
         self._redraw()
 
     def _parallax_mask(self):
         """Returns boolean mask for parallax range filter, or None if disabled/unavailable."""
         if not self.plx_check.isChecked():
             return None
-        if "parallax" not in self.df.columns:
-            self._ensure_membership_columns_from_master()
-        if "parallax" not in self.df.columns:
+        plx = self._parallax_values()
+        if plx is None:
             return None
-        plx = pd.to_numeric(self.df["parallax"], errors="coerce").to_numpy(float)
         plx_min = float(self.plx_min_spin.value())
         plx_max = float(self.plx_max_spin.value())
         mask = np.isfinite(plx) & (plx >= plx_min) & (plx <= plx_max)
@@ -2004,56 +1984,60 @@ class CmdViewerWindow(QWidget):
         view_name = self.available_views[self.view_mode]
 
         # Single view modes
+        # Padded right margin + cax pulled inward keeps the colorbar
+        # label "Teff (K) + OBAFGKM-like color" fully on-canvas even
+        # with long tick labels like "35000 K (O)".  top=0.88 leaves
+        # breathing room for the plot title.
         if view_name == "inst":
             self.ax_inst = self.figure.add_subplot(1, 1, 1)
             self.ax_std = None
             self.ax_gaia = None
-            self.figure.subplots_adjust(left=0.10, right=0.88, bottom=0.10, top=0.92)
-            self.cax = self.figure.add_axes([0.90, 0.12, 0.02, 0.78])
+            self.figure.subplots_adjust(left=0.10, right=0.80, bottom=0.18, top=0.88)
+            self.cax = self.figure.add_axes([0.84, 0.18, 0.018, 0.70])
         elif view_name == "std":
             self.ax_inst = None
             self.ax_std = self.figure.add_subplot(1, 1, 1)
             self.ax_gaia = None
-            self.figure.subplots_adjust(left=0.10, right=0.88, bottom=0.10, top=0.92)
-            self.cax = self.figure.add_axes([0.90, 0.12, 0.02, 0.78])
+            self.figure.subplots_adjust(left=0.10, right=0.80, bottom=0.18, top=0.88)
+            self.cax = self.figure.add_axes([0.84, 0.18, 0.018, 0.70])
         elif view_name == "gaia":
             self.ax_inst = None
             self.ax_std = None
             self.ax_gaia = self.figure.add_subplot(1, 1, 1)
-            self.figure.subplots_adjust(left=0.10, right=0.88, bottom=0.10, top=0.92)
-            self.cax = self.figure.add_axes([0.90, 0.12, 0.02, 0.78])
+            self.figure.subplots_adjust(left=0.10, right=0.80, bottom=0.18, top=0.88)
+            self.cax = self.figure.add_axes([0.84, 0.18, 0.018, 0.70])
         elif view_name == "all":
             # Show all available CMDs
             if self.has_std and self.gaia_mode is not None:
                 self.ax_inst = self.figure.add_subplot(1, 3, 1)
                 self.ax_std = self.figure.add_subplot(1, 3, 2)
                 self.ax_gaia = self.figure.add_subplot(1, 3, 3)
-                self.figure.subplots_adjust(left=0.055, right=0.90, bottom=0.12, top=0.88, wspace=0.25)
-                self.cax = self.figure.add_axes([0.92, 0.16, 0.015, 0.70])
+                self.figure.subplots_adjust(left=0.055, right=0.85, bottom=0.16, top=0.85, wspace=0.30)
+                self.cax = self.figure.add_axes([0.88, 0.16, 0.015, 0.68])
             elif self.has_std:
                 self.ax_inst = self.figure.add_subplot(1, 2, 1)
                 self.ax_std = self.figure.add_subplot(1, 2, 2)
                 self.ax_gaia = None
-                self.figure.subplots_adjust(left=0.07, right=0.90, bottom=0.12, top=0.88, wspace=0.25)
-                self.cax = self.figure.add_axes([0.92, 0.16, 0.015, 0.70])
+                self.figure.subplots_adjust(left=0.07, right=0.85, bottom=0.16, top=0.85, wspace=0.30)
+                self.cax = self.figure.add_axes([0.88, 0.16, 0.015, 0.68])
             elif self.gaia_mode is not None:
                 self.ax_inst = self.figure.add_subplot(1, 2, 1)
                 self.ax_std = None
                 self.ax_gaia = self.figure.add_subplot(1, 2, 2)
-                self.figure.subplots_adjust(left=0.07, right=0.90, bottom=0.12, top=0.88, wspace=0.25)
-                self.cax = self.figure.add_axes([0.92, 0.16, 0.015, 0.70])
+                self.figure.subplots_adjust(left=0.07, right=0.85, bottom=0.16, top=0.85, wspace=0.30)
+                self.cax = self.figure.add_axes([0.88, 0.16, 0.015, 0.68])
             else:
                 self.ax_inst = self.figure.add_subplot(1, 1, 1)
                 self.ax_std = None
                 self.ax_gaia = None
-                self.figure.subplots_adjust(left=0.13, right=0.88, bottom=0.12, top=0.88)
-                self.cax = self.figure.add_axes([0.90, 0.16, 0.02, 0.70])
+                self.figure.subplots_adjust(left=0.13, right=0.80, bottom=0.16, top=0.85)
+                self.cax = self.figure.add_axes([0.84, 0.18, 0.018, 0.66])
         else:
             self.ax_inst = self.figure.add_subplot(1, 1, 1)
             self.ax_std = None
             self.ax_gaia = None
-            self.figure.subplots_adjust(left=0.13, right=0.88, bottom=0.12, top=0.88)
-            self.cax = self.figure.add_axes([0.90, 0.16, 0.02, 0.70])
+            self.figure.subplots_adjust(left=0.13, right=0.80, bottom=0.14, top=0.85)
+            self.cax = self.figure.add_axes([0.84, 0.18, 0.018, 0.66])
 
         self.figure.patch.set_facecolor("black")
         for ax in [self.ax_inst, self.ax_std, self.ax_gaia]:
@@ -2071,7 +2055,7 @@ class CmdViewerWindow(QWidget):
         sm = mpl.cm.ScalarMappable(norm=self.ob_norm, cmap=self.ob_cmap)
         sm.set_array([])
         cbar = self.figure.colorbar(sm, cax=self.cax)
-        cbar.set_label("Teff (K) + OBAFGKM-like color", fontsize=9, color="white")
+        cbar.set_label("Teff (K) + OBAFGKM-like color", fontsize=9, color="white", labelpad=14)
         ticks = [35000, 20000, 10000, 7500, 6000, 4500, 3200]
         labels = ["35000 K (O)", "20000 K (B)", "10000 K (A)", " 7500 K (F)", " 6000 K (G)", " 4500 K (K)", " 3200 K (M)"]
         cbar.set_ticks(ticks)
@@ -2084,12 +2068,12 @@ class CmdViewerWindow(QWidget):
         return pd.to_numeric(series, errors="coerce").to_numpy(float)
 
     def _teff_from_color_index(self, color_x: np.ndarray, mode: str):
-        a = self.color_anchors.get(mode, None)
-        if a is None or color_x.size == 0:
+        if color_x.size == 0:
             return np.full_like(color_x, np.nan, dtype=float)
-        x = np.asarray(color_x, float)
-        teff = np.interp(x, a["x"], a["t"])
-        return np.clip(teff, self.teff_vmin, self.teff_vmax)
+        parts = mode.split("-", 1)
+        if len(parts) == 2:
+            return _teff_from_color(color_x, parts[0], parts[1], self.teff_vmin, self.teff_vmax)
+        return np.full_like(color_x, np.nan, dtype=float)
 
     def _get_y_mode(self, yval):
         if yval in self.y_scalar_opts:
@@ -2289,16 +2273,29 @@ class CmdViewerWindow(QWidget):
             x_g_all, y_g_all = np.array([]), np.array([])
             x_g, y_g, mask_g, teff_g = np.array([]), np.array([]), np.zeros(len(self.df), bool), np.array([])
 
+        color_title = f"{a}-{b}"
+
+        def _count_text(n, n_all, active):
+            return f"N={n}/{n_all}" if active else f"N={n}"
+
         if self.ax_inst is not None:
             self._style_axis(self.ax_inst)
             if member_compare and len(x_i_all) > 0:
                 self.ax_inst.scatter(x_i_all, y_i_all, s=10, alpha=0.22, linewidths=0, rasterized=True, c="#9E9E9E")
             if len(x_i) > 0:
                 self.ax_inst.scatter(x_i, y_i, s=12, alpha=0.92, linewidths=0, rasterized=True, c=teff_i, cmap=self.ob_cmap, norm=self.ob_norm)
-                if member_active or plx_active or roi_active:
-                    self.ax_inst.set_title(f"Instrumental CMD (N={len(x_i)}/{len(x_i_all)})", fontsize=11, color="white")
-                else:
-                    self.ax_inst.set_title(f"Instrumental CMD (N={len(x_i)})", fontsize=11, color="white")
+                self.ax_inst.set_title(
+                    format_cmd_title(
+                        self.params,
+                        yval,
+                        color_title,
+                        system_label="Instrumental",
+                        count_text=_count_text(len(x_i), len(x_i_all), member_active or plx_active or roi_active),
+                        result_dir=self.result_dir,
+                    ),
+                    fontsize=11,
+                    color="white",
+                )
                 self._plot_cache[self.ax_inst] = {
                     "system": "inst",
                     "x": x_i,
@@ -2306,21 +2303,38 @@ class CmdViewerWindow(QWidget):
                     "df_index": np.where(mask_i)[0],
                 }
             else:
-                if member_active or plx_active or roi_active:
-                    self.ax_inst.set_title(f"Instrumental CMD (N=0/{len(x_i_all)})", fontsize=11, color="white")
-                else:
-                    self.ax_inst.set_title("Instrumental CMD (N=0)", fontsize=11, color="white")
+                self.ax_inst.set_title(
+                    format_cmd_title(
+                        self.params,
+                        yval,
+                        color_title,
+                        system_label="Instrumental",
+                        count_text=_count_text(0, len(x_i_all), member_active or plx_active or roi_active),
+                        result_dir=self.result_dir,
+                    ),
+                    fontsize=11,
+                    color="white",
+                )
 
         if self.ax_std is not None:
+            std_label = photometric_system_label(a, b, yval)
             self._style_axis(self.ax_std)
             if member_compare and len(x_s_all) > 0:
                 self.ax_std.scatter(x_s_all, y_s_all, s=10, alpha=0.22, linewidths=0, rasterized=True, c="#9E9E9E")
             if len(x_s) > 0:
                 self.ax_std.scatter(x_s, y_s, s=12, alpha=0.92, linewidths=0, rasterized=True, c=teff_s, cmap=self.ob_cmap, norm=self.ob_norm)
-                if member_active or plx_active or roi_active:
-                    self.ax_std.set_title(f"SDSS CMD (N={len(x_s)}/{len(x_s_all)})", fontsize=11, color="white")
-                else:
-                    self.ax_std.set_title(f"SDSS CMD (N={len(x_s)})", fontsize=11, color="white")
+                self.ax_std.set_title(
+                    format_cmd_title(
+                        self.params,
+                        yval,
+                        color_title,
+                        system_label=std_label,
+                        count_text=_count_text(len(x_s), len(x_s_all), member_active or plx_active or roi_active),
+                        result_dir=self.result_dir,
+                    ),
+                    fontsize=11,
+                    color="white",
+                )
                 self._plot_cache[self.ax_std] = {
                     "system": "std",
                     "x": x_s,
@@ -2328,10 +2342,18 @@ class CmdViewerWindow(QWidget):
                     "df_index": np.where(mask_s)[0],
                 }
             else:
-                if member_active or plx_active or roi_active:
-                    self.ax_std.set_title(f"SDSS CMD (N=0/{len(x_s_all)})", fontsize=11, color="white")
-                else:
-                    self.ax_std.set_title("SDSS CMD (N=0)", fontsize=11, color="white")
+                self.ax_std.set_title(
+                    format_cmd_title(
+                        self.params,
+                        yval,
+                        color_title,
+                        system_label=std_label,
+                        count_text=_count_text(0, len(x_s_all), member_active or plx_active or roi_active),
+                        result_dir=self.result_dir,
+                    ),
+                    fontsize=11,
+                    color="white",
+                )
 
         if self.ax_gaia is not None:
             self._style_axis(self.ax_gaia)
@@ -2339,11 +2361,19 @@ class CmdViewerWindow(QWidget):
                 self.ax_gaia.scatter(x_g_all, y_g_all, s=10, alpha=0.22, linewidths=0, rasterized=True, c="#9E9E9E")
             if len(x_g) > 0:
                 self.ax_gaia.scatter(x_g, y_g, s=12, alpha=0.92, linewidths=0, rasterized=True, c=teff_g, cmap=self.ob_cmap, norm=self.ob_norm)
-                title = "Gaia CMD (inst)" if self.gaia_mode == "inst" else "Gaia CMD (syn)"
-                if member_active or plx_active or roi_active:
-                    self.ax_gaia.set_title(f"{title} (N={len(x_g)}/{len(x_g_all)})", fontsize=11, color="white")
-                else:
-                    self.ax_gaia.set_title(f"{title} (N={len(x_g)})", fontsize=11, color="white")
+                gaia_label = "Gaia instrumental" if self.gaia_mode == "inst" else "Gaia synthetic"
+                self.ax_gaia.set_title(
+                    format_cmd_title(
+                        self.params,
+                        "G",
+                        "BP-RP",
+                        system_label=gaia_label,
+                        count_text=_count_text(len(x_g), len(x_g_all), member_active or plx_active or roi_active),
+                        result_dir=self.result_dir,
+                    ),
+                    fontsize=11,
+                    color="white",
+                )
                 self._plot_cache[self.ax_gaia] = {
                     "system": "gaia",
                     "x": x_g,
@@ -2351,10 +2381,19 @@ class CmdViewerWindow(QWidget):
                     "df_index": np.where(mask_g)[0],
                 }
             else:
-                if member_active or plx_active or roi_active:
-                    self.ax_gaia.set_title(f"Gaia CMD (N=0/{len(x_g_all)})", fontsize=11, color="white")
-                else:
-                    self.ax_gaia.set_title("Gaia CMD (N=0)", fontsize=11, color="white")
+                gaia_label = "Gaia instrumental" if self.gaia_mode == "inst" else "Gaia synthetic"
+                self.ax_gaia.set_title(
+                    format_cmd_title(
+                        self.params,
+                        "G",
+                        "BP-RP",
+                        system_label=gaia_label,
+                        count_text=_count_text(0, len(x_g_all), member_active or plx_active or roi_active),
+                        result_dir=self.result_dir,
+                    ),
+                    fontsize=11,
+                    color="white",
+                )
 
         x_label = f"{a}-{b} (mag)"
         y_label = f"{yval} (mag)" if yval else ""
@@ -2391,6 +2430,17 @@ class CmdViewerWindow(QWidget):
                 f"Membership: {member_mode} (P>={member_thr:.2f}) | source={self._membership_source} | "
                 f"selected={n_mem}/{n_valid} | compare={member_compare}"
             )
+        if self.plx_check.isChecked():
+            plx = self._parallax_values()
+            if plx is None:
+                lines.append("Parallax: unavailable")
+            else:
+                finite = np.isfinite(plx)
+                n_sel = int(plx_mask.sum()) if plx_mask is not None else 0
+                lines.append(
+                    f"Parallax: {self.plx_min_spin.value():.3f}..{self.plx_max_spin.value():.3f} mas | "
+                    f"selected={n_sel}/{int(finite.sum())}"
+                )
         lines.append(f"[Inst] N={len(x_i)}{'/' + str(len(x_i_all)) if member_active else ''} | Teff range: {_rng(teff_i)}")
         if self.has_std:
             lines.append(f"[Std]  N={len(x_s)}{'/' + str(len(x_s_all)) if member_active else ''} | Teff range: {_rng(teff_s)}")
@@ -2497,7 +2547,15 @@ class CmdViewerWindow(QWidget):
         """Switch between views: inst, std, gaia, all"""
         self.view_mode = (self.view_mode + delta) % len(self.available_views)
         view_name = self.available_views[self.view_mode]
-        view_labels = {"inst": "Instrumental", "std": "SDSS Standard", "gaia": "Gaia", "all": "All CMDs"}
+        std_sys = "Standard"
+        try:
+            x_text = self.x_combo.currentText()
+            if "-" in x_text:
+                a, b = x_text.split("-", 1)
+                std_sys = photometric_system_label(a, b, self.y_combo.currentText())
+        except Exception:
+            pass
+        view_labels = {"inst": "Instrumental", "std": f"{std_sys} Standard", "gaia": "Gaia", "all": "All CMDs"}
         self.view_label.setText(f"View: {view_labels.get(view_name, view_name)}")
         self._build_figure()
         self._redraw()
@@ -2681,17 +2739,20 @@ class ZPFitPlotWidget(QWidget):
             if self._coeff_df is not None:
                 row_c = self._coeff_df[self._coeff_df["filter"] == filt]
                 if len(row_c) and "color_col" in row_c.columns:
-                    color_col = str(row_c["color_col"].iloc[0])
+                    cc = str(row_c["color_col"].iloc[0])
+                    if cc != "none":
+                        # coeff_df stores bare name ("B_V"); cal column has "color_" prefix
+                        color_col = cc if cc.startswith("color_") else f"color_{cc}"
             if color_col is None or color_col not in cal.columns:
-                # Guess: try generic fallback columns
-                for cand in (f"color_gr", f"color_ri", f"color_{filt}"):
-                    if cand in cal.columns:
+                # Fallback: scan cal for any color_* column
+                for cand in cal.columns:
+                    if cand.startswith("color_"):
                         color_col = cand
                         break
             if color_col is None or color_col not in cal.columns:
                 continue
 
-            ref_col = f"sdss_{filt}_ref"
+            ref_col = f"ref_{filt}"
             inst_col = f"mag_inst_{filt}"
             err_col = f"mag_inst_err_{filt}"
             delta_col = f"delta_{filt}"
@@ -2731,7 +2792,7 @@ class ZPFitPlotWidget(QWidget):
                     resid = y_plot - (zp_val + ct_val * x_plot)
                     med_r = np.nanmedian(resid)
                     mad_r = np.nanmedian(np.abs(resid - med_r)) + 1e-12
-                    sig_r = 1.4826 * mad_r
+                    sig_r = MAD_TO_SIGMA * mad_r
                     inlier = np.abs(resid - med_r) <= 3.0 * sig_r
                     sc_str = f"σ={sc_val:.4f}" if np.isfinite(sc_val) else ""
                     fit_label = f"{filt}: ZP={zp_val:.3f} CT={ct_val:+.3f} {sc_str} (N={N_val})"
@@ -2822,7 +2883,7 @@ class ZPFitPlotWidget(QWidget):
             fc = self._filter_color(filt)
             med = float(np.median(zp_vals))
             mad = float(np.median(np.abs(zp_vals - med)))
-            sigma = 1.4826 * mad
+            sigma = MAD_TO_SIGMA * mad
             n_bins = max(8, min(30, len(zp_vals) // 2))
             ax.hist(zp_vals, bins=n_bins, color=fc, alpha=0.5,
                     label=f"{filt}: μ={med:.3f} σ={sigma:.3f} N={len(zp_vals)}")
@@ -2904,7 +2965,7 @@ class ZPFitPlotWidget(QWidget):
             if len(yf) >= 3:
                 med_zp = float(np.median(yf))
                 mad_zp = float(np.median(np.abs(yf - med_zp)))
-                sigma_zp = 1.4826 * mad_zp
+                sigma_zp = MAD_TO_SIGMA * mad_zp
                 ax.axhline(med_zp, color=fc, linestyle="--", linewidth=0.9, alpha=0.7)
                 ax.axhspan(med_zp - sigma_zp, med_zp + sigma_zp,
                            color=fc, alpha=0.07, zorder=1)
@@ -3130,6 +3191,23 @@ class ZeropointCalibrationWindow(StepWindowBase):
 
         layout.addWidget(gaia_group)
         layout.addStretch(1)
+        add_parameter_reset_button(
+            buttons,
+            [
+                (self.param_match, 1.0),
+                (self.param_min_match, 10),
+                (self.param_cmd_snr, 50.0),
+                (self.param_frame_min, 5),
+                (self.param_apply_ext, False),
+                (self.param_ext_mode, "absorb"),
+                (self.param_clip, 3.0),
+                (self.param_iters, 5),
+                (self.param_slope, 1.0),
+                (self.param_gaia_snr, 20.0),
+                (self.param_gi_min, -0.5),
+                (self.param_gi_max, 4.5),
+            ],
+        )
         buttons.accepted.connect(lambda: self.save_parameters(dialog))
         buttons.rejected.connect(dialog.reject)
         dialog.exec_()

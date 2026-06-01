@@ -26,10 +26,17 @@ from PyQt5.QtWidgets import (
     QGroupBox, QMessageBox, QComboBox, QCheckBox, QSplitter, QTableWidget,
     QTableWidgetItem, QHeaderView, QDoubleSpinBox, QProgressBar, QDialog,
     QDialogButtonBox, QFormLayout, QSpinBox, QTabWidget, QFileDialog,
-    QLineEdit, QAbstractItemView,
+    QLineEdit, QAbstractItemView, QGridLayout, QSizePolicy,
 )
 
+from apex.analysis.extinction import (
+    fit_ensemble_extinction_once,
+    robust_linfit,
+    robust_weighted_linfit,
+)
+from apex.gui.widgets.fits_viewer import FITSViewerWidget, OverlayMarker
 from apex.utils.astro_utils import compute_airmass_from_header
+from apex.utils.common_helpers import normalize_filter_key
 from apex.utils.photometry_utils import (
     get_numeric_array,
     MAG_ERR_COEFF,
@@ -66,7 +73,7 @@ from apex.utils.gaia_transforms import (
 
 
 def _ext_group_key(date_val: str, filt: str) -> str:
-    return f"{str(date_val)}::{str(filt).strip().lower()}"
+    return f"{str(date_val)}::{normalize_filter_key(filt)}"
 
 
 def _finite_range(vals) -> float:
@@ -297,77 +304,14 @@ class ExtinctionFitWorker(QThread):
         return y
 
     def _robust_linfit(self, x, y, clip_sigma=3.0, iters=5, min_n=10):
-        x = np.asarray(x, float)
-        y = np.asarray(y, float)
-        m0 = np.isfinite(x) & np.isfinite(y)
-        x = x[m0]
-        y = y[m0]
-        if len(x) < min_n:
-            return (np.nan, np.nan, np.nan, 0, np.nan)
-        k, zp = np.polyfit(x, y, 1)
-        base_n = len(x)
-        for _ in range(int(iters)):
-            yhat = zp + k * x
-            r = y - yhat
-            med = np.nanmedian(r)
-            mad = np.nanmedian(np.abs(r - med)) + 1e-12
-            sig = MAD_TO_SIGMA * mad
-            keep = np.abs(r - med) <= float(clip_sigma) * sig
-            if keep.sum() < min_n:
-                break
-            if keep.sum() == len(x):
-                break
-            x, y = x[keep], y[keep]
-            k, zp = np.polyfit(x, y, 1)
-        yhat = zp + k * x
-        scatter = float(np.nanstd(y - yhat)) if len(x) else np.nan
-        outlier_frac = float(1.0 - (len(x) / max(base_n, 1)))
-        return (float(k), float(zp), scatter, int(len(x)), outlier_frac)
+        return robust_linfit(
+            x, y, clip_sigma=clip_sigma, iters=iters, min_n=min_n
+        )
 
     def _robust_weighted_linfit(self, x, y, w=None, clip_sigma=3.0, iters=5, min_n=10):
-        x = np.asarray(x, float)
-        y = np.asarray(y, float)
-        if w is not None:
-            w = np.asarray(w, float)
-            m0 = np.isfinite(x) & np.isfinite(y) & np.isfinite(w) & (w > 0)
-        else:
-            m0 = np.isfinite(x) & np.isfinite(y)
-        x = x[m0]
-        y = y[m0]
-        w = w[m0] if w is not None else None
-        if len(x) < min_n:
-            return (np.nan, np.nan, np.nan, 0, np.nan)
-
-        def _fit(xx, yy, ww):
-            if ww is None:
-                k, zp = np.polyfit(xx, yy, 1)
-            else:
-                k, zp = np.polyfit(xx, yy, 1, w=ww)
-            return k, zp
-
-        k, zp = _fit(x, y, w)
-        base_n = len(x)
-        for _ in range(int(iters)):
-            yhat = zp + k * x
-            r = y - yhat
-            med = np.nanmedian(r)
-            mad = np.nanmedian(np.abs(r - med)) + 1e-12
-            sig = MAD_TO_SIGMA * mad
-            keep = np.abs(r - med) <= float(clip_sigma) * sig
-            if keep.sum() < min_n:
-                break
-            if keep.sum() == len(x):
-                break
-            x = x[keep]
-            y = y[keep]
-            if w is not None:
-                w = w[keep]
-            k, zp = _fit(x, y, w)
-
-        yhat = zp + k * x
-        scatter = float(np.nanstd(y - yhat)) if len(x) else np.nan
-        outlier_frac = float(1.0 - (len(x) / max(base_n, 1)))
-        return (float(k), float(zp), scatter, int(len(x)), outlier_frac)
+        return robust_weighted_linfit(
+            x, y, w=w, clip_sigma=clip_sigma, iters=iters, min_n=min_n
+        )
 
     def _fit_ensemble_once(
         self,
@@ -377,124 +321,9 @@ class ExtinctionFitWorker(QThread):
         min_n: int,
     ):
         """Fit m_ij = s_i + z_j + k1*X_j for one date+filter group."""
-        if sub.empty:
-            return None
-
-        sub = sub.reset_index(drop=True)
-        x = get_numeric_array(sub, "airmass")
-        y = get_numeric_array(sub, "mag_inst")
-        star_ids = coerce_int64_source_id(sub["source_id"]).astype("int64").to_numpy()
-        frame_ids = sub["file"].astype(str).to_numpy()
-
-        base_mask = np.isfinite(x) & np.isfinite(y)
-        if base_mask.sum() < min_n:
-            return None
-
-        unique_stars = np.unique(star_ids[base_mask])
-        unique_frames = np.unique(frame_ids[base_mask])
-        n_star = len(unique_stars)
-        n_frame = len(unique_frames)
-        if n_star == 0 or n_frame == 0:
-            return None
-
-        star_index = {sid: i for i, sid in enumerate(unique_stars)}
-        frame_index = {fid: i for i, fid in enumerate(unique_frames)}
-        ref_frame = unique_frames[0]
-        ref_idx = frame_index[ref_frame]
-
-        star_idx = np.array([star_index[s] for s in star_ids], dtype=int)
-        frame_idx = np.array([frame_index[f] for f in frame_ids], dtype=int)
-
-        # SNR-based weights (if available)
-        has_snr = "snr" in sub.columns
-        if has_snr:
-            snr_arr = get_numeric_array(sub, "snr", default=1.0)
-            sig_mag = MAG_ERR_COEFF / np.clip(snr_arr, 1e-6, None)
-            w_all = 1.0 / np.clip(sig_mag ** 2, 1e-12, None)
-        else:
-            w_all = np.ones(len(sub), dtype=float)
-
-        def build_matrix(mask):
-            idx = np.where(mask)[0]
-            n_obs = len(idx)
-            n_params = n_star + (n_frame - 1) + 1
-            A = np.zeros((n_obs, n_params), dtype=float)
-            rows = np.arange(n_obs)
-            A[rows, star_idx[idx]] = 1.0
-            if n_frame > 1:
-                fidx = frame_idx[idx]
-                m = fidx != ref_idx
-                if m.any():
-                    fcol = fidx[m].copy()
-                    fcol = np.where(fcol > ref_idx, fcol - 1, fcol)
-                    A[rows[m], n_star + fcol] = 1.0
-            A[:, -1] = x[idx]
-            return A, y[idx], idx
-
-        mask_fit = base_mask.copy()
-        base_n = int(mask_fit.sum())
-        if base_n < min_n:
-            return None
-
-        for _ in range(int(iters)):
-            A, yv, idx = build_matrix(mask_fit)
-            if len(yv) < min_n:
-                break
-            W = np.sqrt(w_all[idx])
-            coef, _, _, _ = np.linalg.lstsq(W[:, None] * A, W * yv, rcond=None)
-            r = yv - (A @ coef)
-            med = np.nanmedian(r)
-            mad = np.nanmedian(np.abs(r - med)) + 1e-12
-            sig = MAD_TO_SIGMA * mad
-            keep = np.abs(r - med) <= float(clip_sigma) * sig
-            if keep.sum() < min_n:
-                break
-            if keep.sum() == len(yv):
-                break
-            new_mask = mask_fit.copy()
-            new_mask[idx] = keep
-            mask_fit = new_mask
-
-        A, yv, idx = build_matrix(mask_fit)
-        if len(yv) < min_n:
-            return None
-        W = np.sqrt(w_all[idx])
-        coef, _, _, _ = np.linalg.lstsq(W[:, None] * A, W * yv, rcond=None)
-
-        s_vals = coef[:n_star]
-        z_vals = np.zeros(n_frame, dtype=float)
-        if n_frame > 1:
-            frame_cols = coef[n_star:-1]
-            for fi in range(n_frame):
-                if fi == ref_idx:
-                    z_vals[fi] = 0.0
-                else:
-                    col = fi if fi < ref_idx else fi - 1
-                    z_vals[fi] = frame_cols[col]
-        k1 = float(coef[-1])
-
-        # residuals for all points in sub
-        yhat = s_vals[star_idx] + z_vals[frame_idx] + k1 * x
-        resid = y - yhat
-        delta_m = y - (s_vals[star_idx] + z_vals[frame_idx])
-        scatter = float(np.nanstd(resid[base_mask])) if base_n else np.nan
-        outlier_frac = float(1.0 - (mask_fit.sum() / max(base_n, 1)))
-
-        return {
-            "k1": k1,
-            "s_vals": s_vals,
-            "z_vals": z_vals,
-            "star_index": star_index,
-            "frame_index": frame_index,
-            "ref_frame": ref_frame,
-            "resid": resid,
-            "delta_m": delta_m,
-            "scatter": scatter,
-            "n_used": int(mask_fit.sum()),
-            "outlier_frac": outlier_frac,
-            "n_star": n_star,
-            "n_frame": n_frame,
-        }
+        return fit_ensemble_extinction_once(
+            sub, clip_sigma=clip_sigma, iters=iters, min_n=min_n
+        )
 
     def _robust_quadfit(self, x, y, clip_sigma=3.0, iters=5, min_n=15):
         """2차 다항식 피팅: y = k2*x^2 + k1*x + zp"""
@@ -623,9 +452,9 @@ class ExtinctionFitWorker(QThread):
         idx["file"] = idx["file"].astype(str).str.strip()
         idx = idx[idx["file"] != ""].copy()
         if "filter" in idx.columns:
-            idx["filter"] = idx["filter"].astype(str).str.strip().str.lower()
+            idx["filter"] = idx["filter"].map(normalize_filter_key)
         elif "FILTER" in idx.columns:
-            idx["filter"] = idx["FILTER"].astype(str).str.strip().str.lower()
+            idx["filter"] = idx["FILTER"].map(normalize_filter_key)
         else:
             idx["filter"] = ""
 
@@ -680,7 +509,7 @@ class ExtinctionFitWorker(QThread):
                 break
 
             fname = str(row.get("file", "")).strip()
-            filt_hint = str(row.get("filter", "")).strip().lower()
+            filt_hint = normalize_filter_key(row.get("filter", ""))
             dfp = load_frame_photometry(result_dir, fname, filt_hint)
             if dfp is None or dfp.empty:
                 missing_tables += 1
@@ -699,11 +528,11 @@ class ExtinctionFitWorker(QThread):
             snr_col = self._pick_first_column(dfp.columns, ("snr",))
             filter_col = self._pick_first_column(dfp.columns, ("FILTER", "filter"))
 
-            filter_value = str(filter_map.get(fname, filt_hint)).strip().lower()
+            filter_value = normalize_filter_key(filter_map.get(fname, filt_hint))
             if filter_col is not None:
                 valid_filter = dfp[filter_col].dropna()
                 if len(valid_filter):
-                    filter_value = str(valid_filter.iloc[0]).strip().lower()
+                    filter_value = normalize_filter_key(valid_filter.iloc[0])
 
             frame = pd.DataFrame(index=dfp.index.copy())
             frame["file"] = fname
@@ -725,6 +554,17 @@ class ExtinctionFitWorker(QThread):
                 frame["ID"] = pd.to_numeric(dfp["ID"], errors="coerce").astype("Int64")
             else:
                 frame["ID"] = pd.Series(pd.array([pd.NA] * len(dfp), dtype="Int64"), index=dfp.index)
+
+            # Carry Step 4 apcorr-quality flag (isolated/unsaturated/high-flux)
+            # so the extinction fit can restrict to clean reference stars at the
+            # per-measurement level. Aggregated/filtered after concat below.
+            if "step4_apcorr_candidate" in dfp.columns:
+                frame["step4_apcorr_candidate"] = (
+                    dfp["step4_apcorr_candidate"].astype(str).str.strip()
+                    .str.lower().isin({"1", "true", "t", "yes", "y"}).to_numpy(bool)
+                )
+            else:
+                frame["step4_apcorr_candidate"] = np.nan
 
             bad_signal = np.zeros(len(frame), dtype=bool)
             for bad_col in ("is_saturated", "is_nonlinear"):
@@ -757,6 +597,39 @@ class ExtinctionFitWorker(QThread):
 
         phot_df = pd.concat(rows, ignore_index=True)
         phot_df["source_workspace"] = self._normalize_path(result_dir)
+
+        # Per-measurement apcorr-quality filter for extinction references.
+        # Each row is one star at one airmass; we keep only measurements the
+        # Step 4 quality pass flagged as apcorr_candidate. Extinction is a fit
+        # of m vs airmass, so filtering at the measurement level (not per star)
+        # is the physically correct granularity. Falls back to all rows when
+        # too few qualify so the fit still runs.
+        require_apcorr = bool(getattr(self.params.P, "phot_ref_require_apcorr_candidate", True))
+        apcorr_min_keep = int(getattr(self.params.P, "phot_ref_apcorr_min_keep", 8))
+        if require_apcorr and "step4_apcorr_candidate" in phot_df.columns:
+            qual = phot_df["step4_apcorr_candidate"]
+            has_flag = qual.notna().any()
+            if has_flag:
+                mask = qual.fillna(False).to_numpy(bool)
+                n_before = len(phot_df)
+                n_keep = int(mask.sum())
+                if n_keep >= apcorr_min_keep:
+                    phot_df = phot_df[mask].reset_index(drop=True)
+                    self._log(
+                        f"apcorr-quality ref filter: {n_keep}/{n_before} measurements kept "
+                        f"(per-measurement step4_apcorr_candidate)."
+                    )
+                else:
+                    self._log(
+                        f"apcorr-quality ref filter skipped: only {n_keep}/{n_before} "
+                        f"measurements qualify (< {apcorr_min_keep}); using all measurements."
+                    )
+            else:
+                self._log(
+                    "apcorr-quality ref filter requested but step4_apcorr_candidate is empty "
+                    "(re-run Step 7 forced phot to populate it); using all measurements."
+                )
+
         finite_airmass = int(np.isfinite(pd.to_numeric(phot_df["airmass"], errors="coerce")).sum())
         source_rows = int(phot_df["source_id"].notna().sum()) if "source_id" in phot_df.columns else 0
 
@@ -1531,7 +1404,7 @@ class ExtinctionFitWorker(QThread):
             try:
                 hdr = fits.getheader(fpath)
                 info = compute_airmass_from_header(hdr, lat, lon, alt, tz)
-                filt = str(r.get("filter", hdr.get("FILTER", ""))).strip().lower()
+                filt = normalize_filter_key(r.get("filter", hdr.get("FILTER", "")))
                 obs_date = self._extract_date_from_file(fname, hdr)
                 rows.append({
                     "file": fname,
@@ -1655,9 +1528,9 @@ class ExtinctionFitWorker(QThread):
                         idx = idx.rename(columns={cand: "file"})
                         break
             if "filter" in idx.columns:
-                idx["filter"] = idx["filter"].astype(str).str.strip().str.lower()
+                idx["filter"] = idx["filter"].map(normalize_filter_key)
             elif "FILTER" in idx.columns:
-                idx["filter"] = idx["FILTER"].astype(str).str.strip().str.lower()
+                idx["filter"] = idx["FILTER"].map(normalize_filter_key)
             else:
                 idx["filter"] = ""
 
@@ -1687,7 +1560,7 @@ class ExtinctionFitWorker(QThread):
                 fname = str(r.get("file", "") or "").strip()
                 if not fname:
                     continue
-                filt_hint = str(r.get("filter", "") or "").strip().lower()
+                filt_hint = normalize_filter_key(r.get("filter", ""))
                 dfp = load_frame_photometry(result_dir, fname, filt_hint)
                 if dfp is None or dfp.empty:
                     continue
@@ -1733,7 +1606,7 @@ class ExtinctionFitWorker(QThread):
             if not rows:
                 raise RuntimeError("No photometry data found")
             all_df = pd.concat(rows, ignore_index=True)
-            all_df["FILTER"] = all_df["FILTER"].astype(str).str.strip().str.lower()
+            all_df["FILTER"] = all_df["FILTER"].map(normalize_filter_key)
 
             grp = (
                 all_df.groupby(["ID", "FILTER"])
@@ -2111,6 +1984,7 @@ class ExtinctionFitWindow(QWidget):
         self.worker = None
         self.loaded_source_result_dir: Path | None = None
         self._current_mode = "per_star"
+        self.status_cards: dict[str, QLabel] = {}
 
         self.points_df: pd.DataFrame | None = None
         self.fit_df: pd.DataFrame | None = None
@@ -2127,16 +2001,13 @@ class ExtinctionFitWindow(QWidget):
         self.selection_header = None
         self.selection_selected_source_id: int | None = None
         self._selection_sid_to_row: dict[int, int] = {}
-        self._selection_imshow = None
-        self._selection_scat_candidate = None
-        self._selection_scat_selected = None
-        self._selection_scat_rejected = None
-        self._selection_scat_highlight = None
+        self.selection_viewer: FITSViewerWidget | None = None
         self._selection_panning = False
         self._selection_pan_start = None
 
         self.setWindowTitle("Atmospheric Extinction Fit Tool")
-        self.resize(1220, 860)
+        self.resize(1440, 960)
+        self.setMinimumSize(1180, 820)
 
         layout = QVBoxLayout(self)
 
@@ -2150,9 +2021,14 @@ class ExtinctionFitWindow(QWidget):
 
         settings_group = QGroupBox("Tool")
         settings_layout = QHBoxLayout(settings_group)
-        mode_label = QLabel("Mode: Per-star Bouguer only")
-        mode_label.setStyleSheet("QLabel { font-weight: bold; }")
-        settings_layout.addWidget(mode_label)
+        settings_layout.addWidget(QLabel("Fit method:"))
+        self.fit_mode_combo = QComboBox()
+        self.fit_mode_combo.addItem("Per-star Bouguer", "per_star")
+        self.fit_mode_combo.addItem("Ensemble", "ensemble")
+        self.fit_mode_combo.addItem("Median subtract", "median")
+        self.fit_mode_combo.addItem("Gaia absolute", "gaia")
+        self.fit_mode_combo.currentIndexChanged.connect(self._on_fit_mode_changed)
+        settings_layout.addWidget(self.fit_mode_combo)
         settings_layout.addStretch()
         btn_params = QPushButton("Parameters")
         btn_params.setStyleSheet(
@@ -2162,6 +2038,8 @@ class ExtinctionFitWindow(QWidget):
         btn_params.clicked.connect(self.open_parameters_dialog)
         settings_layout.addWidget(btn_params)
         layout.addWidget(settings_group)
+
+        layout.addWidget(self._build_status_panel())
 
         self.tabs = QTabWidget()
         layout.addWidget(self.tabs)
@@ -2175,9 +2053,151 @@ class ExtinctionFitWindow(QWidget):
         log_layout = QVBoxLayout(log_group)
         self.log_text = QTextEdit()
         self.log_text.setReadOnly(True)
+        self.log_text.setMaximumHeight(140)
         self.log_text.setStyleSheet("QTextEdit { font-family: monospace; font-size: 9pt; }")
         log_layout.addWidget(self.log_text)
         layout.addWidget(log_group)
+        self._refresh_status_cards()
+
+    def _build_status_panel(self) -> QGroupBox:
+        group = QGroupBox("Status")
+        grid = QGridLayout(group)
+        specs = [
+            ("workspace", "Workspace"),
+            ("cache", "Step 7 Cache"),
+            ("filters", "Filters"),
+            ("airmass", "Airmass"),
+            ("selection", "Selection"),
+            ("method", "Method"),
+            ("fit", "Fit Result"),
+        ]
+        for idx, (key, title) in enumerate(specs):
+            label = QLabel(f"<b>{title}</b><br>Not checked")
+            label.setAlignment(Qt.AlignCenter)
+            label.setMinimumHeight(52)
+            label.setWordWrap(True)
+            self.status_cards[key] = label
+            grid.addWidget(label, idx // 4, idx % 4)
+        return group
+
+    @staticmethod
+    def _status_style(level: str) -> str:
+        colors = {
+            "good": ("#E8F5E9", "#2E7D32", "#A5D6A7"),
+            "warn": ("#FFF8E1", "#F57F17", "#FFE082"),
+            "bad": ("#FFEBEE", "#C62828", "#EF9A9A"),
+            "info": ("#E3F2FD", "#1565C0", "#90CAF9"),
+            "idle": ("#ECEFF1", "#455A64", "#CFD8DC"),
+        }
+        bg, fg, border = colors.get(level, colors["idle"])
+        return (
+            "QLabel { "
+            f"background-color: {bg}; color: {fg}; border: 1px solid {border}; "
+            "border-radius: 6px; padding: 6px; font-size: 9pt; "
+            "}"
+        )
+
+    def _set_status_card(self, key: str, title: str, value: str, level: str = "idle"):
+        label = self.status_cards.get(key)
+        if label is None:
+            return
+        label.setText(f"<b>{title}</b><br>{value}")
+        label.setStyleSheet(self._status_style(level))
+
+    def _selected_fit_mode(self) -> str:
+        if hasattr(self, "fit_mode_combo"):
+            mode = self.fit_mode_combo.currentData()
+            if mode:
+                return str(mode)
+        return "per_star"
+
+    def _fit_mode_label(self, mode: str | None = None) -> str:
+        mode = mode or self._selected_fit_mode()
+        labels = {
+            "per_star": "Per-star Bouguer",
+            "ensemble": "Ensemble",
+            "median": "Median subtract",
+            "gaia": "Gaia absolute",
+        }
+        return labels.get(str(mode), str(mode))
+
+    def _on_fit_mode_changed(self):
+        self._current_mode = self._selected_fit_mode()
+        self._refresh_status_cards()
+
+    def _refresh_status_cards(self):
+        source_dir = self._current_source_result_dir()
+        if source_dir.exists():
+            self._set_status_card("workspace", "Workspace", source_dir.name, "good")
+        else:
+            self._set_status_card("workspace", "Workspace", "Missing", "bad")
+
+        cache_paths = [
+            tool_extinction_dir(source_dir) / "step7_extinction_input.csv",
+            tool_extinction_dir(source_dir) / "ensemble_allstar_phot.csv",
+        ]
+        idx_path = step7_forced_phot_dir(source_dir) / "photometry_index.csv"
+        if isinstance(self.phot_df, pd.DataFrame) and not self.phot_df.empty:
+            n_rows = len(self.phot_df)
+            n_files = self.phot_df["file"].nunique() if "file" in self.phot_df.columns else 0
+            self._set_status_card("cache", "Step 7 Cache", f"{n_rows} rows / {n_files} frames", "good")
+        elif any(path.exists() for path in cache_paths):
+            self._set_status_card("cache", "Step 7 Cache", "On disk", "warn")
+        elif idx_path.exists():
+            self._set_status_card("cache", "Step 7 Cache", "Load needed", "warn")
+        else:
+            self._set_status_card("cache", "Step 7 Cache", "Missing", "bad")
+
+        if isinstance(self.phot_df, pd.DataFrame) and not self.phot_df.empty:
+            if "filter" in self.phot_df.columns:
+                filters = sorted(self.phot_df["filter"].dropna().map(normalize_filter_key).unique().tolist())
+                text = ", ".join(filters[:4]) + ("..." if len(filters) > 4 else "")
+                self._set_status_card("filters", "Filters", text or "None", "good" if filters else "warn")
+            else:
+                self._set_status_card("filters", "Filters", "No filter column", "warn")
+
+            if "airmass" in self.phot_df.columns:
+                x = pd.to_numeric(self.phot_df["airmass"], errors="coerce").to_numpy(float)
+                finite = x[np.isfinite(x)]
+                if len(finite):
+                    dx = float(np.nanmax(finite) - np.nanmin(finite))
+                    dx_min = self._as_float(getattr(self.params.P, "extinction_delta_x_min", 0.3), 0.3)
+                    level = "good" if dx >= dx_min else "warn"
+                    self._set_status_card("airmass", "Airmass", f"ΔX={dx:.2f}", level)
+                else:
+                    self._set_status_card("airmass", "Airmass", "No finite X", "bad")
+            else:
+                self._set_status_card("airmass", "Airmass", "No column", "bad")
+        else:
+            self._set_status_card("filters", "Filters", "No data", "idle")
+            self._set_status_card("airmass", "Airmass", "No data", "idle")
+
+        mode = self._selected_fit_mode()
+        if mode == "per_star":
+            n_groups = len(self.selection_state)
+            n_use = sum(len(v.get("selected", set())) for v in self.selection_state.values())
+            n_reject = sum(len(v.get("rejected", set())) for v in self.selection_state.values())
+            if n_groups:
+                self._set_status_card("selection", "Selection", f"{n_groups} groups / use {n_use} / reject {n_reject}", "good")
+            elif isinstance(self.selection_stats_df, pd.DataFrame) and not self.selection_stats_df.empty:
+                self._set_status_card("selection", "Selection", "Candidates ready", "warn")
+            else:
+                self._set_status_card("selection", "Selection", "Load Step 7", "idle")
+        else:
+            self._set_status_card("selection", "Selection", "Not required", "idle")
+
+        self._set_status_card("method", "Method", self._fit_mode_label(mode), "info")
+
+        if isinstance(self.fit_df, pd.DataFrame) and not self.fit_df.empty:
+            scatter = pd.to_numeric(self.fit_df.get("scatter"), errors="coerce")
+            med_scatter = float(scatter.median()) if scatter.notna().any() else np.nan
+            level = "good" if np.isfinite(med_scatter) and med_scatter <= 0.10 else "warn"
+            value = f"{len(self.fit_df)} fits"
+            if np.isfinite(med_scatter):
+                value += f" / σ={med_scatter:.3f}"
+            self._set_status_card("fit", "Fit Result", value, level)
+        else:
+            self._set_status_card("fit", "Fit Result", "Not run", "idle")
 
     def _build_source_tab(self) -> QWidget:
         tab = QWidget()
@@ -2320,9 +2340,11 @@ class ExtinctionFitWindow(QWidget):
         layout.addWidget(self.selection_summary_label)
 
         splitter = QSplitter(Qt.Horizontal)
+        splitter.setChildrenCollapsible(False)
         layout.addWidget(splitter, 1)
 
         left_widget = QWidget()
+        left_widget.setMinimumWidth(720)
         left_layout = QVBoxLayout(left_widget)
         left_layout.setContentsMargins(0, 0, 0, 0)
 
@@ -2331,21 +2353,16 @@ class ExtinctionFitWindow(QWidget):
         self.selection_selected_label = QLabel("Selected: (none)")
         img_layout.addWidget(self.selection_selected_label)
 
-        self.selection_figure = Figure(figsize=(6, 5))
-        self.selection_canvas = FigureCanvas(self.selection_figure)
-        self.selection_ax = self.selection_figure.add_subplot(111)
-        img_layout.addWidget(NavigationToolbar(self.selection_canvas, self))
-        img_layout.addWidget(self.selection_canvas)
-        self.selection_canvas.mpl_connect("scroll_event", self._on_selection_scroll)
-        self.selection_canvas.mpl_connect("button_press_event", self._on_selection_button_press)
-        self.selection_canvas.mpl_connect("button_release_event", self._on_selection_button_release)
-        self.selection_canvas.mpl_connect("motion_notify_event", self._on_selection_motion)
-        self.selection_canvas.mpl_connect("button_press_event", self._on_selection_click)
+        self.selection_viewer = FITSViewerWidget(self)
+        self.selection_viewer.setMinimumSize(720, 520)
+        self.selection_viewer.mouse_pressed.connect(self._on_selection_viewer_pressed)
+        img_layout.addWidget(self.selection_viewer, 1)
         left_layout.addWidget(img_group)
 
         splitter.addWidget(left_widget)
 
         right_widget = QWidget()
+        right_widget.setMinimumWidth(410)
         right_layout = QVBoxLayout(right_widget)
         right_layout.setContentsMargins(0, 0, 0, 0)
 
@@ -2359,6 +2376,7 @@ class ExtinctionFitWindow(QWidget):
         self.selection_table.setSelectionBehavior(QAbstractItemView.SelectRows)
         self.selection_table.setSelectionMode(QAbstractItemView.ExtendedSelection)
         self.selection_table.setEditTriggers(QAbstractItemView.NoEditTriggers)
+        self.selection_table.setMinimumHeight(300)
         self.selection_table.verticalHeader().setVisible(False)
         header = self.selection_table.horizontalHeader()
         header.setSectionResizeMode(0, QHeaderView.ResizeToContents)
@@ -2378,26 +2396,21 @@ class ExtinctionFitWindow(QWidget):
 
         preview_group = QGroupBox("Selected Star Preview")
         preview_layout = QVBoxLayout(preview_group)
-        self.selection_preview_figure = Figure(figsize=(4, 2.4))
+        self.selection_preview_figure = Figure(figsize=(4.4, 2.8))
         self.selection_preview_canvas = FigureCanvas(self.selection_preview_figure)
-        preview_layout.addWidget(self.selection_preview_canvas)
+        self.selection_preview_canvas.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
+        self.selection_preview_canvas.setMinimumSize(380, 220)
+        preview_layout.addWidget(self.selection_preview_canvas, 1)
         right_layout.addWidget(preview_group, 2)
 
         splitter.addWidget(right_widget)
-        splitter.setSizes([760, 460])
+        splitter.setSizes([900, 460])
 
         return tab
 
     def _build_fit_tab(self) -> QWidget:
         tab = QWidget()
         layout = QVBoxLayout(tab)
-
-        info = QLabel(
-            "Run per-star Bouguer extinction fitting on the cached Step 7 source table.\n"
-            "If Selection tab states exist, rejected stars are dropped and selected stars are preferred."
-        )
-        info.setStyleSheet("QLabel { background-color: #E3F2FD; padding: 8px; border-radius: 5px; }")
-        layout.addWidget(info)
 
         controls = QHBoxLayout()
         self.btn_run_fit = QPushButton("Run Fit")
@@ -2440,13 +2453,35 @@ class ExtinctionFitWindow(QWidget):
         filter_layout.addStretch()
         layout.addLayout(filter_layout)
 
+        summary_group = QGroupBox("Fit Summary")
+        summary_layout = QVBoxLayout(summary_group)
+        self.fit_summary_table = QTableWidget()
+        self.fit_summary_table.setColumnCount(11)
+        self.fit_summary_table.setHorizontalHeaderLabels([
+            "Date", "Filter", "Method", "k1", "k1 err", "Scatter",
+            "N used", "Stars", "Frames", "Outliers", "Fit order",
+        ])
+        self.fit_summary_table.setSelectionBehavior(QAbstractItemView.SelectRows)
+        self.fit_summary_table.setSelectionMode(QAbstractItemView.SingleSelection)
+        self.fit_summary_table.setEditTriggers(QAbstractItemView.NoEditTriggers)
+        self.fit_summary_table.verticalHeader().setVisible(False)
+        self.fit_summary_table.setMaximumHeight(165)
+        header = self.fit_summary_table.horizontalHeader()
+        for col in range(self.fit_summary_table.columnCount()):
+            header.setSectionResizeMode(col, QHeaderView.ResizeToContents)
+        header.setSectionResizeMode(2, QHeaderView.Stretch)
+        summary_layout.addWidget(self.fit_summary_table)
+        layout.addWidget(summary_group)
+
         plot_group = QGroupBox("Fit Diagnostics")
         plot_layout = QVBoxLayout(plot_group)
-        self.figure = Figure(figsize=(7, 5))
+        self.figure = Figure(figsize=(10, 6.8))
         self.canvas = FigureCanvas(self.figure)
+        self.canvas.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
+        self.canvas.setMinimumSize(920, 560)
         plot_layout.addWidget(NavigationToolbar(self.canvas, self))
-        plot_layout.addWidget(self.canvas)
-        layout.addWidget(plot_group)
+        plot_layout.addWidget(self.canvas, 1)
+        layout.addWidget(plot_group, 1)
 
         return tab
 
@@ -2514,7 +2549,7 @@ class ExtinctionFitWindow(QWidget):
         return str(self.sel_date_combo.currentText()).strip()
 
     def _current_selection_filter(self) -> str:
-        return str(self.sel_filter_combo.currentText()).strip().lower()
+        return normalize_filter_key(self.sel_filter_combo.currentText())
 
     def _current_selection_key(self) -> str | None:
         date_val = self._current_selection_date()
@@ -2536,6 +2571,7 @@ class ExtinctionFitWindow(QWidget):
         if loaded and current != loaded:
             self.phot_df = None
             self._clear_selection_context()
+        self._refresh_status_cards()
 
     def _browse_source_workspace(self):
         start_dir = self._current_source_result_dir()
@@ -2544,10 +2580,12 @@ class ExtinctionFitWindow(QWidget):
         if path:
             self.source_workspace_edit.setText(path)
             self.log(f"Source workspace selected: {path}")
+            self._refresh_status_cards()
 
     def _use_current_source_workspace(self):
         self.source_workspace_edit.setText(str(self.result_dir))
         self.log(f"Source workspace reset to current result dir: {self.result_dir}")
+        self._refresh_status_cards()
 
     def log(self, message: str):
         timestamp = time.strftime("%H:%M:%S")
@@ -2580,10 +2618,10 @@ class ExtinctionFitWindow(QWidget):
         self.selection_table.setRowCount(0)
         self.selection_summary_label.setText("No Step 7 source table loaded.")
         self.selection_selected_label.setText("Selected: (none)")
-        self.selection_figure.clear()
-        self.selection_canvas.draw()
+        self._clear_selection_image_viewer()
         self.selection_preview_figure.clear()
         self.selection_preview_canvas.draw()
+        self._refresh_status_cards()
 
     def _source_path_map_data(self, source_dir: Path | None = None) -> dict[str, str]:
         source_dir = Path(source_dir or self._current_source_result_dir())
@@ -2676,7 +2714,7 @@ class ExtinctionFitWindow(QWidget):
         if not selection_dir.exists():
             return
         for sel_path in sorted(selection_dir.glob("selection_*.json")):
-            filt = sel_path.stem.replace("selection_", "").strip().lower()
+            filt = normalize_filter_key(sel_path.stem.replace("selection_", ""))
             if not filt:
                 continue
             try:
@@ -2782,46 +2820,9 @@ class ExtinctionFitWindow(QWidget):
         return meta
 
     def _robust_weighted_linfit_local(self, x, y, w=None, clip_sigma=3.0, iters=5, min_n=5):
-        x = np.asarray(x, float)
-        y = np.asarray(y, float)
-        if w is not None:
-            w = np.asarray(w, float)
-            mask = np.isfinite(x) & np.isfinite(y) & np.isfinite(w) & (w > 0)
-        else:
-            mask = np.isfinite(x) & np.isfinite(y)
-        x = x[mask]
-        y = y[mask]
-        w = w[mask] if w is not None else None
-        if len(x) < min_n:
-            return (np.nan, np.nan, np.nan, 0, np.nan)
-
-        def _fit(xx, yy, ww):
-            if ww is None:
-                k, zp = np.polyfit(xx, yy, 1)
-            else:
-                k, zp = np.polyfit(xx, yy, 1, w=ww)
-            return k, zp
-
-        k, zp = _fit(x, y, w)
-        base_n = len(x)
-        for _ in range(int(iters)):
-            yhat = zp + k * x
-            resid = y - yhat
-            med = np.nanmedian(resid)
-            mad = np.nanmedian(np.abs(resid - med)) + 1e-12
-            sig = MAD_TO_SIGMA * mad
-            keep = np.abs(resid - med) <= float(clip_sigma) * sig
-            if keep.sum() < min_n or keep.sum() == len(x):
-                break
-            x = x[keep]
-            y = y[keep]
-            if w is not None:
-                w = w[keep]
-            k, zp = _fit(x, y, w)
-        yhat = zp + k * x
-        scatter = float(np.nanstd(y - yhat)) if len(x) else np.nan
-        out_frac = float(1.0 - (len(x) / max(base_n, 1)))
-        return (float(k), float(zp), scatter, int(len(x)), out_frac)
+        return robust_weighted_linfit(
+            x, y, w=w, clip_sigma=clip_sigma, iters=iters, min_n=min_n
+        )
 
     def _rebuild_selection_catalog(self):
         self.selection_stats_df = pd.DataFrame()
@@ -2860,7 +2861,7 @@ class ExtinctionFitWindow(QWidget):
             )
             rows.append({
                 "date": str(date_val),
-                "filter": str(filt).strip().lower(),
+                "filter": normalize_filter_key(filt),
                 "source_id": int(sid),
                 "ID": self._first_valid_int(ssub["ID"]) if "ID" in ssub.columns else pd.NA,
                 "n_frames": n_frames,
@@ -2881,7 +2882,7 @@ class ExtinctionFitWindow(QWidget):
         if "gaia_variable_flag" not in stats_df.columns:
             stats_df["gaia_variable_flag"] = ""
         stats_df["step8_target"] = stats_df.apply(
-            lambda r: self._step8_target_by_filter.get(str(r["filter"]).strip().lower()) == int(r["source_id"]),
+            lambda r: self._step8_target_by_filter.get(normalize_filter_key(r["filter"])) == int(r["source_id"]),
             axis=1,
         )
         self.selection_stats_df = stats_df
@@ -2947,7 +2948,7 @@ class ExtinctionFitWindow(QWidget):
             return
         group_df = self.phot_df[
             (self.phot_df["date"].astype(str) == date_val)
-            & (self.phot_df["filter"].astype(str).str.strip().str.lower() == filt)
+            & (self.phot_df["filter"].map(normalize_filter_key) == filt)
         ].copy()
         files = sorted(group_df["file"].dropna().astype(str).unique().tolist())
         preferred = current_file if current_file in files else self._default_frame_for_group(group_df)
@@ -3103,6 +3104,7 @@ class ExtinctionFitWindow(QWidget):
             state["rejected"] -= sids
         self._save_selection_state()
         self._refresh_selection_table()
+        self._refresh_status_cards()
         self.log(f"{self._current_selection_date()}/{self._current_selection_filter()}: {new_state} -> {sorted(sids)}")
 
     def _clear_current_group_states(self):
@@ -3112,6 +3114,7 @@ class ExtinctionFitWindow(QWidget):
         self.selection_state[key] = {"selected": set(), "rejected": set()}
         self._save_selection_state()
         self._refresh_selection_table()
+        self._refresh_status_cards()
         self.log(f"{self._current_selection_date()}/{self._current_selection_filter()}: manual state cleared")
 
     def _copy_selection_state_to_keys(self, keys: list[str], scope_label: str):
@@ -3141,6 +3144,7 @@ class ExtinctionFitWindow(QWidget):
 
         self._save_selection_state()
         self._refresh_selection_table()
+        self._refresh_status_cards()
         self.log(
             f"{self._current_selection_date()}/{self._current_selection_filter()}: "
             f"copied manual state to {copied} {scope_label} group(s)"
@@ -3210,6 +3214,7 @@ class ExtinctionFitWindow(QWidget):
         state["rejected"] -= chosen
         self._save_selection_state()
         self._refresh_selection_table()
+        self._refresh_status_cards()
         self.log(
             f"{self._current_selection_date()}/{self._current_selection_filter()}: "
             f"auto-picked {len(chosen)} star(s) "
@@ -3226,6 +3231,13 @@ class ExtinctionFitWindow(QWidget):
 
     def _on_selection_frame_changed(self):
         self._load_selection_frame()
+
+    def _clear_selection_image_viewer(self):
+        if self.selection_viewer is None:
+            return
+        self.selection_viewer.clear_overlay_markers()
+        self.selection_viewer.set_data_auto_stf(np.zeros((2, 2), dtype=np.float32))
+        self.selection_viewer.fit_in_view()
 
     def _extract_date_key(self, value: str) -> str:
         match = self._DATE_KEY_RE.search(str(value))
@@ -3251,8 +3263,7 @@ class ExtinctionFitWindow(QWidget):
         source_dir = self.loaded_source_result_dir or self._current_source_result_dir()
         if not fname or not filt:
             self._update_selection_overlay()
-            self.selection_figure.clear()
-            self.selection_canvas.draw()
+            self._clear_selection_image_viewer()
             return
 
         try:
@@ -3319,40 +3330,13 @@ class ExtinctionFitWindow(QWidget):
         return np.clip((arr - lo) / denom, 0.0, 1.0)
 
     def _refresh_selection_image(self):
-        self.selection_figure.clear()
-        self.selection_ax = self.selection_figure.add_subplot(111)
-        self._selection_imshow = None
-        self._selection_scat_candidate = None
-        self._selection_scat_selected = None
-        self._selection_scat_rejected = None
-        self._selection_scat_highlight = None
-
-        if self.selection_image_data is None:
-            self.selection_ax.text(0.5, 0.5, "No frame loaded", ha="center", va="center", transform=self.selection_ax.transAxes)
-            self.selection_canvas.draw()
+        if self.selection_viewer is None:
             return
-
-        stretched = self._stretch_selection_image(self.selection_image_data)
-        self._selection_imshow = self.selection_ax.imshow(
-            stretched, cmap="gray", origin="lower", vmin=0, vmax=1, interpolation="nearest"
-        )
-        title = str(self.sel_frame_combo.currentText()).strip()
-        self.selection_ax.set_title(title)
-        self.selection_ax.set_xlabel("X")
-        self.selection_ax.set_ylabel("Y")
-        self._selection_scat_candidate = self.selection_ax.scatter(
-            [], [], s=26, facecolors="none", edgecolors="#90A4AE", linewidths=0.9, alpha=0.8
-        )
-        self._selection_scat_selected = self.selection_ax.scatter(
-            [], [], s=42, facecolors="none", edgecolors="#2E7D32", linewidths=1.5, alpha=0.95
-        )
-        self._selection_scat_rejected = self.selection_ax.scatter(
-            [], [], s=42, facecolors="none", edgecolors="#C62828", linewidths=1.5, alpha=0.95, marker="x"
-        )
-        self._selection_scat_highlight = self.selection_ax.scatter(
-            [], [], s=80, facecolors="none", edgecolors="#FFD54F", linewidths=1.8, alpha=0.95
-        )
-        self.selection_canvas.draw()
+        if self.selection_image_data is None:
+            self._clear_selection_image_viewer()
+            return
+        self.selection_viewer.set_data_auto_stf(np.asarray(self.selection_image_data, dtype=np.float32))
+        self.selection_viewer.fit_in_view()
 
     def _display_id_for_sid(self, sid: int, fallback=None):
         sid = int(sid)
@@ -3370,22 +3354,11 @@ class ExtinctionFitWindow(QWidget):
         return sid
 
     def _update_selection_overlay(self):
-        if self.selection_ax is None:
+        if self.selection_viewer is None:
             return
         if self.selection_frame_df is None or self.selection_frame_df.empty:
-            if self._selection_scat_candidate is not None:
-                self._selection_scat_candidate.set_offsets(np.empty((0, 2)))
-                self._selection_scat_selected.set_offsets(np.empty((0, 2)))
-                self._selection_scat_rejected.set_offsets(np.empty((0, 2)))
-                self._selection_scat_highlight.set_offsets(np.empty((0, 2)))
-                self.selection_canvas.draw_idle()
+            self.selection_viewer.clear_overlay_markers()
             return
-
-        for txt in list(self.selection_ax.texts):
-            try:
-                txt.remove()
-            except Exception:
-                pass
 
         x = pd.to_numeric(self.selection_frame_df["x"], errors="coerce").to_numpy(float)
         y = pd.to_numeric(self.selection_frame_df["y"], errors="coerce").to_numpy(float)
@@ -3397,72 +3370,51 @@ class ExtinctionFitWindow(QWidget):
         is_candidate = ~(is_selected | is_rejected)
         is_highlight = sids == int(self.selection_selected_source_id) if self.selection_selected_source_id is not None else np.zeros(len(sids), dtype=bool)
 
-        self._selection_scat_candidate.set_offsets(self._safe_offsets(x[is_candidate], y[is_candidate]))
-        self._selection_scat_selected.set_offsets(self._safe_offsets(x[is_selected], y[is_selected]))
-        self._selection_scat_rejected.set_offsets(self._safe_offsets(x[is_rejected], y[is_rejected]))
-        self._selection_scat_highlight.set_offsets(self._safe_offsets(x[is_highlight], y[is_highlight]))
-
-        if self.chk_show_selection_ids.isChecked():
-            label_mask = is_selected | is_rejected | is_highlight
-            for xi, yi, sid in zip(x[label_mask], y[label_mask], sids[label_mask]):
-                if not np.isfinite(xi) or not np.isfinite(yi):
-                    continue
-                disp_id = self._display_id_for_sid(int(sid))
-                self.selection_ax.text(
-                    xi - 4.0, yi + 4.0, str(disp_id),
-                    color="#FFD54F", fontsize=8, fontweight="bold",
-                    ha="right", va="bottom", alpha=0.98,
+        markers = []
+        show_ids = self.chk_show_selection_ids.isChecked()
+        for xi, yi, sid, cand, sel, rej, hi in zip(
+            x, y, sids, is_candidate, is_selected, is_rejected, is_highlight
+        ):
+            if not np.isfinite(xi) or not np.isfinite(yi) or sid < 0:
+                continue
+            if hi:
+                markers.append(
+                    OverlayMarker(
+                        col=float(xi), row=float(yi), radius=12.0,
+                        color=QColor("#FFD54F"), label=str(self._display_id_for_sid(int(sid))),
+                        member=True,
+                    )
                 )
-        self.selection_canvas.draw_idle()
+                continue
+            if sel:
+                markers.append(
+                    OverlayMarker(
+                        col=float(xi), row=float(yi), radius=9.0,
+                        color=QColor("#2E7D32"), label=str(self._display_id_for_sid(int(sid))) if show_ids else "",
+                        member=True,
+                    )
+                )
+            elif rej:
+                markers.append(
+                    OverlayMarker(
+                        col=float(xi), row=float(yi), radius=9.0,
+                        color=QColor("#C62828"), rejected=True,
+                        label=str(self._display_id_for_sid(int(sid))) if show_ids else "",
+                    )
+                )
+            elif cand:
+                markers.append(
+                    OverlayMarker(
+                        col=float(xi), row=float(yi), radius=7.0,
+                        color=QColor(144, 164, 174, 170),
+                    )
+                )
+        self.selection_viewer.set_overlay_markers(markers)
 
-    def _on_selection_scroll(self, event):
-        if event.inaxes != self.selection_ax or event.xdata is None or event.ydata is None:
-            return
-        scale = 1.2 if event.button == "down" else 1 / 1.2
-        xlim = self.selection_ax.get_xlim()
-        ylim = self.selection_ax.get_ylim()
-        xdata, ydata = event.xdata, event.ydata
-        new_width = (xlim[1] - xlim[0]) * scale
-        new_height = (ylim[1] - ylim[0]) * scale
-        relx = (xlim[1] - xdata) / (xlim[1] - xlim[0])
-        rely = (ylim[1] - ydata) / (ylim[1] - ylim[0])
-        self.selection_ax.set_xlim([xdata - new_width * (1 - relx), xdata + new_width * relx])
-        self.selection_ax.set_ylim([ydata - new_height * (1 - rely), ydata + new_height * rely])
-        self.selection_canvas.draw_idle()
-
-    def _on_selection_button_press(self, event):
-        if event.inaxes != self.selection_ax:
-            return
-        if event.button == 3:
-            self._selection_panning = True
-            self._selection_pan_start = (event.xdata, event.ydata)
-
-    def _on_selection_button_release(self, event):
-        if event.button == 3:
-            self._selection_panning = False
-            self._selection_pan_start = None
-
-    def _on_selection_motion(self, event):
-        if not self._selection_panning or event.inaxes != self.selection_ax:
-            return
-        if self._selection_pan_start is None or event.xdata is None or event.ydata is None:
-            return
-        dx = self._selection_pan_start[0] - event.xdata
-        dy = self._selection_pan_start[1] - event.ydata
-        xlim = self.selection_ax.get_xlim()
-        ylim = self.selection_ax.get_ylim()
-        self.selection_ax.set_xlim([xlim[0] + dx, xlim[1] + dx])
-        self.selection_ax.set_ylim([ylim[0] + dy, ylim[1] + dy])
-        self.selection_canvas.draw_idle()
-
-    def _on_selection_click(self, event):
-        if event.inaxes != self.selection_ax or event.button != 1:
+    def _on_selection_viewer_pressed(self, x: float, y: float, btn: int):
+        if btn != int(Qt.LeftButton):
             return
         if self.selection_frame_df is None or self.selection_frame_df.empty:
-            return
-        x = event.xdata
-        y = event.ydata
-        if x is None or y is None:
             return
         search_r = float(getattr(self.params.P, "search_radius_px", 7.0))
         dx = pd.to_numeric(self.selection_frame_df["x"], errors="coerce").to_numpy(float) - x
@@ -3543,17 +3495,19 @@ class ExtinctionFitWindow(QWidget):
         sid = self.selection_selected_source_id
         if sid is None or not isinstance(self.phot_df, pd.DataFrame):
             ax.text(0.5, 0.5, "No star selected", ha="center", va="center", transform=ax.transAxes)
+            self.selection_preview_figure.subplots_adjust(left=0.16, right=0.96, bottom=0.18, top=0.88)
             self.selection_preview_canvas.draw()
             return
         date_val = self._current_selection_date()
         filt = self._current_selection_filter()
         sub = self.phot_df[
             (self.phot_df["date"].astype(str) == date_val)
-            & (self.phot_df["filter"].astype(str).str.strip().str.lower() == filt)
+            & (self.phot_df["filter"].map(normalize_filter_key) == filt)
             & (coerce_int64_source_id(self.phot_df["source_id"]).fillna(-1).astype("int64") == int(sid))
         ].copy()
         if sub.empty:
             ax.text(0.5, 0.5, "No points for selected star", ha="center", va="center", transform=ax.transAxes)
+            self.selection_preview_figure.subplots_adjust(left=0.16, right=0.96, bottom=0.18, top=0.88)
             self.selection_preview_canvas.draw()
             return
 
@@ -3578,7 +3532,7 @@ class ExtinctionFitWindow(QWidget):
         ax.set_title("Bouguer Preview")
         ax.grid(True, alpha=0.3)
         ax.invert_yaxis()
-        self.selection_preview_figure.tight_layout()
+        self.selection_preview_figure.subplots_adjust(left=0.16, right=0.96, bottom=0.18, top=0.88)
         self.selection_preview_canvas.draw()
 
     def run_photometry(self):
@@ -3600,6 +3554,7 @@ class ExtinctionFitWindow(QWidget):
         self.btn_save.setEnabled(False)
         self.progress_bar.setValue(0)
         self.progress_label.setText("Loading Step 7 source table...")
+        self._set_status_card("cache", "Step 7 Cache", "Loading", "warn")
         self.log(f"Source workspace: {source_dir}")
 
         self.worker = ExtinctionFitWorker(
@@ -3623,6 +3578,7 @@ class ExtinctionFitWindow(QWidget):
             self.progress_label.setText("Stopped")
             self.log("Step 7 source load stopped")
             self.btn_run_fit.setEnabled(True)
+            self._refresh_status_cards()
             return
 
         phot_df = results.get("phot")
@@ -3639,6 +3595,7 @@ class ExtinctionFitWindow(QWidget):
         self.btn_run_fit.setEnabled(True)
         self.progress_label.setText("Step 7 source table ready")
         self.log("Step 7 source load complete")
+        self._refresh_status_cards()
         self.tabs.setCurrentWidget(self.selection_tab)
 
     def open_parameters_dialog(self):
@@ -3815,8 +3772,10 @@ class ExtinctionFitWindow(QWidget):
         self.btn_stop.setEnabled(True)
         self.btn_save.setEnabled(False)
         self.progress_bar.setValue(0)
-        self.progress_label.setText("Starting per-star Bouguer fit...")
-        self._current_mode = "per_star"
+        mode = self._selected_fit_mode()
+        self.progress_label.setText(f"Starting {self._fit_mode_label(mode)} fit...")
+        self._current_mode = mode
+        self._set_status_card("fit", "Fit Result", "Running", "warn")
 
         current_norm = self._normalize_dir_path(source_dir)
         loaded_norm = self._normalize_dir_path(self.loaded_source_result_dir)
@@ -3827,21 +3786,24 @@ class ExtinctionFitWindow(QWidget):
         ) else None
         selected_map, rejected_map = self._collect_manual_state_maps()
         self.log(f"Source workspace: {source_dir}")
-        if selected_map or rejected_map:
+        self.log(f"Fit method: {self._fit_mode_label(mode)}")
+        if mode == "per_star" and (selected_map or rejected_map):
             self.log(
                 f"Manual state applied: selected groups={len(selected_map)}, rejected groups={len(rejected_map)}"
             )
+        elif mode != "per_star" and (selected_map or rejected_map):
+            self.log("Manual selection state is ignored outside Per-star Bouguer mode")
 
         self.worker = ExtinctionFitWorker(
             self.params,
             self.data_dir,
             self.result_dir,
-            mode="per_star",
+            mode=mode,
             task="fit",
             phot_df=phot_df,
             source_result_dir=source_dir,
-            selected_star_map=selected_map,
-            rejected_star_map=rejected_map,
+            selected_star_map=selected_map if mode == "per_star" else None,
+            rejected_star_map=rejected_map if mode == "per_star" else None,
         )
         self.worker.progress.connect(self.on_progress)
         self.worker.log.connect(self.log)
@@ -3861,6 +3823,7 @@ class ExtinctionFitWindow(QWidget):
         if results.get("stopped"):
             self.progress_label.setText("Stopped")
             self.log("Extinction fit stopped")
+            self._set_status_card("fit", "Fit Result", "Stopped", "warn")
             return
         self._current_mode = str(results.get("mode", "per_star"))
         self.fit_df = results.get("fit")
@@ -3872,6 +3835,7 @@ class ExtinctionFitWindow(QWidget):
             self.tabs.setCurrentIndex(2)
         self.log("Extinction fit complete")
         self.progress_label.setText("Done")
+        self._refresh_status_cards()
 
     def _populate_combos(self):
         self.date_combo.blockSignals(True)
@@ -3893,18 +3857,87 @@ class ExtinctionFitWindow(QWidget):
     def _on_filter_changed(self):
         self._plot_results()
 
+    @staticmethod
+    def _format_summary_value(value, fmt: str = "{:.4f}") -> str:
+        try:
+            val = float(value)
+        except Exception:
+            return "-"
+        if not np.isfinite(val):
+            return "-"
+        return fmt.format(val)
+
+    def _refresh_fit_summary_table(self, fit_df: pd.DataFrame | None = None):
+        if not hasattr(self, "fit_summary_table"):
+            return
+        self.fit_summary_table.setRowCount(0)
+        if fit_df is None:
+            fit_df = self.fit_df
+        if not isinstance(fit_df, pd.DataFrame) or fit_df.empty:
+            return
+
+        self.fit_summary_table.setRowCount(len(fit_df))
+        for row_idx, (_, row) in enumerate(fit_df.iterrows()):
+            method = str(row.get("method", self._current_mode))
+            n_used = row.get("n_used", row.get("n_ref", np.nan))
+            n_stars = row.get("n_stars", "-")
+            n_frames = row.get("n_frames", "-")
+            out_frac = row.get("outlier_fraction", np.nan)
+            try:
+                out_text = self._format_summary_value(100.0 * float(out_frac), "{:.1f}%")
+            except Exception:
+                out_text = "-"
+            values = [
+                str(row.get("date", "")),
+                str(row.get("filter", "")),
+                self._fit_mode_label(method),
+                self._format_summary_value(row.get("k1"), "{:.5f}"),
+                self._format_summary_value(row.get("k1_err"), "{:.5f}"),
+                self._format_summary_value(row.get("scatter"), "{:.4f}"),
+                "-" if pd.isna(n_used) else str(int(float(n_used))),
+                "-" if pd.isna(n_stars) else str(int(float(n_stars))) if str(n_stars) != "-" else "-",
+                "-" if pd.isna(n_frames) else str(int(float(n_frames))) if str(n_frames) != "-" else "-",
+                out_text,
+                str(int(float(row.get("fit_order", 1)))) if pd.notna(row.get("fit_order", 1)) else "-",
+            ]
+            for col, value in enumerate(values):
+                item = QTableWidgetItem(value)
+                if col in {3, 4, 5, 6, 7, 8, 9, 10}:
+                    item.setTextAlignment(Qt.AlignRight | Qt.AlignVCenter)
+                if col == 5:
+                    try:
+                        scatter = float(row.get("scatter", np.nan))
+                    except Exception:
+                        scatter = np.nan
+                    if np.isfinite(scatter):
+                        if scatter <= 0.05:
+                            item.setBackground(QColor("#E8F5E9"))
+                        elif scatter <= 0.10:
+                            item.setBackground(QColor("#FFF8E1"))
+                        else:
+                            item.setBackground(QColor("#FFEBEE"))
+                self.fit_summary_table.setItem(row_idx, col, item)
+        self.fit_summary_table.resizeRowsToContents()
+
     def on_error(self, message: str):
         self.btn_run_phot.setEnabled(True)
         self.btn_run_fit.setEnabled(True)
         self.btn_stop.setEnabled(False)
         self.progress_label.setText("Error")
+        self._set_status_card("fit", "Fit Result", "Error", "bad")
         QMessageBox.critical(self, "Error", f"Extinction fit failed:\n{message}")
 
     def _plot_results(self):
         self.figure.clear()
-        ax1, ax2 = self.figure.subplots(2, 1)
+        ax1, ax2 = self.figure.subplots(
+            2,
+            1,
+            gridspec_kw={"height_ratios": [3.0, 1.15]},
+        )
 
         if self.fit_df is None or self.fit_df.empty:
+            self._refresh_fit_summary_table(pd.DataFrame())
+            self.figure.tight_layout(pad=0.8)
             self.canvas.draw()
             return
 
@@ -3922,6 +3955,7 @@ class ExtinctionFitWindow(QWidget):
             fit_df = fit_df[fit_df["filter"] == sel_filter]
             if not points_df.empty and "filter" in points_df.columns:
                 points_df = points_df[points_df["filter"] == sel_filter]
+        self._refresh_fit_summary_table(fit_df)
 
         colors = ["#1f77b4", "#ff7f0e", "#2ca02c", "#d62728", "#9467bd", "#8c564b"]
         markers = ["o", "s", "^", "v", "D", "p"]
@@ -3941,15 +3975,19 @@ class ExtinctionFitWindow(QWidget):
                     mask &= points_df["filter"].astype(str) == filt
             sub = points_df[mask].copy() if not points_df.empty else pd.DataFrame()
             label_prefix = f"{date_val}/{filt}" if sel_date == "All Dates" else filt
-            if not sub.empty:
+            delta_col = "delta_m" if "delta_m" in sub.columns else "delta"
+            if not sub.empty and delta_col in sub.columns:
+                y_plot = pd.to_numeric(sub[delta_col], errors="coerce")
                 ax1.scatter(
-                    sub["airmass"], sub["delta_m"],
+                    sub["airmass"], y_plot,
                     s=8, alpha=0.35, color=color, marker=marker,
                     label=f"{label_prefix} (n={len(sub)})",
                 )
                 if show_fit and np.isfinite(k1):
                     xx = np.linspace(float(np.nanmin(sub["airmass"])), float(np.nanmax(sub["airmass"])), 100)
-                    yy = k1 * xx
+                    zp = self._as_float(row.get("zp", 0.0), 0.0)
+                    k2 = self._as_float(row.get("k2", 0.0), 0.0)
+                    yy = zp + k1 * xx + k2 * xx * xx
                     ax1.plot(xx, yy, color=color, lw=2, label=f"{label_prefix}: k1={k1:.4f}")
                 resid = pd.to_numeric(sub.get("resid"), errors="coerce").dropna()
                 if len(resid):
@@ -3976,7 +4014,7 @@ class ExtinctionFitWindow(QWidget):
             ax2.legend(loc="best", fontsize=7)
         ax2.grid(True, alpha=0.3)
 
-        self.figure.tight_layout()
+        self.figure.tight_layout(pad=0.8)
         self.canvas.draw()
 
     def save_plots(self):

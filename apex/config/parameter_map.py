@@ -159,6 +159,8 @@ COMMON_TOML_KEY_MAP: tuple[tuple[tuple[str, ...], str], ...] = (
     (('photometry', 'sky_sigma_includes_rn'), 'sky_sigma_includes_rn'),
     (('photometry', 'sky_sigma_min_n_sky'), 'sky_sigma_min_n_sky'),
     (('photometry', 'use_qc_pass_only'), 'phot_use_qc_pass_only'),
+    (('photometry', 'ref_require_apcorr_candidate'), 'phot_ref_require_apcorr_candidate'),
+    (('photometry', 'ref_apcorr_min_keep'), 'phot_ref_apcorr_min_keep'),
     (('photometry', 'scales', 'aperture_scale'), 'phot_aperture_scale'),
     (('photometry', 'scales', 'annulus_scale'), 'fitsky_annulus_scale'),
     (('photometry', 'scales', 'dannulus_scale'), 'fitsky_dannulus_scale'),

@@ -2,7 +2,7 @@ schema_version = 1
 
 [io]
 data_dir = "data/example"
-filename_prefix = "pp_"
+filename_prefix = ""
 result_dir = "data/example/result"
 cache_dir = "cache"
 night_gap_hours = 8.0
@@ -40,6 +40,9 @@ camera_pixel_um = 3.76
 binning = 2
 gain_e_per_adu = 0.1
 rdnoise_e = 1.39
+noise_use_fits_header = true
+noise_reference_binning = 2
+noise_scale_by_binning = true
 saturation_adu = 65000.0
 zp_initial = 25.0
 datamin_adu = 0.1
@@ -132,6 +135,11 @@ recenter = true
 use_segm_mask = true
 min_snr_for_mag = 3.0
 use_qc_pass_only = false
+# Restrict ZP / extinction reference measurements to Step 4 apcorr-quality
+# stars (isolated, unsaturated, high-flux). Per-measurement filter with an
+# automatic fallback to all measurements when too few qualify.
+ref_require_apcorr_candidate = true
+ref_apcorr_min_keep = 8
 
 [photometry.scales]
 aperture_scale = 1.0
@@ -376,6 +384,9 @@ pmem_ruwe_max = 2.0
 pmem_min_visibility_periods = 8.0
 pmem_min_valid = 30
 pmem_min_fit = 25
+
+[simbad]
+timeout_s = 20.0
 
 [idmatch]
 tol_px = 1.0
