@@ -17,6 +17,8 @@ from PyQt5.QtGui import QFont, QIcon, QPixmap, QPainter
 from pathlib import Path
 from typing import Optional, List
 
+from apex.gui.tools.registry import iter_tools_for_mode
+
 _RESOURCES = Path(__file__).resolve().parent.parent / "resources"
 
 
@@ -67,8 +69,12 @@ class StepButton(QPushButton):
         self.completed = False
         self.accessible = False
         self.setText(f"Step {step_number}: {step_name}")
-        self.setMinimumHeight(50)
+        # Fixed-vertical size policy so a cramped window cannot crush the
+        # 12 step buttons into illegible 25px slivers on small displays.
+        self.setMinimumHeight(46)
         self.setMinimumWidth(300)
+        from PyQt5.QtWidgets import QSizePolicy
+        self.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
         self.update_appearance()
 
     def set_completed(self, completed: bool):
@@ -192,9 +198,9 @@ class MainWindowWorkflow(QMainWindow):
             state_dir = project_root / ".state" / mode
             state_dir.mkdir(parents=True, exist_ok=True)
             self.project_state = ProjectState(state_dir)
+            self._register_state_mirror()
 
-            if mode == "lc":
-                self._bootstrap_file_selection_state()
+            self._bootstrap_file_selection_state()
 
         except Exception as e:
             QMessageBox.critical(self, "Initialization Error",
@@ -247,7 +253,7 @@ class MainWindowWorkflow(QMainWindow):
         self._shortcut_router = ShortcutRouter(self)
         QApplication.instance().installEventFilter(self._shortcut_router)
 
-        if mode == "lc" and hasattr(self, "_offline_data_dir"):
+        if hasattr(self, "_offline_data_dir"):
             QMessageBox.warning(
                 self, "Previous Data Path Unavailable",
                 f"The last-used data path is inaccessible:\n\n"
@@ -266,10 +272,12 @@ class MainWindowWorkflow(QMainWindow):
         if data_dir:
             self.params.P.data_dir = Path(data_dir)
             saved_result_dir = state_data.get("result_dir")
-            self.params.P.result_dir = (
-                Path(saved_result_dir) if saved_result_dir
-                else self.params.P.data_dir / "result"
-            )
+            if saved_result_dir:
+                self.params.P.result_dir = Path(saved_result_dir)
+            elif self.mode == "lc":
+                # Legacy LC sessions defaulted result_dir to data_dir/result.
+                self.params.P.result_dir = self.params.P.data_dir / "result"
+            # CMD without saved result_dir keeps params.toml's value.
             self.params.P.cache_dir = self.params.P.result_dir / "cache"
             try:
                 self.params.P.result_dir.mkdir(parents=True, exist_ok=True)
@@ -290,6 +298,21 @@ class MainWindowWorkflow(QMainWindow):
             self.file_manager.set_multi_night_dirs(root_path, night_dirs)
         else:
             self.file_manager.clear_multi_night_dirs()
+        self._register_state_mirror()
+
+    def _register_state_mirror(self) -> None:
+        """Mirror project_state.json into the current result_dir so previous
+        sessions are discoverable by Load Previous Session."""
+        result_dir = getattr(self.params.P, "result_dir", None)
+        if not result_dir:
+            return
+        try:
+            mirror = Path(result_dir) / "project_state.json"
+            if mirror.resolve() == self.project_state.state_file.resolve():
+                return
+        except OSError:
+            return
+        self.project_state.add_mirror_path(mirror)
 
     # ── UI setup ─────────────────────────────────────────────────────────────
 
@@ -299,7 +322,12 @@ class MainWindowWorkflow(QMainWindow):
         icon = _load_icon(self.mode)
         self.setWindowIcon(icon)
         QApplication.instance().setWindowIcon(icon)
-        self.setMinimumSize(800, 700)
+        # Minimum chosen so the watermark + title + log all fit; initial
+        # resize chosen so 12 step buttons (CMD) are visible without
+        # scrolling on a 1080p display.  Smaller monitors get a scroll
+        # area inside the Processing Steps group (see below).
+        self.setMinimumSize(820, 640)
+        self.resize(960, 920)
 
         central = QWidget()
         self.setCentralWidget(central)
@@ -321,7 +349,7 @@ class MainWindowWorkflow(QMainWindow):
                 lbl.move(e.size().width() - 190, e.size().height() - 190)
             )
 
-        title = QLabel("Aperture Photometry Toolkit")
+        title = QLabel("APEX — Automated Photometry EXtraction")
         title.setFont(QFont("Arial", 18, QFont.Bold))
         title.setAlignment(Qt.AlignCenter)
         layout.addWidget(title)
@@ -356,20 +384,37 @@ class MainWindowWorkflow(QMainWindow):
         layout.addWidget(progress_group)
 
         steps_group = QGroupBox("Processing Steps")
-        steps_layout = QVBoxLayout(steps_group)
+        steps_outer = QVBoxLayout(steps_group)
+        steps_outer.setContentsMargins(8, 12, 8, 8)
+        # The button list goes inside a QScrollArea so cramped windows can
+        # scroll instead of crushing 12 buttons into 25px slivers.
+        from PyQt5.QtWidgets import QScrollArea, QFrame, QSizePolicy
+        steps_scroll = QScrollArea()
+        steps_scroll.setWidgetResizable(True)
+        steps_scroll.setFrameShape(QFrame.NoFrame)
+        steps_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        steps_scroll.setVerticalScrollBarPolicy(Qt.ScrollBarAsNeeded)
+        steps_inner = QWidget()
+        steps_layout = QVBoxLayout(steps_inner)
+        steps_layout.setContentsMargins(0, 0, 0, 0)
+        steps_layout.setSpacing(4)
         for i, step_name in enumerate(self.step_names):
             btn = StepButton(i + 1, step_name)
             btn.clicked.connect(lambda checked, idx=i: self.open_step(idx))
             self.step_buttons.append(btn)
             steps_layout.addWidget(btn)
-        layout.addWidget(steps_group)
+        steps_layout.addStretch(1)
+        steps_scroll.setWidget(steps_inner)
+        steps_outer.addWidget(steps_scroll)
+        steps_group.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
+        layout.addWidget(steps_group, stretch=1)
 
         action_layout = QHBoxLayout()
-        btn_resume = QPushButton("Resume Next Step")
-        btn_resume.setFont(QFont("Arial", 11, QFont.Bold))
-        btn_resume.setMinimumHeight(40)
-        btn_resume.clicked.connect(self.resume_next_step)
-        action_layout.addWidget(btn_resume)
+        btn_load = QPushButton("Load Previous Session...")
+        btn_load.setFont(QFont("Arial", 11, QFont.Bold))
+        btn_load.setMinimumHeight(40)
+        btn_load.clicked.connect(self.load_previous_session)
+        action_layout.addWidget(btn_load)
         btn_reset = QPushButton("Reset Progress")
         btn_reset.setMinimumHeight(40)
         btn_reset.clicked.connect(self.reset_progress)
@@ -408,67 +453,14 @@ class MainWindowWorkflow(QMainWindow):
         file_menu.addAction(action_exit)
 
         tools_menu = menubar.addMenu("&Tools")
-
-        action_qa = QAction("QA Reports", self)
-        action_qa.setShortcut("Ctrl+R")
-        action_qa.triggered.connect(self.open_qa_report)
-        tools_menu.addAction(action_qa)
-
-        action_iraf = QAction("IRAF/DAOPHOT Tool", self)
-        action_iraf.setShortcut("Ctrl+I")
-        action_iraf.triggered.connect(self.open_iraf_tool)
-        tools_menu.addAction(action_iraf)
-
-        if self.mode == "lc":
-            action_ext = QAction("Extinction Fit Tool", self)
-            action_ext.setShortcut("Ctrl+E")
-            action_ext.triggered.connect(self.open_extinction_tool)
-            tools_menu.addAction(action_ext)
-
-            action_airmass = QAction("Airmass Header Debug", self)
-            action_airmass.triggered.connect(self.open_airmass_debug_tool)
-            tools_menu.addAction(action_airmass)
-
-            tools_menu.addSeparator()
-
-            action_merger = QAction("Multi-Night Light Curve Merger", self)
-            action_merger.setShortcut("Ctrl+M")
-            action_merger.triggered.connect(self.open_multi_night_merger)
-            tools_menu.addAction(action_merger)
-
-            tools_menu.addSeparator()
-
-            action_varstar = QAction("Variable Star Analysis", self)
-            action_varstar.setShortcut("Ctrl+Shift+V")
-            action_varstar.triggered.connect(self.open_variable_star_tool)
-            tools_menu.addAction(action_varstar)
-
-            action_transit = QAction("Exoplanet Transit Analysis", self)
-            action_transit.setShortcut("Ctrl+Shift+T")
-            action_transit.triggered.connect(self.open_transit_tool)
-            tools_menu.addAction(action_transit)
-
-            action_eb = QAction("Eclipsing Binary Analysis", self)
-            action_eb.setShortcut("Ctrl+Shift+B")
-            action_eb.triggered.connect(self.open_eb_tool)
-            tools_menu.addAction(action_eb)
-
-        elif self.mode == "cmd":
-            action_ext_fit = QAction("Extinction (Airmass Fit)", self)
-            action_ext_fit.triggered.connect(self.open_extinction_fit_cmd)
-            tools_menu.addAction(action_ext_fit)
-
-            action_cmd_prev = QAction("CMD + Isochrone (From Results)...", self)
-            action_cmd_prev.triggered.connect(self.open_cmd_iso_tool)
-            tools_menu.addAction(action_cmd_prev)
-
-            action_gaia_3d = QAction("Gaia 3D Cluster Viewer", self)
-            action_gaia_3d.triggered.connect(self.open_gaia_3d_viewer)
-            tools_menu.addAction(action_gaia_3d)
-
-            action_cluster = QAction("Analyze Cluster Structure", self)
-            action_cluster.triggered.connect(self.open_cluster_structure_tool)
-            tools_menu.addAction(action_cluster)
+        for spec in iter_tools_for_mode(self.mode):
+            if spec.separator_before:
+                tools_menu.addSeparator()
+            action = QAction(spec.label, self)
+            if spec.shortcut:
+                action.setShortcut(spec.shortcut)
+            action.triggered.connect(getattr(self, spec.launcher))
+            tools_menu.addAction(action)
 
         help_menu = menubar.addMenu("&Help")
         action_wcs_help = QAction("WCS Solver Installation Help...", self)
@@ -621,21 +613,72 @@ class MainWindowWorkflow(QMainWindow):
         self.update_step_buttons()
         self.append_log(f"\u2713 Step {step_index + 1} finished: {self.step_names[step_index]}")
 
-    def resume_next_step(self):
-        next_step = self.project_state.get_next_incomplete_step()
-        if next_step is not None:
-            if not self.project_state.is_step_accessible(next_step):
-                prev_idx = next_step - 1
-                prev_name = (self.step_names[prev_idx]
-                             if 0 <= prev_idx < len(self.step_names) else "previous step")
-                QMessageBox.warning(self, "Step Not Accessible",
-                                    f"Please finish earlier steps first.\n"
-                                    f"Required now: Step {next_step}: {prev_name}")
-                return
-            self.open_step(next_step)
-        else:
-            QMessageBox.information(self, "Workflow Finished",
-                                    "All workflow steps are finished.")
+    def load_previous_session(self):
+        """Pick a saved project_state.json (typically mirrored under a previous
+        run's result_dir) and rebind this window to that session."""
+        result_dir = getattr(self.params.P, "result_dir", None)
+        start_dir = str(Path(result_dir).parent) if result_dir else str(Path.home())
+        chosen, _ = QFileDialog.getOpenFileName(
+            self,
+            "Load Previous Session — select project_state.json",
+            start_dir,
+            "APEX session (project_state.json);;JSON files (*.json);;All files (*)",
+        )
+        if not chosen:
+            return
+
+        chosen_path = Path(chosen)
+        try:
+            import json as _json
+            with open(chosen_path, "r", encoding="utf-8") as f:
+                loaded = _json.load(f)
+            if not isinstance(loaded, dict) or "step_data" not in loaded:
+                raise ValueError("File does not look like an APEX project_state.json")
+        except Exception as exc:
+            QMessageBox.critical(
+                self, "Load Session Failed",
+                f"Could not read session file:\n  {chosen_path}\n\n{exc}",
+            )
+            return
+
+        if self.current_step_window is not None:
+            try:
+                self.current_step_window.close()
+            except Exception:
+                pass
+            self.current_step_window = None
+
+        # Replace state contents in place, then persist (so the current
+        # workspace state file mirrors the loaded session) and re-bootstrap.
+        self.project_state.state.update(loaded)
+        self.project_state._normalize_state()
+        self.project_state.clear_mirror_paths()
+        if chosen_path.resolve() != self.project_state.state_file.resolve():
+            self.project_state.add_mirror_path(chosen_path)
+        self.project_state.save()
+
+        # Re-derive params.data_dir/result_dir from the loaded file_selection
+        # state, then rebuild file_manager so downstream steps see the swap.
+        if hasattr(self, "_offline_data_dir"):
+            del self._offline_data_dir
+        self._bootstrap_file_selection_state()
+        try:
+            from apex.core import FileManager
+            self.file_manager = FileManager(self.params)
+            # _bootstrap re-applies multi-night/ref_filename to the new manager
+            self._bootstrap_file_selection_state()
+        except Exception:
+            pass
+
+        self.update_step_buttons()
+        self.append_log(f"Loaded session: {chosen_path}")
+        result_dir_now = getattr(self.params.P, "result_dir", "(unknown)")
+        completed = len(self.project_state.state.get("completed_steps", []))
+        QMessageBox.information(
+            self, "Session Loaded",
+            f"Result dir: {result_dir_now}\n"
+            f"Completed steps: {completed}/{len(self.step_names)}",
+        )
 
     def reset_progress(self):
         reply = QMessageBox.question(
@@ -820,8 +863,6 @@ class MainWindowWorkflow(QMainWindow):
         self.iraf_window.activateWindow()
         self.append_log("Opened IRAF/DAOPHOT Tool")
 
-    # ── LC tools ─────────────────────────────────────────────────────────────
-
     def open_extinction_tool(self):
         from apex.gui.tools.extinction_fit import ExtinctionFitWindow
         self.extinction_window = ExtinctionFitWindow(
@@ -832,6 +873,8 @@ class MainWindowWorkflow(QMainWindow):
         self.extinction_window.raise_()
         self.extinction_window.activateWindow()
         self.append_log("Opened Extinction (Airmass Fit) Tool")
+
+    # ── LC tools ─────────────────────────────────────────────────────────────
 
     def open_airmass_debug_tool(self):
         from apex.gui.tools.airmass_debug import AirmassHeaderDebugToolWindow
@@ -893,31 +936,7 @@ class MainWindowWorkflow(QMainWindow):
     # ── CMD tools ────────────────────────────────────────────────────────────
 
     def open_extinction_fit_cmd(self):
-        from apex.gui.tools.extinction_fit import ExtinctionFitWindow
-        self.ext_window = ExtinctionFitWindow(
-            self.params, self.params.P.data_dir, self.params.P.result_dir, parent=None
-        )
-        self.ext_window.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose, False)
-        self.ext_window.show()
-        self.ext_window.raise_()
-        self.ext_window.activateWindow()
-        self.append_log("Opened Extinction Fit window")
-
-    def open_cmd_iso_tool(self):
-        start_dir = str(getattr(self.params.P, "result_dir", Path.cwd()))
-        selected = QFileDialog.getExistingDirectory(self, "Select Result Folder", start_dir)
-        if not selected:
-            return
-        from apex.gui.tools.cmd_iso_tool import CmdIsoToolWindow
-        self.cmd_tool_window = CmdIsoToolWindow(
-            self.params, self.file_manager, self.project_state, self,
-            initial_result_dir=Path(selected), parent=None
-        )
-        self.cmd_tool_window.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose, False)
-        self.cmd_tool_window.show()
-        self.cmd_tool_window.raise_()
-        self.cmd_tool_window.activateWindow()
-        self.append_log(f"Opened CMD + Isochrone tool: {selected}")
+        self.open_extinction_tool()
 
     def open_gaia_3d_viewer(self):
         try:
@@ -965,7 +984,7 @@ class MainWindowWorkflow(QMainWindow):
     def open_settings(self):
         from PyQt5.QtWidgets import (
             QDialog, QVBoxLayout, QLabel, QLineEdit,
-            QDialogButtonBox, QGroupBox, QFormLayout
+            QDialogButtonBox, QGroupBox, QFormLayout, QCheckBox
         )
         dialog = QDialog(self)
         dialog.setWindowTitle("Instrument Settings")
@@ -1007,12 +1026,31 @@ class MainWindowWorkflow(QMainWindow):
 
         params_group = QGroupBox("Camera Parameters")
         params_layout = QFormLayout(params_group)
-        gain_edit = QLineEdit(str(self.params.P.gain_e_per_adu))
+        gain_value = getattr(self.params.P, "gain_e_per_adu", None)
+        gain_edit = QLineEdit("" if gain_value is None else str(gain_value))
         gain_edit.setMaximumWidth(150)
         params_layout.addRow("Gain (e-/ADU):", gain_edit)
-        rdnoise_edit = QLineEdit(str(self.params.P.rdnoise_e))
+        rdnoise_value = getattr(self.params.P, "rdnoise_e", None)
+        rdnoise_edit = QLineEdit("" if rdnoise_value is None else str(rdnoise_value))
         rdnoise_edit.setMaximumWidth(150)
         params_layout.addRow("Read Noise (e-):", rdnoise_edit)
+        noise_header_check = QCheckBox()
+        noise_header_check.setChecked(bool(getattr(self.params.P, "noise_use_fits_header", False)))
+        noise_header_check.setToolTip("Trust FITS EGAIN/RDNOISE when present. Leave off when measured PTC values should override bad headers.")
+        params_layout.addRow("Trust FITS EGAIN/RDNOISE:", noise_header_check)
+        noise_ref_bin_spin = QSpinBox()
+        noise_ref_bin_spin.setRange(1, 8)
+        noise_ref_bin_spin.setValue(int(getattr(
+            self.params.P,
+            "noise_reference_binning",
+            getattr(self.params.P, "binning_default", self.instrument.binning),
+        ) or getattr(self.params.P, "binning_default", self.instrument.binning)))
+        noise_ref_bin_spin.setToolTip("Binning of the manual gain/read-noise values. Use 1 for BIN1 camera specs.")
+        params_layout.addRow("Manual Noise Ref. Binning:", noise_ref_bin_spin)
+        noise_scale_check = QCheckBox()
+        noise_scale_check.setChecked(bool(getattr(self.params.P, "noise_scale_by_binning", False)))
+        noise_scale_check.setToolTip("Scale manual gain/read-noise from the reference binning to each FITS frame binning. Leave off for PTC values measured from the current FITS data.")
+        params_layout.addRow("Scale Manual Noise by Binning:", noise_scale_check)
         saturation_edit = QLineEdit(str(self.params.P.saturation_adu))
         saturation_edit.setMaximumWidth(150)
         params_layout.addRow("Saturation (ADU):", saturation_edit)
@@ -1068,8 +1106,13 @@ class MainWindowWorkflow(QMainWindow):
                     * float(self.instrument.binning)
                     / float(self.instrument.focal_length_mm)
                 )
-                self.params.P.gain_e_per_adu = float(gain_edit.text())
-                self.params.P.rdnoise_e = float(rdnoise_edit.text())
+                gain_text = gain_edit.text().strip()
+                rdnoise_text = rdnoise_edit.text().strip()
+                self.params.P.gain_e_per_adu = float(gain_text) if gain_text else None
+                self.params.P.rdnoise_e = float(rdnoise_text) if rdnoise_text else None
+                self.params.P.noise_use_fits_header = bool(noise_header_check.isChecked())
+                self.params.P.noise_reference_binning = int(noise_ref_bin_spin.value())
+                self.params.P.noise_scale_by_binning = bool(noise_scale_check.isChecked())
                 self.params.P.saturation_adu = float(saturation_edit.text())
                 self.params.P.site_lat_deg = float(site_lat_edit.text())
                 self.params.P.site_lon_deg = float(site_lon_edit.text())

@@ -22,7 +22,7 @@ apex/
     run_workspace.py       Multi-night workspace helpers (LC)
     ... (logging, constants, qc, header_cache, common_helpers)
   analysis/
-    light_curve/           LC science: lightcurve, detrend, period, eclipse, asteroid
+    light_curve/           LC science services: loader, output, detrend, period, ensemble
     merge/                 Multi-night workspace scan/build/id-match (LC)
     cmd/                   CMD science: isochrone_fitter, isochrone_fitter_v2
   gui/
@@ -63,7 +63,6 @@ apex/
       transit_tool.py       Exoplanet transit fitting (LC)
       eb_tool.py            Eclipsing binary fitting (LC)
       gaia_3d_viewer.py     Gaia 3D cluster viewer (CMD)
-      cmd_iso_tool.py       CMD + isochrone from results (CMD)
       cluster_structure/    Cluster structure analysis (CMD)
 ```
 

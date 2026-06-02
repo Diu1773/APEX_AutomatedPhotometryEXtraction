@@ -6,12 +6,15 @@ Popup window with Previous/Next navigation
 from PyQt5.QtWidgets import (
     QVBoxLayout, QHBoxLayout, QPushButton, QLabel,
     QTableWidget, QTableWidgetItem, QGroupBox, QLineEdit,
-    QFileDialog, QMessageBox, QHeaderView
+    QFileDialog, QMessageBox, QHeaderView, QWidget
 )
-from PyQt5.QtCore import Qt
+from PyQt5.QtCore import Qt, QUrl
+from PyQt5.QtGui import QDesktopServices
 from pathlib import Path
+from urllib.parse import quote_plus
 
 from apex.gui.workflow.step_window_base import StepWindowBase
+from apex.gui.workflow.target_resolver import TargetResolveWorker, target_failure_message
 
 
 class FileSelectionWindow(StepWindowBase):
@@ -28,6 +31,7 @@ class FileSelectionWindow(StepWindowBase):
             main_window: Main window reference
         """
         self.file_manager = file_manager
+        self.simbad_worker = None
 
         # Initialize base class
         super().__init__(
@@ -68,24 +72,56 @@ class FileSelectionWindow(StepWindowBase):
         self.content_layout.addWidget(dir_group)
 
         # === SIMBAD Target ===
-        target_group = QGroupBox("SIMBAD Target")
-        target_layout = QHBoxLayout(target_group)
+        target_group = QGroupBox("Target Coordinates")
+        target_layout = QVBoxLayout(target_group)
 
-        target_layout.addWidget(QLabel("Target Name:"))
+        target_row = QHBoxLayout()
+        target_row.addWidget(QLabel("Target Name:"))
         self.target_edit = QLineEdit()
         self.target_edit.setPlaceholderText("e.g., M31 or WASP-12")
         self.target_edit.setMaximumWidth(200)
-        target_layout.addWidget(self.target_edit)
+        target_row.addWidget(self.target_edit)
 
-        btn_resolve = QPushButton("Resolve SIMBAD")
-        btn_resolve.clicked.connect(self.resolve_target)
-        target_layout.addWidget(btn_resolve)
+        self.btn_resolve_simbad = QPushButton("Resolve SIMBAD")
+        self.btn_resolve_simbad.clicked.connect(self.resolve_target)
+        target_row.addWidget(self.btn_resolve_simbad)
+
+        btn_open_simbad = QPushButton("Open SIMBAD")
+        btn_open_simbad.setToolTip("Open the target name in the SIMBAD web page.")
+        btn_open_simbad.clicked.connect(self.open_simbad_page)
+        target_row.addWidget(btn_open_simbad)
+
+        btn_manual = QPushButton("Manual RA/Dec")
+        btn_manual.setToolTip("Enter target coordinates manually when SIMBAD cannot resolve the object.")
+        btn_manual.clicked.connect(self._toggle_manual_radec)
+        target_row.addWidget(btn_manual)
 
         self.target_result = QLabel("(not resolved)")
         self.target_result.setStyleSheet("QLabel { font-weight: bold; color: #4CAF50; }")
-        target_layout.addWidget(self.target_result)
+        target_row.addWidget(self.target_result)
 
-        target_layout.addStretch()
+        target_row.addStretch()
+        target_layout.addLayout(target_row)
+
+        self._manual_radec_widget = QWidget()
+        manual_row = QHBoxLayout(self._manual_radec_widget)
+        manual_row.setContentsMargins(0, 0, 0, 0)
+        manual_row.addWidget(QLabel("RA:"))
+        self.manual_ra_edit = QLineEdit()
+        self.manual_ra_edit.setPlaceholderText("HH:MM:SS or deg")
+        self.manual_ra_edit.setMaximumWidth(140)
+        manual_row.addWidget(self.manual_ra_edit)
+        manual_row.addWidget(QLabel("Dec:"))
+        self.manual_dec_edit = QLineEdit()
+        self.manual_dec_edit.setPlaceholderText("±DD:MM:SS or deg")
+        self.manual_dec_edit.setMaximumWidth(140)
+        manual_row.addWidget(self.manual_dec_edit)
+        btn_apply_manual = QPushButton("Apply")
+        btn_apply_manual.clicked.connect(self._apply_manual_radec)
+        manual_row.addWidget(btn_apply_manual)
+        manual_row.addStretch()
+        self._manual_radec_widget.setVisible(False)
+        target_layout.addWidget(self._manual_radec_widget)
         self.content_layout.addWidget(target_group)
 
         # === Header Table ===
@@ -104,9 +140,10 @@ class FileSelectionWindow(StepWindowBase):
         table_layout.addLayout(btn_row)
 
         self.header_table = QTableWidget()
-        self.header_table.setColumnCount(7)
+        self.header_table.setColumnCount(10)
         self.header_table.setHorizontalHeaderLabels([
-            "Use", "Filename", "DATE-OBS", "FILTER", "EXPTIME", "AIRMASS", "IMAGETYP"
+            "Use", "Filename", "DATE-OBS", "FILTER", "EXPTIME", "AIRMASS",
+            "OBJECT", "RA_DEG", "DEC_DEG", "IMAGETYP"
         ])
         self.header_table.horizontalHeader().setSectionResizeMode(1, QHeaderView.Stretch)
         self.header_table.setSelectionBehavior(QTableWidget.SelectRows)
@@ -123,11 +160,86 @@ class FileSelectionWindow(StepWindowBase):
 
     def validate_step(self) -> bool:
         """Validate if step can be completed"""
-        # Only check if files are loaded
-        # Reference frame selection will be done after detection/ID matching in later steps
         has_files = len(self.file_manager.filenames) > 0
+        has_target = self._has_target_coordinates()
 
-        return has_files
+        return has_files and has_target
+
+    def _has_target_coordinates(self) -> bool:
+        try:
+            ra = float(getattr(self.params.P, "target_ra_deg", float("nan")))
+            dec = float(getattr(self.params.P, "target_dec_deg", float("nan")))
+        except (TypeError, ValueError):
+            return False
+        return (0.0 <= ra < 360.0) and (-90.0 <= dec <= 90.0)
+
+    @staticmethod
+    def _format_header_cell(row, key: str) -> str:
+        try:
+            value = row.get(key, "")
+        except Exception:
+            value = ""
+        if value is None:
+            return ""
+        try:
+            if value != value:
+                return ""
+        except Exception:
+            pass
+        if key in {"RA_DEG", "DEC_DEG"}:
+            try:
+                return f"{float(value):.5f}"
+            except (TypeError, ValueError):
+                return str(value)
+        return str(value)
+
+    def open_simbad_page(self) -> None:
+        name = self.target_edit.text().strip()
+        url = "https://simbad.cds.unistra.fr/simbad/sim-id"
+        if name:
+            url = f"{url}?Ident={quote_plus(name)}"
+        QDesktopServices.openUrl(QUrl(url))
+
+    def _clear_target_coordinates(self) -> None:
+        self.params.P.target_name = ""
+        self.params.P.target_ra_deg = None
+        self.params.P.target_dec_deg = None
+        try:
+            inst = self.main_window.instrument
+            inst.targets_resolved = []
+            inst.primary_target = None
+            inst.primary_coord = None
+        except Exception:
+            pass
+        self.target_edit.clear()
+        self.target_result.setText("(not resolved)")
+
+    def _clear_resolved_target_state(self, name: str | None = None, *, persist: bool = False) -> None:
+        target_name = str(name if name is not None else self.target_edit.text()).strip()
+        self.params.P.target_name = target_name
+        self.params.P.target_ra_deg = None
+        self.params.P.target_dec_deg = None
+        try:
+            inst = self.main_window.instrument
+            inst.targets_resolved = []
+            inst.primary_target = None
+            inst.primary_coord = None
+        except Exception:
+            pass
+        if persist and hasattr(self.params, 'save_toml'):
+            self.params.save_toml()
+        try:
+            self._invalidate_workflow_from_here()
+        except Exception:
+            pass
+        self.update_navigation_buttons()
+
+    def _invalidate_workflow_from_here(self) -> None:
+        for idx in list(self.project_state.state.get("completed_steps", [])):
+            if int(idx) >= self.step_index:
+                self.project_state.mark_step_incomplete(int(idx))
+        if hasattr(self.main_window, "update_step_buttons"):
+            self.main_window.update_step_buttons()
 
     def browse_directory(self):
         """Browse for data directory"""
@@ -138,6 +250,9 @@ class FileSelectionWindow(StepWindowBase):
         if dir_path:
             data_path = Path(dir_path)
             self.params.P.data_dir = data_path
+            self.params.P.filename_prefix = ""
+            self._clear_target_coordinates()
+            self._invalidate_workflow_from_here()
             self.dir_edit.setText(dir_path)
 
             # Update result_dir to match new data_dir
@@ -163,36 +278,111 @@ class FileSelectionWindow(StepWindowBase):
             QMessageBox.warning(self, "Target Missing", "Please enter a target name.")
             return
 
+        if self.simbad_worker is not None and self.simbad_worker.isRunning():
+            QMessageBox.information(self, "SIMBAD", "SIMBAD lookup is already running.")
+            return
+
+        self.target_result.setText("(resolving...)")
+        self.btn_resolve_simbad.setEnabled(False)
+        self._clear_resolved_target_state(name, persist=True)
+        self.simbad_worker = TargetResolveWorker(self.main_window.instrument, name, self)
+        self.simbad_worker.log_message.connect(print)
+        self.simbad_worker.result_ready.connect(self._on_simbad_result)
+        self.simbad_worker.error_message.connect(self._on_simbad_error)
+        self.simbad_worker.finished.connect(self._on_simbad_finished)
+        self.simbad_worker.start()
+
+    def _on_simbad_result(self, result: dict) -> None:
+        if not result.get("ok"):
+            name = str(result.get("name") or self.target_edit.text().strip())
+            self._clear_resolved_target_state(name, persist=True)
+            self.target_result.setText(f"(not resolved: {name})")
+            QMessageBox.warning(self, "SIMBAD", target_failure_message(result))
+            return
+
+        name = str(result.get("name") or self.target_edit.text().strip())
+        ra_deg = float(result["ra_deg"])
+        dec_deg = float(result["dec_deg"])
+        self.target_result.setText(f"{result['ra_hms']}, {result['dec_dms']}")
+        self.params.P.target_name = name
+        self.params.P.target_ra_deg = ra_deg
+        self.params.P.target_dec_deg = dec_deg
+        if hasattr(self.params, 'save_toml'):
+            self.params.save_toml()
+        self.update_navigation_buttons()
+
+    def _on_simbad_error(self, message: str) -> None:
+        name = self.target_edit.text().strip()
+        self._clear_resolved_target_state(name, persist=True)
+        self.target_result.setText(f"(not resolved: {name})" if name else "(not resolved)")
+        QMessageBox.warning(self, "SIMBAD Error", message)
+        self.update_navigation_buttons()
+
+    def _on_simbad_finished(self) -> None:
+        self.btn_resolve_simbad.setEnabled(True)
+        if self.simbad_worker is not None:
+            self.simbad_worker.deleteLater()
+            self.simbad_worker = None
+
+    def _toggle_manual_radec(self) -> None:
+        self._manual_radec_widget.setVisible(not self._manual_radec_widget.isVisible())
+
+    def _apply_manual_radec(self) -> None:
+        from astropy.coordinates import SkyCoord
+        import astropy.units as u
+
+        ra_text = self.manual_ra_edit.text().strip()
+        dec_text = self.manual_dec_edit.text().strip()
+        name = self.target_edit.text().strip() or "manual"
+        if not ra_text or not dec_text:
+            QMessageBox.warning(self, "Manual Coordinates", "Enter both RA and Dec.")
+            return
+        try:
+            try:
+                coord = SkyCoord(ra_text, dec_text, unit=(u.hourangle, u.deg))
+            except Exception:
+                coord = SkyCoord(float(ra_text), float(dec_text), unit="deg")
+        except Exception as exc:
+            QMessageBox.warning(
+                self,
+                "Manual Coordinates",
+                "Failed to parse coordinates.\n\n"
+                "RA examples: 16:41:41.63 or 250.4234\n"
+                "Dec examples: +36:27:40 or 36.461\n\n"
+                f"{exc}",
+            )
+            return
+
+        ra_deg = float(coord.ra.deg)
+        dec_deg = float(coord.dec.deg)
+        ra_hms = coord.ra.to_string(unit="hour", sep=":", precision=2)
+        dec_dms = coord.dec.to_string(unit="deg", sep=":", precision=1, alwayssign=True)
+
         try:
             inst = self.main_window.instrument
-            inst.targets_resolved = []
-            inst.primary_target = None
-            inst.primary_coord = None
-            inst.resolve_targets([name])
-            if inst.primary_coord is None:
-                self.target_result.setText("(not resolved)")
-                tried = getattr(inst, "last_target_attempts", [])
-                errors = getattr(inst, "last_target_errors", [])
-                tried_text = f"\nTried: {', '.join(tried[:8])}" if tried else ""
-                error_text = f"\nLast error: {errors[-1]}" if errors else ""
-                QMessageBox.warning(self, "SIMBAD", f"Target not resolved: {name}{tried_text}{error_text}")
-                return
+            inst.targets_resolved = [dict(
+                name=name,
+                ra_deg=ra_deg,
+                dec_deg=dec_deg,
+                ra_str=ra_hms,
+                dec_str=dec_dms,
+                vmag=float("nan"),
+                otype="",
+                simbad_query="manual",
+            )]
+            inst.primary_target = name
+            inst.primary_coord = coord
+        except Exception:
+            pass
 
-            ra_deg = float(inst.primary_coord.ra.deg)
-            dec_deg = float(inst.primary_coord.dec.deg)
-            ra_hms = inst.primary_coord.ra.to_string(unit="hour", sep=":", precision=2)
-            dec_dms = inst.primary_coord.dec.to_string(unit="deg", sep=":", precision=1, alwayssign=True)
-            self.target_result.setText(f"{ra_hms}, {dec_dms}")
-
-            # Save to params.P and TOML (primary source of truth)
-            self.params.P.target_name = name
-            self.params.P.target_ra_deg = ra_deg
-            self.params.P.target_dec_deg = dec_deg
-            if hasattr(self.params, 'save_toml'):
-                self.params.save_toml()
-
-        except Exception as e:
-            QMessageBox.warning(self, "SIMBAD Error", str(e))
+        self.target_result.setText(f"{ra_hms}, {dec_dms}")
+        self.params.P.target_name = name
+        self.params.P.target_ra_deg = ra_deg
+        self.params.P.target_dec_deg = dec_deg
+        if hasattr(self.params, 'save_toml'):
+            self.params.save_toml()
+        self._manual_radec_widget.setVisible(False)
+        self.update_navigation_buttons()
 
     def load_files(self):
         """Load files and headers"""
@@ -217,12 +407,16 @@ class FileSelectionWindow(StepWindowBase):
                 use_item.setData(Qt.UserRole, fname)
                 self.header_table.setItem(i, 0, use_item)
 
-                self.header_table.setItem(i, 1, QTableWidgetItem(fname))
-                self.header_table.setItem(i, 2, QTableWidgetItem(str(row["DATE-OBS"])))
-                self.header_table.setItem(i, 3, QTableWidgetItem(str(row["FILTER"])))
-                self.header_table.setItem(i, 4, QTableWidgetItem(str(row["EXPTIME"])))
-                self.header_table.setItem(i, 5, QTableWidgetItem(str(row["AIRMASS"])))
-                self.header_table.setItem(i, 6, QTableWidgetItem(str(row["IMAGETYP"])))
+                labels = [
+                    "Filename", "DATE-OBS", "FILTER", "EXPTIME", "AIRMASS",
+                    "OBJECT", "RA_DEG", "DEC_DEG", "IMAGETYP",
+                ]
+                for col, label in enumerate(labels, start=1):
+                    self.header_table.setItem(
+                        i,
+                        col,
+                        QTableWidgetItem(self._format_header_cell(row, label)),
+                    )
 
             self.header_table.blockSignals(False)
             self._file_table_loading = False
@@ -276,6 +470,7 @@ class FileSelectionWindow(StepWindowBase):
         self._sync_excluded_files()
         state_data = {
             "data_dir": str(self.params.P.data_dir),
+            "result_dir": str(self.params.P.result_dir),
             "file_count": len(self.file_manager.filenames),
             "excluded_files": sorted(self.file_manager.excluded_files),
         }
@@ -311,3 +506,4 @@ class FileSelectionWindow(StepWindowBase):
                 self.target_result.setText(f"{float(ra):.6f}, {float(dec):.6f}")
             except (ValueError, TypeError):
                 pass
+        self.update_navigation_buttons()

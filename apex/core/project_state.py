@@ -29,6 +29,7 @@ class ProjectState:
         self.project_dir = Path(project_dir)
         self.state_file = self.project_dir / "project_state.json"
         self.steps: List[str] = list(steps) if steps is not None else []
+        self._mirror_paths: List[Path] = []
 
         self.state: Dict[str, Any] = {
             "project_name": "Untitled Project",
@@ -110,6 +111,24 @@ class ProjectState:
         self.project_dir.mkdir(parents=True, exist_ok=True)
         with open(self.state_file, "w", encoding="utf-8") as f:
             json.dump(self.state, f, indent=2, ensure_ascii=False)
+        for mirror in self._mirror_paths:
+            try:
+                mirror.parent.mkdir(parents=True, exist_ok=True)
+                with open(mirror, "w", encoding="utf-8") as f:
+                    json.dump(self.state, f, indent=2, ensure_ascii=False)
+            except OSError:
+                pass
+
+    def add_mirror_path(self, path: Path) -> None:
+        """Also write state to `path` on every save (lets result_dir hold a
+        discoverable copy that Load Previous Session can find)."""
+        mirror = Path(path)
+        if mirror == self.state_file or mirror in self._mirror_paths:
+            return
+        self._mirror_paths.append(mirror)
+
+    def clear_mirror_paths(self) -> None:
+        self._mirror_paths.clear()
 
     def load(self):
         try:
