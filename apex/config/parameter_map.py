@@ -457,6 +457,12 @@ LC_ONLY_TOML_KEY_MAP: tuple[tuple[tuple[str, ...], str], ...] = (
     (('extinction_fit', 'color_index_by_filter'), 'extfit_color_index_by_filter'),
     (('extinction_fit', 'color_c1_by_filter'), 'extfit_color_c1_by_filter'),
     (('extinction_fit', 'color_c2_by_filter'), 'extfit_color_c2_by_filter'),
+    # Keys read by the shared Extinction (Airmass Fit) tool — available in LC mode
+    # too (registry modes default to cmd+lc). These were over-eagerly moved to
+    # CMD_ONLY; restore them for LC so parameters.toml values are honored there.
+    (('cmd', 'snr_calib_min'), 'cmd_snr_calib_min'),
+    (('cmd', 'zp', 'clip_sigma'), 'zp_clip_sigma'),
+    (('cmd', 'zp', 'fit_iters'), 'zp_fit_iters'),
 )
 
 # ── Canonical composed maps — callers must use these ─────────────────────────
