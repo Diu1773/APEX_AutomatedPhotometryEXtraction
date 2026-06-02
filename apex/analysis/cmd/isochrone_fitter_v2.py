@@ -1,11 +1,16 @@
 """
-Isochrone Fitting Module v2 - Improved accuracy
+Isochrone Fitting Module v2
 
-Key improvements over v1:
-1. Bilinear interpolation between isochrone grid points
-2. Perpendicular distance to isochrone curve (not nearest point)
-3. IMF-weighted likelihood (accounts for stellar mass function)
-4. Proper chi² with consistent error propagation
+Fits (log_age, [M/H], distance_mod, E(color)) to an observed CMD using:
+- Nearest grid-point lookup (argmin on precomputed age/metallicity arrays)
+- KD-tree nearest-neighbour distance in error-normalised CMD space
+- chi²-like objective: sum of squared (Δcol/σ_col)² + (Δmag/σ_mag)² for the
+  closest ``fit_fraction`` of stars (robust against field-star contamination)
+- Optional EM membership weighting across multiple fit rounds
+
+Note: bilinear interpolation between grid points and perpendicular-distance
+computation are not yet implemented.  ``_imf_weight`` is defined but unused
+(kept for future IMF-likelihood extension).
 
 Author: KNUEMAO Pipeline
 """
@@ -64,6 +69,9 @@ class FitResult:
     fit_mode: str = "fast"
     elapsed_sec: float = 0.0
     converged: bool = True
+    extinction_label: str = "E(g-r)"
+    color_label: str = "g-r"
+    mag_label: str = "g"
 
     @property
     def age_gyr(self) -> float:
@@ -101,10 +109,14 @@ class FitResult:
         else:
             lines.append(f"  (m-M)    = {self.distance_mod:.3f}  ({self.distance_pc:.0f} pc)")
 
+        e_label = self.extinction_label or "E(color)"
         if self.extinction_gr_err:
-            lines.append(f"  E(g-r)   = {self.extinction_gr:.4f} ± {self.extinction_gr_err:.4f}")
+            lines.append(f"  {e_label:<8s} = {self.extinction_gr:.4f} ± {self.extinction_gr_err:.4f}")
         else:
-            lines.append(f"  E(g-r)   = {self.extinction_gr:.4f}")
+            lines.append(f"  {e_label:<8s} = {self.extinction_gr:.4f}")
+
+        if self.color_label or self.mag_label:
+            lines.append(f"  CMD axes : color={self.color_label}, mag={self.mag_label}")
 
         lines.extend([
             "",
@@ -149,9 +161,7 @@ class GridScanResult:
 
 
 class IsochroneFitterV2:
-    """
-    Improved Isochrone Fitter with interpolation and perpendicular distance.
-    """
+    """KD-tree based isochrone fitter (nearest grid-point, error-normalised CMD space)."""
 
     # Extinction coefficients R_band = A_band / E(B-V) (Cardelli+1989)
     # Shared with step12 via EXTINCTION_R; kept here for internal use.
@@ -166,11 +176,15 @@ class IsochroneFitterV2:
         col_g: int = 29,
         col_r: int = 30,
         col_mag: Optional[int] = None,
-        col_mass: int = 5,  # Initial mass column for IMF weighting
+        col_mass: int = 5,
         fit_fraction: float = 0.7,
         R_band1: float = 3.303,
         R_band2: float = 2.285,
         R_mag: Optional[float] = None,
+        iso_data: Optional[np.ndarray] = None,
+        use_imf_weight: bool = False,
+        use_bilinear: bool = True,
+        bilinear_n_points: int = 200,
     ):
         self.iso_file = Path(isochrone_file)
         self.COL_MH = col_mh
@@ -181,20 +195,29 @@ class IsochroneFitterV2:
         # mag band can be independent from color bands.
         self.COL_MAG = int(col_mag) if col_mag is not None else int(col_g)
         self.COL_MASS = col_mass
-        self.fit_fraction = fit_fraction
+        self.fit_fraction    = fit_fraction
+        self.use_imf_weight  = bool(use_imf_weight)
+        self.use_bilinear    = bool(use_bilinear)
+        self.bilinear_n_pts  = max(50, int(bilinear_n_points))
         self.R_1 = R_band1
         self.R_2 = R_band2
         self.R_MAG = float(R_mag) if R_mag is not None else float(R_band1)
 
-        self.iso_data = self._load_isochrone()
+        self.iso_data = self._load_isochrone() if iso_data is None else self._clean_isochrone_data(iso_data)
+        self._validate_isochrone_columns()
 
         # Build grid structure
-        self.ages = np.unique(self.iso_data[:, self.COL_AGE])
-        self.metallicities = np.unique(self.iso_data[:, self.COL_MH])
+        self.ages = np.unique(np.round(self.iso_data[:, self.COL_AGE], 2))
+        self.metallicities = np.unique(np.round(self.iso_data[:, self.COL_MH], 2))
 
         # Pre-compute isochrone curves for each (age, mh) combination
         self._iso_cache: Dict[Tuple[float, float], np.ndarray] = {}
         self._build_iso_cache()
+
+        # Pre-extracted column cache: key -> (raw_color, raw_mag, mass)
+        # Avoids repeated 2D array slicing in the inner objective loop.
+        self._col_cache: Dict[Tuple[float, float], Tuple[np.ndarray, np.ndarray, np.ndarray]] = {}
+        self._build_col_cache()
 
         # Fitting state
         self.progress_callback: Optional[Callable[[float, str], None]] = None
@@ -206,22 +229,67 @@ class IsochroneFitterV2:
 
     def _load_isochrone(self) -> np.ndarray:
         data = np.genfromtxt(self.iso_file, comments='#')
-        data = data[~np.isnan(data).any(axis=1)]
-        return data
+        return self._clean_isochrone_data(data)
+
+    @staticmethod
+    def _clean_isochrone_data(data: np.ndarray) -> np.ndarray:
+        arr = np.asarray(data, dtype=float)
+        if arr.ndim == 1:
+            arr = arr.reshape(1, -1)
+        if arr.ndim != 2:
+            raise ValueError("Isochrone data must be a 2D numeric array")
+        if arr.size == 0:
+            return arr
+        return arr[~np.isnan(arr).any(axis=1)]
+
+    def _validate_isochrone_columns(self) -> None:
+        if self.iso_data.size == 0:
+            raise ValueError("Isochrone file is empty")
+        max_col = max(self.COL_MH, self.COL_AGE, self.COL_G, self.COL_R, self.COL_MAG, self.COL_MASS)
+        if self.iso_data.shape[1] <= max_col:
+            raise ValueError(
+                f"Isochrone data has {self.iso_data.shape[1]} columns, "
+                f"but column index {max_col} is required"
+            )
 
     def _build_iso_cache(self):
-        """Pre-cache isochrone data for each grid point"""
-        for age in self.ages:
-            for mh in self.metallicities:
-                mask = (
-                    (np.abs(self.iso_data[:, self.COL_AGE] - age) < 0.01) &
-                    (np.abs(self.iso_data[:, self.COL_MH] - mh) < 0.01)
-                )
-                iso_sub = self.iso_data[mask]
-                if len(iso_sub) > 10:
-                    # Sort by magnitude (evolutionary sequence)
-                    sort_idx = np.argsort(iso_sub[:, self.COL_MAG])
-                    self._iso_cache[(round(age, 2), round(mh, 2))] = iso_sub[sort_idx]
+        """Pre-cache isochrone data for each grid point."""
+        if len(self.iso_data) == 0:
+            return
+
+        rounded_ages = np.round(self.iso_data[:, self.COL_AGE], 2)
+        rounded_mhs = np.round(self.iso_data[:, self.COL_MH], 2)
+        order = np.lexsort((self.iso_data[:, self.COL_MAG], rounded_mhs, rounded_ages))
+
+        self.iso_data = self.iso_data[order]
+        rounded_ages = rounded_ages[order]
+        rounded_mhs = rounded_mhs[order]
+
+        group_breaks = (
+            (rounded_ages[1:] != rounded_ages[:-1])
+            | (rounded_mhs[1:] != rounded_mhs[:-1])
+        )
+        bounds = np.concatenate(([0], np.flatnonzero(group_breaks) + 1, [len(self.iso_data)]))
+
+        for start, stop in zip(bounds[:-1], bounds[1:]):
+            if stop - start > 10:
+                key = (float(rounded_ages[start]), float(rounded_mhs[start]))
+                self._iso_cache[key] = self.iso_data[start:stop]
+
+    def _build_col_cache(self) -> None:
+        """Pre-extract band columns for every cached (age, mh) grid point.
+
+        Stores (raw_color, raw_mag, mass) with validity masking already applied,
+        so ``_interpolate_isochrone`` only needs to apply dm/E(color) offsets.
+        """
+        for key, iso_data in self._iso_cache.items():
+            b1   = iso_data[:, self.COL_G].copy()
+            b2   = iso_data[:, self.COL_R].copy()
+            mag  = iso_data[:, self.COL_MAG].copy()
+            mass = iso_data[:, self.COL_MASS].copy()
+            valid = np.isfinite(b1) & np.isfinite(b2) & np.isfinite(mag) & np.isfinite(mass)
+            if valid.sum() >= 10:
+                self._col_cache[key] = (b1[valid] - b2[valid], mag[valid], mass[valid])
 
     def _get_nearby_isochrones(self, log_age: float, mh: float) -> List[Tuple[float, float, np.ndarray]]:
         """Get up to 4 nearest isochrones for interpolation"""
@@ -244,46 +312,113 @@ class IsochroneFitterV2:
 
         return nearby
 
+    def _apply_extinction(
+        self, raw_color: np.ndarray, raw_mag: np.ndarray,
+        dm: float, e_gr: float,
+    ) -> Tuple[np.ndarray, np.ndarray]:
+        """Apply distance modulus and Cardelli extinction to raw columns."""
+        E_BV  = e_gr / (self.R_1 - self.R_2)
+        A_mag = self.R_MAG * E_BV
+        return raw_color + e_gr, raw_mag + dm + A_mag
+
+    def _interpolate_nearest(
+        self, log_age: float, mh: float, dm: float, e_gr: float
+    ) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
+        """Nearest grid-point lookup (fast fallback)."""
+        age_idx = np.argmin(np.abs(self.ages - log_age))
+        mh_idx  = np.argmin(np.abs(self.metallicities - mh))
+        key = (round(float(self.ages[age_idx]), 2),
+               round(float(self.metallicities[mh_idx]), 2))
+        raw = self._col_cache.get(key)
+        if raw is None:
+            return np.array([]), np.array([]), np.array([])
+        raw_color, raw_mag, mass = raw
+        color, mag = self._apply_extinction(raw_color, raw_mag, dm, e_gr)
+        return color, mag, mass
+
+    def _interpolate_bilinear(
+        self, log_age: float, mh: float, dm: float, e_gr: float
+    ) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
+        """Bilinear interpolation across the 4 bracketing (age, [M/H]) grid points.
+
+        Uses initial stellar mass as the common parameterisation axis so that
+        evolutionary stage is matched correctly between isochrones at different
+        ages/metallicities.  Falls back to nearest-grid if any corner is absent
+        or the mass ranges do not overlap sufficiently.
+        """
+        # ── Bracketing grid points ──────────────────────────────────────────
+        ai = np.searchsorted(self.ages, log_age)
+        age_lo = self.ages[max(0, ai - 1)]
+        age_hi = self.ages[min(len(self.ages) - 1, ai)]
+
+        mi = np.searchsorted(self.metallicities, mh)
+        mh_lo = self.metallicities[max(0, mi - 1)]
+        mh_hi = self.metallicities[min(len(self.metallicities) - 1, mi)]
+
+        # Bilinear weights in (age, mh) space
+        t_age = float(np.clip(
+            (log_age - age_lo) / (age_hi - age_lo) if age_hi > age_lo else 0.0,
+            0.0, 1.0,
+        ))
+        t_mh = float(np.clip(
+            (mh - mh_lo) / (mh_hi - mh_lo) if mh_hi > mh_lo else 0.0,
+            0.0, 1.0,
+        ))
+
+        # ── Load all 4 corners ──────────────────────────────────────────────
+        corners: dict[tuple, tuple] = {}
+        for a in (age_lo, age_hi):
+            for m in (mh_lo, mh_hi):
+                key = (round(float(a), 2), round(float(m), 2))
+                raw = self._col_cache.get(key)
+                if raw is not None:
+                    corners[(a, m)] = raw
+
+        if len(corners) < 4:
+            return self._interpolate_nearest(log_age, mh, dm, e_gr)
+
+        # ── Common mass grid (intersection of all 4 mass ranges) ───────────
+        mass_lo = max(raw[2][0]  for raw in corners.values())
+        mass_hi = min(raw[2][-1] for raw in corners.values())
+        if mass_hi <= mass_lo + 1e-6:
+            return self._interpolate_nearest(log_age, mh, dm, e_gr)
+
+        mass_grid = np.linspace(mass_lo, mass_hi, self.bilinear_n_pts)
+
+        def _resample(raw: tuple) -> Tuple[np.ndarray, np.ndarray]:
+            rc, rm, ms = raw
+            order = np.argsort(ms)
+            return (np.interp(mass_grid, ms[order], rc[order]),
+                    np.interp(mass_grid, ms[order], rm[order]))
+
+        c_lolo, g_lolo = _resample(corners[(age_lo, mh_lo)])
+        c_hilo, g_hilo = _resample(corners[(age_hi, mh_lo)])
+        c_lohi, g_lohi = _resample(corners[(age_lo, mh_hi)])
+        c_hihi, g_hihi = _resample(corners[(age_hi, mh_hi)])
+
+        # ── Bilinear combination ────────────────────────────────────────────
+        w00 = (1 - t_age) * (1 - t_mh)
+        w10 = t_age        * (1 - t_mh)
+        w01 = (1 - t_age) * t_mh
+        w11 = t_age        * t_mh
+
+        raw_color = w00 * c_lolo + w10 * c_hilo + w01 * c_lohi + w11 * c_hihi
+        raw_mag   = w00 * g_lolo + w10 * g_hilo + w01 * g_lohi + w11 * g_hihi
+
+        color, mag = self._apply_extinction(raw_color, raw_mag, dm, e_gr)
+        return color, mag, mass_grid
+
     def _interpolate_isochrone(
         self, log_age: float, mh: float, dm: float, e_gr: float
     ) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
+        """Return (color, mag, mass) with extinction/distance applied.
+
+        Uses bilinear interpolation between grid points when ``use_bilinear=True``
+        (default); falls back to nearest-grid when corners are unavailable.
         """
-        Get isochrone CMD coordinates using nearest grid point.
-        Fast version - no interpolation between grid points.
-        Returns (color, mag, mass) arrays.
-        """
-        # Find nearest age and metallicity in grid
-        age_idx = np.argmin(np.abs(self.ages - log_age))
-        mh_idx = np.argmin(np.abs(self.metallicities - mh))
-
-        nearest_age = self.ages[age_idx]
-        nearest_mh = self.metallicities[mh_idx]
-
-        key = (round(nearest_age, 2), round(nearest_mh, 2))
-
-        if key not in self._iso_cache:
-            return np.array([]), np.array([]), np.array([])
-
-        iso_data = self._iso_cache[key]
-
-        band1 = iso_data[:, self.COL_G]
-        band2 = iso_data[:, self.COL_R]
-        mag_band = iso_data[:, self.COL_MAG]
-        mass = iso_data[:, self.COL_MASS]
-
-        # Apply extinction and distance modulus
-        E_BV = e_gr / (self.R_1 - self.R_2)
-        A_1 = self.R_1 * E_BV
-        A_2 = self.R_2 * E_BV
-        A_mag = self.R_MAG * E_BV
-
-        b1_obs = band1 + dm + A_1
-        b2_obs = band2 + dm + A_2
-        mag_obs = mag_band + dm + A_mag
-        color = b1_obs - b2_obs
-
-        valid = np.isfinite(color) & np.isfinite(mag_obs)
-        return color[valid], mag_obs[valid], mass[valid]
+        if self.use_bilinear:
+            return self._interpolate_bilinear(log_age, mh, dm, e_gr)
+        return self._interpolate_nearest(log_age, mh, dm, e_gr)
 
     def _fast_distance(
         self,
@@ -292,63 +427,69 @@ class IsochroneFitterV2:
         obs_color_err: np.ndarray,
         obs_mag_err: np.ndarray,
         iso_color: np.ndarray,
-        iso_mag: np.ndarray
-    ) -> np.ndarray:
-        """
-        Fast distance computation using KD-tree with error normalization.
-        Normalizes CMD space by typical errors before computing distances.
+        iso_mag: np.ndarray,
+    ) -> Tuple[np.ndarray, np.ndarray]:
+        """KD-tree nearest-neighbour distance in error-normalised CMD space.
+
+        Returns
+        -------
+        chi_dist : (N,) array of error-normalised distances per observed star
+        iso_idx  : (N,) integer array of matched isochrone point indices
         """
         if len(iso_color) < 2:
-            return np.full(len(obs_color), np.inf)
+            inf = np.full(len(obs_color), np.inf)
+            return inf, np.zeros(len(obs_color), dtype=int)
 
-        # Normalize by median errors for balanced color/mag weighting
         color_scale = max(np.median(obs_color_err), 1e-6)
-        mag_scale = max(np.median(obs_mag_err), 1e-6)
+        mag_scale   = max(np.median(obs_mag_err),   1e-6)
 
-        # Normalized isochrone points
-        iso_pts = np.column_stack([
-            iso_color / color_scale,
-            iso_mag / mag_scale
-        ])
+        iso_pts = np.column_stack([iso_color / color_scale, iso_mag / mag_scale])
+        obs_pts = np.column_stack([obs_color / color_scale, obs_mag / mag_scale])
 
-        # Normalized observed points
-        obs_pts = np.column_stack([
-            obs_color / color_scale,
-            obs_mag / mag_scale
-        ])
-
-        # KD-tree for fast nearest neighbor
         tree = cKDTree(iso_pts)
-        dist, idx = tree.query(obs_pts)
+        _, iso_idx = tree.query(obs_pts)
 
-        # Scale back and normalize by individual errors
-        closest_iso_c = iso_color[idx]
-        closest_iso_m = iso_mag[idx]
+        closest_iso_c = iso_color[iso_idx]
+        closest_iso_m = iso_mag[iso_idx]
 
-        # Chi-like distance normalized by individual errors
         dist_c = (obs_color - closest_iso_c) / obs_color_err
-        dist_m = (obs_mag - closest_iso_m) / obs_mag_err
-        chi_dist = np.sqrt(dist_c**2 + dist_m**2)
+        dist_m = (obs_mag   - closest_iso_m) / obs_mag_err
+        chi_dist = np.sqrt(dist_c ** 2 + dist_m ** 2)
 
-        return chi_dist
+        return chi_dist, iso_idx
 
     def _imf_weight(self, mass: np.ndarray) -> np.ndarray:
-        """
-        IMF weighting - Kroupa IMF.
-        More massive (brighter) stars are rarer.
-        """
-        # Kroupa IMF: dN/dM ∝ M^(-alpha)
-        # alpha = 1.3 for M < 0.5, alpha = 2.3 for M >= 0.5
-        weights = np.ones_like(mass)
-        low_mass = mass < 0.5
-        high_mass = mass >= 0.5
+        """Kroupa (2001) IMF probability density for each mass value.
 
-        weights[low_mass] = mass[low_mass] ** (-1.3)
-        weights[high_mass] = 0.5 ** (-1.3) * (mass[high_mass] / 0.5) ** (-2.3)
+        Returns normalised weights (sum = 1) proportional to dN/dM so that
+        stars at densely-populated evolutionary stages (main sequence) receive
+        higher weight in the chi² objective when ``use_imf_weight=True``.
 
-        # Normalize
-        weights /= np.sum(weights)
+        Stars below 0.08 M☉ (brown-dwarf regime) are assigned zero weight.
+        """
+        mass = np.asarray(mass, dtype=float)
+        weights = np.zeros_like(mass)
+        valid = mass >= 0.08
+        m = mass[valid]
+        w = np.where(m < 0.5,
+                     m ** (-1.3),
+                     0.5 ** (-1.3) * (m / 0.5) ** (-2.3))
+        weights[valid] = w
+        total = weights.sum()
+        if total > 0:
+            weights /= total
         return weights
+
+    def _effective_dof(self, n_stars: int) -> int:
+        """Degrees of freedom matching the chi2 sample size.
+
+        ``_objective`` sums squared distances over only the closest
+        ``fit_fraction`` of stars (``n_use``), so reduced_chi2 must divide by
+        that same subset size minus the 4 fit parameters — not the full
+        ``n_stars`` — otherwise reduced_chi2 is systematically under-estimated.
+        """
+        n_use = min(int(n_stars), max(20, int(n_stars * self.fit_fraction)))
+        return max(1, n_use - 4)
 
     def _objective(self, params: np.ndarray) -> float:
         """
@@ -367,27 +508,36 @@ class IsochroneFitterV2:
             obs_c_err = self._fit_err[:, 0]
             obs_m_err = self._fit_err[:, 1]
 
-            # Fast KD-tree based distance (chi-like, normalized by errors)
-            dist = self._fast_distance(
+            # KD-tree distance in error-normalised CMD space
+            dist, iso_idx = self._fast_distance(
                 obs_c, obs_m, obs_c_err, obs_m_err, iso_c, iso_m
             )
 
             # Robust: use only closest fraction
             n_use = max(20, int(len(dist) * self.fit_fraction))
-            sorted_idx = np.argsort(dist)
+            sorted_idx  = np.argsort(dist)
             closest_idx = sorted_idx[:n_use]
 
-            # Chi² = sum of squared normalized distances
-            # Optional robust weighting for iterative membership refinement.
+            # Base weights: membership (EM) if available, else uniform
             weights = self._fit_weight
             if weights is not None and len(weights) == len(dist):
                 w = np.asarray(weights, dtype=float)[closest_idx]
                 w = np.clip(w, 1e-3, None)
-                # Normalize weights so chi2 scale stays comparable across EM rounds.
-                chi2 = np.sum((dist[closest_idx] ** 2) * w) * (len(w) / np.sum(w))
+                w = w / w.mean()   # normalize so scale is comparable across EM rounds
             else:
-                chi2 = np.sum(dist[closest_idx] ** 2)
+                w = np.ones(len(closest_idx), dtype=float)
 
+            # Optional IMF weighting: upweight stars near populous CMD stages.
+            # Each observed star is weighted by the Kroupa IMF density at the
+            # nearest matched isochrone mass — scaled so the mean weight stays 1.
+            if self.use_imf_weight and len(iso_mass) > 0:
+                matched_mass = iso_mass[iso_idx[closest_idx]]
+                imf_w = self._imf_weight(matched_mass)
+                # _imf_weight normalises by sum; rescale to mean=1 for chi² stability
+                imf_w = imf_w * len(imf_w) / max(imf_w.sum(), 1e-30)
+                w = w * imf_w
+
+            chi2 = np.sum((dist[closest_idx] ** 2) * w) * (len(w) / max(w.sum(), 1e-30))
             return chi2
 
         except Exception:
@@ -527,7 +677,7 @@ class IsochroneFitterV2:
             self.progress_callback(1.0, "Complete")
 
         chi2 = result.fun
-        dof = max(1, n_stars - 4)
+        dof = self._effective_dof(n_stars)
 
         return FitResult(
             log_age=result.x[0],
@@ -691,7 +841,10 @@ class IsochroneFitterV2:
                         hess_inv = np.array(best_local_result.hess_inv.todense())
                     else:
                         hess_inv = np.array(best_local_result.hess_inv)
-                    errors = np.sqrt(np.abs(np.diag(hess_inv)))
+                    # Objective is χ², so Hessian H ≈ 2·F (Fisher info) ⇒ Cov ≈ 2·H⁻¹.
+                    # L-BFGS-B's hess_inv is also a BFGS approximation; treat as
+                    # an order-of-magnitude estimate only.
+                    errors = np.sqrt(np.abs(2.0 * np.diag(hess_inv)))
                 except Exception:
                     pass
             selected_source = best_local_source or "local"
@@ -711,7 +864,7 @@ class IsochroneFitterV2:
             original_callback(0.98, f"Selected {selected_source} | chi2={chi2:.2f}")
             original_callback(1.0, "Complete")
 
-        dof = max(1, n_stars - 4)
+        dof = self._effective_dof(n_stars)
         return FitResult(
             log_age=float(best_x[0]),
             metallicity=float(best_x[1]),
@@ -731,7 +884,7 @@ class IsochroneFitterV2:
     # -----------------------------------------------------------------
 
     def _grid_objective_2p(self, params_2p: np.ndarray, age: float, mh: float) -> float:
-        """2-parameter wrapper: optimize (DM, E(g-r)) for fixed (age, mh)."""
+        """2-parameter wrapper: optimize (DM, E(color)) for fixed (age, mh)."""
         dm, e_gr = params_2p
         return self._objective(np.array([age, mh, dm, e_gr]))
 
@@ -847,11 +1000,11 @@ class IsochroneFitterV2:
                     hess_inv = np.array(ref.hess_inv.todense())
                 else:
                     hess_inv = np.array(ref.hess_inv)
-                errors = list(np.sqrt(np.abs(np.diag(hess_inv))))
+                errors = list(np.sqrt(np.abs(2.0 * np.diag(hess_inv))))
         except Exception:
             pass
 
-        dof = max(1, n_stars - 4)
+        dof = self._effective_dof(n_stars)
         best_fit = FitResult(
             log_age=best_age,
             metallicity=best_mh,
