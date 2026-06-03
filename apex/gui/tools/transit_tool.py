@@ -132,11 +132,12 @@ from matplotlib.figure import Figure
 from PyQt5.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QFormLayout, QGroupBox,
     QPushButton, QLabel, QLineEdit, QDoubleSpinBox, QSpinBox,
-    QCheckBox, QTabWidget, QTextEdit, QTableWidget, QTableWidgetItem,
+    QCheckBox, QComboBox, QTabWidget, QTextEdit, QTableWidget, QTableWidgetItem,
     QHeaderView, QFileDialog, QSplitter, QMessageBox,
 )
 from PyQt5.QtCore import Qt, QThread, pyqtSignal
 
+from apex.gui.tools.tool_window_base import ToolWindowBase
 from apex.gui.workflow.lc.step11_period_analysis import PeriodAnalysisWorker
 
 
@@ -491,13 +492,15 @@ class MCMCWorker(QThread):
 # Main window
 # ---------------------------------------------------------------------------
 
-class TransitToolWindow(QWidget):
+class TransitToolWindow(ToolWindowBase):
     """Exoplanet Transit Analysis Tool."""
 
     def __init__(self, params, project_state, parent=None):
-        super().__init__(parent)
-        self.params = params
-        self.project_state = project_state
+        super().__init__(
+            "Exoplanet Transit Analysis",
+            params=params, project_state=project_state,
+            parent=parent, min_size=(1050, 720),
+        )
         self.lc_data: Optional[dict] = None
         self.series_options: dict[str, dict] = {}
         self.prior_params: dict = {
@@ -512,7 +515,6 @@ class TransitToolWindow(QWidget):
         self._mcmc_worker: Optional[MCMCWorker] = None
         self.workspace_dir = Path(self.params.P.result_dir)
 
-        self.setWindowTitle("Exoplanet Transit Analysis")
         self.resize(1300, 850)
         self._build_ui()
         self._load_lc_from_workspace()
@@ -522,13 +524,12 @@ class TransitToolWindow(QWidget):
     # ------------------------------------------------------------------
 
     def _build_ui(self):
-        root = QVBoxLayout(self)
+        root = self.content_layout
 
         header = QLabel(
-            "<b>Exoplanet Transit Analysis</b> — load transit light curve → fetch prior "
-            "parameters (NASA/ExoClock) → batman model fit → optional MCMC → O-C timing"
+            "Load LC → fetch priors (NASA/ExoClock) → batman fit → optional MCMC → O-C"
         )
-        header.setStyleSheet("QLabel { background: #E8F5E9; padding: 8px; border-radius: 4px; }")
+        header.setStyleSheet("QLabel { color: #666; font-size: 9pt; }")
         header.setWordWrap(True)
         root.addWidget(header)
 

@@ -22,6 +22,7 @@ from matplotlib.backends.backend_qt5agg import NavigationToolbar2QT as Navigatio
 from matplotlib.figure import Figure
 
 from apex.core.file_manager import FileManager
+from apex.gui.tools.tool_window_base import ToolWindowBase
 from apex.utils.astro_utils import (
     AIRMASS_FORMULAS,
     DEFAULT_AIRMASS_FORMULA,
@@ -149,27 +150,26 @@ def _extract_date_key(filename: str, params=None) -> str:
     return date_key or "unknown_date"
 
 
-class AirmassHeaderDebugToolWindow(QWidget):
+class AirmassHeaderDebugToolWindow(ToolWindowBase):
     """Plot header AIRMASS vs computed values by date."""
 
     def __init__(self, params, project_state, parent=None, file_manager: FileManager | None = None):
-        super().__init__(parent)
-        self.params = params
-        self.project_state = project_state
+        super().__init__(
+            "Airmass Header Debug",
+            params=params, project_state=project_state,
+            parent=parent, min_size=(900, 600),
+        )
         self.file_manager = file_manager or FileManager(params)
         self._init_path_map()
         self.data_df = pd.DataFrame()
 
-        self.setWindowTitle("Airmass Header Debug")
-        self.setWindowFlag(Qt.Window, True)
         self.resize(1100, 700)
-        self.setMinimumSize(900, 600)
 
         self._setup_ui()
         self._load_data()
 
     def _setup_ui(self):
-        layout = QVBoxLayout(self)
+        layout = self.content_layout
 
         controls = QGroupBox("Controls")
         controls_layout = QHBoxLayout(controls)

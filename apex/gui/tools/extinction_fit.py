@@ -34,6 +34,8 @@ from apex.analysis.extinction import (
     robust_linfit,
     robust_weighted_linfit,
 )
+from apex.gui.tools.tool_window_base import ToolWindowBase
+from apex.gui.workflow.log_panel import show_raised
 from apex.gui.widgets.fits_viewer import FITSViewerWidget, OverlayMarker
 from apex.utils.astro_utils import compute_airmass_from_header
 from apex.utils.common_helpers import normalize_filter_key
@@ -1971,14 +1973,16 @@ class ExtinctionFitWorker(QThread):
             self.error.emit(str(e))
 
 
-class ExtinctionFitWindow(QWidget):
+class ExtinctionFitWindow(ToolWindowBase):
     """Per-star Bouguer extinction tool with image-based star selection."""
 
     _DATE_KEY_RE = re.compile(r"(20\d{6})")
 
     def __init__(self, params, data_dir: Path, result_dir: Path, parent=None):
-        super().__init__(parent)
-        self.params = params
+        super().__init__(
+            "Atmospheric Extinction Fit Tool",
+            params=params, parent=parent, min_size=(1180, 820),
+        )
         self.data_dir = Path(data_dir)
         self.result_dir = Path(result_dir)
         self.worker = None
@@ -2005,20 +2009,13 @@ class ExtinctionFitWindow(QWidget):
         self._selection_panning = False
         self._selection_pan_start = None
 
-        self.setWindowTitle("Atmospheric Extinction Fit Tool")
         self.resize(1440, 960)
-        self.setMinimumSize(1180, 820)
 
-        layout = QVBoxLayout(self)
+        layout = self.content_layout
 
-        info = QLabel(
-            "Atmospheric extinction coefficient tool.\n"
-            "Load Step 7 forced photometry, choose stable stars per date/filter on the image, "
-            "and run per-star Bouguer fits to measure k1."
-        )
-        info.setStyleSheet("QLabel { background-color: #E3F2FD; padding: 8px; border-radius: 5px; }")
-        layout.addWidget(info)
-
+        # One compact control row (no separate bottom action bar): the fit
+        # method plus the unified Parameters / Log buttons. Run actions stay
+        # in their own tabs (Load Step 7 / Run Fit) — no duplicate buttons.
         settings_group = QGroupBox("Tool")
         settings_layout = QHBoxLayout(settings_group)
         settings_layout.addWidget(QLabel("Fit method:"))
@@ -2030,13 +2027,35 @@ class ExtinctionFitWindow(QWidget):
         self.fit_mode_combo.currentIndexChanged.connect(self._on_fit_mode_changed)
         settings_layout.addWidget(self.fit_mode_combo)
         settings_layout.addStretch()
-        btn_params = QPushButton("Parameters")
-        btn_params.setStyleSheet(
-            "QPushButton { background-color: #9C27B0; color: white; "
-            "font-weight: bold; padding: 6px 12px; }"
+
+        # Log lives in a popup so it doesn't clutter the window; self.log_text
+        # is aliased to it so existing self.log(...) calls keep working.
+        self._log_window = QWidget(self, Qt.Window)
+        self._log_window.setWindowTitle("Extinction — Log")
+        self._log_window.resize(700, 360)
+        _log_lay = QVBoxLayout(self._log_window)
+        self._log_text = QTextEdit()
+        self._log_text.setReadOnly(True)
+        self._log_text.setStyleSheet("QTextEdit { font-family: monospace; font-size: 9pt; }")
+        _log_lay.addWidget(self._log_text)
+        self.log_text = self._log_text
+
+        _ctl_qss = (
+            "QPushButton { background-color: #ECEFF1; color: #263238;"
+            " border: 1px solid #B0BEC5; border-radius: 5px;"
+            " font-weight: bold; padding: 5px 12px; }"
+            "QPushButton:hover { background-color: #CFD8DC; }"
         )
+        btn_params = QPushButton("⚙ 파라미터")
+        btn_params.setStyleSheet(_ctl_qss)
+        btn_params.setToolTip("Tool parameters")
         btn_params.clicked.connect(self.open_parameters_dialog)
         settings_layout.addWidget(btn_params)
+        btn_log = QPushButton("📜 Log")
+        btn_log.setStyleSheet(_ctl_qss)
+        btn_log.setToolTip("처리 로그 보기")
+        btn_log.clicked.connect(lambda: show_raised(self._log_window))
+        settings_layout.addWidget(btn_log)
         layout.addWidget(settings_group)
 
         layout.addWidget(self._build_status_panel())
@@ -2049,27 +2068,17 @@ class ExtinctionFitWindow(QWidget):
         self.tabs.addTab(self.selection_tab, "Selection")
         self.tabs.addTab(self._build_fit_tab(), "Extinction Fit")
 
-        log_group = QGroupBox("Log")
-        log_layout = QVBoxLayout(log_group)
-        self.log_text = QTextEdit()
-        self.log_text.setReadOnly(True)
-        self.log_text.setMaximumHeight(140)
-        self.log_text.setStyleSheet("QTextEdit { font-family: monospace; font-size: 9pt; }")
-        log_layout.addWidget(self.log_text)
-        layout.addWidget(log_group)
         self._refresh_status_cards()
 
     def _build_status_panel(self) -> QGroupBox:
         group = QGroupBox("Status")
         grid = QGridLayout(group)
+        # Only the essentials — workspace, whether Step 7 is cached, and the
+        # selection state. Filters/Airmass/Method/Fit-result were noise.
         specs = [
             ("workspace", "Workspace"),
             ("cache", "Step 7 Cache"),
-            ("filters", "Filters"),
-            ("airmass", "Airmass"),
             ("selection", "Selection"),
-            ("method", "Method"),
-            ("fit", "Fit Result"),
         ]
         for idx, (key, title) in enumerate(specs):
             label = QLabel(f"<b>{title}</b><br>Not checked")
@@ -2203,11 +2212,8 @@ class ExtinctionFitWindow(QWidget):
         tab = QWidget()
         layout = QVBoxLayout(tab)
 
-        info = QLabel(
-            "Load and cache Step 7 forced photometry + frame airmass from the selected workspace.\n"
-            "The cached table is reused by the selection tab and the Bouguer fit."
-        )
-        info.setStyleSheet("QLabel { background-color: #E3F2FD; padding: 8px; border-radius: 5px; }")
+        info = QLabel("Load & cache Step 7 forced photometry from the selected workspace.")
+        info.setStyleSheet("QLabel { color: #666; font-size: 9pt; }")
         layout.addWidget(info)
 
         source_layout = QHBoxLayout()

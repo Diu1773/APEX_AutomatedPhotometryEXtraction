@@ -11,6 +11,8 @@ import sys
 import subprocess
 import tempfile
 import json
+import time
+import shutil
 try:
     import tomllib
 except ImportError:
@@ -27,20 +29,27 @@ from scipy.spatial import cKDTree
 from astropy.io import fits
 from astropy.stats import sigma_clipped_stats
 
+from apex.utils.constants import MAD_TO_SIGMA
+
 from matplotlib.backends.backend_qt5agg import FigureCanvasQTAgg as FigureCanvas
 from matplotlib.backends.backend_qt5agg import NavigationToolbar2QT as NavigationToolbar
 from matplotlib.figure import Figure
 
 from PyQt5.QtCore import Qt, QThread, pyqtSignal
-from PyQt5.QtGui import QKeySequence
+from PyQt5.QtGui import QColor, QKeySequence
 from PyQt5.QtWidgets import (
     QWidget, QMainWindow, QVBoxLayout, QHBoxLayout, QPushButton, QLabel,
     QTextEdit, QGroupBox, QFormLayout, QLineEdit, QDoubleSpinBox, QSpinBox,
     QFileDialog, QMessageBox, QProgressBar, QTabWidget, QComboBox,
     QCheckBox, QSplitter, QTableWidget, QTableWidgetItem, QScrollArea,
-    QFrame, QSlider, QShortcut, QDialog, QHeaderView
+    QFrame, QSlider, QShortcut, QDialog, QHeaderView, QGridLayout
 )
 
+from apex.gui.widgets.fits_viewer import FITSViewerWidget, OverlayMarker
+from apex.gui.workflow.run_control import RunControlBar
+from apex.gui.workflow.ui_helpers import create_cache_action_button, create_parameter_button
+from apex.utils.common_helpers import normalize_filter_key
+from apex.utils.step_paths import step4_dir, step7_forced_phot_dir
 from apex.utils.step_paths_lc import step2_cropped_dir
 
 
@@ -70,6 +79,105 @@ def wsl_to_windows_path(wsl_path: str) -> str:
     return wsl_path
 
 
+def _format_subprocess_output(text: str | None, max_chars: int = 4000) -> str:
+    out = str(text or "").strip()
+    if len(out) > max_chars:
+        out = out[-max_chars:]
+    return out
+
+
+def _iraf_runtime_cmd(is_windows: bool) -> list[str]:
+    return ["wsl", "python3"] if is_windows else ["python3"]
+
+
+def _unbuffered_python_cmd(runtime_cmd: list[str]) -> list[str]:
+    return list(runtime_cmd) + ["-u"]
+
+
+def _parse_probe_statuses(output: str) -> dict[str, tuple[str, str]]:
+    statuses: dict[str, tuple[str, str]] = {}
+    for raw in str(output or "").splitlines():
+        line = raw.strip()
+        if line.startswith("[CHECK-OK] "):
+            state = "ok"
+            payload = line[len("[CHECK-OK] "):]
+        elif line.startswith("[CHECK-FAIL] "):
+            state = "fail"
+            payload = line[len("[CHECK-FAIL] "):]
+        elif line.startswith("[CHECK-SKIP] "):
+            state = "warn"
+            payload = line[len("[CHECK-SKIP] "):]
+        else:
+            continue
+        key, _, message = payload.partition("|")
+        statuses[key.strip()] = (state, message.strip() or state.upper())
+    return statuses
+
+
+def _run_iraf_environment_probe(
+    runtime_cmd: list[str],
+    data_dir: str,
+    output_dir: str,
+    log_callback=None,
+    timeout: int = 30,
+) -> dict:
+    code = f"""
+import os
+import sys
+
+failed = False
+data_dir = {data_dir!r}
+output_dir = {output_dir!r}
+print(f"[CHECK-OK] runtime|Python: {{sys.executable}}")
+if not os.path.isdir(data_dir):
+    print(f"[CHECK-FAIL] data|Data directory is not visible: {{data_dir}}")
+    failed = True
+else:
+    print(f"[CHECK-OK] data|Data directory visible")
+try:
+    os.makedirs(output_dir, exist_ok=True)
+    print(f"[CHECK-OK] output|Output directory writable")
+except Exception as exc:
+    print(f"[CHECK-FAIL] output|{{type(exc).__name__}}: {{exc}}")
+    failed = True
+try:
+    from pyraf import iraf
+    print("[CHECK-OK] pyraf|PyRAF import OK")
+except Exception as exc:
+    iraf = None
+    print(f"[CHECK-FAIL] pyraf|{{type(exc).__name__}}: {{exc}}")
+    failed = True
+if iraf is None:
+    print("[CHECK-SKIP] daophot|Skipped because PyRAF import failed")
+else:
+    try:
+        iraf.noao(); iraf.digiphot(); iraf.daophot()
+        print("[CHECK-OK] daophot|IRAF DAOPHOT ready")
+    except Exception as exc:
+        print(f"[CHECK-FAIL] daophot|{{type(exc).__name__}}: {{exc}}")
+        failed = True
+sys.exit(1 if failed else 0)
+"""
+    proc = subprocess.run(
+        runtime_cmd + ["-c", code],
+        stdout=subprocess.PIPE,
+        stderr=subprocess.STDOUT,
+        timeout=timeout,
+        **_SUBPROCESS_TEXT_KWARGS,
+    )
+    out = _format_subprocess_output(proc.stdout)
+    if out and log_callback:
+        for line in out.splitlines():
+            log_callback(line)
+    return {
+        "ok": proc.returncode == 0,
+        "returncode": proc.returncode,
+        "output": out,
+        "statuses": _parse_probe_statuses(out),
+        "command": runtime_cmd + ["-c", "<probe>"],
+    }
+
+
 # ============================================================================
 # IRAF Parameter Dataclass-like storage
 # ============================================================================
@@ -82,8 +190,8 @@ class IRAFParameters:
         self.emission = True       # Emission features (True) or absorption (False)
         self.datamax = 60000.0     # Maximum good data value
         self.noise = "poisson"     # Noise model: poisson, constant, file
-        self.readnoise = 1.39      # CCD readout noise in electrons
-        self.epadu = 0.1           # Gain in electrons per ADU
+        self.readnoise = 2.5       # CCD readout noise in electrons
+        self.epadu = 0.689         # Gain in electrons per ADU
         self.exposure = "EXPTIME"  # Exposure time header keyword
         self.itime = 1.0           # Integration time (if not in header)
 
@@ -176,10 +284,20 @@ class IRAFParameters:
 PYRAF_SCRIPT_TEMPLATE = '''#!/usr/bin/env python3
 """Auto-generated PyRAF photometry script with filter-specific parameters"""
 
-from pyraf import iraf
-import os, glob, sys
+import os, glob, sys, time, shutil, atexit, signal
 import numpy as np
 
+try:
+    sys.stdout.reconfigure(line_buffering=True)
+except Exception:
+    pass
+
+def log(message):
+    print(message, flush=True)
+
+log("[INIT] Importing PyRAF...")
+from pyraf import iraf
+log("[INIT] Loading IRAF packages...")
 iraf.noao(); iraf.digiphot(); iraf.daophot()
 
 # =====================
@@ -189,13 +307,28 @@ DATA_DIR = "{data_dir}"
 OUTDIR = "{output_dir}"
 FILE_PATTERN = "{file_pattern}"
 SKIP_EXISTING = {skip_existing}
+USE_WSL_SCRATCH = {use_wsl_scratch}
+SCRATCH_ROOT = "{scratch_root}"
+SCRATCH_RUN_DIR_REQUESTED = "{scratch_run_dir}"
 
 # =====================
 # Filter config (from TOML)
 # =====================
 FILTER_PARAMS = {filter_params}
 FILTER_ALIASES = {filter_aliases}
+BUILTIN_FILTER_ALIASES = {{
+    "b": "B", "v": "V",
+    "rc": "R", "r_c": "R", "r_cousins": "R", "rj": "R", "r_j": "R",
+    "ic": "I", "i_c": "I", "i_cousins": "I", "ij": "I", "i_j": "I",
+    "bj": "B", "b_j": "B", "b_john": "B",
+    "vj": "V", "v_j": "V", "v_john": "V",
+    "sdss-g": "g", "sdss_g": "g", "g'": "g", "gprime": "g",
+    "sdss-r": "r", "sdss_r": "r", "r'": "r", "rprime": "r",
+    "sdss-i": "i", "sdss_i": "i", "i'": "i", "iprime": "i",
+}}
 PARAM_DEFAULTS = {param_defaults}
+APEX_FRAME_PARAMS = {apex_frame_params}
+USE_APEX_FRAME_PARAMS = {use_apex_frame_params}
 
 # =====================
 # Pixel scale
@@ -306,10 +439,30 @@ def get_header(im, key):
         return None
 
 def normalize_filter(val):
-    key = str(val).strip().lower()
+    raw = str(val).strip()
+    key = raw.lower()
     if key in FILTER_ALIASES:
-        return str(FILTER_ALIASES[key]).strip().lower()
-    return key
+        return str(FILTER_ALIASES[key]).strip()
+    if key in BUILTIN_FILTER_ALIASES:
+        return str(BUILTIN_FILTER_ALIASES[key]).strip()
+    return raw
+
+def filename_filter_tokens(im):
+    stem = os.path.basename(im).lower()
+    for ext in [".fits", ".fit", ".fts", ".fz", ".gz"]:
+        if stem.endswith(ext):
+            stem = stem[:-len(ext)]
+    tokens = []
+    buf = []
+    for ch in stem:
+        if ch.isalnum():
+            buf.append(ch)
+        elif buf:
+            tokens.append("".join(buf))
+            buf = []
+    if buf:
+        tokens.append("".join(buf))
+    return tokens
 
 def guess_filter(im):
     for k in ["FILTER", "FILTER1", "FILTER2", "FILTNAM"]:
@@ -317,15 +470,20 @@ def guess_filter(im):
         if v:
             return normalize_filter(v)
     low = os.path.basename(im).lower()
+    tokens = filename_filter_tokens(im)
     for alias, canon in FILTER_ALIASES.items():
-        if alias and alias in low:
-            return str(canon).strip().lower()
+        alias_key = str(alias).strip().lower()
+        if alias_key and (alias_key in tokens or (len(alias_key) > 1 and alias_key in low)):
+            return str(canon).strip()
     for key in FILTER_PARAMS.keys():
-        if key != "default" and key in low:
+        key_low = str(key).strip().lower()
+        if key != "default" and key_low and (key_low in tokens or (len(key_low) > 1 and key_low in low)):
             return key
-    if "-g" in low: return "g"
-    if "-r" in low: return "r"
-    if "-i" in low: return "i"
+    if "b" in tokens: return "B"
+    if "v" in tokens: return "V"
+    if "g" in tokens: return "g"
+    if "r" in tokens: return "r"
+    if "i" in tokens: return "i"
     return "unknown"
 
 def get_param(name, band, default=None):
@@ -345,6 +503,33 @@ def estimate_sigma(image):
         return float(out[0].strip())
     except:
         return None
+
+def clean_frame_key(name):
+    stem = os.path.basename(str(name))
+    low = stem.lower()
+    for ext in [".fits.gz", ".fit.gz", ".fits", ".fit", ".fts", ".fz", ".gz"]:
+        if low.endswith(ext):
+            return stem[:-len(ext)]
+    return os.path.splitext(stem)[0]
+
+def frame_params_for(im):
+    if not USE_APEX_FRAME_PARAMS or not APEX_FRAME_PARAMS:
+        return {{}}
+    fname = os.path.basename(im)
+    keys = [fname, os.path.splitext(fname)[0], clean_frame_key(fname)]
+    for key in keys:
+        if key in APEX_FRAME_PARAMS:
+            return APEX_FRAME_PARAMS[key]
+    return {{}}
+
+def finite_positive(value):
+    try:
+        out = float(value)
+        if np.isfinite(out) and out > 0:
+            return out
+    except:
+        pass
+    return None
 
 def fwhm_pix_from_header_or_default(im, band):
     # Try arcsec keys from header
@@ -370,6 +555,40 @@ def fwhm_pix_from_header_or_default(im, band):
     # Use filter-specific seeing
     seeing_arcsec = get_param("seeing", band, SEEING.get(band, SEEING["default"]))
     return seeing_arcsec / PIX_SCALE
+
+def format_bytes(nbytes):
+    try:
+        value = float(nbytes)
+    except:
+        value = 0.0
+    units = ["B", "KB", "MB", "GB", "TB"]
+    for unit in units:
+        if value < 1024.0 or unit == units[-1]:
+            return f"{{value:.1f}} {{unit}}" if unit != "B" else f"{{int(value)}} B"
+        value /= 1024.0
+
+SCRATCH_RUN_DIR = None
+
+def cleanup_scratch():
+    try:
+        if SCRATCH_RUN_DIR and os.path.isdir(SCRATCH_RUN_DIR):
+            shutil.rmtree(SCRATCH_RUN_DIR, ignore_errors=True)
+            log(f"[SCRATCH] Cleaned scratch run dir: {{SCRATCH_RUN_DIR}}")
+    except Exception as exc:
+        log(f"[SCRATCH] Cleanup warning: {{exc}}")
+
+atexit.register(cleanup_scratch)
+
+def handle_stop_signal(signum, _frame):
+    log(f"[STOP] Received signal {{signum}}; cleaning scratch and exiting.")
+    cleanup_scratch()
+    sys.exit(128 + int(signum))
+
+try:
+    signal.signal(signal.SIGTERM, handle_stop_signal)
+    signal.signal(signal.SIGINT, handle_stop_signal)
+except Exception:
+    pass
 
 # =====================
 # Unlearn all tasks
@@ -435,49 +654,146 @@ iraf.fitskypars.rgrow = FITSKYPARS["rgrow"]
 iraf.photpars.zmag = PHOTPARS["zmag"]
 iraf.photpars.mkapert = "yes" if PHOTPARS["mkapert"] else "no"
 
-print("[INIT] PyRAF initialized")
-print(f"[PARAM] pix_scale={{PIX_SCALE:.3f}} arcsec/pix")
-print(f"[PARAM] epadu={{DATAPARS['epadu']}}, rdnoise={{DATAPARS['readnoise']}}")
-print(f"[PARAM] FWHM multipliers: ap={{PHOTPARS['aperture_mult']}}x, ann={{FITSKYPARS['annulus_mult']}}x, dann={{FITSKYPARS['dannulus_mult']}}x")
-print(f"[PARAM] Filter-specific seeing: g={{SEEING['g']}}, r={{SEEING['r']}}, i={{SEEING['i']}} arcsec")
-print(f"[PARAM] Filter-specific sigma: g={{SIGMA['g']}}, r={{SIGMA['r']}}, i={{SIGMA['i']}}")
+log("[INIT] PyRAF initialized")
+log(f"[PARAM] pix_scale={{PIX_SCALE:.3f}} arcsec/pix")
+log(f"[PARAM] epadu={{DATAPARS['epadu']}}, rdnoise={{DATAPARS['readnoise']}}")
+log(f"[PARAM] FWHM multipliers: ap={{PHOTPARS['aperture_mult']}}x, ann={{FITSKYPARS['annulus_mult']}}x, dann={{FITSKYPARS['dannulus_mult']}}x")
+log(f"[PARAM] Filter-specific seeing: g={{SEEING['g']}}, r={{SEEING['r']}}, i={{SEEING['i']}} arcsec")
+log(f"[PARAM] Filter-specific sigma: g={{SIGMA['g']}}, r={{SIGMA['r']}}, i={{SIGMA['i']}}")
 
-os.makedirs(OUTDIR, exist_ok=True)
+FINAL_OUTDIR = OUTDIR
+WORK_DATA_DIR = DATA_DIR
+WORK_OUTDIR = OUTDIR
+SCRATCH_SOURCE_BY_NAME = {{}}
+
+os.makedirs(FINAL_OUTDIR, exist_ok=True)
 os.chdir(DATA_DIR)
-imgs = sorted(glob.glob(FILE_PATTERN))
+source_imgs = sorted(glob.glob(FILE_PATTERN))
 
-if not imgs:
-    print(f"[ERROR] No images found matching {{FILE_PATTERN}}")
+if not source_imgs:
+    log(f"[ERROR] No images found matching {{FILE_PATTERN}}")
     sys.exit(1)
 
-print(f"[INFO] Found {{len(imgs)}} images")
-
+pending_imgs = []
 skipped = 0
+for src in source_imgs:
+    base = os.path.splitext(os.path.basename(src))[0]
+    final_txt = os.path.join(FINAL_OUTDIR, f"{{base}}.txt")
+    if SKIP_EXISTING and os.path.exists(final_txt):
+        skipped += 1
+        continue
+    pending_imgs.append(src)
+
+if not pending_imgs:
+    log(f"[DONE] Processed: 0, Skipped: {{skipped}}, Output: {{FINAL_OUTDIR}}")
+    sys.exit(0)
+
+imgs = pending_imgs
+if USE_WSL_SCRATCH:
+    scratch_base = os.path.abspath(SCRATCH_ROOT or "/tmp/apex_iraf")
+    os.makedirs(scratch_base, exist_ok=True)
+
+    input_bytes = 0
+    for src in pending_imgs:
+        try:
+            input_bytes += os.path.getsize(src)
+        except:
+            pass
+    required_bytes = int(input_bytes * 2.0 + 512 * 1024 * 1024)
+    usage = shutil.disk_usage(scratch_base)
+    log(
+        f"[SCRATCH] Enabled root={{scratch_base}} | input={{format_bytes(input_bytes)}} "
+        f"| free={{format_bytes(usage.free)}} | required~={{format_bytes(required_bytes)}}"
+    )
+    if usage.free < required_bytes:
+        log("[ERROR] Not enough free space in WSL scratch. Disable scratch or free WSL disk space.")
+        sys.exit(2)
+
+    if SCRATCH_RUN_DIR_REQUESTED:
+        SCRATCH_RUN_DIR = os.path.abspath(SCRATCH_RUN_DIR_REQUESTED)
+    else:
+        SCRATCH_RUN_DIR = os.path.join(scratch_base, f"apex_iraf_{{int(time.time())}}_{{os.getpid()}}")
+    WORK_DATA_DIR = os.path.join(SCRATCH_RUN_DIR, "data")
+    WORK_OUTDIR = os.path.join(SCRATCH_RUN_DIR, "out")
+    os.makedirs(WORK_DATA_DIR, exist_ok=True)
+    os.makedirs(WORK_OUTDIR, exist_ok=True)
+    log(f"[SCRATCH] Run dir: {{SCRATCH_RUN_DIR}}")
+
+    SCRATCH_SOURCE_BY_NAME = {{
+        os.path.basename(src): os.path.abspath(src)
+        for src in pending_imgs
+    }}
+    imgs = list(SCRATCH_SOURCE_BY_NAME.keys())
+    log(f"[SCRATCH] Copy mode: per-frame copy for {{len(imgs)}} pending FITS file(s)")
+    log(f"[SCRATCH] IRAF work data: {{WORK_DATA_DIR}}")
+    log(f"[SCRATCH] IRAF work output: {{WORK_OUTDIR}}")
+    log(f"[SCRATCH] Final output: {{FINAL_OUTDIR}}")
+    os.chdir(WORK_DATA_DIR)
+else:
+    os.chdir(WORK_DATA_DIR)
+
+log(f"[INFO] Found {{len(source_imgs)}} images; pending {{len(imgs)}}; skipped existing {{skipped}}")
+
 processed = 0
 
 for idx, im in enumerate(imgs):
     base = os.path.splitext(os.path.basename(im))[0]
-    txt = os.path.join(OUTDIR, f"{{base}}.txt")
+    final_coo = os.path.join(FINAL_OUTDIR, f"{{base}}.coo")
+    final_mag = os.path.join(FINAL_OUTDIR, f"{{base}}.mag")
+    final_txt = os.path.join(FINAL_OUTDIR, f"{{base}}.txt")
 
     # Skip if already processed
-    if SKIP_EXISTING and os.path.exists(txt):
-        print(f"[SKIP] {{idx+1}}/{{len(imgs)}} {{im}} (already exists)")
+    if SKIP_EXISTING and os.path.exists(final_txt):
+        log(f"[SKIP] {{idx+1}}/{{len(imgs)}} {{im}} (already exists)")
         skipped += 1
         continue
 
+    copyin_seconds = 0.0
+    work_image_path = None
+    if USE_WSL_SCRATCH:
+        src_path = SCRATCH_SOURCE_BY_NAME.get(os.path.basename(im))
+        work_image_path = os.path.join(WORK_DATA_DIR, os.path.basename(im))
+        if not src_path:
+            log(f"  -> ERROR: scratch source missing for {{im}}")
+            continue
+        try:
+            t_copyin = time.perf_counter()
+            shutil.copy2(src_path, work_image_path)
+            copyin_seconds = time.perf_counter() - t_copyin
+            log(f"[SCRATCH] Copy-in {{idx+1}}/{{len(imgs)}} {{os.path.basename(im)}}: {{copyin_seconds:.1f}}s")
+            im = os.path.basename(work_image_path)
+        except Exception as exc:
+            log(f"  -> ERROR: scratch copy-in failed for {{im}}: {{exc}}")
+            continue
+
     band = guess_filter(im)
+    frame_params = frame_params_for(im)
 
     # Get filter-specific FWHM
-    fwhm_pix = fwhm_pix_from_header_or_default(im, band)
+    apex_fwhm = finite_positive(frame_params.get("fwhm_px"))
+    if apex_fwhm is not None:
+        fwhm_pix = apex_fwhm
+        fwhm_source = "apex-step4"
+    else:
+        fwhm_pix = fwhm_pix_from_header_or_default(im, band)
+        fwhm_source = "header/default"
     iraf.datapars.fwhmpsf = float(fwhm_pix)
 
     # Get filter-specific sigma (or auto-estimate)
-    if {auto_sigma}:
+    apex_sigma = finite_positive(frame_params.get("sigma"))
+    if apex_sigma is not None:
+        sig = apex_sigma
+        sigma_source = "apex-step4"
+    elif {auto_sigma}:
         sig = estimate_sigma(im)
         if sig is None or sig <= 0:
             sig = get_param("sigma", band, SIGMA.get(band, SIGMA["default"]))
+            sigma_source = "filter-default"
+        else:
+            sigma_source = "imstat"
     else:
         sig = get_param("sigma", band, SIGMA.get(band, SIGMA["default"]))
+        sigma_source = "filter-default"
     iraf.datapars.sigma = float(sig)
 
     # Filter-specific threshold with sigma scaling
@@ -550,19 +866,32 @@ for idx, im in enumerate(imgs):
     iraf.photpars.zmag = float(get_param("zmag", band, PHOTPARS["zmag"]))
     iraf.photpars.mkapert = "yes" if get_param("mkapert", band, PHOTPARS["mkapert"]) else "no"
 
-    coo = os.path.join(OUTDIR, f"{{base}}.coo")
-    mag = os.path.join(OUTDIR, f"{{base}}.mag")
+    coo = os.path.join(WORK_OUTDIR, f"{{base}}.coo")
+    mag = os.path.join(WORK_OUTDIR, f"{{base}}.mag")
+    txt = os.path.join(WORK_OUTDIR, f"{{base}}.txt")
     safe_rm(coo); safe_rm(mag); safe_rm(txt)
+    safe_rm(final_coo); safe_rm(final_mag); safe_rm(final_txt)
 
-    print(f"[PROGRESS] {{idx+1}}/{{len(imgs)}} {{im}} band={{band}}")
-    print(f"  fwhm={{fwhm_pix:.2f}}px sigma={{sig:.1f}} thr={{thr:.2f}} sharplo={{sharplo}} datamin={{datamin}}")
-    print(f"  ap={{aperture:.2f}}px ann={{annulus:.2f}}px dann={{dannulus:.2f}}px cbox={{cbox:.2f}}px")
+    log(f"[PROGRESS] {{idx+1}}/{{len(imgs)}} {{im}} band={{band}}")
+    log(f"  fwhm={{fwhm_pix:.2f}}px({{fwhm_source}}) sigma={{sig:.1f}}({{sigma_source}}) thr={{thr:.2f}} sharplo={{sharplo}} datamin={{datamin}}")
+    log(f"  ap={{aperture:.2f}}px ann={{annulus:.2f}}px dann={{dannulus:.2f}}px cbox={{cbox:.2f}}px")
 
     try:
+        t0 = time.perf_counter()
         iraf.daofind(im, output=coo, verify="no", interactive="no", verbose="no")
-        iraf.phot(im, coords=coo, output=mag, verify="no", interactive="no")
+        t_daofind = time.perf_counter()
+        iraf.phot(im, coords=coo, output=mag, verify="no", interactive="no", verbose="no", Stdout=os.devnull)
+        t_phot = time.perf_counter()
         iraf.txdump(mag, fields="ID,XCENTER,YCENTER,MAG,MERR,MSKY,STDEV,NSKY",
                    expr="yes", headers="no", Stdout=txt)
+        t_txdump = time.perf_counter()
+
+        t_copyout = t_txdump
+        if os.path.abspath(WORK_OUTDIR) != os.path.abspath(FINAL_OUTDIR):
+            for work_path, final_path in ((coo, final_coo), (mag, final_mag), (txt, final_txt)):
+                if os.path.exists(work_path):
+                    shutil.copy2(work_path, final_path)
+            t_copyout = time.perf_counter()
 
         n_stars = 0
         try:
@@ -570,12 +899,30 @@ for idx, im in enumerate(imgs):
                 n_stars = sum(1 for _ in f)
         except:
             pass
-        print(f"  -> {{n_stars}} stars detected")
+        try:
+            apex_n_sources = float(frame_params.get("apex_n_sources", 0) or 0)
+        except:
+            apex_n_sources = 0.0
+        if apex_n_sources > 0 and n_stars > max(2000, apex_n_sources * 1.5):
+            log(
+                f"  [QC] IRAF detected many sources: {{n_stars}} vs APEX Step4 {{int(apex_n_sources)}}. "
+                f"Consider raising FINDPARS threshold (current {{thr:.2f}}) for faster comparison runs."
+            )
+        elif n_stars > 2500:
+            log(
+                f"  [QC] IRAF detected many sources: {{n_stars}}. "
+                f"Consider raising FINDPARS threshold (current {{thr:.2f}}) for faster comparison runs."
+            )
+        copy_part = f" copyout={{t_copyout-t_txdump:.1f}}s" if os.path.abspath(WORK_OUTDIR) != os.path.abspath(FINAL_OUTDIR) else ""
+        copyin_part = f"copyin={{copyin_seconds:.1f}}s " if USE_WSL_SCRATCH else ""
+        log(f"  -> {{n_stars}} stars detected ({{copyin_part}}daofind={{t_daofind-t0:.1f}}s phot={{t_phot-t_daofind:.1f}}s txdump={{t_txdump-t_phot:.1f}}s{{copy_part}})")
         processed += 1
     except Exception as e:
-        print(f"  -> ERROR: {{e}}")
+        log(f"  -> ERROR: {{e}}")
+    if work_image_path:
+        safe_rm(work_image_path)
 
-print(f"[DONE] Processed: {{processed}}, Skipped: {{skipped}}, Output: {{OUTDIR}}")
+log(f"[DONE] Processed: {{processed}}, Skipped: {{skipped}}, Output: {{OUTDIR}}")
 '''
 
 
@@ -593,7 +940,9 @@ class IRAFPhotometryWorker(QThread):
     def __init__(self, data_dir: Path, output_dir: Path, file_pattern: str,
                  params: IRAFParameters, auto_sigma: bool = True, skip_existing: bool = True,
                  filter_params: dict | None = None, filter_aliases: dict | None = None,
-                 param_defaults: dict | None = None):
+                 param_defaults: dict | None = None, apex_frame_params: dict | None = None,
+                 use_apex_frame_params: bool = True, use_wsl_scratch: bool = False,
+                 scratch_root: str = "/tmp/apex_iraf"):
         super().__init__()
         self.data_dir = Path(data_dir)
         self.output_dir = Path(output_dir)
@@ -604,17 +953,96 @@ class IRAFPhotometryWorker(QThread):
         self.filter_params = filter_params or {}
         self.filter_aliases = filter_aliases or {}
         self.param_defaults = param_defaults or {}
+        self.apex_frame_params = apex_frame_params or {}
+        self.use_apex_frame_params = bool(use_apex_frame_params)
+        self.use_wsl_scratch = bool(use_wsl_scratch)
+        self.scratch_root = str(scratch_root or "/tmp/apex_iraf")
         self._stop_requested = False
         self._process = None
         self._script_path = None
+        self._wsl_script_path = None
+        self._scratch_run_dir = None
 
     def stop(self):
         self._stop_requested = True
+        if sys.platform == "win32" and self._wsl_script_path:
+            try:
+                subprocess.run(
+                    ["wsl", "pkill", "-TERM", "-f", self._wsl_script_path],
+                    stdout=subprocess.DEVNULL,
+                    stderr=subprocess.DEVNULL,
+                    timeout=5,
+                )
+            except Exception:
+                pass
         if self._process:
             self._process.terminate()
 
     def _log(self, msg: str):
         self.log.emit(msg)
+
+    def _runtime_cmd(self, is_windows: bool) -> list[str]:
+        return _iraf_runtime_cmd(is_windows)
+
+    def _cleanup_scratch_run_dir(self, is_windows: bool):
+        scratch_dir = str(self._scratch_run_dir or "").replace("\\", "/").rstrip("/")
+        scratch_root = str(self.scratch_root or "/tmp/apex_iraf").replace("\\", "/").rstrip("/")
+        if not self.use_wsl_scratch or not scratch_dir:
+            return
+        name = scratch_dir.rsplit("/", 1)[-1]
+        if not scratch_dir.startswith(scratch_root + "/") or not name.startswith("apex_iraf_"):
+            self._log(f"[SCRATCH] Cleanup skipped for unexpected path: {scratch_dir}")
+            return
+        try:
+            if is_windows:
+                subprocess.run(
+                    ["wsl", "rm", "-rf", "--", scratch_dir],
+                    stdout=subprocess.DEVNULL,
+                    stderr=subprocess.DEVNULL,
+                    timeout=30,
+                )
+            else:
+                shutil.rmtree(scratch_dir, ignore_errors=True)
+            self._log(f"[SCRATCH] Worker cleanup removed: {scratch_dir}")
+        except Exception as exc:
+            self._log(f"[SCRATCH] Worker cleanup failed: {exc}")
+
+    def _check_runtime_environment(self, runtime_cmd: list[str], data_dir: str, output_dir: str):
+        try:
+            result = _run_iraf_environment_probe(
+                runtime_cmd, data_dir, output_dir, log_callback=self._log, timeout=30
+            )
+        except subprocess.TimeoutExpired as exc:
+            out = _format_subprocess_output(exc.stdout)
+            details = f"\n\nLast output:\n{out}" if out else ""
+            raise RuntimeError(f"IRAF environment check timed out after 30s.{details}") from exc
+
+        if not result["ok"]:
+            raise RuntimeError(
+                "IRAF/PyRAF environment check failed before photometry started.\n"
+                "Install/configure PyRAF and IRAF DAOPHOT in the runtime used by this tool "
+                "(WSL python3 on Windows, local python3 otherwise).\n\n"
+                f"Command: {' '.join(result['command'])}\n"
+                f"Exit code: {result['returncode']}\n\n{result['output']}"
+            )
+
+    @staticmethod
+    def _looks_like_iraf_source_row(line: str) -> bool:
+        parts = line.split()
+        if len(parts) < 5:
+            return False
+
+        image_name = parts[0].split("[", 1)[0].lower()
+        if not image_name.endswith((".fit", ".fits", ".fts", ".fit.gz", ".fits.gz", ".fts.gz")):
+            return False
+
+        try:
+            float(parts[1])
+            float(parts[2])
+            float(parts[3])
+        except ValueError:
+            return False
+        return True
 
     def run(self):
         try:
@@ -628,15 +1056,30 @@ class IRAFPhotometryWorker(QThread):
                 data_dir_str = str(self.data_dir)
                 output_dir_str = str(self.output_dir)
 
+            runtime_cmd = self._runtime_cmd(is_windows)
+            self._log("[CHECK] Verifying PyRAF/IRAF runtime...")
+            self._check_runtime_environment(runtime_cmd, data_dir_str, output_dir_str)
+
+            if self.use_wsl_scratch:
+                root = self.scratch_root.replace("\\", "/").rstrip("/") or "/tmp/apex_iraf"
+                self._scratch_run_dir = f"{root}/apex_iraf_{int(time.time())}_{os.getpid()}_{id(self) & 0xffff:x}"
+            else:
+                self._scratch_run_dir = None
+
             p = self.params
             script_content = PYRAF_SCRIPT_TEMPLATE.format(
                 data_dir=data_dir_str,
                 output_dir=output_dir_str,
                 file_pattern=self.file_pattern,
                 skip_existing="True" if self.skip_existing else "False",
+                use_wsl_scratch="True" if self.use_wsl_scratch else "False",
+                scratch_root=self.scratch_root.replace("\\", "/"),
+                scratch_run_dir=(self._scratch_run_dir or ""),
                 filter_params=repr(self.filter_params),
                 filter_aliases=repr(self.filter_aliases),
                 param_defaults=repr(self.param_defaults),
+                apex_frame_params=repr(self.apex_frame_params),
+                use_apex_frame_params="True" if self.use_apex_frame_params else "False",
                 # Pixel scale
                 pix_scale=p.pix_scale,
                 # Filter-specific seeing
@@ -721,17 +1164,19 @@ class IRAFPhotometryWorker(QThread):
                 script_path.write_text(script_content, encoding="utf-8")
                 self._script_path = script_path
                 wsl_script_path = windows_to_wsl_path(str(script_path))
+                self._wsl_script_path = wsl_script_path
                 self._log(f"Script: {script_path}")
-                cmd = ["wsl", "python3", wsl_script_path]
+                cmd = _unbuffered_python_cmd(runtime_cmd) + [wsl_script_path]
             else:
                 with tempfile.NamedTemporaryFile(mode='w', suffix='.py', delete=False) as f:
                     f.write(script_content)
-                    script_path = f.name
+                script_path = f.name
                 self._script_path = Path(script_path)
+                self._wsl_script_path = script_path
                 self._log(f"Script: {script_path}")
-                cmd = ["python3", script_path]
+                cmd = _unbuffered_python_cmd(runtime_cmd) + [script_path]
 
-            self._log("Starting PyRAF via WSL..." if is_windows else "Starting PyRAF...")
+            self._log("Starting PyRAF via WSL (unbuffered)..." if is_windows else "Starting PyRAF (unbuffered)...")
 
             self._process = subprocess.Popen(
                 cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
@@ -740,6 +1185,10 @@ class IRAFPhotometryWorker(QThread):
 
             total_images = 0
             results = []
+            suppressed_source_rows = 0
+            current_image_index = 0
+            current_image_name = ""
+            output_tail: list[str] = []
 
             for line in iter(self._process.stdout.readline, ''):
                 if self._stop_requested:
@@ -750,31 +1199,102 @@ class IRAFPhotometryWorker(QThread):
                 if not line:
                     continue
 
+                if self._looks_like_iraf_source_row(line):
+                    suppressed_source_rows += 1
+                    if suppressed_source_rows == 1:
+                        self._log("[IRAF] Suppressing per-source phot rows; detailed rows are in phot output files.")
+                    continue
+
                 self._log(line)
+                output_tail.append(line)
+                if len(output_tail) > 80:
+                    output_tail = output_tail[-80:]
 
                 if line.startswith("[INFO] Found"):
                     try:
                         total_images = int(line.split()[2])
+                        self.progress.emit(0, total_images, "Starting")
                     except:
                         pass
+                elif line.startswith("[SCRATCH] Run dir:"):
+                    self._scratch_run_dir = line.split(":", 1)[1].strip()
                 elif line.startswith("[PROGRESS]"):
                     try:
-                        parts = line.split()
-                        current = int(parts[1].split("/")[0])
-                        self.progress.emit(current, total_images, parts[2] if len(parts) > 2 else "")
+                        parts = line.split(maxsplit=3)
+                        frame_count = parts[1].split("/")
+                        current_image_index = int(frame_count[0])
+                        if len(frame_count) > 1:
+                            total_images = int(frame_count[1])
+                        current_image_name = parts[2] if len(parts) > 2 else ""
+                        completed = max(current_image_index - 1, 0)
+                        self.progress.emit(
+                            completed,
+                            total_images,
+                            f"Running {current_image_index}/{total_images}: {current_image_name}",
+                        )
+                    except:
+                        pass
+                elif line.startswith("[SKIP]"):
+                    try:
+                        parts = line.split(maxsplit=3)
+                        frame_count = parts[1].split("/")
+                        current = int(frame_count[0])
+                        if len(frame_count) > 1:
+                            total_images = int(frame_count[1])
+                        skipped_name = parts[2] if len(parts) > 2 else ""
+                        self.progress.emit(current, total_images, f"Skipped {skipped_name}")
                     except:
                         pass
                 elif "stars detected" in line:
                     try:
                         n_stars = int(line.split("->")[1].split()[0])
                         results.append({"n_stars": n_stars})
+                        self.progress.emit(
+                            current_image_index,
+                            total_images,
+                            f"Completed {current_image_name} ({n_stars} stars)",
+                        )
                     except:
                         pass
+                elif line.startswith("-> ERROR"):
+                    if current_image_index:
+                        self.progress.emit(
+                            current_image_index,
+                            total_images,
+                            f"Error on {current_image_name}",
+                        )
 
-            self._process.wait()
+            if self._stop_requested:
+                try:
+                    self._process.wait(timeout=10)
+                except subprocess.TimeoutExpired:
+                    self._log("[STOP] PyRAF did not exit after terminate; killing process.")
+                    self._process.kill()
+                    self._process.wait()
+            else:
+                self._process.wait()
 
-            if self._process.returncode == 0:
+            if suppressed_source_rows:
+                self._log(f"[IRAF] Suppressed {suppressed_source_rows} per-source phot rows.")
+
+            if self._stop_requested:
+                self._log(f"[STOP] IRAF photometry stopped by user (exit code {self._process.returncode}).")
+                self._cleanup_scratch_run_dir(is_windows)
+                if self._script_path:
+                    try:
+                        self._script_path.unlink()
+                        self._log(f"[CLEANUP] Removed script: {self._script_path}")
+                    except Exception as e:
+                        self._log(f"[CLEANUP] Failed to remove script: {e}")
+                self.finished.emit({
+                    "results": results,
+                    "output_dir": str(self.output_dir),
+                    "stopped": True,
+                    "returncode": self._process.returncode,
+                })
+            elif self._process.returncode == 0:
                 self._log("\n[SUCCESS] PyRAF photometry completed!")
+                self._cleanup_scratch_run_dir(is_windows)
                 if self._script_path:
                     try:
                         self._script_path.unlink()
@@ -783,12 +1303,87 @@ class IRAFPhotometryWorker(QThread):
                         self._log(f"[CLEANUP] Failed to remove script: {e}")
                 self.finished.emit({"results": results, "output_dir": str(self.output_dir)})
             else:
-                self.error.emit(f"PyRAF exited with code {self._process.returncode}")
+                self._cleanup_scratch_run_dir(is_windows)
+                tail = "\n".join(output_tail[-12:])
+                details = f"\n\nLast output:\n{tail}" if tail else ""
+                self.error.emit(f"PyRAF exited with code {self._process.returncode}{details}")
 
-        except FileNotFoundError:
-            self.error.emit("WSL not found. Install WSL and PyRAF first.")
+        except FileNotFoundError as e:
+            missing = str(getattr(e, "filename", "") or "")
+            if missing == "wsl" or sys.platform == "win32":
+                self.error.emit("WSL not found. Install WSL, then install PyRAF/IRAF inside WSL.")
+            else:
+                self.error.emit(f"Python runtime not found: {missing or 'python3'}")
         except Exception as e:
             self.error.emit(f"Error: {e}")
+
+
+class IRAFEnvironmentCheckWorker(QThread):
+    """Worker for IRAF dependency and path status checks."""
+
+    status = pyqtSignal(str, str, str)
+    log = pyqtSignal(str)
+    finished = pyqtSignal(dict)
+
+    def __init__(self, data_dir: Path, output_dir: Path, file_pattern: str):
+        super().__init__()
+        self.data_dir = Path(data_dir)
+        self.output_dir = Path(output_dir)
+        self.file_pattern = str(file_pattern or "*.fit*").strip() or "*.fit*"
+
+    def _emit_status(self, key: str, state: str, message: str):
+        self.status.emit(key, state, message)
+
+    def run(self):
+        statuses: dict[str, tuple[str, str]] = {}
+
+        def set_status(key: str, state: str, message: str):
+            statuses[key] = (state, message)
+            self._emit_status(key, state, message)
+
+        is_windows = sys.platform == "win32"
+        runtime_cmd = _iraf_runtime_cmd(is_windows)
+
+        try:
+            if not self.data_dir.exists():
+                set_status("images", "fail", "Data directory missing")
+            elif not self.data_dir.is_dir():
+                set_status("images", "fail", "Data path is not a directory")
+            else:
+                try:
+                    image_count = sum(1 for _ in self.data_dir.glob(self.file_pattern))
+                    if image_count:
+                        set_status("images", "ok", f"{image_count} file(s)")
+                    else:
+                        set_status("images", "fail", f"No match: {self.file_pattern}")
+                except Exception as exc:
+                    set_status("images", "fail", f"Pattern error: {exc}")
+
+            data_dir_str = windows_to_wsl_path(str(self.data_dir)) if is_windows else str(self.data_dir)
+            output_dir_str = windows_to_wsl_path(str(self.output_dir)) if is_windows else str(self.output_dir)
+            result = _run_iraf_environment_probe(
+                runtime_cmd, data_dir_str, output_dir_str, log_callback=self.log.emit, timeout=30
+            )
+            for key, (state, message) in result["statuses"].items():
+                set_status(key, state, message)
+            if "runtime" not in statuses:
+                set_status("runtime", "ok" if result["ok"] else "fail", "Runtime checked")
+            overall_ok = bool(result["ok"]) and not any(state == "fail" for state, _ in statuses.values())
+            self.finished.emit({"ok": overall_ok, "statuses": statuses, "output": result["output"]})
+        except FileNotFoundError as exc:
+            missing = str(getattr(exc, "filename", "") or "python3")
+            label = "WSL not found" if is_windows else f"{missing} not found"
+            set_status("runtime", "fail", label)
+            set_status("pyraf", "warn", "Not checked")
+            set_status("daophot", "warn", "Not checked")
+            self.finished.emit({"ok": False, "statuses": statuses, "output": str(exc)})
+        except subprocess.TimeoutExpired as exc:
+            out = _format_subprocess_output(exc.stdout)
+            set_status("runtime", "fail", "Check timed out")
+            self.finished.emit({"ok": False, "statuses": statuses, "output": out})
+        except Exception as exc:
+            set_status("runtime", "fail", str(exc))
+            self.finished.emit({"ok": False, "statuses": statuses, "output": str(exc)})
 
 
 # ============================================================================
@@ -831,14 +1426,32 @@ def _read_apex_tsv(path: Path) -> pd.DataFrame:
 
 
 def _normalize_frame_key(stem: str) -> str:
-    key = stem
+    key = str(stem)
+    if key.startswith("photometry_"):
+        key = key[len("photometry_"):]
+    if key.startswith("detect_"):
+        key = key[len("detect_"):]
     if key.endswith("_photometry"):
         key = key[:-len("_photometry")]
-    if key.endswith(".fit") or key.endswith(".fits"):
-        key = key.rsplit(".", 1)[0]
     if key.startswith("Crop_"):
         key = key[len("Crop_"):]
+    low = key.lower()
+    for ext in (".fits.gz", ".fit.gz", ".fits", ".fit", ".fts", ".fz", ".gz"):
+        if low.endswith(ext):
+            key = key[:-len(ext)]
+            break
     return key
+
+
+def _iter_apex_photometry_files(apex_dir: Path):
+    patterns = ("*_photometry.tsv", "photometry_*.tsv")
+    seen: set[Path] = set()
+    for pattern in patterns:
+        for path in apex_dir.rglob(pattern):
+            if not path.is_file() or path in seen:
+                continue
+            seen.add(path)
+            yield path
 
 
 BASE_IRAF_SHIFT = -1.0
@@ -876,6 +1489,19 @@ class IRAFPhotometryWindow(QMainWindow):
         self.project_state = project_state
         self.iraf_params = IRAFParameters()
         self.worker = None
+        self.env_worker = None
+        self.run_log_window = None
+        self.run_log_text = None
+        self.env_status_labels = {}
+        # Only the integration essentials — is the runtime/PyRAF/DAOPHOT stack
+        # actually wired up. Path/image checks still run in the worker but the
+        # paths are already visible in their own fields, so they're not shown
+        # as status cards (keeps the window uncluttered).
+        self.env_status_defs = (
+            ("runtime", "WSL/Python" if sys.platform == "win32" else "Python"),
+            ("pyraf", "PyRAF"),
+            ("daophot", "IRAF/DAOPHOT"),
+        )
 
         # Comparison data
         self.frame_rows = []
@@ -895,6 +1521,7 @@ class IRAFPhotometryWindow(QMainWindow):
         self.overlay_iraf_map = {}
         self.overlay_filter_cache = {}
         self._overlay_normalized_cache = None
+        self.overlay_viewer: FITSViewerWidget | None = None
         self.overlay_xlim_original = None
         self.overlay_ylim_original = None
         self.overlay_panning = False
@@ -917,7 +1544,224 @@ class IRAFPhotometryWindow(QMainWindow):
 
         self.setWindowTitle("IRAF/DAOPHOT Photometry Tool")
         self.setMinimumSize(1200, 900)
+        self._init_project_path_widgets()
         self.setup_ui()
+
+    def _default_project_image_dir(self) -> Path:
+        cropped = step2_cropped_dir(self.result_dir)
+        if cropped.exists():
+            return cropped
+        legacy_cropped = step2_cropped_dir(self.data_dir / "result")
+        if legacy_cropped.exists():
+            return legacy_cropped
+        return self.data_dir
+
+    def _init_project_path_widgets(self):
+        default_images = self._default_project_image_dir()
+        default_iraf_dir = self.result_dir / "iraf_phot"
+
+        self.data_edit = QLineEdit(str(default_images))
+        self.out_edit = QLineEdit(str(default_iraf_dir))
+        self.pattern_edit = QLineEdit("*.fit*")
+
+        self.auto_sigma_check = QCheckBox("Auto-estimate sigma per image")
+        self.auto_sigma_check.setChecked(True)
+        self.skip_existing_check = QCheckBox("Skip already processed files")
+        self.skip_existing_check.setChecked(True)
+        self.use_apex_step4_check = QCheckBox("Use APEX Step 4 frame FWHM/sky when available")
+        self.use_apex_step4_check.setChecked(True)
+        self.use_wsl_scratch_check = QCheckBox("Use WSL scratch copy for IRAF run")
+        self.use_wsl_scratch_check.setChecked(sys.platform == "win32")
+        self.use_wsl_scratch_check.setToolTip(
+            "Copy FITS files to WSL /tmp before IRAF, then copy results back. "
+            "This is faster for external drives and /mnt paths but needs WSL disk space."
+        )
+
+        self.cmp_apex_edit = QLineEdit(str(self.result_dir))
+        self.cmp_iraf_edit = QLineEdit(str(default_iraf_dir))
+        self.cmp_image_edit = QLineEdit(str(default_images))
+        self.cmp_tol = QDoubleSpinBox()
+        self.cmp_tol.setRange(0.1, 20.0)
+        self.cmp_tol.setValue(1.5)
+        self.cmp_tol.valueChanged.connect(lambda _value: self._refresh_path_summaries())
+
+        for edit in (self.data_edit, self.out_edit, self.pattern_edit):
+            edit.editingFinished.connect(self._on_photometry_path_settings_changed)
+        self.use_wsl_scratch_check.stateChanged.connect(lambda _value: self._refresh_path_summaries())
+        for edit in (self.cmp_apex_edit, self.cmp_iraf_edit):
+            edit.editingFinished.connect(self._on_comparison_path_settings_changed)
+        self.cmp_image_edit.editingFinished.connect(self._on_comparison_image_path_changed)
+
+    def _path_row(self, line_edit: QLineEdit) -> QWidget:
+        row = QWidget()
+        layout = QHBoxLayout(row)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.addWidget(line_edit)
+        btn = QPushButton("Browse")
+        btn.clicked.connect(lambda: self._browse_dir(line_edit))
+        layout.addWidget(btn)
+        return row
+
+    def _reset_project_paths(self):
+        default_images = self._default_project_image_dir()
+        default_iraf_dir = self.result_dir / "iraf_phot"
+        self.data_edit.setText(str(default_images))
+        self.out_edit.setText(str(default_iraf_dir))
+        self.pattern_edit.setText("*.fit*")
+        self.use_wsl_scratch_check.setChecked(sys.platform == "win32")
+        self.cmp_apex_edit.setText(str(self.result_dir))
+        self.cmp_iraf_edit.setText(str(default_iraf_dir))
+        self.cmp_image_edit.setText(str(default_images))
+        self._on_photometry_path_settings_changed()
+        self._on_comparison_image_path_changed()
+
+    def _on_photometry_path_settings_changed(self):
+        if hasattr(self, "env_status_labels"):
+            self._mark_environment_pending()
+        self._refresh_path_summaries()
+
+    def _on_comparison_path_settings_changed(self):
+        self._refresh_path_summaries()
+        if hasattr(self, "overlay_file_combo"):
+            self._overlay_refresh_maps()
+
+    def _on_comparison_image_path_changed(self):
+        self._refresh_path_summaries()
+        if hasattr(self, "overlay_file_combo"):
+            self._overlay_reload()
+
+    def _refresh_path_summaries(self):
+        if hasattr(self, "run_path_summary"):
+            self.run_path_summary.setText(
+                "Data Directory: "
+                f"{self.data_edit.text()}\n"
+                "Output Directory: "
+                f"{self.out_edit.text()}\n"
+                f"File Pattern: {self.pattern_edit.text().strip() or '*.fit*'}\n"
+                "WSL Scratch: "
+                f"{'enabled' if getattr(self, 'use_wsl_scratch_check', None) and self.use_wsl_scratch_check.isChecked() else 'disabled'}"
+            )
+        if hasattr(self, "cmp_path_summary"):
+            self.cmp_path_summary.setText(
+                f"APEX: {self.cmp_apex_edit.text()}\n"
+                f"IRAF: {self.cmp_iraf_edit.text()}\n"
+                f"Images: {self.cmp_image_edit.text()} | Tol: {self.cmp_tol.value():.2f} px | Scratch: temp"
+            )
+
+    @staticmethod
+    def _format_bytes(nbytes: int | float | None) -> str:
+        try:
+            value = float(nbytes or 0)
+        except Exception:
+            value = 0.0
+        units = ("B", "KB", "MB", "GB", "TB")
+        for unit in units:
+            if value < 1024.0 or unit == units[-1]:
+                return f"{int(value)} B" if unit == "B" else f"{value:.1f} {unit}"
+            value /= 1024.0
+        return f"{value:.1f} TB"
+
+    @staticmethod
+    def _scratch_required_bytes(input_bytes: int) -> int:
+        return int(max(0, input_bytes) * 2.0 + 512 * 1024 * 1024)
+
+    @staticmethod
+    def _sum_file_sizes(paths: list[Path]) -> int:
+        total = 0
+        for path in paths:
+            try:
+                total += path.stat().st_size
+            except OSError:
+                pass
+        return total
+
+    def _wsl_free_bytes(self, wsl_path: str = "/tmp") -> int | None:
+        if sys.platform != "win32":
+            return None
+        try:
+            result = subprocess.run(
+                ["wsl", "df", "-Pk", wsl_path],
+                stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT,
+                timeout=10,
+                **_SUBPROCESS_TEXT_KWARGS,
+            )
+        except Exception as exc:
+            self._scratch_last_check = {"error": str(exc)}
+            return None
+        output = _format_subprocess_output(result.stdout, max_chars=2000)
+        self._scratch_last_check = {"df_output": output}
+        if result.returncode != 0:
+            return None
+        lines = [line for line in output.splitlines() if line.strip()]
+        if len(lines) < 2:
+            return None
+        parts = lines[-1].split()
+        if len(parts) < 4:
+            return None
+        try:
+            return int(parts[3]) * 1024
+        except ValueError:
+            return None
+
+    def _confirm_wsl_scratch_run(self, image_count: int, input_bytes: int) -> bool:
+        self._scratch_last_check = {}
+        required = self._scratch_required_bytes(input_bytes)
+        free = self._wsl_free_bytes("/tmp")
+        self._scratch_last_check.update({
+            "enabled": True,
+            "image_count": image_count,
+            "input_bytes": input_bytes,
+            "required_bytes": required,
+            "free_bytes": free,
+            "scratch_root": "/tmp/apex_iraf",
+        })
+
+        if free is not None and free < required:
+            QMessageBox.critical(
+                self,
+                "WSL Scratch Space",
+                "Not enough free space in WSL /tmp for scratch photometry.\n\n"
+                f"Input FITS: {self._format_bytes(input_bytes)} ({image_count} files)\n"
+                f"Required: {self._format_bytes(required)}\n"
+                f"Free: {self._format_bytes(free)}\n\n"
+                "Disable WSL scratch or free WSL disk space.",
+            )
+            return False
+
+        if free is None:
+            choice = QMessageBox.warning(
+                self,
+                "WSL Scratch Space",
+                "Could not verify free space in WSL /tmp.\n\n"
+                f"Input FITS: {self._format_bytes(input_bytes)} ({image_count} files)\n"
+                f"Estimated required: {self._format_bytes(required)}\n"
+                "Scratch path: /tmp/apex_iraf\n\n"
+                "Continue anyway?",
+                QMessageBox.Yes | QMessageBox.No,
+                QMessageBox.No,
+            )
+            return choice == QMessageBox.Yes
+
+        choice = QMessageBox.warning(
+            self,
+            "WSL Scratch Copy",
+            "IRAF will run from WSL scratch, then copy results back to the project output folder.\n\n"
+            f"Input FITS: {self._format_bytes(input_bytes)} ({image_count} files)\n"
+            f"Estimated required: {self._format_bytes(required)}\n"
+            f"WSL /tmp free: {self._format_bytes(free)}\n"
+            "Scratch path: /tmp/apex_iraf\n\n"
+            "Continue?",
+            QMessageBox.Yes | QMessageBox.No,
+            QMessageBox.Yes,
+        )
+        return choice == QMessageBox.Yes
+
+    def show_parameters_tab(self):
+        if hasattr(self, "tabs"):
+            self.tabs.setCurrentIndex(1)
+        if hasattr(self, "param_tabs"):
+            self.param_tabs.setCurrentIndex(0)
 
     def setup_ui(self):
         central = QWidget()
@@ -942,6 +1786,87 @@ class IRAFPhotometryWindow(QMainWindow):
         self._auto_save_params()
         super().closeEvent(event)
 
+    def _create_environment_status_group(self):
+        group = QGroupBox("Environment Status")
+        layout = QVBoxLayout(group)
+
+        grid = QGridLayout()
+        grid.setSpacing(8)
+        self.env_status_labels = {}
+        for idx, (key, title) in enumerate(self.env_status_defs):
+            label = QLabel()
+            label.setAlignment(Qt.AlignCenter)
+            label.setWordWrap(True)
+            label.setMinimumHeight(58)
+            self.env_status_labels[key] = label
+            grid.addWidget(label, idx // 3, idx % 3)
+            self._set_environment_status(key, "pending", "Not checked")
+        layout.addLayout(grid)
+
+        btn_row = QHBoxLayout()
+        self.check_env_btn = QPushButton("Check Environment")
+        self.check_env_btn.clicked.connect(self.check_iraf_environment)
+        btn_row.addWidget(self.check_env_btn)
+        self.env_summary_label = QLabel("Run this before photometry on a new PC or after changing paths.")
+        self.env_summary_label.setStyleSheet("color: #555;")
+        btn_row.addWidget(self.env_summary_label, stretch=1)
+        layout.addLayout(btn_row)
+        return group
+
+    def _set_environment_status(self, key: str, state: str, message: str):
+        label = self.env_status_labels.get(key)
+        if label is None:
+            return
+        title = dict(self.env_status_defs).get(key, key)
+        state_key = str(state or "pending").lower()
+        palette = {
+            "ok": ("#E7F6EC", "#1E7F3B", "OK"),
+            "fail": ("#FDEAEA", "#B42318", "FAIL"),
+            "warn": ("#FFF4E5", "#B54708", "CHECK"),
+            "running": ("#E8F1FF", "#175CD3", "CHECKING"),
+            "pending": ("#F2F4F7", "#667085", "NOT CHECKED"),
+        }
+        bg, fg, status_text = palette.get(state_key, palette["pending"])
+        label.setText(f"{title}\n{status_text}: {message}")
+        label.setStyleSheet(
+            f"QLabel {{ background: {bg}; color: {fg}; border: 1px solid {fg}; "
+            "border-radius: 6px; padding: 8px; font-weight: 600; }}"
+        )
+
+    def _mark_environment_pending(self):
+        for key, _ in self.env_status_defs:
+            self._set_environment_status(key, "pending", "Not checked")
+        if hasattr(self, "env_summary_label"):
+            self.env_summary_label.setText("Status is stale. Run Check Environment.")
+
+    def check_iraf_environment(self):
+        data_dir = Path(self.data_edit.text())
+        output_dir = Path(self.out_edit.text())
+        pattern = self.pattern_edit.text().strip() or "*.fit*"
+
+        for key, _ in self.env_status_defs:
+            self._set_environment_status(key, "running", "Checking")
+        self.env_summary_label.setText("Checking IRAF runtime and paths...")
+        self.check_env_btn.setEnabled(False)
+        self.run_btn.setEnabled(False)
+
+        self.env_worker = IRAFEnvironmentCheckWorker(data_dir, output_dir, pattern)
+        self.env_worker.status.connect(self._on_environment_status)
+        self.env_worker.log.connect(self._on_log)
+        self.env_worker.finished.connect(self._on_environment_finished)
+        self.env_worker.start()
+
+    def _on_environment_status(self, key: str, state: str, message: str):
+        self._set_environment_status(key, state, message)
+
+    def _on_environment_finished(self, result: dict):
+        ok = bool(result.get("ok"))
+        self.check_env_btn.setEnabled(True)
+        self.run_btn.setEnabled(True)
+        self.env_summary_label.setText(
+            "Environment ready." if ok else "Environment check failed. See red status boxes and log."
+        )
+
     # ========================================================================
     # Tab 1: Run Photometry
     # ========================================================================
@@ -951,73 +1876,43 @@ class IRAFPhotometryWindow(QMainWindow):
 
         # Info
         info = QLabel(
-            "Run IRAF DAOPHOT photometry via WSL/PyRAF.\n"
+            "Run IRAF DAOPHOT photometry via PyRAF (WSL python3 on Windows, local python3 otherwise).\n"
             "Configure parameters in the 'IRAF Parameters' tab before running."
         )
         info.setStyleSheet("color: #555; font-style: italic; padding: 5px;")
         layout.addWidget(info)
 
-        # Paths
-        paths_group = QGroupBox("Paths")
-        paths_layout = QFormLayout()
+        controls = QHBoxLayout()
+        btn_params = create_parameter_button("IRAF Parameters")
+        btn_params.clicked.connect(self.show_parameters_tab)
+        controls.addWidget(btn_params)
+        controls.addStretch()
+        layout.addLayout(controls)
 
-        # Data directory
-        data_row = QHBoxLayout()
-        default_data = step2_cropped_dir(self.result_dir)
-        if not default_data.exists():
-            default_data = step2_cropped_dir(self.data_dir / "result")
-        self.data_edit = QLineEdit(str(default_data))
-        data_btn = QPushButton("Browse")
-        data_btn.clicked.connect(lambda: self._browse_dir(self.data_edit))
-        data_row.addWidget(self.data_edit)
-        data_row.addWidget(data_btn)
-        data_w = QWidget()
-        data_w.setLayout(data_row)
-        paths_layout.addRow("Data Directory:", data_w)
-
-        # Output directory
-        out_row = QHBoxLayout()
-        self.out_edit = QLineEdit(str(self.result_dir / "iraf_phot"))
-        out_btn = QPushButton("Browse")
-        out_btn.clicked.connect(lambda: self._browse_dir(self.out_edit))
-        out_row.addWidget(self.out_edit)
-        out_row.addWidget(out_btn)
-        out_w = QWidget()
-        out_w.setLayout(out_row)
-        paths_layout.addRow("Output Directory:", out_w)
-
-        # File pattern
-        self.pattern_edit = QLineEdit("*.fit*")
-        paths_layout.addRow("File Pattern:", self.pattern_edit)
-
-        # Auto sigma
-        self.auto_sigma_check = QCheckBox("Auto-estimate sigma per image")
-        self.auto_sigma_check.setChecked(True)
-        paths_layout.addRow("", self.auto_sigma_check)
-
-        # Skip existing
-        self.skip_existing_check = QCheckBox("Skip already processed files")
-        self.skip_existing_check.setChecked(True)
-        paths_layout.addRow("", self.skip_existing_check)
-
-        paths_group.setLayout(paths_layout)
+        paths_group = QGroupBox("Project Paths")
+        paths_layout = QVBoxLayout(paths_group)
+        self.run_path_summary = QLabel()
+        self.run_path_summary.setTextInteractionFlags(Qt.TextSelectableByMouse)
+        self.run_path_summary.setStyleSheet(
+            "QLabel { font-family: Consolas, 'Courier New', monospace; "
+            "background: #F5F5F5; padding: 8px; border: 1px solid #D0D7DE; }"
+        )
+        paths_layout.addWidget(self.run_path_summary)
         layout.addWidget(paths_group)
 
+        layout.addWidget(self._create_environment_status_group())
+
         # Buttons
-        btn_layout = QHBoxLayout()
-
-        self.run_btn = QPushButton("Run IRAF Photometry")
-        self.run_btn.setStyleSheet("font-weight: bold; padding: 8px;")
-        self.run_btn.clicked.connect(self.run_photometry)
-        btn_layout.addWidget(self.run_btn)
-
-        self.stop_btn = QPushButton("Stop")
-        self.stop_btn.setEnabled(False)
-        self.stop_btn.clicked.connect(self.stop_photometry)
-        btn_layout.addWidget(self.stop_btn)
-
-        btn_layout.addStretch()
-        layout.addLayout(btn_layout)
+        self.run_bar = RunControlBar(
+            "Run IRAF Photometry",
+            "Log",
+            run_cb=self.run_photometry,
+            stop_cb=self.stop_photometry,
+            log_cb=self.show_run_log_window,
+        )
+        layout.addWidget(self.run_bar)
+        self.run_btn = self.run_bar.btn_run
+        self.stop_btn = self.run_bar.btn_stop
 
         # Progress
         self.progress_bar = QProgressBar()
@@ -1037,6 +1932,7 @@ class IRAFPhotometryWindow(QMainWindow):
         log_group.setLayout(log_layout)
         layout.addWidget(log_group)
 
+        self._refresh_path_summaries()
         return tab
 
     # ========================================================================
@@ -1048,7 +1944,9 @@ class IRAFPhotometryWindow(QMainWindow):
 
         # Sub-tabs for each parameter group
         param_tabs = QTabWidget()
+        self.param_tabs = param_tabs
 
+        param_tabs.addTab(self._create_project_paths_panel(), "Project Paths")
         param_tabs.addTab(self._create_datapars_panel(), "DATAPARS")
         param_tabs.addTab(self._create_findpars_panel(), "FINDPARS")
         param_tabs.addTab(self._create_centerpars_panel(), "CENTERPARS")
@@ -1074,6 +1972,251 @@ class IRAFPhotometryWindow(QMainWindow):
         self._auto_load_params()
 
         return tab
+
+    def _create_project_paths_panel(self):
+        scroll = QScrollArea()
+        scroll.setWidgetResizable(True)
+        panel = QWidget()
+        layout = QVBoxLayout(panel)
+
+        project_group = QGroupBox("Main Project")
+        project_layout = QFormLayout(project_group)
+        project_result = QLabel(str(self.result_dir))
+        project_result.setTextInteractionFlags(Qt.TextSelectableByMouse)
+        project_data = QLabel(str(self.data_dir))
+        project_data.setTextInteractionFlags(Qt.TextSelectableByMouse)
+        project_layout.addRow("APEX Result Dir:", project_result)
+        project_layout.addRow("Raw Data Dir:", project_data)
+        btn_defaults = create_cache_action_button("Use Project Defaults")
+        btn_defaults.clicked.connect(self._reset_project_paths)
+        project_layout.addRow("", btn_defaults)
+        btn_sync = create_parameter_button("Sync From APEX Step 4/7")
+        btn_sync.clicked.connect(self.sync_iraf_params_from_apex)
+        project_layout.addRow("", btn_sync)
+        self.apex_sync_status = QLabel("Step 4/7 sync has not been run in this session.")
+        self.apex_sync_status.setWordWrap(True)
+        self.apex_sync_status.setStyleSheet("color: #555;")
+        project_layout.addRow("APEX Sync:", self.apex_sync_status)
+        layout.addWidget(project_group)
+
+        run_group = QGroupBox("IRAF Photometry")
+        run_layout = QFormLayout(run_group)
+        run_layout.addRow("Data Directory:", self._path_row(self.data_edit))
+        run_layout.addRow("Output Directory:", self._path_row(self.out_edit))
+        run_layout.addRow("File Pattern:", self.pattern_edit)
+        run_layout.addRow("", self.auto_sigma_check)
+        run_layout.addRow("", self.skip_existing_check)
+        run_layout.addRow("", self.use_apex_step4_check)
+        run_layout.addRow("", self.use_wsl_scratch_check)
+        layout.addWidget(run_group)
+
+        compare_group = QGroupBox("Comparison")
+        compare_layout = QFormLayout(compare_group)
+        compare_layout.addRow("APEX Result Dir:", self._path_row(self.cmp_apex_edit))
+        compare_layout.addRow("IRAF Result Dir:", self._path_row(self.cmp_iraf_edit))
+        compare_layout.addRow("Image Dir:", self._path_row(self.cmp_image_edit))
+        compare_layout.addRow("Match Tolerance (px):", self.cmp_tol)
+        layout.addWidget(compare_group)
+
+        layout.addStretch()
+        scroll.setWidget(panel)
+        return scroll
+
+    @staticmethod
+    def _first_column(df: pd.DataFrame, candidates: list[str]) -> str | None:
+        names = {str(col).lower(): str(col) for col in df.columns}
+        for name in candidates:
+            col = names.get(str(name).lower())
+            if col is not None:
+                return col
+        return None
+
+    @staticmethod
+    def _finite_median(values) -> float:
+        arr = pd.to_numeric(pd.Series(values), errors="coerce").to_numpy(float)
+        arr = arr[np.isfinite(arr)]
+        return float(np.nanmedian(arr)) if arr.size else float("nan")
+
+    @staticmethod
+    def _frame_key_variants(filename) -> set[str]:
+        raw = Path(str(filename)).name
+        variants = {raw, Path(raw).stem}
+        low = raw.lower()
+        for ext in (".fits.gz", ".fit.gz", ".fits", ".fit", ".fts", ".fz", ".gz"):
+            if low.endswith(ext):
+                variants.add(raw[:-len(ext)])
+                break
+        return {v for v in variants if v}
+
+    def _load_apex_step4_frame_table(self) -> tuple[pd.DataFrame, str]:
+        s4_dir = step4_dir(self.result_dir)
+        frame_quality = s4_dir / "frame_quality.csv"
+        if frame_quality.exists():
+            try:
+                return pd.read_csv(frame_quality), str(frame_quality)
+            except Exception:
+                pass
+
+        rows = []
+        if s4_dir.exists():
+            for path in sorted(s4_dir.glob("detect_*.json")):
+                if path.name.startswith("detect_peak_"):
+                    continue
+                try:
+                    payload = json.loads(path.read_text(encoding="utf-8"))
+                except Exception:
+                    continue
+                fname = path.name[len("detect_"):-len(".json")]
+                rows.append({
+                    "file": fname,
+                    "filter": payload.get("filter", ""),
+                    "fwhm_px": payload.get("fwhm_px", np.nan),
+                    "fwhm_arcsec": payload.get("fwhm_arcsec", np.nan),
+                    "sky_sigma_med_adu": payload.get("bkg_rms", np.nan),
+                    "sigma_used": payload.get("sigma_used", np.nan),
+                    "n_sources": payload.get("n_sources", np.nan),
+                })
+        if rows:
+            return pd.DataFrame(rows), str(s4_dir / "detect_*.json")
+        return pd.DataFrame(), str(frame_quality)
+
+    def _load_apex_frame_params(self) -> dict:
+        df, _source = self._load_apex_step4_frame_table()
+        if df.empty:
+            return {}
+        file_col = self._first_column(df, ["file", "filename", "File", "Filename"])
+        fwhm_col = self._first_column(df, ["fwhm_med", "fwhm_px", "fwhm_med_px"])
+        sigma_col = self._first_column(df, ["sky_sigma_med_adu", "sky_sigma", "bkg_rms"])
+        n_sources_col = self._first_column(df, ["n_sources", "sources", "source_count"])
+        if file_col is None or (fwhm_col is None and sigma_col is None and n_sources_col is None):
+            return {}
+
+        frame_params = {}
+        for _, row in df.iterrows():
+            entry = {}
+            if fwhm_col is not None:
+                fwhm = pd.to_numeric(pd.Series([row.get(fwhm_col)]), errors="coerce").iloc[0]
+                if np.isfinite(float(fwhm)) and float(fwhm) > 0:
+                    entry["fwhm_px"] = float(fwhm)
+            if sigma_col is not None:
+                sigma = pd.to_numeric(pd.Series([row.get(sigma_col)]), errors="coerce").iloc[0]
+                if np.isfinite(float(sigma)) and float(sigma) > 0:
+                    entry["sigma"] = float(sigma)
+            if n_sources_col is not None:
+                n_sources = pd.to_numeric(pd.Series([row.get(n_sources_col)]), errors="coerce").iloc[0]
+                if np.isfinite(float(n_sources)) and float(n_sources) > 0:
+                    entry["apex_n_sources"] = int(n_sources)
+            if not entry:
+                continue
+            for key in self._frame_key_variants(row.get(file_col, "")):
+                frame_params[key] = dict(entry)
+        return frame_params
+
+    def sync_iraf_params_from_apex(self):
+        self._apply_params_silent()
+        df, source = self._load_apex_step4_frame_table()
+        if df.empty:
+            message = f"No Step 4 frame quality data found at {source}"
+            if hasattr(self, "apex_sync_status"):
+                self.apex_sync_status.setText(message)
+            QMessageBox.information(self, "APEX Sync", message)
+            return
+
+        p = self.iraf_params
+        updates = []
+
+        pix_scale = getattr(getattr(self.app_params, "P", object()), "pixel_scale_arcsec", np.nan)
+        try:
+            pix_scale = float(pix_scale)
+        except Exception:
+            pix_scale = np.nan
+        if np.isfinite(pix_scale) and pix_scale > 0:
+            p.pix_scale = pix_scale
+            updates.append(f"pix_scale={pix_scale:.3f}\"/px")
+
+        fwhm_col = self._first_column(df, ["fwhm_med", "fwhm_px", "fwhm_med_px"])
+        sigma_col = self._first_column(df, ["sky_sigma_med_adu", "sky_sigma", "bkg_rms"])
+        filter_col = self._first_column(df, ["filter", "FILTER"])
+
+        if fwhm_col is not None:
+            fwhm_med_px = self._finite_median(df[fwhm_col])
+            if np.isfinite(fwhm_med_px) and fwhm_med_px > 0:
+                p.seeing_default = fwhm_med_px * p.pix_scale
+                updates.append(f"default seeing={p.seeing_default:.2f}\" ({fwhm_med_px:.2f}px)")
+
+        if sigma_col is not None:
+            sigma_med = self._finite_median(df[sigma_col])
+            if np.isfinite(sigma_med) and sigma_med > 0:
+                p.sigma_default = sigma_med
+                p.sigma_ref = sigma_med
+                updates.append(f"default sigma={sigma_med:.1f}")
+
+        if filter_col is not None:
+            work = df.copy()
+            work["_iraf_filter_key"] = work[filter_col].map(normalize_filter_key)
+            for filt_key, group in work.groupby("_iraf_filter_key"):
+                if filt_key not in {"g", "r", "i"}:
+                    continue
+                if fwhm_col is not None:
+                    fwhm_px = self._finite_median(group[fwhm_col])
+                    if np.isfinite(fwhm_px) and fwhm_px > 0:
+                        setattr(p, f"seeing_{filt_key}", fwhm_px * p.pix_scale)
+                if sigma_col is not None:
+                    sigma_val = self._finite_median(group[sigma_col])
+                    if np.isfinite(sigma_val) and sigma_val > 0:
+                        setattr(p, f"sigma_{filt_key}", sigma_val)
+
+        P = getattr(self.app_params, "P", object())
+        detect_sigma = getattr(P, "detect_sigma", None)
+        try:
+            detect_sigma = float(detect_sigma)
+        except Exception:
+            detect_sigma = np.nan
+        if np.isfinite(detect_sigma) and detect_sigma > 0:
+            p.threshold_default = float(detect_sigma)
+        sigma_by_filter = getattr(P, "detect_sigma_by_filter", {}) or {}
+        if isinstance(sigma_by_filter, dict):
+            for filt, value in sigma_by_filter.items():
+                key = normalize_filter_key(filt)
+                if key not in {"g", "r", "i"}:
+                    continue
+                try:
+                    val = float(value)
+                except Exception:
+                    continue
+                if np.isfinite(val) and val > 0:
+                    setattr(p, f"threshold_{key}", val)
+
+        for attr, target in (
+            ("forced_r_ap_scale", "aperture_mult"),
+            ("fitsky_annulus_scale", "annulus_mult"),
+            ("fitsky_dannulus_scale", "dannulus_mult"),
+            ("center_cbox_scale", "cbox_mult"),
+        ):
+            try:
+                val = float(getattr(P, attr))
+            except Exception:
+                continue
+            if np.isfinite(val) and val > 0:
+                setattr(p, target, val)
+        updates.append(
+            f"geometry ap={p.aperture_mult:.2f}x ann={p.annulus_mult:.2f}x "
+            f"dann={p.dannulus_mult:.2f}x cbox={p.cbox_mult:.2f}x"
+        )
+
+        step7_path = step7_forced_phot_dir(self.result_dir) / "apcorr_summary.csv"
+        if step7_path.exists():
+            updates.append("Step 7 apcorr summary found for comparison context")
+
+        self._update_ui_from_params()
+        self.use_apex_step4_check.setChecked(True)
+        self._auto_save_params()
+
+        frame_count = len(self._load_apex_frame_params())
+        message = f"Synced from {source}. Frame overrides available: {frame_count}. " + "; ".join(updates)
+        if hasattr(self, "apex_sync_status"):
+            self.apex_sync_status.setText(message)
+        QMessageBox.information(self, "APEX Sync", message)
 
     def _create_datapars_panel(self):
         scroll = QScrollArea()
@@ -1917,63 +3060,14 @@ class IRAFPhotometryWindow(QMainWindow):
     def _create_comparison_tab(self):
         tab = QWidget()
         layout = QVBoxLayout(tab)
+        layout.setContentsMargins(8, 8, 8, 8)
+        layout.setSpacing(6)
 
-        # Settings
-        settings_group = QGroupBox("Comparison Settings")
-        settings_layout = QFormLayout()
-
-        # APEX dir
-        apex_row = QHBoxLayout()
-        self.cmp_apex_edit = QLineEdit(str(self.result_dir))
-        apex_btn = QPushButton("Browse")
-        apex_btn.clicked.connect(lambda: self._browse_dir(self.cmp_apex_edit))
-        apex_row.addWidget(self.cmp_apex_edit)
-        apex_row.addWidget(apex_btn)
-        apex_w = QWidget()
-        apex_w.setLayout(apex_row)
-        settings_layout.addRow("APEX Result Dir:", apex_w)
-        self.cmp_apex_edit.editingFinished.connect(self._overlay_refresh_maps)
-
-        # IRAF dir
-        iraf_row = QHBoxLayout()
-        self.cmp_iraf_edit = QLineEdit(str(self.result_dir / "iraf_phot"))
-        iraf_btn = QPushButton("Browse")
-        iraf_btn.clicked.connect(lambda: self._browse_dir(self.cmp_iraf_edit))
-        iraf_row.addWidget(self.cmp_iraf_edit)
-        iraf_row.addWidget(iraf_btn)
-        iraf_w = QWidget()
-        iraf_w.setLayout(iraf_row)
-        settings_layout.addRow("IRAF Result Dir:", iraf_w)
-        self.cmp_iraf_edit.editingFinished.connect(self._overlay_refresh_maps)
-
-        # Image dir (FITS)
-        img_row = QHBoxLayout()
-        default_img = step2_cropped_dir(self.result_dir)
-        if not default_img.exists():
-            default_img = step2_cropped_dir(self.data_dir / "result")
-        if not default_img.exists():
-            default_img = self.data_dir
-        self.cmp_image_edit = QLineEdit(str(default_img))
-        img_btn = QPushButton("Browse")
-        img_btn.clicked.connect(lambda: self._browse_dir(self.cmp_image_edit))
-        img_row.addWidget(self.cmp_image_edit)
-        img_row.addWidget(img_btn)
-        img_w = QWidget()
-        img_w.setLayout(img_row)
-        settings_layout.addRow("Image Dir:", img_w)
-        self.cmp_image_edit.editingFinished.connect(self._overlay_reload)
-
-        # Tolerance
-        self.cmp_tol = QDoubleSpinBox()
-        self.cmp_tol.setRange(0.1, 20.0)
-        self.cmp_tol.setValue(1.5)
-        settings_layout.addRow("Match Tolerance (px):", self.cmp_tol)
-
-        settings_group.setLayout(settings_layout)
-        layout.addWidget(settings_group)
-
-        # Buttons
         btn_layout = QHBoxLayout()
+        btn_params = create_parameter_button("IRAF Parameters")
+        btn_params.clicked.connect(self.show_parameters_tab)
+        btn_layout.addWidget(btn_params)
+
         self.cmp_run_btn = QPushButton("Run Comparison")
         self.cmp_run_btn.clicked.connect(self.run_comparison)
         btn_layout.addWidget(self.cmp_run_btn)
@@ -1982,19 +3076,41 @@ class IRAFPhotometryWindow(QMainWindow):
         self.cmp_export_btn.clicked.connect(self.export_comparison)
         btn_layout.addWidget(self.cmp_export_btn)
 
+        self.cmp_log_btn = create_cache_action_button("Log")
+        self.cmp_log_btn.clicked.connect(self.show_comparison_log)
+        btn_layout.addWidget(self.cmp_log_btn)
+
         btn_layout.addStretch()
         layout.addLayout(btn_layout)
+
+        paths_group = QGroupBox("Project Paths")
+        paths_group.setMaximumHeight(82)
+        paths_layout = QVBoxLayout(paths_group)
+        paths_layout.setContentsMargins(8, 4, 8, 4)
+        self.cmp_path_summary = QLabel()
+        self.cmp_path_summary.setTextInteractionFlags(Qt.TextSelectableByMouse)
+        self.cmp_path_summary.setStyleSheet(
+            "QLabel { font-family: Consolas, 'Courier New', monospace; "
+            "font-size: 8pt; background: #F5F5F5; padding: 3px; border: 1px solid #D0D7DE; }"
+        )
+        paths_layout.addWidget(self.cmp_path_summary)
+        layout.addWidget(paths_group)
+        self._refresh_path_summaries()
 
         # Summary
         self.cmp_summary = QLabel("No comparison run yet.")
         self.cmp_summary.setStyleSheet("font-weight: bold; padding: 5px;")
+        self.cmp_summary.setMaximumHeight(30)
         layout.addWidget(self.cmp_summary)
 
         # Tabs: results + log
         tabs = QTabWidget()
+        tabs.setMinimumHeight(430)
+        self.cmp_tabs = tabs
 
         result_tab = QWidget()
         result_layout = QVBoxLayout(result_tab)
+        result_layout.setContentsMargins(0, 0, 0, 0)
 
         # Splitter: table + plot
         splitter = QSplitter(Qt.Horizontal)
@@ -2002,7 +3118,7 @@ class IRAFPhotometryWindow(QMainWindow):
         # Table
         self.cmp_table = QTableWidget(0, 13)
         self.cmp_table.setHorizontalHeaderLabels([
-            "Frame", "Matched", "dmag_med", "dmag_std", "dx_med", "dy_med",
+            "Frame", "Matched", "dmag_med", "resid_std", "dx_med", "dy_med",
             "dist_med", "dist_p95", "frac<=tol", "shift_x", "shift_y",
             "N_iraf", "N_apex"
         ])
@@ -2012,20 +3128,26 @@ class IRAFPhotometryWindow(QMainWindow):
         self.cmp_table.setSelectionMode(QTableWidget.SingleSelection)
         self.cmp_table.setEditTriggers(QTableWidget.NoEditTriggers)
         self.cmp_table.itemSelectionChanged.connect(self._plot_comparison)
+        self.cmp_table.setMinimumWidth(360)
+        self.cmp_table.setMaximumWidth(540)
         splitter.addWidget(self.cmp_table)
 
         # Plot
         plot_widget = QWidget()
         plot_layout = QVBoxLayout(plot_widget)
-        self.cmp_fig = Figure(figsize=(8, 6), tight_layout=True)
+        plot_layout.setContentsMargins(2, 2, 2, 2)
+        plot_layout.setSpacing(2)
+        self.cmp_fig = Figure(figsize=(9, 6.5), tight_layout=True)
         self.cmp_canvas = FigureCanvas(self.cmp_fig)
+        self.cmp_canvas.setMinimumSize(620, 390)
         self.cmp_toolbar = NavigationToolbar(self.cmp_canvas, self)
         plot_layout.addWidget(self.cmp_toolbar)
-        plot_layout.addWidget(self.cmp_canvas)
+        plot_layout.addWidget(self.cmp_canvas, stretch=1)
         splitter.addWidget(plot_widget)
 
         splitter.setStretchFactor(0, 1)
-        splitter.setStretchFactor(1, 2)
+        splitter.setStretchFactor(1, 4)
+        splitter.setSizes([420, 850])
 
         result_layout.addWidget(splitter)
         tabs.addTab(result_tab, "Results")
@@ -2039,30 +3161,22 @@ class IRAFPhotometryWindow(QMainWindow):
         tabs.addTab(log_tab, "Log")
 
         overlay_widget = self._create_overlay_widget()
-        overlay_widget.setMinimumHeight(420)
+        tabs.addTab(overlay_widget, "Overlay")
 
-        main_splitter = QSplitter(Qt.Vertical)
-        main_splitter.addWidget(tabs)
-        main_splitter.addWidget(overlay_widget)
-        main_splitter.setStretchFactor(0, 2)
-        main_splitter.setStretchFactor(1, 3)
-
-        layout.addWidget(main_splitter)
+        layout.addWidget(tabs, stretch=1)
 
         return tab
 
     def _create_overlay_widget(self):
         widget = QWidget()
         layout = QVBoxLayout(widget)
-
-        info = QLabel(
-            "Overlay APEX TSV positions with IRAF daofind positions on FITS frames."
-        )
-        info.setStyleSheet("QLabel { background-color: #FFF3CD; padding: 6px; border-radius: 4px; }")
-        layout.addWidget(info)
+        layout.setContentsMargins(4, 4, 4, 4)
+        layout.setSpacing(4)
 
         select_group = QGroupBox("Frame Selection")
         select_layout = QHBoxLayout(select_group)
+        select_layout.setContentsMargins(8, 4, 8, 4)
+        select_layout.setSpacing(6)
         select_layout.addWidget(QLabel("Index:"))
         self.overlay_index_spin = QSpinBox()
         self.overlay_index_spin.setRange(0, 0)
@@ -2074,68 +3188,19 @@ class IRAFPhotometryWindow(QMainWindow):
         self.overlay_file_combo.currentIndexChanged.connect(self._overlay_on_file_changed)
         select_layout.addWidget(self.overlay_file_combo, stretch=1)
 
-        btn_reload = QPushButton("Reload Frames")
+        btn_reload = QPushButton("Reload")
         btn_reload.clicked.connect(self._overlay_reload)
         select_layout.addWidget(btn_reload)
+        select_group.setMaximumHeight(58)
         layout.addWidget(select_group)
 
         control_group = QGroupBox("Display Controls")
         control_layout = QHBoxLayout(control_group)
-        control_layout.addWidget(QLabel("Stretch:"))
-        self.overlay_scale_combo = QComboBox()
-        self.overlay_scale_combo.addItems([
-            "Auto Stretch (Siril)",
-            "Asinh Stretch",
-            "Midtone (MTF)",
-            "Histogram Eq",
-            "Log Stretch",
-            "Sqrt Stretch",
-            "Linear (1-99%)",
-            "ZScale (IRAF)",
-        ])
-        self.overlay_scale_combo.currentIndexChanged.connect(self._overlay_on_stretch_changed)
-        control_layout.addWidget(self.overlay_scale_combo)
-
-        control_layout.addWidget(QLabel("Intensity:"))
-        self.overlay_stretch_slider = QSlider(Qt.Horizontal)
-        self.overlay_stretch_slider.setMinimum(1)
-        self.overlay_stretch_slider.setMaximum(100)
-        self.overlay_stretch_slider.setValue(25)
-        self.overlay_stretch_slider.setFixedWidth(120)
-        self.overlay_stretch_slider.sliderReleased.connect(self._overlay_redisplay)
-        self.overlay_stretch_slider.valueChanged.connect(self._overlay_update_stretch_label)
-        control_layout.addWidget(self.overlay_stretch_slider)
-
-        self.overlay_stretch_value = QLabel("25")
-        self.overlay_stretch_value.setFixedWidth(30)
-        control_layout.addWidget(self.overlay_stretch_value)
-
-        control_layout.addWidget(QLabel("Black:"))
-        self.overlay_black_slider = QSlider(Qt.Horizontal)
-        self.overlay_black_slider.setMinimum(0)
-        self.overlay_black_slider.setMaximum(100)
-        self.overlay_black_slider.setValue(0)
-        self.overlay_black_slider.setFixedWidth(80)
-        self.overlay_black_slider.sliderReleased.connect(self._overlay_redisplay)
-        self.overlay_black_slider.valueChanged.connect(self._overlay_update_black_label)
-        control_layout.addWidget(self.overlay_black_slider)
-
-        self.overlay_black_value = QLabel("0")
-        self.overlay_black_value.setFixedWidth(25)
-        control_layout.addWidget(self.overlay_black_value)
-
+        control_layout.setContentsMargins(8, 4, 8, 4)
+        control_layout.setSpacing(8)
         btn_reset_zoom = QPushButton("Reset Zoom")
         btn_reset_zoom.clicked.connect(self._overlay_reset_zoom)
         control_layout.addWidget(btn_reset_zoom)
-
-        btn_reset_stretch = QPushButton("Reset Stretch")
-        btn_reset_stretch.clicked.connect(self._overlay_reset_stretch)
-        control_layout.addWidget(btn_reset_stretch)
-
-        btn_2d_plot = QPushButton("2D Plot")
-        btn_2d_plot.setStyleSheet("QPushButton { background-color: #FF9800; color: white; font-weight: bold; }")
-        btn_2d_plot.clicked.connect(self._overlay_open_stretch_plot)
-        control_layout.addWidget(btn_2d_plot)
 
         self.overlay_show_apex = QCheckBox("APEX TSV")
         self.overlay_show_apex.setChecked(True)
@@ -2148,22 +3213,16 @@ class IRAFPhotometryWindow(QMainWindow):
         control_layout.addWidget(self.overlay_show_iraf)
 
         control_layout.addStretch()
+        control_group.setMaximumHeight(58)
         layout.addWidget(control_group)
 
-        self.overlay_fig = Figure(figsize=(10, 8))
-        self.overlay_canvas = FigureCanvas(self.overlay_fig)
-        self.overlay_canvas.setMinimumHeight(450)
-        self.overlay_ax = self.overlay_fig.add_subplot(111)
-        self.overlay_fig.subplots_adjust(left=0.07, right=0.98, bottom=0.08, top=0.95)
-        self.overlay_canvas.setFocusPolicy(Qt.StrongFocus)
-        self.overlay_canvas.mpl_connect("scroll_event", self._overlay_on_scroll)
-        self.overlay_canvas.mpl_connect("button_press_event", self._overlay_on_button_press)
-        self.overlay_canvas.mpl_connect("button_release_event", self._overlay_on_button_release)
-        self.overlay_canvas.mpl_connect("motion_notify_event", self._overlay_on_motion)
-        layout.addWidget(self.overlay_canvas, stretch=1)
+        self.overlay_viewer = FITSViewerWidget(self)
+        self.overlay_viewer.setMinimumHeight(360)
+        layout.addWidget(self.overlay_viewer, stretch=1)
 
         self.overlay_status = QLabel("No frame loaded.")
         self.overlay_status.setStyleSheet("QLabel { color: #555; padding: 4px; }")
+        self.overlay_status.setMaximumHeight(28)
         layout.addWidget(self.overlay_status)
 
         sc_prev = QShortcut(QKeySequence(Qt.Key_BracketLeft), widget)
@@ -2322,7 +3381,7 @@ class IRAFPhotometryWindow(QMainWindow):
             for fkey, fvals in raw_filters.items():
                 if not isinstance(fvals, dict):
                     continue
-                key = str(fkey).strip().lower()
+                key = normalize_filter_key(fkey)
                 params = {}
                 for pkey, pval in fvals.items():
                     pname = str(pkey).strip().lower().replace("-", "_").replace(" ", "_")
@@ -2335,7 +3394,7 @@ class IRAFPhotometryWindow(QMainWindow):
             for akey, aval in raw_aliases.items():
                 if aval is None:
                     continue
-                filter_aliases[str(akey).strip().lower()] = str(aval).strip().lower()
+                filter_aliases[str(akey).strip().lower()] = normalize_filter_key(aval)
 
         return filter_params, filter_aliases
 
@@ -2400,7 +3459,7 @@ class IRAFPhotometryWindow(QMainWindow):
         self.overlay_iraf_map = {}
 
         if apex_dir.exists():
-            for p in apex_dir.rglob("*_photometry.tsv"):
+            for p in _iter_apex_photometry_files(apex_dir):
                 key = _normalize_frame_key(p.stem)
                 self.overlay_apex_map.setdefault(key, p)
 
@@ -2471,31 +3530,14 @@ class IRAFPhotometryWindow(QMainWindow):
         self._overlay_reset_stretch_plot_values()
 
         self._overlay_display()
-        self.overlay_canvas.setFocus()
+        if self.overlay_viewer is not None:
+            self.overlay_viewer.setFocus()
 
     def _overlay_display(self):
         if self.overlay_image_data is None:
             return
-
-        normalized = self._overlay_normalize_image()
-        if normalized is None:
-            self._overlay_render_empty("No valid image data.")
+        if self.overlay_viewer is None:
             return
-
-        stretched = self._overlay_apply_stretch(normalized)
-
-        xlim_current = self.overlay_ax.get_xlim() if self.overlay_xlim_original else None
-        ylim_current = self.overlay_ax.get_ylim() if self.overlay_ylim_original else None
-
-        self.overlay_ax.clear()
-        self._overlay_imshow_obj = self.overlay_ax.imshow(
-            stretched,
-            cmap="gray",
-            origin="lower",
-            vmin=0,
-            vmax=1,
-            interpolation="nearest",
-        )
 
         fname = self.overlay_file_list[self.overlay_current_index]
         key = _normalize_frame_key(Path(fname).stem)
@@ -2505,47 +3547,32 @@ class IRAFPhotometryWindow(QMainWindow):
 
         apex_n = 0
         iraf_n = 0
+        markers: list[OverlayMarker] = []
 
         if self.overlay_show_apex.isChecked() and apex_xy.size:
             apex_n = apex_xy.shape[0]
-            self.overlay_ax.scatter(
-                apex_xy[:, 0],
-                apex_xy[:, 1],
-                s=18,
-                facecolors="none",
-                edgecolors="#00C853",
-                linewidths=0.8,
-                label="APEX TSV",
+            markers.extend(
+                OverlayMarker(
+                    col=float(x), row=float(y), radius=5.0,
+                    color=QColor(0, 200, 83, 210), line_width=1.0,
+                )
+                for x, y in apex_xy
             )
 
         if self.overlay_show_iraf.isChecked() and iraf_xy.size:
             iraf_n = iraf_xy.shape[0]
-            self.overlay_ax.scatter(
-                iraf_xy[:, 0],
-                iraf_xy[:, 1],
-                s=20,
-                marker="x",
-                color="#FF5252",
-                linewidths=0.8,
-                label="IRAF daofind",
+            markers.extend(
+                OverlayMarker(
+                    col=float(x), row=float(y), radius=4.0,
+                    color=QColor(255, 82, 82, 220), rejected=True,
+                    line_width=1.2,
+                )
+                for x, y in iraf_xy
             )
 
-        if self.overlay_show_apex.isChecked() or self.overlay_show_iraf.isChecked():
-            self.overlay_ax.legend(loc="upper right", fontsize=8, framealpha=0.7)
-
-        self.overlay_ax.set_xlabel("X (pixels)")
-        self.overlay_ax.set_ylabel("Y (pixels)")
-        stretch_name = self.overlay_scale_combo.currentText()
-        self.overlay_ax.set_title(f"{fname} | {stretch_name}")
-
-        if self.overlay_xlim_original is None:
-            self.overlay_xlim_original = self.overlay_ax.get_xlim()
-            self.overlay_ylim_original = self.overlay_ax.get_ylim()
-        elif xlim_current is not None and ylim_current is not None:
-            self.overlay_ax.set_xlim(xlim_current)
-            self.overlay_ax.set_ylim(ylim_current)
-
-        self.overlay_canvas.draw_idle()
+        self.overlay_viewer.set_data_auto_stf(self.overlay_image_data)
+        self.overlay_viewer.set_overlay_markers(markers)
+        self.overlay_viewer.fit_in_view()
 
         filt = self._overlay_get_filter(fname)
         self.overlay_status.setText(
@@ -2557,9 +3584,10 @@ class IRAFPhotometryWindow(QMainWindow):
         )
 
     def _overlay_render_empty(self, message: str):
-        self.overlay_ax.clear()
-        self.overlay_ax.text(0.5, 0.5, message, ha="center", va="center")
-        self.overlay_canvas.draw_idle()
+        if self.overlay_viewer is not None:
+            self.overlay_viewer.clear_overlay_markers()
+            self.overlay_viewer.set_data_auto_stf(np.zeros((2, 2), dtype=np.float32))
+            self.overlay_viewer.fit_in_view()
         self._overlay_imshow_obj = None
         self.overlay_status.setText(message)
         self.overlay_xlim_original = None
@@ -2633,7 +3661,7 @@ class IRAFPhotometryWindow(QMainWindow):
         filt = ""
         try:
             header = fits.getheader(fpath)
-            filt = str(header.get("FILTER", "")).strip().lower()
+            filt = normalize_filter_key(header.get("FILTER", ""))
         except Exception:
             filt = ""
         if not filt:
@@ -2674,24 +3702,22 @@ class IRAFPhotometryWindow(QMainWindow):
         self._overlay_display()
 
     def _overlay_update_stretch_label(self, value):
-        self.overlay_stretch_value.setText(str(value))
+        if hasattr(self, "overlay_stretch_value"):
+            self.overlay_stretch_value.setText(str(value))
 
     def _overlay_update_black_label(self, value):
-        self.overlay_black_value.setText(str(value))
+        if hasattr(self, "overlay_black_value"):
+            self.overlay_black_value.setText(str(value))
 
     def _overlay_reset_stretch(self):
-        self.overlay_scale_combo.setCurrentIndex(0)
-        self.overlay_stretch_slider.setValue(25)
-        self.overlay_black_slider.setValue(0)
         self._overlay_normalized_cache = None
         self._overlay_reset_stretch_plot_values()
-        self._overlay_display()
+        if self.overlay_viewer is not None and self.overlay_image_data is not None:
+            self.overlay_viewer.set_data_auto_stf(self.overlay_image_data)
 
     def _overlay_reset_zoom(self):
-        if self.overlay_xlim_original is not None and self.overlay_ylim_original is not None:
-            self.overlay_ax.set_xlim(self.overlay_xlim_original)
-            self.overlay_ax.set_ylim(self.overlay_ylim_original)
-            self.overlay_canvas.draw_idle()
+        if self.overlay_viewer is not None:
+            self.overlay_viewer.fit_in_view()
 
     def _overlay_redisplay(self):
         self._overlay_display()
@@ -2760,16 +3786,9 @@ class IRAFPhotometryWindow(QMainWindow):
         self._overlay_stretch_data_range = (float(p_low), float(p_high))
 
         if self._overlay_stretch_vmin is None or self._overlay_stretch_vmax is None:
-            stretch_idx = self.overlay_scale_combo.currentIndex()
-            if stretch_idx == 6:
-                vmin = np.percentile(flat, 1)
-                vmax = np.percentile(flat, 99)
-            elif stretch_idx == 7:
-                vmin, vmax = self._overlay_calculate_zscale()
-            else:
-                _, median_val, std_val = sigma_clipped_stats(flat, sigma=3.0, maxiters=5)
-                vmin = max(np.min(flat), median_val - 2.8 * std_val)
-                vmax = min(np.max(flat), np.percentile(flat, 99.9))
+            _, median_val, std_val = sigma_clipped_stats(flat, sigma=3.0, maxiters=5)
+            vmin = max(np.min(flat), median_val - 2.8 * std_val)
+            vmax = min(np.max(flat), np.percentile(flat, 99.9))
 
             if vmax <= vmin:
                 vmin = np.min(flat)
@@ -2806,9 +3825,8 @@ class IRAFPhotometryWindow(QMainWindow):
         ax.legend(loc='upper right', fontsize=8)
 
         if self.overlay_stretch_plot_info_label:
-            stretch_name = self.overlay_scale_combo.currentText()
             self.overlay_stretch_plot_info_label.setText(
-                f"Stretch: {stretch_name} | Min: {vmin:.2f} | Max: {vmax:.2f}"
+                f"Manual range | Min: {vmin:.2f} | Max: {vmax:.2f}"
             )
 
         self.overlay_stretch_plot_canvas.draw_idle()
@@ -2859,14 +3877,9 @@ class IRAFPhotometryWindow(QMainWindow):
         if vmax <= vmin:
             vmax = vmin + 1
 
-        data = self.overlay_image_data.copy()
-        normalized = (data - vmin) / (vmax - vmin + 1e-10)
-        normalized = np.clip(normalized, 0, 1)
-        stretched = self._overlay_apply_stretch(normalized)
-
-        if self._overlay_imshow_obj is not None:
-            self._overlay_imshow_obj.set_data(stretched)
-            self.overlay_canvas.draw_idle()
+        if self.overlay_viewer is not None:
+            self.overlay_viewer.set_stretch_mode("linear")
+            self.overlay_viewer.set_linear_range(vmin, vmax)
 
     def _overlay_reset_stretch_plot_values(self):
         """Reset stretch plot values when changing image or stretch mode"""
@@ -2879,8 +3892,7 @@ class IRAFPhotometryWindow(QMainWindow):
         if self.overlay_image_data is None:
             return None
 
-        stretch_idx = self.overlay_scale_combo.currentIndex()
-        cache_key = (id(self.overlay_image_data), stretch_idx)
+        cache_key = id(self.overlay_image_data)
         if self._overlay_normalized_cache is not None:
             if self._overlay_normalized_cache[0] == cache_key:
                 return self._overlay_normalized_cache[1].copy()
@@ -2890,15 +3902,9 @@ class IRAFPhotometryWindow(QMainWindow):
         if not finite.any():
             return np.zeros_like(data)
 
-        if stretch_idx == 6:  # Linear (1-99%)
-            vmin = np.percentile(data[finite], 1)
-            vmax = np.percentile(data[finite], 99)
-        elif stretch_idx == 7:  # ZScale (IRAF)
-            vmin, vmax = self._overlay_calculate_zscale()
-        else:
-            _, median_val, std_val = sigma_clipped_stats(data[finite], sigma=3.0, maxiters=5)
-            vmin = max(np.min(data[finite]), median_val - 2.8 * std_val)
-            vmax = min(np.max(data[finite]), np.percentile(data[finite], 99.9))
+        _, median_val, std_val = sigma_clipped_stats(data[finite], sigma=3.0, maxiters=5)
+        vmin = max(np.min(data[finite]), median_val - 2.8 * std_val)
+        vmax = min(np.max(data[finite]), np.percentile(data[finite], 99.9))
 
         if vmax <= vmin:
             vmin = float(np.min(data[finite]))
@@ -2926,24 +3932,6 @@ class IRAFPhotometryWindow(QMainWindow):
         return vmin, vmax
 
     def _overlay_apply_stretch(self, data):
-        stretch_idx = self.overlay_scale_combo.currentIndex()
-        intensity = self.overlay_stretch_slider.value() / 100.0
-        black_point = self.overlay_black_slider.value() / 100.0
-
-        data = np.clip((data - black_point) / (1.0 - black_point + 1e-10), 0, 1)
-
-        if stretch_idx == 0:
-            return self._overlay_stretch_auto_siril(data, intensity)
-        if stretch_idx == 1:
-            return self._overlay_stretch_asinh(data, intensity)
-        if stretch_idx == 2:
-            return self._overlay_stretch_mtf(data, intensity)
-        if stretch_idx == 3:
-            return self._overlay_stretch_histogram_eq(data)
-        if stretch_idx == 4:
-            return self._overlay_stretch_log(data, intensity)
-        if stretch_idx == 5:
-            return self._overlay_stretch_sqrt(data, intensity)
         return data
 
     def _overlay_stretch_auto_siril(self, data, intensity):
@@ -2952,7 +3940,7 @@ class IRAFPhotometryWindow(QMainWindow):
             return data
         median_val = np.median(finite)
         mad = np.median(np.abs(finite - median_val))
-        sigma = mad * 1.4826
+        sigma = mad * MAD_TO_SIGMA
         shadows = max(0.0, median_val - 2.8 * sigma)
         highlights = 1.0
         stretched = (data - shadows) / (highlights - shadows + 1e-10)
@@ -3000,52 +3988,16 @@ class IRAFPhotometryWindow(QMainWindow):
         return np.clip(stretched, 0, 1)
 
     def _overlay_on_scroll(self, event):
-        if event.inaxes != self.overlay_ax:
-            return
-        zoom_factor = 1.2 if event.button == "up" else 0.8
-        xlim = self.overlay_ax.get_xlim()
-        ylim = self.overlay_ax.get_ylim()
-        xdata, ydata = event.xdata, event.ydata
-        if xdata is None or ydata is None:
-            return
-        x_range = (xlim[1] - xlim[0]) * zoom_factor
-        y_range = (ylim[1] - ylim[0]) * zoom_factor
-        new_xlim = [
-            xdata - x_range * (xdata - xlim[0]) / (xlim[1] - xlim[0]),
-            xdata + x_range * (xlim[1] - xdata) / (xlim[1] - xlim[0]),
-        ]
-        new_ylim = [
-            ydata - y_range * (ydata - ylim[0]) / (ylim[1] - ylim[0]),
-            ydata + y_range * (ylim[1] - ydata) / (ylim[1] - ylim[0]),
-        ]
-        self.overlay_ax.set_xlim(new_xlim)
-        self.overlay_ax.set_ylim(new_ylim)
-        self.overlay_canvas.draw_idle()
+        return
 
     def _overlay_on_button_press(self, event):
-        if event.button == 3:
-            self.overlay_panning = True
-            self.overlay_pan_start = (event.xdata, event.ydata)
+        return
 
     def _overlay_on_button_release(self, event):
-        if event.button == 3:
-            self.overlay_panning = False
-            self.overlay_pan_start = None
+        return
 
     def _overlay_on_motion(self, event):
-        if not self.overlay_panning or self.overlay_pan_start is None:
-            return
-        if event.inaxes != self.overlay_ax:
-            return
-        if event.xdata is None or event.ydata is None:
-            return
-        dx = self.overlay_pan_start[0] - event.xdata
-        dy = self.overlay_pan_start[1] - event.ydata
-        xlim = self.overlay_ax.get_xlim()
-        ylim = self.overlay_ax.get_ylim()
-        self.overlay_ax.set_xlim([xlim[0] + dx, xlim[1] + dx])
-        self.overlay_ax.set_ylim([ylim[0] + dy, ylim[1] + dy])
-        self.overlay_canvas.draw_idle()
+        return
 
     # ========================================================================
     # Run Photometry
@@ -3057,29 +4009,118 @@ class IRAFPhotometryWindow(QMainWindow):
         output_dir = Path(self.out_edit.text())
 
         if not data_dir.exists():
+            self._set_environment_status("data", "fail", "Directory missing")
+            self._set_environment_status("images", "fail", "Not checked")
             QMessageBox.warning(self, "Error", f"Data directory not found:\n{data_dir}")
             return
+        if not data_dir.is_dir():
+            self._set_environment_status("data", "fail", "Not a directory")
+            self._set_environment_status("images", "fail", "Not checked")
+            QMessageBox.warning(self, "Error", f"Data path is not a directory:\n{data_dir}")
+            return
 
-        self.run_btn.setEnabled(False)
-        self.stop_btn.setEnabled(True)
+        pattern = self.pattern_edit.text().strip() or "*.fit*"
+        try:
+            image_files = sorted(data_dir.glob(pattern))
+            image_count = len(image_files)
+        except Exception as exc:
+            self._set_environment_status("images", "fail", f"Pattern error: {exc}")
+            QMessageBox.warning(self, "Error", f"Invalid file pattern:\n{pattern}\n\n{exc}")
+            return
+        self._set_environment_status("data", "ok", "Directory exists")
+        if image_count == 0:
+            self._set_environment_status("images", "fail", f"No match: {pattern}")
+            QMessageBox.warning(
+                self,
+                "No Images",
+                f"No images found in:\n{data_dir}\n\nPattern: {pattern}",
+            )
+            return
+        self._set_environment_status("images", "ok", f"{image_count} file(s)")
+
+        try:
+            output_dir.mkdir(parents=True, exist_ok=True)
+        except Exception as exc:
+            self._set_environment_status("output", "fail", "Not writable")
+            QMessageBox.warning(self, "Error", f"Output directory is not writable:\n{output_dir}\n\n{exc}")
+            return
+        self._set_environment_status("output", "ok", "Writable")
+
+        use_wsl_scratch = (
+            sys.platform == "win32"
+            and hasattr(self, "use_wsl_scratch_check")
+            and self.use_wsl_scratch_check.isChecked()
+        )
+        skip_existing = self.skip_existing_check.isChecked()
+        pending_files = image_files
+        if skip_existing:
+            pending_files = [
+                path for path in image_files
+                if not (output_dir / f"{path.stem}.txt").exists()
+            ]
+        pending_count = len(pending_files)
+        skipped_count = image_count - pending_count
+        input_bytes = self._sum_file_sizes(pending_files)
+
+        if pending_count == 0:
+            QMessageBox.information(
+                self,
+                "Nothing To Run",
+                f"All {image_count} matching image(s) already have IRAF .txt outputs.\n\n"
+                "Disable 'Skip already processed files' to rerun.",
+            )
+            return
+
+        if use_wsl_scratch and not self._confirm_wsl_scratch_run(pending_count, input_bytes):
+            return
+
+        if hasattr(self, "run_bar"):
+            self.run_bar.set_running(True)
+        else:
+            self.run_btn.setEnabled(False)
+            self.stop_btn.setEnabled(True)
         self.progress_bar.setVisible(True)
         self.progress_bar.setValue(0)
+        self._progress_started_at = time.monotonic()
+        self.progress_label.setText(f"0/{pending_count}: Starting | elapsed 00:00 | ETA estimating")
         self.log_text.clear()
+        if self.run_log_text is not None:
+            self.run_log_text.clear()
+        if use_wsl_scratch:
+            check = getattr(self, "_scratch_last_check", {})
+            free = check.get("free_bytes")
+            required = check.get("required_bytes", self._scratch_required_bytes(input_bytes))
+            self._on_log(
+                "[SCRATCH] Enabled: "
+                f"copy {pending_count} pending FITS ({self._format_bytes(input_bytes)}) "
+                "to WSL /tmp/apex_iraf per frame before IRAF; "
+                f"required~{self._format_bytes(required)}, "
+                f"free={self._format_bytes(free) if free is not None else 'unknown'}; "
+                f"final output={output_dir}; skipped existing={skipped_count}"
+            )
 
         self._auto_save_params()
         filter_params, filter_aliases = self._load_iraf_toml_config()
         param_defaults = self._build_iraf_param_defaults()
+        use_apex_frames = bool(self.use_apex_step4_check.isChecked())
+        apex_frame_params = self._load_apex_frame_params() if use_apex_frames else {}
+        if apex_frame_params:
+            self._on_log(f"[APEX] Using Step 4 frame overrides for {len(apex_frame_params)} frame keys")
 
         self.worker = IRAFPhotometryWorker(
             data_dir=data_dir,
             output_dir=output_dir,
-            file_pattern=self.pattern_edit.text(),
+            file_pattern=pattern,
             params=self.iraf_params,
             auto_sigma=self.auto_sigma_check.isChecked(),
             skip_existing=self.skip_existing_check.isChecked(),
             filter_params=filter_params,
             filter_aliases=filter_aliases,
             param_defaults=param_defaults,
+            apex_frame_params=apex_frame_params,
+            use_apex_frame_params=use_apex_frames,
+            use_wsl_scratch=use_wsl_scratch,
+            scratch_root="/tmp/apex_iraf",
         )
 
         self.worker.progress.connect(self._on_progress)
@@ -3091,37 +4132,143 @@ class IRAFPhotometryWindow(QMainWindow):
 
     def stop_photometry(self):
         if self.worker:
+            if hasattr(self, "run_bar"):
+                self.run_bar.set_stopping()
             self.worker.stop()
 
+    @staticmethod
+    def _format_progress_duration(seconds: float) -> str:
+        seconds = max(0, int(seconds))
+        hours, remainder = divmod(seconds, 3600)
+        minutes, secs = divmod(remainder, 60)
+        if hours:
+            return f"{hours:d}:{minutes:02d}:{secs:02d}"
+        return f"{minutes:02d}:{secs:02d}"
+
+    @staticmethod
+    def _timestamp_log_message(msg: str) -> str:
+        stamp = time.strftime("%Y-%m-%d %H:%M:%S")
+        lines = str(msg).splitlines() or [""]
+        return "\n".join(f"[{stamp}] {line}" if line else "" for line in lines)
+
     def _on_progress(self, current, total, message):
+        total = max(0, int(total or 0))
+        current = max(0, int(current or 0))
+        if total:
+            current = min(current, total)
+
         self.progress_bar.setMaximum(total)
         self.progress_bar.setValue(current)
-        self.progress_label.setText(f"{current}/{total}: {message}")
+
+        started_at = getattr(self, "_progress_started_at", None)
+        elapsed = max(0.0, time.monotonic() - started_at) if started_at else 0.0
+        elapsed_text = self._format_progress_duration(elapsed)
+        eta_text = "estimating"
+        if started_at and current > 0 and total > 0:
+            seconds_per_frame = elapsed / current
+            eta_text = self._format_progress_duration(seconds_per_frame * (total - current))
+
+        self.progress_label.setText(
+            f"{current}/{total}: {message} | elapsed {elapsed_text} | ETA {eta_text}"
+        )
+
+    def show_run_log_window(self):
+        if self.run_log_window is None:
+            self.run_log_window = QWidget(None, Qt.Window)
+            self.run_log_window.setWindowTitle("IRAF Photometry Log")
+            self.run_log_window.resize(900, 500)
+            layout = QVBoxLayout(self.run_log_window)
+            self.run_log_text = QTextEdit(self.run_log_window)
+            self.run_log_text.setReadOnly(True)
+            self.run_log_text.setStyleSheet("QTextEdit { font-family: monospace; font-size: 9pt; }")
+            layout.addWidget(self.run_log_text)
+        if self.run_log_text is not None and hasattr(self, "log_text"):
+            self.run_log_text.setPlainText(self.log_text.toPlainText())
+            scrollbar = self.run_log_text.verticalScrollBar()
+            scrollbar.setValue(scrollbar.maximum())
+        self.run_log_window.show()
+        self.run_log_window.raise_()
+        self.run_log_window.activateWindow()
 
     def _on_log(self, msg):
-        self.log_text.append(msg)
+        text = self._timestamp_log_message(msg)
+        self.log_text.append(text)
         scrollbar = self.log_text.verticalScrollBar()
         scrollbar.setValue(scrollbar.maximum())
+        if self.run_log_text is not None:
+            self.run_log_text.append(text)
+            log_scrollbar = self.run_log_text.verticalScrollBar()
+            log_scrollbar.setValue(log_scrollbar.maximum())
+
+    def show_comparison_log(self):
+        if hasattr(self, "tabs"):
+            self.tabs.setCurrentIndex(2)
+        if hasattr(self, "cmp_tabs"):
+            self.cmp_tabs.setCurrentIndex(1)
+
+    def _sync_comparison_after_iraf_run(self, output_dir: str):
+        if not output_dir:
+            return
+        out_path = Path(output_dir)
+        if hasattr(self, "cmp_iraf_edit"):
+            self.cmp_iraf_edit.setText(str(out_path))
+        if hasattr(self, "cmp_image_edit"):
+            self.cmp_image_edit.setText(self.data_edit.text())
+        self._refresh_path_summaries()
+        txt_count = 0
+        coo_count = 0
+        try:
+            txt_count = sum(1 for _ in out_path.glob("*.txt"))
+            coo_count = sum(1 for _ in out_path.glob("*.coo"))
+        except Exception:
+            pass
+        self._on_log(
+            f"[COMPARISON] IRAF result path synced: {out_path} "
+            f"({txt_count} txt, {coo_count} coo). Scratch files are not used for comparison."
+        )
+        if hasattr(self, "overlay_file_combo"):
+            self._overlay_refresh_maps()
 
     def _on_finished(self, result):
-        self.run_btn.setEnabled(True)
-        self.stop_btn.setEnabled(False)
+        if hasattr(self, "run_bar"):
+            self.run_bar.set_running(False)
+        else:
+            self.run_btn.setEnabled(True)
+            self.stop_btn.setEnabled(False)
         self.progress_bar.setVisible(False)
         n = len(result.get("results", []))
-        self.progress_label.setText(f"Completed: {n} images processed")
+        started_at = getattr(self, "_progress_started_at", None)
+        elapsed = time.monotonic() - started_at if started_at else 0.0
+        self._sync_comparison_after_iraf_run(result.get("output_dir", ""))
+        if result.get("stopped"):
+            self.progress_label.setText(
+                f"Stopped: {n} images completed | elapsed {self._format_progress_duration(elapsed)}"
+            )
+            self._on_log(
+                f"[STOP] User stopped IRAF photometry. Completed frames: {n}. "
+                f"Output kept in: {result.get('output_dir', '')}"
+            )
+            return
+        self.progress_label.setText(
+            f"Completed: {n} images processed | elapsed {self._format_progress_duration(elapsed)}"
+        )
         QMessageBox.information(self, "Complete",
             f"IRAF photometry completed.\n{n} images processed.\nOutput: {result.get('output_dir', '')}")
 
     def _on_error(self, msg):
-        self.run_btn.setEnabled(True)
-        self.stop_btn.setEnabled(False)
+        if hasattr(self, "run_bar"):
+            self.run_bar.set_running(False)
+        else:
+            self.run_btn.setEnabled(True)
+            self.stop_btn.setEnabled(False)
         self.progress_bar.setVisible(False)
+        self._on_log(f"[ERROR] {msg}")
         QMessageBox.critical(self, "Error", msg)
 
     def _cmp_log(self, msg: str):
         if not hasattr(self, "cmp_log_text") or self.cmp_log_text is None:
             return
-        self.cmp_log_text.append(msg)
+        self.cmp_log_text.append(self._timestamp_log_message(msg))
         scrollbar = self.cmp_log_text.verticalScrollBar()
         scrollbar.setValue(scrollbar.maximum())
 
@@ -3132,6 +4279,7 @@ class IRAFPhotometryWindow(QMainWindow):
         apex_dir = Path(self.cmp_apex_edit.text())
         iraf_dir = Path(self.cmp_iraf_edit.text())
         tol = self.cmp_tol.value()
+        cmp_zmag = float(self.pp_zmag.value()) if hasattr(self, "pp_zmag") else float(self.iraf_params.zmag)
 
         if hasattr(self, "cmp_log_text") and self.cmp_log_text is not None:
             self.cmp_log_text.clear()
@@ -3139,6 +4287,9 @@ class IRAFPhotometryWindow(QMainWindow):
         self._cmp_log(f"APEX dir: {apex_dir}")
         self._cmp_log(f"IRAF dir: {iraf_dir}")
         self._cmp_log(f"Tolerance: {tol:.2f} px")
+        self._cmp_log(
+            f"IRAF zmag: {cmp_zmag:.2f}; APEX mag_inst is shifted by +zmag only when raw instrumental scale is detected."
+        )
 
         if not apex_dir.exists():
             self._cmp_log(f"ERROR: APEX dir not found: {apex_dir}")
@@ -3153,7 +4304,7 @@ class IRAFPhotometryWindow(QMainWindow):
 
         # Collect files
         apex_map = {}
-        for p in apex_dir.rglob("*_photometry.tsv"):
+        for p in _iter_apex_photometry_files(apex_dir):
             key = _normalize_frame_key(p.stem)
             apex_map.setdefault(key, p)
 
@@ -3190,17 +4341,33 @@ class IRAFPhotometryWindow(QMainWindow):
             if not np.any(mask):
                 return pd.DataFrame()
 
+            iraf_mag = iraf_df.loc[mask, "mag"].to_numpy(float)
+            apex_mag_raw = apex_df.loc[idx[mask], mag_col].to_numpy(float)
+            raw_dmag = apex_mag_raw - iraf_mag
+            apex_zmag_offset = 0.0
+            if mag_col == "mag_inst" and np.isfinite(cmp_zmag) and cmp_zmag != 0.0:
+                finite_raw = raw_dmag[np.isfinite(raw_dmag)]
+                if finite_raw.size:
+                    raw_med = float(np.nanmedian(finite_raw))
+                    shifted_med = raw_med + cmp_zmag
+                    if np.isfinite(shifted_med) and abs(shifted_med) < abs(raw_med):
+                        apex_zmag_offset = cmp_zmag
+            apex_mag = apex_mag_raw + apex_zmag_offset
+
             match = pd.DataFrame({
                 "iraf_x": iraf_df.loc[mask, "x"].to_numpy(),
                 "iraf_y": iraf_df.loc[mask, "y"].to_numpy(),
-                "iraf_mag": iraf_df.loc[mask, "mag"].to_numpy(),
+                "iraf_mag": iraf_mag,
                 "apex_x": apex_df.loc[idx[mask], x_col].to_numpy(),
                 "apex_y": apex_df.loc[idx[mask], y_col].to_numpy(),
-                "apex_mag": apex_df.loc[idx[mask], mag_col].to_numpy(),
+                "apex_mag": apex_mag,
+                "apex_mag_raw": apex_mag_raw,
+                "apex_zmag_offset": np.full(len(apex_mag), apex_zmag_offset, dtype=float),
                 "dist_px": dist[mask],
             })
             match["dx"] = match["apex_x"] - match["iraf_x"]
             match["dy"] = match["apex_y"] - match["iraf_y"]
+            match["raw_dmag"] = raw_dmag
             match["dmag"] = match["apex_mag"] - match["iraf_mag"]
             return match
 
@@ -3244,6 +4411,7 @@ class IRAFPhotometryWindow(QMainWindow):
                     "n": 0,
                     "dmag_med": np.nan,
                     "dmag_std": np.nan,
+                    "resid_std": np.nan,
                     "dx_med": np.nan,
                     "dy_med": np.nan,
                     "dist_med": np.nan,
@@ -3253,6 +4421,7 @@ class IRAFPhotometryWindow(QMainWindow):
                     "best_shift_y": np.nan,
                     "n_iraf_total": n_iraf_total,
                     "n_apex_total": n_apex_total,
+                    "apex_zmag_offset": np.nan,
                 })
                 self.frame_matches[frame] = pd.DataFrame()
                 continue
@@ -3261,6 +4430,7 @@ class IRAFPhotometryWindow(QMainWindow):
             dmag_std = float(np.nanstd(match["dmag"]))
             dx_med = float(np.nanmedian(match["dx"]))
             dy_med = float(np.nanmedian(match["dy"]))
+            apex_zmag_offset = float(np.nanmedian(match["apex_zmag_offset"]))
 
             dist_vals = match["dist_px"].to_numpy(float)
             dist_med = float(np.nanmedian(dist_vals)) if dist_vals.size else np.nan
@@ -3283,6 +4453,7 @@ class IRAFPhotometryWindow(QMainWindow):
                 "n": len(match),
                 "dmag_med": dmag_med,
                 "dmag_std": dmag_std,
+                "resid_std": dmag_std,
                 "dx_med": dx_med,
                 "dy_med": dy_med,
                 "dist_med": dist_med,
@@ -3292,6 +4463,7 @@ class IRAFPhotometryWindow(QMainWindow):
                 "best_shift_y": best_shift_y,
                 "n_iraf_total": n_iraf_total,
                 "n_apex_total": n_apex_total,
+                "apex_zmag_offset": apex_zmag_offset,
             })
             self.frame_matches[frame] = match
             all_matches.append(match.assign(frame=frame))
@@ -3305,7 +4477,7 @@ class IRAFPhotometryWindow(QMainWindow):
                 row["frame"],
                 str(row["n"]),
                 f"{row['dmag_med']:.4f}" if np.isfinite(row["dmag_med"]) else "nan",
-                f"{row['dmag_std']:.4f}" if np.isfinite(row["dmag_std"]) else "nan",
+                f"{row.get('resid_std', row['dmag_std']):.4f}" if np.isfinite(row.get("resid_std", row["dmag_std"])) else "nan",
                 f"{row['dx_med']:.3f}" if np.isfinite(row["dx_med"]) else "nan",
                 f"{row['dy_med']:.3f}" if np.isfinite(row["dy_med"]) else "nan",
                 f"{row['dist_med']:.3f}" if np.isfinite(row["dist_med"]) else "nan",
@@ -3325,11 +4497,19 @@ class IRAFPhotometryWindow(QMainWindow):
             total = len(self.matched_all)
             med = np.nanmedian(self.matched_all["dmag"])
             std = np.nanstd(self.matched_all["dmag"])
+            if "apex_zmag_offset" in self.matched_all:
+                zp_offsets = self.matched_all["apex_zmag_offset"].to_numpy(float)
+                if zp_offsets.size and np.any(np.isfinite(zp_offsets)):
+                    zp_offset = float(np.nanmedian(zp_offsets))
+                    if abs(zp_offset) > 1e-9:
+                        self._cmp_log(
+                            f"Applied APEX mag_inst +{zp_offset:.2f} before comparison to match IRAF zmag scale."
+                        )
             self.cmp_summary.setText(
-                f"Total: {total} matched stars | dmag median: {med:.4f} | dmag std: {std:.4f}"
+                f"Total: {total} matched stars | dmag median: {med:.4f} | residual std: {std:.4f}"
             )
             self._cmp_log(
-                f"Total matched: {total} | dmag median: {med:.4f} | dmag std: {std:.4f}"
+                f"Total matched: {total} | dmag median: {med:.4f} | residual std: {std:.4f}"
             )
 
             frame_filters = {}
@@ -3385,21 +4565,33 @@ class IRAFPhotometryWindow(QMainWindow):
         ax3 = self.cmp_fig.add_subplot(223)
         ax4 = self.cmp_fig.add_subplot(224)
 
-        # dmag vs mag
-        ax1.scatter(match["apex_mag"], match["dmag"], s=10, alpha=0.6)
-        ax1.axhline(0, color="red", ls="--")
-        med = np.nanmedian(match["dmag"])
-        ax1.axhline(med, color="blue", ls=":")
-        ax1.set_xlabel("APEX mag")
-        ax1.set_ylabel("dmag (APEX - IRAF)")
-        ax1.set_title(f"dmag vs mag (med={med:.4f})")
+        dmag = match["dmag"].astype(float)
+        med = float(np.nanmedian(dmag))
+        resid = dmag - med
+        scatter = float(np.nanstd(resid))
+        zp_offset = 0.0
+        if "apex_zmag_offset" in match:
+            zp_vals = match["apex_zmag_offset"].to_numpy(float)
+            if zp_vals.size and np.any(np.isfinite(zp_vals)):
+                zp_offset = float(np.nanmedian(zp_vals))
+        apex_label = "APEX mag_inst + zmag" if abs(zp_offset) > 1e-9 else "APEX mag"
 
-        # dmag hist
-        ax2.hist(match["dmag"].dropna(), bins=30, alpha=0.7, edgecolor="black")
+        # Median-removed dmag vs mag
+        ax1.scatter(match["apex_mag"], resid, s=10, alpha=0.6)
+        ax1.axhline(0, color="red", ls="--")
+        ax1.axhline(scatter, color="gray", ls=":", lw=0.8)
+        ax1.axhline(-scatter, color="gray", ls=":", lw=0.8)
+        ax1.set_xlabel(apex_label)
+        ax1.set_ylabel("dmag residual")
+        ax1.set_title(f"Residual vs mag (med={med:.4f})")
+
+        # Residual dmag hist
+        ax2.hist(resid.dropna(), bins=30, alpha=0.7, edgecolor="black")
         ax2.axvline(0, color="red", ls="--")
-        ax2.axvline(med, color="blue", ls=":")
-        ax2.set_xlabel("dmag")
-        ax2.set_title(f"std={np.nanstd(match['dmag']):.4f}")
+        ax2.axvline(scatter, color="gray", ls=":", lw=0.8)
+        ax2.axvline(-scatter, color="gray", ls=":", lw=0.8)
+        ax2.set_xlabel("dmag residual")
+        ax2.set_title(f"resid std={scatter:.4f}")
 
         # dx vs dy
         ax3.scatter(match["dx"], match["dy"], s=10, alpha=0.6)
@@ -3410,14 +4602,15 @@ class IRAFPhotometryWindow(QMainWindow):
         ax3.set_title("Position offset")
         ax3.set_aspect("equal")
 
-        # 1:1
-        ax4.scatter(match["iraf_mag"], match["apex_mag"], s=10, alpha=0.6)
-        lims = [min(match["iraf_mag"].min(), match["apex_mag"].min()),
-                max(match["iraf_mag"].max(), match["apex_mag"].max())]
+        # 1:1 after removing the median magnitude offset.
+        apex_aligned = match["apex_mag"] - med
+        ax4.scatter(match["iraf_mag"], apex_aligned, s=10, alpha=0.6)
+        lims = [min(match["iraf_mag"].min(), apex_aligned.min()),
+                max(match["iraf_mag"].max(), apex_aligned.max())]
         ax4.plot(lims, lims, "r--")
         ax4.set_xlabel("IRAF mag")
-        ax4.set_ylabel("APEX mag")
-        ax4.set_title("1:1 comparison")
+        ax4.set_ylabel(f"{apex_label} - median dmag")
+        ax4.set_title("1:1 (median offset removed)")
 
         self.cmp_fig.suptitle(f"{frame} (N={len(match)})")
         self.cmp_fig.tight_layout()
@@ -3463,3 +4656,9 @@ class IRAFPhotometryWindow(QMainWindow):
         path = QFileDialog.getExistingDirectory(self, "Select Directory", line_edit.text())
         if path:
             line_edit.setText(path)
+            if line_edit in (self.data_edit, self.out_edit):
+                self._on_photometry_path_settings_changed()
+            elif line_edit in (self.cmp_apex_edit, self.cmp_iraf_edit):
+                self._on_comparison_path_settings_changed()
+            elif line_edit is self.cmp_image_edit:
+                self._on_comparison_image_path_changed()

@@ -217,6 +217,7 @@ def _resolve_check_filter(filters, selected_filter: str | None = None) -> str | 
     unique_filters = sorted({str(f) for f in filters if str(f).strip() and str(f).lower() != "nan"})
     return unique_filters[0] if len(unique_filters) == 1 else None
 
+from apex.gui.tools.tool_window_base import ToolWindowBase
 from apex.gui.workflow.lc.step11_period_analysis import PeriodAnalysisWorker
 from apex.analysis.light_curve.period_analysis_service import run_period_analysis
 
@@ -864,13 +865,15 @@ class RefineBootstrapWorker(QThread):
 # Main window
 # ---------------------------------------------------------------------------
 
-class VariableStarToolWindow(QWidget):
+class VariableStarToolWindow(ToolWindowBase):
     """Variable Star Analysis Tool — period refinement, O-C, Fourier."""
 
     def __init__(self, params, project_state, parent=None):
-        super().__init__(parent)
-        self.params = params
-        self.project_state = project_state
+        super().__init__(
+            "Variable Star Analysis",
+            params=params, project_state=project_state,
+            parent=parent, min_size=(1000, 700),
+        )
         self.lc_data: Optional[dict] = None
         self.series_options: dict[str, dict] = {}
         self.scan_result: Optional[dict] = None
@@ -890,7 +893,6 @@ class VariableStarToolWindow(QWidget):
         self.recommendation_text = "Load a light curve and run a scan."
         self.workflow_step = "load"
 
-        self.setWindowTitle("Variable Star Analysis")
         self.resize(1200, 800)
         self._build_ui()
         self._load_lc_from_workspace()
@@ -900,13 +902,12 @@ class VariableStarToolWindow(QWidget):
     # ------------------------------------------------------------------
 
     def _build_ui(self):
-        root = QVBoxLayout(self)
+        root = self.content_layout
 
         header = QLabel(
-            "<b>Variable Star Analysis</b> — load workspace → quick scan → "
-            "route to Single/Multi → refine or multi-mode fit → phase/O-C/Fourier"
+            "Load workspace → quick scan → Single/Multi → refine/multi-mode → phase/O-C/Fourier"
         )
-        header.setStyleSheet("QLabel { background: #E8EAF6; padding: 8px; border-radius: 4px; }")
+        header.setStyleSheet("QLabel { color: #666; font-size: 9pt; }")
         header.setWordWrap(True)
         root.addWidget(header)
 

@@ -24,6 +24,7 @@ from typing import Optional, Dict, List, Tuple, Any
 import numpy as np
 import pandas as pd
 
+from apex.gui.tools.tool_window_base import ToolWindowBase
 from apex.utils.common_helpers import normalize_filter_key
 from apex.utils.constants import MAD_TO_SIGMA
 from apex.utils.photometry_loader import load_frame_photometry
@@ -1082,7 +1083,7 @@ class QAReportWorker(QThread):
         self._log(f"QA results saved to {qa_dir}")
 
 
-class QAReportWindow(QMainWindow):
+class QAReportWindow(ToolWindowBase):
     """
     Publication-Quality QA Report Window
 
@@ -1091,8 +1092,10 @@ class QAReportWindow(QMainWindow):
     """
 
     def __init__(self, params, result_dir: Path, parent=None):
-        super().__init__(parent)
-        self.params = params
+        super().__init__(
+            "QA Report — Publication Quality Validation",
+            params=params, parent=parent, min_size=(1200, 800),
+        )
         self.result_dir = Path(result_dir)
         self.worker = None
         self.results = {}
@@ -1119,9 +1122,6 @@ class QAReportWindow(QMainWindow):
         self.available_filters = []
         self._scan_available_filters()
         self._load_qa_params()
-
-        self.setWindowTitle("QA Report - Publication Quality Validation")
-        self.setMinimumSize(1200, 800)
 
         self.setup_ui()
 
@@ -1349,16 +1349,8 @@ class QAReportWindow(QMainWindow):
 
     def setup_ui(self):
         """Setup user interface"""
-        central = QWidget()
-        self.setCentralWidget(central)
-        layout = QVBoxLayout(central)
-
-        # === Header ===
-        header = QLabel("Publication-Quality Photometry Validation")
-        header.setFont(QFont("Arial", 16, QFont.Bold))
-        header.setAlignment(Qt.AlignCenter)
-        header.setStyleSheet("QLabel { color: #1565C0; padding: 10px; }")
-        layout.addWidget(header)
+        # ToolWindowBase already provides the centered title + content area.
+        layout = self.content_layout
 
         # === Control Panel ===
         control_group = QGroupBox("Report Generation")

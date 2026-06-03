@@ -169,6 +169,7 @@ def _resolve_check_filter(filters) -> str | None:
     unique_filters = sorted({str(f) for f in filters if str(f).strip() and str(f).lower() != "nan"})
     return unique_filters[0] if len(unique_filters) == 1 else None
 
+from apex.gui.tools.tool_window_base import ToolWindowBase
 from apex.gui.workflow.lc.step11_period_analysis import PeriodAnalysisWorker
 
 
@@ -210,13 +211,15 @@ def _pick_check_overlay_cols(df: pd.DataFrame, preferred_mag_col: str | None = N
 # Main window
 # ---------------------------------------------------------------------------
 
-class EclipsingBinaryToolWindow(QWidget):
+class EclipsingBinaryToolWindow(ToolWindowBase):
     """Eclipsing Binary Analysis Tool."""
 
     def __init__(self, params, project_state, parent=None):
-        super().__init__(parent)
-        self.params = params
-        self.project_state = project_state
+        super().__init__(
+            "Eclipsing Binary Analysis",
+            params=params, project_state=project_state,
+            parent=parent, min_size=(1000, 700),
+        )
         self.lc_data: Optional[dict] = None
         self.series_options: dict[str, dict] = {}
         self.scan_result: Optional[dict] = None
@@ -225,7 +228,6 @@ class EclipsingBinaryToolWindow(QWidget):
         self.filter_visibility: dict = {}  # True=visible, False=hidden
         self.workspace_dir = Path(self.params.P.result_dir)
 
-        self.setWindowTitle("Eclipsing Binary Analysis")
         self.resize(1200, 800)
         self._build_ui()
         self._load_lc_from_workspace()
@@ -235,13 +237,12 @@ class EclipsingBinaryToolWindow(QWidget):
     # ------------------------------------------------------------------
 
     def _build_ui(self):
-        root = QVBoxLayout(self)
+        root = self.content_layout
 
         header = QLabel(
-            "<b>Eclipsing Binary Analysis</b> — LS + BLS period scan → phase fold → "
-            "primary/secondary eclipse timing → O-C diagram → depth/duration measurement"
+            "LS + BLS period scan → phase fold → eclipse timing → O-C → depth/duration"
         )
-        header.setStyleSheet("QLabel { background: #FFF3E0; padding: 8px; border-radius: 4px; }")
+        header.setStyleSheet("QLabel { color: #666; font-size: 9pt; }")
         header.setWordWrap(True)
         root.addWidget(header)
 

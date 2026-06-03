@@ -5,13 +5,15 @@ Each step gets its own window with Previous/Next navigation
 
 from PyQt5.QtWidgets import (
     QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
-    QPushButton, QLabel, QMessageBox
+    QPushButton, QLabel, QMessageBox, QApplication
 )
 from PyQt5.QtCore import Qt, pyqtSignal, QThread
 from PyQt5.QtGui import QFont
 
+from apex.gui.window_chrome import WindowChromeMixin
 
-class StepWindowBase(QMainWindow):
+
+class StepWindowBase(WindowChromeMixin, QMainWindow):
     """Base class for workflow step windows with navigation buttons"""
 
     # Signals
@@ -46,27 +48,97 @@ class StepWindowBase(QMainWindow):
         # Setup base UI
         self.setWindowTitle(f"Step {step_index + 1}: {step_name}")
         self.setMinimumSize(900, 700)
+        # Default size = 85% of available screen, capped at 1200×950 so
+        # the window opens comfortably without being annoying on very
+        # large monitors.  Slightly narrower default than the screen so
+        # CMD/isochrone plots don't get stretched horizontally past
+        # usefulness.
+        try:
+            screen = QApplication.primaryScreen()
+            if screen is not None:
+                avail = screen.availableGeometry()
+                w = max(900, min(1200, int(avail.width() * 0.85)))
+                h = max(700, min(950, int(avail.height() * 0.85)))
+                self.resize(w, h)
+        except Exception:
+            pass
 
         # Central widget
         self.central_widget = QWidget()
         self.setCentralWidget(self.central_widget)
         self.main_layout = QVBoxLayout(self.central_widget)
 
-        # Title
+        # Title row: centered title + a right-aligned action cluster.
+        # Subclasses register buttons via add_header_action()/add_param_button()
+        # instead of hand-rolling their own toolbar in each window.
+        title_row = QHBoxLayout()
         self.title_label = QLabel(f"Step {step_index + 1}: {step_name}")
         self.title_label.setFont(QFont("Arial", 16, QFont.Bold))
         self.title_label.setAlignment(Qt.AlignCenter)
-        self.main_layout.addWidget(self.title_label)
+        # A spacer matching the action cluster keeps the title visually centered.
+        title_row.addSpacing(110)
+        title_row.addWidget(self.title_label, stretch=1)
 
-        # Content area (to be filled by subclasses)
+        # Action cluster: subclass-added actions appear left of the guide button.
+        self.header_actions = QHBoxLayout()
+        self.header_actions.setSpacing(6)
+        title_row.addLayout(self.header_actions)
+
+        self.btn_guide = QPushButton("❔ 가이드")
+        self.btn_guide.setFixedWidth(100)
+        self.btn_guide.setMinimumHeight(30)
+        self.btn_guide.setToolTip("이 단계에서 무엇을 하는지 간단히 안내합니다")
+        self.btn_guide.setStyleSheet(
+            "QPushButton { background-color: #1976D2; color: white;"
+            " border-radius: 5px; font-weight: bold; padding: 4px 8px; }"
+            "QPushButton:hover { background-color: #1565C0; }"
+        )
+        self.btn_guide.clicked.connect(self.show_step_guide)
+        title_row.addWidget(self.btn_guide)
+        self.main_layout.addLayout(title_row)
+
+        # Optional skeleton slots (created lazily by helper methods below).
+        self._log_text = None
+        self._log_window = None
+
+        # Content area (to be filled by subclasses).  stretch=1 so the
+        # content fills the window whenever the user resizes — without
+        # this, subclasses whose inner widgets have small sizeHint() values
+        # (e.g. LC step8) render in a tiny corner of an otherwise empty
+        # window.
         self.content_widget = QWidget()
         self.content_layout = QVBoxLayout(self.content_widget)
-        self.main_layout.addWidget(self.content_widget)
+        self.main_layout.addWidget(self.content_widget, stretch=1)
 
         # Navigation buttons
         self.setup_navigation_buttons()
 
         # NOTE: restore_state() should be called by subclass after UI setup
+
+    def show_step_guide(self):
+        """Show the short per-step guide in a popup.
+
+        Steps may override ``guide_text()`` to customise; by default the
+        text comes from the central :mod:`step_guides` table keyed by
+        (mode, step_index).
+        """
+        text = self.guide_text()
+        box = QMessageBox(self)
+        box.setWindowTitle(f"가이드 — Step {self.step_index + 1}: {self.step_name}")
+        box.setTextFormat(Qt.RichText)
+        box.setText(text)
+        box.setStandardButtons(QMessageBox.Ok)
+        box.setIcon(QMessageBox.Information)
+        box.exec_()
+
+    def guide_text(self) -> str:
+        """Return the HTML guide for this step (override to customise)."""
+        from apex.gui.workflow.step_guides import step_guide
+        mode = getattr(self.main_window, "mode", "cmd")
+        return step_guide(mode, self.step_index, self.step_name)
+
+    # NOTE: header actions, the workspace bar, the log dock and log() come
+    # from WindowChromeMixin (apex/gui/window_chrome.py) — shared with tools.
 
     def setup_navigation_buttons(self):
         """Setup Previous/Next navigation buttons at bottom."""

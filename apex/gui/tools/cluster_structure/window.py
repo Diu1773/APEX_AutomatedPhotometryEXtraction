@@ -37,16 +37,18 @@ from PyQt5.QtWidgets import (
     QPlainTextEdit,
 )
 
+from apex.gui.tools.tool_window_base import ToolWindowBase
 from .io import ResolvedInputs, load_ref_fits_with_wcs, load_star_table, resolve_inputs
 from . import analysis as an
 
 
-class ClusterStructureWindow(QWidget):
+class ClusterStructureWindow(ToolWindowBase):
     """Standalone tool for cluster structure analysis."""
 
     def __init__(self, params, result_dir: Optional[Path] = None, parent=None):
-        super().__init__(parent)
-        self.params = params
+        tname = str(getattr(getattr(params, "P", None), "target_name", "") or "").strip()
+        title = f"{tname} - Analyze Cluster Structure" if tname else "Analyze Cluster Structure"
+        super().__init__(title, params=params, parent=parent, min_size=(1280, 860))
         self.result_dir = Path(result_dir or getattr(params.P, "result_dir", Path.cwd()))
 
         self.inputs: Optional[ResolvedInputs] = None
@@ -82,13 +84,6 @@ class ClusterStructureWindow(QWidget):
         self.shape_info: dict = {}
         self.pmem_curve_df = pd.DataFrame()
 
-        tname = str(getattr(getattr(params, "P", None), "target_name", "") or "").strip()
-        if tname:
-            self.setWindowTitle(f"{tname} - Analyze Cluster Structure")
-        else:
-            self.setWindowTitle("Analyze Cluster Structure")
-        self.setMinimumSize(1280, 860)
-
         self._build_ui()
         self._load_inputs()
 
@@ -96,7 +91,7 @@ class ClusterStructureWindow(QWidget):
     # UI
     # ------------------------------------------------------------------
     def _build_ui(self):
-        root = QVBoxLayout(self)
+        root = self.content_layout
         root.setContentsMargins(6, 6, 6, 6)
         root.setSpacing(6)
 
@@ -272,7 +267,9 @@ class ClusterStructureWindow(QWidget):
         fp_row_l.setSpacing(8)
         self.combo_footprint = QComboBox()
         self.combo_footprint.addItem("Reference footprint", "ref")
-        self.combo_footprint.addItem("Intersection footprint (TODO)", "intersection")
+        self.combo_footprint.setToolTip(
+            "Use the reference FITS footprint for annulus area correction."
+        )
         fp_row_l.addWidget(self.combo_footprint)
         ctrl.addRow("Footprint mode:", fp_row)
 
@@ -389,10 +386,6 @@ class ClusterStructureWindow(QWidget):
         return float(self.pmem_slider.value()) / 100.0
 
     def _footprint_mode(self) -> str:
-        mode = str(self.combo_footprint.currentData() or "ref")
-        if mode == "intersection":
-            self._log("Footprint intersection is TODO. Fallback to reference footprint.")
-            return "ref"
         return "ref"
 
     def _load_inputs(self):

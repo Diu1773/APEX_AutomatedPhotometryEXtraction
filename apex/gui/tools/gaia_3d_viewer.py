@@ -25,9 +25,15 @@ from PyQt5.QtWidgets import (
     QApplication,
 )
 
+from apex.gui.tools.tool_window_base import ToolWindowBase
 from apex.utils.step_paths import step5_wcs_dir, step6_refbuild_dir
 from apex.utils.step_paths_cmd import step9_selection_dir, step10_zp_dir
 from apex.utils.io_utils import parse_int64_series, read_ecsv_int64_source_id
+from apex.utils.gaia_transforms import (
+    build_color_pairs,
+    filter_bands_from_columns,
+    teff_from_color,
+)
 
 
 # ---------------------------------------------------------------------------
@@ -91,12 +97,13 @@ _MAX_PM_ARROWS = 3000   # quiver arrow limit to keep interactive performance
 # ---------------------------------------------------------------------------
 # Main viewer window
 # ---------------------------------------------------------------------------
-class Gaia3DViewerWindow(QWidget):
+class Gaia3DViewerWindow(ToolWindowBase):
     """Tool window for Gaia 3D visualization."""
 
     def __init__(self, params, result_dir: Path | None = None, parent=None):
-        super().__init__(parent)
-        self.params = params
+        _tname = getattr(getattr(params, "P", None), "target_name", None) or ""
+        win_title = f"{_tname} — Gaia 3D Cluster Viewer" if _tname else "Gaia 3D Cluster Viewer"
+        super().__init__(win_title, params=params, parent=parent, min_size=(1150, 780))
         self.result_dir = Path(result_dir or getattr(params.P, "result_dir", Path.cwd()))
 
         self.df = pd.DataFrame()
@@ -117,10 +124,6 @@ class Gaia3DViewerWindow(QWidget):
         self._anim_yc = self._anim_yr = 0.0
         self._anim_zc = self._anim_zr = 0.0
 
-        _tname = getattr(getattr(params, "P", None), "target_name", None) or ""
-        win_title = f"{_tname} — Gaia 3D Cluster Viewer" if _tname else "Gaia 3D Cluster Viewer"
-        self.setWindowTitle(win_title)
-        self.setMinimumSize(1150, 780)
         self._build_ui()
         self.reload_data()
 
@@ -128,7 +131,7 @@ class Gaia3DViewerWindow(QWidget):
     # UI
     # ------------------------------------------------------------------
     def _build_ui(self):
-        root = QVBoxLayout(self)
+        root = self.content_layout
         root.setContentsMargins(6, 4, 6, 4)
         root.setSpacing(4)
 
@@ -194,7 +197,7 @@ class Gaia3DViewerWindow(QWidget):
         self.color_combo = QComboBox()
         self.color_combo.addItems([
             "Membership", "G mag", "Parallax",
-            "Teff (BP-RP)", "Teff (g-r std)", "Teff (g-r inst)",
+            "Teff (BP-RP)", "Teff (CMD std)", "Teff (CMD inst)",
             "Single color",
         ])
         self.color_combo.currentIndexChanged.connect(self.redraw_plot)
@@ -462,6 +465,66 @@ class Gaia3DViewerWindow(QWidget):
             except Exception:
                 return "-"
 
+    @staticmethod
+    def _cmd_color_value_cols(columns) -> tuple[str, ...]:
+        cols: list[str] = []
+        for prefix in ("mag_std_", "mag_inst_"):
+            for band in filter_bands_from_columns(columns, prefix):
+                cols.append(f"{prefix}{band}")
+        for col in columns:
+            if str(col).startswith("color_") and col not in cols:
+                cols.append(str(col))
+        return tuple(cols)
+
+    @staticmethod
+    def _legacy_color_column(col: str) -> tuple[str, str] | None:
+        legacy = {
+            "color_gr": ("g", "r"),
+            "color_ri": ("r", "i"),
+            "color_gi": ("g", "i"),
+            "color_BV": ("B", "V"),
+            "color_VR": ("V", "R"),
+            "color_VI": ("V", "I"),
+            "color_RI": ("R", "I"),
+            "color_BR": ("B", "R"),
+            "color_UB": ("U", "B"),
+        }
+        return legacy.get(str(col))
+
+    def _best_cmd_color(self, df: pd.DataFrame, prefix: str, idx: np.ndarray) -> tuple[np.ndarray, str, str | None, str | None]:
+        bands = filter_bands_from_columns(df.columns, prefix)
+        pairs = build_color_pairs(bands, adjacent_only=True)
+        preferred = [("g", "r"), ("B", "V"), ("V", "R"), ("V", "I"), ("R", "I"), ("r", "i"), ("g", "i")]
+        pair_order: list[tuple[str, str]] = []
+        for pair in preferred + pairs:
+            if pair in pairs and pair not in pair_order:
+                pair_order.append(pair)
+
+        for band_a, band_b in pair_order:
+            col_a = f"{prefix}{band_a}"
+            col_b = f"{prefix}{band_b}"
+            if col_a not in df.columns or col_b not in df.columns:
+                continue
+            color = (
+                pd.to_numeric(df[col_a], errors="coerce").to_numpy(float)
+                - pd.to_numeric(df[col_b], errors="coerce").to_numpy(float)
+            )[idx]
+            teff = teff_from_color(color, band_a, band_b, _TEFF_VMIN, _TEFF_VMAX)
+            if np.isfinite(teff).sum() > 0:
+                return color, f"{band_a}-{band_b}", band_a, band_b
+
+        for col in df.columns:
+            pair = self._legacy_color_column(str(col))
+            if pair is None:
+                continue
+            band_a, band_b = pair
+            color = pd.to_numeric(df[col], errors="coerce").to_numpy(float)[idx]
+            teff = teff_from_color(color, band_a, band_b, _TEFF_VMIN, _TEFF_VMAX)
+            if np.isfinite(teff).sum() > 0:
+                return color, f"{band_a}-{band_b}", band_a, band_b
+
+        return np.full(len(idx), np.nan, float), "CMD color", None, None
+
     # ------------------------------------------------------------------
     # Data loading
     # ------------------------------------------------------------------
@@ -514,7 +577,6 @@ class Gaia3DViewerWindow(QWidget):
             result_dir / "median_by_ID_filter_wide.csv",
             step10_zp_dir(result_dir) / "median_by_ID_filter_wide.csv",
         ]
-        value_cols = ("mag_std_g", "mag_std_r", "mag_inst_g", "mag_inst_r", "color_gr", "color_ri")
         for p in cands:
             if not p.exists():
                 continue
@@ -525,7 +587,7 @@ class Gaia3DViewerWindow(QWidget):
             if df.empty:
                 continue
             key_cols = [k for k in ("ID", "source_id", "gaia_source_id") if k in df.columns]
-            add_cols = [c for c in value_cols if c in df.columns]
+            add_cols = [c for c in self._cmd_color_value_cols(df.columns) if c in df.columns]
             if not key_cols or not add_cols:
                 continue
             out = df[key_cols + add_cols].copy()
@@ -615,9 +677,10 @@ class Gaia3DViewerWindow(QWidget):
 
         cmd_aux, cmd_name = self._load_cmd_color_aux()
         if cmd_aux is not None:
+            cmd_cols = tuple(c for c in cmd_aux.columns if c not in ("ID", "source_id", "gaia_source_id"))
             df = self._merge_aux_columns(
                 df, cmd_aux,
-                ("mag_std_g", "mag_std_r", "mag_inst_g", "mag_inst_r", "color_gr", "color_ri"),
+                cmd_cols,
                 tag=f"CMD colors ({cmd_name})",
             )
 
@@ -742,20 +805,8 @@ class Gaia3DViewerWindow(QWidget):
         dist_pc = np.where(np.isfinite(plx_arr) & (plx_arr > 0), 1000.0 / plx_arr, np.nan)
         bp_rp   = self._compute_bp_rp(df)[idx]
 
-        if "mag_std_g" in df.columns and "mag_std_r" in df.columns:
-            gr_std = (pd.to_numeric(df["mag_std_g"], errors="coerce").to_numpy(float)
-                      - pd.to_numeric(df["mag_std_r"], errors="coerce").to_numpy(float))[idx]
-        elif "color_gr" in df.columns:
-            gr_std = pd.to_numeric(df["color_gr"], errors="coerce").to_numpy(float)[idx]
-        else:
-            gr_std = np.full(len(idx), np.nan, float)
-        if "mag_inst_g" in df.columns and "mag_inst_r" in df.columns:
-            gr_inst = (pd.to_numeric(df["mag_inst_g"], errors="coerce").to_numpy(float)
-                       - pd.to_numeric(df["mag_inst_r"], errors="coerce").to_numpy(float))[idx]
-        elif "color_gr" in df.columns:
-            gr_inst = pd.to_numeric(df["color_gr"], errors="coerce").to_numpy(float)[idx]
-        else:
-            gr_inst = np.full(len(idx), np.nan, float)
+        cmd_std, cmd_std_label, cmd_std_a, cmd_std_b = self._best_cmd_color(df, "mag_std_", idx)
+        cmd_inst, cmd_inst_label, cmd_inst_a, cmd_inst_b = self._best_cmd_color(df, "mag_inst_", idx)
 
         # --- color mode ---
         c_mode = self.color_combo.currentIndex()
@@ -772,13 +823,13 @@ class Gaia3DViewerWindow(QWidget):
             c = _color_to_teff(bp_rp, "BP-RP")
             cmap = _STELLAR_CMAP; cbar = "Teff (K) from BP-RP"
             vmin, vmax = _TEFF_VMIN, _TEFF_VMAX
-        elif c_mode == 4 and np.isfinite(gr_std).sum() > 0:
-            c = _color_to_teff(gr_std, "g-r")
-            cmap = _STELLAR_CMAP; cbar = "Teff (K) from g-r std"
+        elif c_mode == 4 and cmd_std_a and cmd_std_b:
+            c = teff_from_color(cmd_std, cmd_std_a, cmd_std_b, _TEFF_VMIN, _TEFF_VMAX)
+            cmap = _STELLAR_CMAP; cbar = f"Teff (K) from {cmd_std_label} std"
             vmin, vmax = _TEFF_VMIN, _TEFF_VMAX
-        elif c_mode == 5 and np.isfinite(gr_inst).sum() > 0:
-            c = _color_to_teff(gr_inst, "g-r")
-            cmap = _STELLAR_CMAP; cbar = "Teff (K) from g-r inst"
+        elif c_mode == 5 and cmd_inst_a and cmd_inst_b:
+            c = teff_from_color(cmd_inst, cmd_inst_a, cmd_inst_b, _TEFF_VMIN, _TEFF_VMAX)
+            cmap = _STELLAR_CMAP; cbar = f"Teff (K) from {cmd_inst_label} inst"
             vmin, vmax = _TEFF_VMIN, _TEFF_VMAX
         else:
             c = "#4FC3F7"; cmap = None; cbar = None
@@ -790,7 +841,8 @@ class Gaia3DViewerWindow(QWidget):
             pmem_n=int(np.isfinite(pmem).sum()),
             row_idx=idx, pmem=pmem,
             gmag=gmag, plx=plx_arr, dist_pc=dist_pc,
-            bp_rp=bp_rp, gr_std=gr_std, gr_inst=gr_inst,
+            bp_rp=bp_rp, gr_std=cmd_std, gr_inst=cmd_inst,
+            gr_std_label=cmd_std_label, gr_inst_label=cmd_inst_label,
             ra_arr=ra_arr, dec_arr=dec_arr,
             pmra_arr=pmra_arr, pmdec_arr=pmdec_arr,
             is_sky=is_sky,
@@ -1106,6 +1158,8 @@ class Gaia3DViewerWindow(QWidget):
         bp_rp = self._plot_cache["bp_rp"][i]   if i < len(self._plot_cache["bp_rp"])   else np.nan
         gr_s  = self._plot_cache["gr_std"][i]  if i < len(self._plot_cache["gr_std"])  else np.nan
         gr_i  = self._plot_cache["gr_inst"][i] if i < len(self._plot_cache["gr_inst"]) else np.nan
+        std_label = str(self._plot_cache.get("gr_std_label") or "CMD color")
+        inst_label = str(self._plot_cache.get("gr_inst_label") or "CMD color")
         pmem  = self._plot_cache["pmem"][i]    if i < len(self._plot_cache["pmem"])    else np.nan
         pmra_v  = self._plot_cache["pmra_arr"][i]  if i < len(self._plot_cache["pmra_arr"])  else np.nan
         pmdec_v = self._plot_cache["pmdec_arr"][i] if i < len(self._plot_cache["pmdec_arr"]) else np.nan
@@ -1118,8 +1172,8 @@ class Gaia3DViewerWindow(QWidget):
             f"plx={plx:.3f}mas"  if np.isfinite(plx)  else "plx=-",
             f"pm=({pmra_v:.2f},{pmdec_v:.2f})mas/yr" if (np.isfinite(pmra_v) and np.isfinite(pmdec_v)) else "pm=-",
             f"BP-RP={bp_rp:.3f}"  if np.isfinite(bp_rp) else "BP-RP=-",
-            f"g-r(std)={gr_s:.3f}" if np.isfinite(gr_s) else "g-r(std)=-",
-            f"g-r(inst)={gr_i:.3f}" if np.isfinite(gr_i) else "g-r(inst)=-",
+            f"{std_label}(std)={gr_s:.3f}" if np.isfinite(gr_s) else f"{std_label}(std)=-",
+            f"{inst_label}(inst)={gr_i:.3f}" if np.isfinite(gr_i) else f"{inst_label}(inst)=-",
             f"Pmem={pmem:.3f}" if np.isfinite(pmem) else "Pmem=-",
         ]
         msg = " | ".join(parts)
