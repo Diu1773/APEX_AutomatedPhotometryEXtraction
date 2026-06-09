@@ -435,6 +435,8 @@ LC_ONLY_TOML_KEY_MAP: tuple[tuple[tuple[str, ...], str], ...] = (
     (('refbuild', 'sat_drop_pct'), 'ref_select_sat_pct'),
     (('refbuild', 'elong_drop_pct'), 'ref_select_elong_pct'),
     (('refbuild', 'per_date'), 'ref_per_date'),
+    (('refbuild', 'master_union'), 'ref_master_union'),
+    (('refbuild', 'union_min_frames'), 'ref_union_min_frames'),
     (('refbuild', 'ref_cat_max_sources'), 'ref_cat_max_sources'),
     (('refbuild', 'ref_cat_min_sources'), 'ref_cat_min_sources'),
     (('refbuild', 'ref_cat_max_elong'), 'ref_cat_max_elong'),

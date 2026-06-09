@@ -37,6 +37,7 @@ from PyQt5.QtWidgets import (
     QTextEdit, QProgressBar, QTableWidget, QTableWidgetItem,
     QHeaderView, QAbstractItemView, QWidget, QMessageBox,
     QTabWidget, QSplitter, QFormLayout, QCheckBox, QDoubleSpinBox,
+    QScrollArea, QFrame,
 )
 from PyQt5.QtCore import Qt, QThread, pyqtSignal
 
@@ -50,7 +51,11 @@ except ImportError:
 from .step_window_base import StepWindowBase
 from .run_control import RunControlBar, format_duration as _fmt_duration, progress_status_text
 from .log_panel import WorkflowLogWindow, WorkerStatusPanel, append_timestamped_log, show_raised
-from .ui_helpers import create_output_reuse_checkbox
+from .ui_helpers import (
+    create_output_reuse_checkbox,
+    set_table_row_background,
+    status_row_background,
+)
 from apex.utils.step_paths import (
     step2_cropped_dir,
     step4_dir,
@@ -65,13 +70,20 @@ from apex.utils.photometry_utils import (
     refine_local_centroid,
 )
 from apex.utils.cache_utils import astap_wcs_candidates, parse_astap_wcs_file
-from apex.utils.constants import get_parallel_workers
-
-MAG_ERR_COEFF = 2.5 / np.log(10)
+from apex.utils.constants import (
+    get_parallel_workers,
+    MAG_ERR_COEFF,
+    MAD_TO_SIGMA,
+    INSTRUMENTAL_ZMAG,
+    EXPTIME_HEADER_KEYS,
+)
+from apex.utils.noise_params import resolve_effective_noise_params
 
 _GC_N_STEPS = 14   # number of radii in the growth curve
 _FORCED_SIGNATURE_FILE = "forced_phot_signature.json"
-_FORCED_SIGNATURE_VERSION = 1
+# v2: mag_inst redefined as IRAF-style count-rate magnitude
+# (INSTRUMENTAL_ZMAG - 2.5*log10(flux_e/exptime)); invalidates v1 caches.
+_FORCED_SIGNATURE_VERSION = 2
 _FORCED_SIGNATURE_PARAMS = (
     "phot_use_qc_pass_only",
     "fwhm_pix_guess",
@@ -88,6 +100,9 @@ _FORCED_SIGNATURE_PARAMS = (
     "annulus_min_gap_px",
     "gain_e_per_adu",
     "rdnoise_e",
+    "noise_use_fits_header",
+    "noise_reference_binning",
+    "noise_scale_by_binning",
     "saturation_adu",
     "datamax_adu",
     "phot_sigma_clip",
@@ -124,6 +139,26 @@ def _to_int(val, default: int) -> int:
         return int(default)
 
 
+def _exptime_from_header(header, default: float = 1.0) -> float:
+    """Exposure time (seconds) from a FITS header, for count-rate magnitudes.
+
+    Falls back to ``default`` (1.0 s) when no usable EXPTIME-like key is
+    present, which keeps single-exposure datasets behaving sensibly while
+    still normalizing mixed-exposure sets correctly.
+    """
+    if header is None:
+        return float(default)
+    for key in EXPTIME_HEADER_KEYS:
+        if key in header:
+            try:
+                val = float(header[key])
+            except (TypeError, ValueError):
+                continue
+            if np.isfinite(val) and val > 0:
+                return val
+    return float(default)
+
+
 def _catalog_series(df: pd.DataFrame, col: str, fallback) -> pd.Series:
     if col in df.columns:
         return df[col].reset_index(drop=True)
@@ -131,18 +166,21 @@ def _catalog_series(df: pd.DataFrame, col: str, fallback) -> pd.Series:
 
 
 def _normalize_filter_value(value) -> str:
-    raw = str(value or "").strip().lower()
+    from apex.utils.astro_utils import normalize_filter_name
+    import re
+    raw = str(value or "").strip()
     if not raw:
         return ""
-    import re
-    tokens = [t for t in re.split(r"[^a-z0-9]+", raw) if t]
+    # Try direct normalization first (preserves Johnson/SDSS case distinction)
+    direct = normalize_filter_name(raw)
+    if direct:
+        return direct
+    # Extract a token from compound strings like "Bessel_R" or "sdss-r_001"
+    tokens = [t for t in re.split(r"[^a-zA-Z0-9']+", raw) if t]
     for token in reversed(tokens or [raw]):
-        if token in {"ha", "halpha", "h-alpha"}:
-            return "ha"
-        if token in {"u", "g", "r", "i", "z", "b", "v"}:
-            return token
-    if raw in {"u", "g", "r", "i", "z", "b", "v"}:
-        return raw
+        candidate = normalize_filter_name(token)
+        if candidate:
+            return candidate
     return raw
 
 
@@ -204,7 +242,7 @@ def _robust_frame_shift(dx, dy, *, sigma: float = 3.0, max_iter: int = 3) -> dic
         resid_keep = resid[keep]
         med_resid = float(np.median(resid_keep))
         mad = float(np.median(np.abs(resid_keep - med_resid)))
-        scale = 1.4826 * mad
+        scale = MAD_TO_SIGMA * mad
         if not np.isfinite(scale) or scale <= 0:
             scale = float(np.percentile(resid_keep, 68)) if resid_keep.size else float("nan")
         if not np.isfinite(scale) or scale <= 0:
@@ -493,6 +531,23 @@ class ForcedPhotWorker(QThread):
         cand = self.data_dir / fname
         return cand if cand.exists() else None
 
+    def _load_header(self, fname: str) -> Optional[fits.Header]:
+        path = self._resolve_fits_path(fname)
+        if path is None or not path.exists():
+            return None
+        key = str(path)
+        with self._wcs_cache_lock:
+            hdr = self._wcs_header_cache.get(key)
+        if hdr is not None:
+            return hdr
+        try:
+            hdr = fits.getheader(path)
+        except Exception:
+            return None
+        with self._wcs_cache_lock:
+            self._wcs_header_cache[key] = hdr
+        return hdr
+
     def _load_wcs_for_frame(self, fname: str) -> Optional[WCS]:
         fits_path = self._resolve_fits_path(fname)
         candidates: List[Path] = []
@@ -680,6 +735,7 @@ class ForcedPhotWorker(QThread):
         fname: str,
         master_df: pd.DataFrame,
         img: np.ndarray,
+        header: Optional[fits.Header],
         wcs: Optional[WCS],
         fwhm_px: float,
         P,
@@ -711,8 +767,18 @@ class ForcedPhotWorker(QThread):
         max_shift    = _to_float(getattr(P, "max_recenter_shift",     2.0), 2.0)
         outlier_px   = _to_float(getattr(P, "centroid_outlier_px",    1.0), 1.0)
         recenter_enabled = bool(getattr(P, "recenter_aperture", True))
-        gain         = _to_float(getattr(P, "gain_e_per_adu",         1.0), 1.0)
-        rn_e         = _to_float(getattr(P, "rdnoise_e",              7.5), 7.5)
+        noise        = resolve_effective_noise_params(P, header)
+        gain         = noise.gain_e_per_adu
+        rn_e         = noise.rdnoise_e
+        exptime      = _exptime_from_header(header)
+        noise_info = {
+            "gain_e_per_adu": float(noise.gain_e_per_adu),
+            "rdnoise_e": float(noise.rdnoise_e),
+            "binning_x": int(noise.bin_x),
+            "binning_y": int(noise.bin_y),
+            "gain_source": noise.gain_source,
+            "rdnoise_source": noise.rdnoise_source,
+        }
         sat_adu      = _to_float(getattr(P, "saturation_adu",     65000.0), 65000.0)
         datamax_adu  = _to_float(getattr(P, "datamax_adu",        55000.0), 55000.0)
         sigma_clip   = _to_float(getattr(P, "phot_sigma_clip",        3.0), 3.0)
@@ -794,31 +860,38 @@ class ForcedPhotWorker(QThread):
                 dists, idxs = tree.query(master_xy_pred[valid_pred], k=1)
                 match_mask = dists <= registration_match_radius
                 valid_indices = np.where(valid_pred)[0]
-                for k, (vi, matched, idx, dist) in enumerate(zip(valid_indices, match_mask, idxs, dists)):
-                    if matched:
-                        detected_flag[vi] = bool(dist <= max_shift)
-                        det_uid_arr[vi] = int(det_df["det_uid"].iloc[idx])
-                        dx = float(det_df["x"].iloc[idx]) - float(x_pred[vi])
-                        dy = float(det_df["y"].iloc[idx]) - float(y_pred[vi])
-                        det_x_arr[vi] = float(det_df["x"].iloc[idx])
-                        det_y_arr[vi] = float(det_df["y"].iloc[idx])
-                        match_dx[vi] = dx
-                        match_dy[vi] = dy
-                        match_offset[vi] = float(dist)
-                        ok, reason, used = _step4_quality_check(
-                            det_df.iloc[idx], P, sat_adu, datamax_adu
-                        )
-                        step4_quality_ok[vi] = ok
-                        step4_quality_used[vi] = used
-                        step4_quality_reason[vi] = reason
-                        if "quality_score" in det_df.columns:
-                            step4_quality_score[vi] = float(det_df["quality_score"].iloc[idx])
-                        if "quality_flags" in det_df.columns:
-                            step4_quality_flags[vi] = str(det_df["quality_flags"].iloc[idx])
-                        if "anchor_candidate" in det_df.columns:
-                            step4_anchor_candidate[vi] = bool(det_df["anchor_candidate"].iloc[idx])
-                        if "apcorr_candidate" in det_df.columns:
-                            step4_apcorr_candidate[vi] = bool(det_df["apcorr_candidate"].iloc[idx])
+                # Check column presence once before the loop (avoid per-iteration overhead).
+                _has_uid    = "det_uid"          in det_df.columns
+                _has_qscore = "quality_score"    in det_df.columns
+                _has_qflags = "quality_flags"    in det_df.columns
+                _has_anchor = "anchor_candidate" in det_df.columns
+                _has_apcorr = "apcorr_candidate" in det_df.columns
+                for vi, matched, idx, dist in zip(valid_indices, match_mask, idxs, dists):
+                    if not matched:
+                        continue
+                    # Single iloc per matched star — reuse the row Series for all accesses.
+                    row = det_df.iloc[idx]
+                    x_d = float(row["x"])
+                    y_d = float(row["y"])
+                    detected_flag[vi] = bool(dist <= max_shift)
+                    det_uid_arr[vi]   = int(row["det_uid"]) if _has_uid else -1
+                    det_x_arr[vi]     = x_d
+                    det_y_arr[vi]     = y_d
+                    match_dx[vi]      = x_d - float(x_pred[vi])
+                    match_dy[vi]      = y_d - float(y_pred[vi])
+                    match_offset[vi]  = float(dist)
+                    ok, reason, used  = _step4_quality_check(row, P, sat_adu, datamax_adu)
+                    step4_quality_ok[vi]     = ok
+                    step4_quality_used[vi]   = used
+                    step4_quality_reason[vi] = reason
+                    if _has_qscore:
+                        step4_quality_score[vi]   = float(row["quality_score"])
+                    if _has_qflags:
+                        step4_quality_flags[vi]   = str(row["quality_flags"])
+                    if _has_anchor:
+                        step4_anchor_candidate[vi] = bool(row["anchor_candidate"])
+                    if _has_apcorr:
+                        step4_apcorr_candidate[vi] = bool(row["apcorr_candidate"])
 
         # --- Frame-level registration from good anchor stars ---
         crowding_flag = (
@@ -1027,7 +1100,7 @@ class ForcedPhotWorker(QThread):
         _status(f"Apcorr refs {n_gc_stars}/{n_apcorr_candidates}", 68)
 
         apcorr = 1.0
-        growth_curve_data: dict = {}
+        growth_curve_data: dict = {"noise": dict(noise_info)}
 
         if n_gc_stars >= apcorr_min_n:
             gc_radii = np.linspace(max(2.0, r_ap * 0.4), r_ref * 1.15, _GC_N_STEPS)
@@ -1071,6 +1144,7 @@ class ForcedPhotWorker(QThread):
                 err_opt   = float(med_mag_err[r_opt_idx]) if np.isfinite(med_mag_err[r_opt_idx]) else float("nan")
 
                 growth_curve_data = {
+                    "noise":          dict(noise_info),
                     "radii_px":       gc_radii.tolist(),
                     "enclosed_frac":  [float(v) for v in gc_curve],
                     "mag_err":        [float(v) for v in med_mag_err],
@@ -1101,9 +1175,20 @@ class ForcedPhotWorker(QThread):
         flux_corr     = flux_arr * apcorr
         flux_err_corr = flux_err_arr * apcorr
 
-        mag_inst = np.where(
+        # IRAF-style instrumental magnitude: count rate (e-/s) with a fixed
+        # zeropoint baked in (see INSTRUMENTAL_ZMAG). Normalizing by exptime
+        # makes magnitudes from frames of different exposure time directly
+        # combinable; the +zmag constant makes mag_inst a real (positive)
+        # magnitude. The per-frame ZP in Step 10 (median(gaia - mag_inst))
+        # re-absorbs both automatically, so no downstream retuning is needed.
+        rate = np.where(
             np.isfinite(flux_corr) & (flux_corr > 0),
-            -2.5 * np.log10(np.where(flux_corr > 0, flux_corr, np.nan)),
+            flux_corr / exptime,
+            np.nan,
+        )
+        mag_inst = np.where(
+            np.isfinite(rate) & (rate > 0),
+            INSTRUMENTAL_ZMAG - 2.5 * np.log10(np.where(rate > 0, rate, np.nan)),
             np.nan,
         )
         mag_err = np.where(
@@ -1173,11 +1258,24 @@ class ForcedPhotWorker(QThread):
             "flux_e":            flux_corr,
             "flux_net_adu":      flux_corr / max(gain, 1e-12),
             "flux_err":          flux_err_corr,
+            "gain_e_per_adu":    np.full(n, gain),
+            "exptime":           np.full(n, float(exptime)),
+            "rdnoise_e":         np.full(n, rn_e),
+            "binning_x":         np.full(n, noise.bin_x),
+            "binning_y":         np.full(n, noise.bin_y),
+            "gain_source":       np.full(n, noise.gain_source, dtype=object),
+            "rdnoise_source":    np.full(n, noise.rdnoise_source, dtype=object),
             "mag_inst":          mag_inst,
             "mag_err":           mag_err,
             "snr":               snr_arr,
             "sky":               sky_arr,
+            "sky_std":           sky_std_arr,
+            "bkg_median_adu":    sky_arr,
+            "bkg_std_adu":       sky_std_arr,
+            "n_sky":             n_sky_arr,
             "apcorr":            apcorr,
+            "apcorr_applied":    np.full(n, bool(np.isfinite(apcorr) and abs(apcorr - 1.0) > 1e-6)),
+            "apcorr_ref_count":  np.full(n, n_gc_stars),
             "is_saturated":      is_sat_arr,
             "is_nonlinear":      is_nl_arr,
             "bad_phot_flag":     bad_phot,
@@ -1219,7 +1317,7 @@ class ForcedPhotWorker(QThread):
                     pass
             import re
             m = re.search(r"[-_]([ugrizbvUGRIZBV])[-_.]", str(fname), re.IGNORECASE)
-            return m.group(1).lower() if m else "unknown"
+            return _normalize_filter_value(m.group(1)) if m else "unknown"
 
         filter_map: Dict[str, List[str]] = {}
         for fname in self.file_list:
@@ -1286,6 +1384,7 @@ class ForcedPhotWorker(QThread):
                     return ("no_image", fname, filt, None, None, None, None)
 
                 self.worker_status.emit(slot, fname, "WCS / FWHM", 20)
+                header = self._load_header(fname)
                 wcs = self._load_wcs_for_frame(fname)
                 fwhm_px = self._load_fwhm(fname, fallback=fwhm_guess)
                 t_wcs = time.time()
@@ -1296,7 +1395,7 @@ class ForcedPhotWorker(QThread):
                         self.worker_status.emit(slot, fname, label, pct)
 
                     phot_df, apcorr_val, gc_data = self._phot_frame(
-                        fname, master_df, img, wcs, fwhm_px, P, status_cb=_status
+                        fname, master_df, img, header, wcs, fwhm_px, P, status_cb=_status
                     )
                     t_phot = time.time()
                 except Exception as exc:
@@ -1334,6 +1433,7 @@ class ForcedPhotWorker(QThread):
                 return ("ok", fname, filt, phot_df, apcorr_val, gc_data,
                         {"wcs_ok": wcs is not None, "fwhm_px": fwhm_px,
                          "n_master": len(master_df), "out_path": str(out_path),
+                         "noise": gc_data.get("noise", {}) if isinstance(gc_data, dict) else {},
                          "center_stats": center_stats,
                          "elapsed_s": t_save - t0,
                          "timing": {
@@ -1448,6 +1548,9 @@ class ForcedPhotWorker(QThread):
                         "apcorr":       apcorr_val,
                         "path":         info["out_path"],
                     }
+                    noise_info = info.get("noise") or {}
+                    if noise_info:
+                        index_row.update(noise_info)
                     for key, value in center_stats.items():
                         if key not in index_row:
                             index_row[key] = value
@@ -1798,11 +1901,27 @@ class ForcedPhotWindow(StepWindowBase):
 
         # ── Tab widget ─────────────────────────────────────────────────────────
         self.tabs = QTabWidget()
-        self.content_layout.addWidget(self.tabs)
+        self.content_layout.addWidget(self.tabs, stretch=1)
 
         # ── Tab 0: Centering Stats ─────────────────────────────────────────────
+        # The tab content (summary + plot + table) needs ~700px of vertical
+        # space.  Cramped windows (small laptops, 720p captures) cannot
+        # afford that, so wrap the whole tab in a QScrollArea — both plot
+        # and table keep their own minimum height, and the user scrolls
+        # when the tab is shorter than the content.
         tab_stats = QWidget()
-        tab_stats_layout = QVBoxLayout(tab_stats)
+        tab_stats_outer = QVBoxLayout(tab_stats)
+        tab_stats_outer.setContentsMargins(0, 0, 0, 0)
+
+        stats_scroll = QScrollArea()
+        stats_scroll.setWidgetResizable(True)
+        stats_scroll.setFrameShape(QFrame.NoFrame)
+        stats_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAsNeeded)
+        stats_scroll.setVerticalScrollBarPolicy(Qt.ScrollBarAsNeeded)
+
+        stats_inner = QWidget()
+        tab_stats_layout = QVBoxLayout(stats_inner)
+        tab_stats_layout.setContentsMargins(6, 6, 6, 6)
 
         self.center_summary_label = QLabel("Run forced photometry to populate centering stats.")
         self.center_summary_label.setWordWrap(True)
@@ -1818,7 +1937,13 @@ class ForcedPhotWindow(StepWindowBase):
             self._center_ax_hist = self._center_fig.add_subplot(121)
             self._center_ax_scatter = self._center_fig.add_subplot(122)
             self._center_canvas = FigureCanvasQTAgg(self._center_fig)
-            self._center_canvas.setMinimumHeight(260)
+            # Hard minimum so X-axis ticks/labels aren't cropped away;
+            # maximum so the plot doesn't devour the whole tab on tall
+            # windows and push the diagnostics table out of view.
+            # 230~280 keeps two histogram axes legible while leaving
+            # room for ~5 table rows in a 900px-tall window.
+            self._center_canvas.setMinimumHeight(230)
+            self._center_canvas.setMaximumHeight(280)
             center_plot_layout.addWidget(self._center_canvas)
             self._init_center_axes()
         else:
@@ -1829,6 +1954,8 @@ class ForcedPhotWindow(StepWindowBase):
         center_table_group = QGroupBox("Per-frame Centering Diagnostics")
         center_table_layout = QVBoxLayout(center_table_group)
         self.center_stats_table = QTableWidget()
+        # Enough room for 4–5 rows + header + horizontal scrollbar.
+        self.center_stats_table.setMinimumHeight(220)
         _center_headers = [
             "File", "Filter", "Status", "Centering",
             "Detected %", "Forced %", "Recentered %",
@@ -1866,6 +1993,9 @@ class ForcedPhotWindow(StepWindowBase):
         self.center_stats_table.itemSelectionChanged.connect(self._on_center_stats_row_selected)
         center_table_layout.addWidget(self.center_stats_table)
         tab_stats_layout.addWidget(center_table_group)
+
+        stats_scroll.setWidget(stats_inner)
+        tab_stats_outer.addWidget(stats_scroll)
 
         self._stats_tab_index = self.tabs.addTab(tab_stats, "Stats")
 
@@ -2026,18 +2156,30 @@ class ForcedPhotWindow(StepWindowBase):
     # ── Load existing results ──────────────────────────────────────────────────
 
     def _try_load_existing_results(self):
-        idx_path = step7_forced_phot_dir(self.params.P.result_dir) / "photometry_index.csv"
+        out_dir = step7_forced_phot_dir(self.params.P.result_dir)
+        idx_path = out_dir / "photometry_index.csv"
+        loaded = False
+        self._gc_accumulator.clear()
+        self._gc_per_frame.clear()
+        self._center_stats_rows.clear()
+        if hasattr(self, "apcorr_table"):
+            self.apcorr_table.setRowCount(0)
+        if hasattr(self, "center_stats_table"):
+            self.center_stats_table.setRowCount(0)
         if not idx_path.exists():
-            return
+            return False
         try:
             df = pd.read_csv(idx_path)
-            self._populate_results_table(df.to_dict(orient="records"))
+            rows = df.to_dict(orient="records")
+            self.results = {"index_rows": rows}
+            self._populate_results_table(rows)
             self.progress_label.setText(f"Loaded {len(df)} frames from previous run")
             self.update_navigation_buttons()
+            loaded = True
         except Exception:
             pass
 
-        apc_path = step7_forced_phot_dir(self.params.P.result_dir) / "apcorr_summary.csv"
+        apc_path = out_dir / "apcorr_summary.csv"
         if apc_path.exists():
             try:
                 apc_df = pd.read_csv(apc_path)
@@ -2061,7 +2203,7 @@ class ForcedPhotWindow(StepWindowBase):
             except Exception:
                 pass
 
-        stats_path = step7_forced_phot_dir(self.params.P.result_dir) / "centering_stats.csv"
+        stats_path = out_dir / "centering_stats.csv"
         if stats_path.exists():
             try:
                 stats_df = pd.read_csv(stats_path)
@@ -2070,6 +2212,9 @@ class ForcedPhotWindow(StepWindowBase):
                 self._refresh_center_summary()
             except Exception:
                 pass
+        else:
+            self._refresh_center_summary()
+        return loaded
 
     # ── Table helpers ──────────────────────────────────────────────────────────
 
@@ -2109,6 +2254,11 @@ class ForcedPhotWindow(StepWindowBase):
                 item = QTableWidgetItem(val)
                 item.setTextAlignment(Qt.AlignCenter)
                 self.results_table.setItem(ri, ci, item)
+            status = str(row.get("status", "") or "").strip().lower()
+            centering = str(row.get("centering_status", "") or "").strip().upper()
+            ok = status == "ok" and wcs_ok is not False
+            warning = ok and centering in {"CHECK", "LOW_MATCH", "REVIEW"}
+            set_table_row_background(self.results_table, ri, status_row_background(ok, warning=warning))
 
     def _fmt_table_float(self, v, fmt="{:.2f}") -> str:
         try:
@@ -2697,6 +2847,24 @@ class ForcedPhotWindow(StepWindowBase):
             return False, f"missing/incomplete frames {len(missing)}/{len(file_list)}: {preview}"
         return True, "ok"
 
+    def _current_forced_cache_status(self) -> tuple[bool, str]:
+        try:
+            files = list(self.file_manager.get_file_list())
+        except Exception as exc:
+            return False, f"file list unavailable: {exc}"
+        if not files:
+            return False, "no current frames"
+        use_qc = bool(getattr(self.params.P, "phot_use_qc_pass_only", False))
+        files, _ = filter_files_by_qc(
+            Path(self.params.P.result_dir),
+            files,
+            require_qc=use_qc,
+        )
+        if not files:
+            return False, "no current frames after QC"
+        signature = self._build_forced_output_signature(list(files))
+        return self._existing_output_covers(list(files), signature)
+
     def _on_progress(self, current: int, total: int, fname: str):
         self.progress_bar.setMaximum(total)
         self.progress_bar.setValue(current)
@@ -2798,9 +2966,20 @@ class ForcedPhotWindow(StepWindowBase):
         self._sync_cache_params()
 
     def validate_step(self) -> bool:
-        idx_path = step7_forced_phot_dir(self.params.P.result_dir) / "photometry_index.csv"
-        return idx_path.exists()
+        valid, _ = self._current_forced_cache_status()
+        return valid
 
     def restore_state(self):
-        self._try_load_existing_results()
+        valid, reason = self._current_forced_cache_status()
+        if valid:
+            self._try_load_existing_results()
+            append_timestamped_log(
+                self.log_text,
+                "[FORCED][CACHE] Restored Step 7 output matching current inputs.",
+            )
+        elif (step7_forced_phot_dir(self.params.P.result_dir) / "photometry_index.csv").exists():
+            append_timestamped_log(
+                self.log_text,
+                f"[FORCED][CACHE] Previous output not restored ({reason}).",
+            )
         self._check_prerequisites()

@@ -5,8 +5,31 @@ This module centralizes magic numbers and configuration constants
 that were previously scattered throughout the codebase.
 """
 
+import math
 from dataclasses import dataclass
 from typing import Dict, Tuple
+
+
+# =============================================================================
+# Canonical photometric conversion constants (single source of truth)
+# =============================================================================
+# These module-level names are the authoritative definitions. They are
+# re-exported by apex.utils.photometry_utils for backward compatibility, so
+# callers may import from either module. Do not redefine the literals
+# (1.0857 / 1.4826) inline anywhere else — import these instead.
+
+MAG_ERR_COEFF = 2.5 / math.log(10)   # magnitude error coefficient ≈ 1.0857
+MAD_TO_SIGMA = 1.4826                 # MAD -> Gaussian sigma conversion factor
+
+# IRAF-style instrumental-magnitude zeropoint. Instrumental magnitudes are
+# defined as a count rate with this additive constant baked in, matching
+# IRAF `phot` (MAG = zmag - 2.5 log10(flux/itime), zmag default 25.0):
+#     mag_inst = INSTRUMENTAL_ZMAG - 2.5 * log10(flux_e / exptime)
+# Baking zmag + exptime into the instrumental magnitude makes it a real
+# (positive) magnitude AND exposure-time invariant, so frames of different
+# exposure time are directly combinable. Do not redefine 25.0 inline; import
+# this — the IRAF cross-check and CMD viewer must agree on the same value.
+INSTRUMENTAL_ZMAG = 25.0
 
 
 # =============================================================================
@@ -17,8 +40,8 @@ from typing import Dict, Tuple
 class PhotometryConstants:
     """Constants for aperture photometry calculations."""
 
-    # Magnitude error coefficient: 2.5 / ln(10) ≈ 1.0857
-    MAG_ERR_COEFF: float = 1.0857
+    # Magnitude error coefficient: 2.5 / ln(10) ≈ 1.0857 (see module-level def)
+    MAG_ERR_COEFF: float = MAG_ERR_COEFF
 
     # Minimum cutout size for centroid refinement (pixels)
     MIN_CUTOUT_SIZE: int = 9
@@ -39,8 +62,8 @@ class PhotometryConstants:
     DEFAULT_SIGMA_CLIP: float = 3.0
     DEFAULT_CLIP_MAXITER: int = 5
 
-    # MAD to sigma conversion factor
-    MAD_TO_SIGMA: float = 1.4826
+    # MAD to sigma conversion factor (see module-level def)
+    MAD_TO_SIGMA: float = MAD_TO_SIGMA
 
 
 PHOT = PhotometryConstants()

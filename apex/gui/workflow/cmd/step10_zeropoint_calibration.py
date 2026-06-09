@@ -4,6 +4,7 @@ Step 10: Zeropoint & Standardization
 
 from __future__ import annotations
 
+import hashlib
 import json
 import time
 import traceback
@@ -69,6 +70,34 @@ from apex.utils.gaia_transforms import (
     teff_from_color    as _teff_from_color,
     TEFF_COLOR_ANCHORS as _TEFF_COLOR_ANCHORS,
     filter_bands_from_columns as _filter_bands_from_columns,
+)
+
+_ZP_SIGNATURE_FILE = "zeropoint_signature.json"
+_ZP_SIGNATURE_VERSION = 1
+_ZP_SIGNATURE_PARAMS = (
+    "match_tol_px",
+    "min_master_gaia_matches",
+    "cmd_snr_calib_min",
+    "frame_zp_min_n",
+    "cmd_apply_extinction",
+    "cmd_extinction_mode",
+    "zp_clip_sigma",
+    "zp_fit_iters",
+    "zp_slope_absmax",
+    "gaia_snr_calib_min",
+    "gaia_gi_min",
+    "gaia_gi_max",
+    "gaia_zp_slope_absmax",
+    "gaia_color_slope_absmax",
+    "min_snr_for_mag",
+    "phot_ref_apcorr_min_keep",
+    "phot_ref_require_apcorr_candidate",
+    "phot_use_qc_pass_only",
+    "ref_frame",
+    "site_lat_deg",
+    "site_lon_deg",
+    "site_alt_m",
+    "site_tz_offset_hours",
 )
 
 
@@ -619,31 +648,12 @@ class ZeropointCalibrationWorker(QThread):
                     "Check photometry_index.csv path column and Step5/Step6 photometry outputs."
                 )
 
-            # Per-measurement apcorr-quality filter. Each row is one star on one
-            # frame; we keep only rows the Step 4 quality pass flagged as an
-            # apcorr_candidate (isolated/unsaturated/high-flux). If that leaves
-            # too few measurements the filter is dropped so calibration still
-            # runs — better a noisier ZP than none.
-            if require_apcorr and "step4_apcorr_candidate" in all_df.columns:
-                mask = all_df["step4_apcorr_candidate"].fillna(False).to_numpy(bool)
-                n_before = len(all_df)
-                n_keep = int(mask.sum())
-                if n_keep >= apcorr_min_keep:
-                    all_df = all_df[mask].copy()
-                    self._log(
-                        f"[ZP] apcorr-quality ref filter: {n_keep}/{n_before} measurements kept "
-                        f"(per-measurement step4_apcorr_candidate)."
-                    )
-                else:
-                    self._log(
-                        f"[ZP] apcorr-quality ref filter skipped: only {n_keep}/{n_before} "
-                        f"measurements qualify (< {apcorr_min_keep}); using all measurements."
-                    )
-            elif require_apcorr:
-                self._log(
-                    "[ZP] apcorr-quality ref filter requested but step4_apcorr_candidate "
-                    "column is absent (re-run Step 7 forced phot to populate it); using all measurements."
-                )
+            # NOTE: the apcorr-quality reference filter is applied ONLY to the
+            # frame-zeropoint fit reference set (see below, where `obs` is
+            # restricted to calibrators). It must NOT filter `all_df` here,
+            # because `all_df` also builds the per-star instrumental table that
+            # the CMD is plotted from — filtering it would drop faint stars from
+            # the CMD entirely (apcorr_candidate requires flux_pct >= 60%).
 
             def _combine_group_raw(g):
                 med, med_err, n_med = self._robust_median_and_err(g["mag_inst"])
@@ -1135,10 +1145,10 @@ class ZeropointCalibrationWorker(QThread):
                 snr_vals = np.asarray(g[_snr_col], float) if _snr_col else np.array([np.nan])
                 snr_med = float(np.nanmedian(snr_vals)) if np.isfinite(snr_vals).any() else np.nan
                 return pd.Series({
-                    "mag_inst_med": med,
-                    "mag_inst_med_err": med_err,
-                    "mag_inst_wmean": wmean,
-                    "mag_inst_werr": werr,
+                    "mag_cal_med": med,
+                    "mag_cal_med_err": med_err,
+                    "mag_cal_wmean": wmean,
+                    "mag_cal_werr": werr,
                     "n_frames": n_med,
                     "snr_med": snr_med,
                 })
@@ -1149,21 +1159,21 @@ class ZeropointCalibrationWorker(QThread):
             grp_cal.to_csv(grp_path, index=False, na_rep="NaN")
             self._log(f"Saved {grp_path.name} | rows={len(grp_cal)}")
 
-            wide_mag_w = grp_cal.pivot_table(index="ID", columns="FILTER", values="mag_inst_wmean", aggfunc="median")
-            wide_err_w = grp_cal.pivot_table(index="ID", columns="FILTER", values="mag_inst_werr", aggfunc="median")
-            wide_mag_med = grp_cal.pivot_table(index="ID", columns="FILTER", values="mag_inst_med", aggfunc="median")
-            wide_err_med = grp_cal.pivot_table(index="ID", columns="FILTER", values="mag_inst_med_err", aggfunc="median")
+            wide_mag_w = grp_cal.pivot_table(index="ID", columns="FILTER", values="mag_cal_wmean", aggfunc="median")
+            wide_err_w = grp_cal.pivot_table(index="ID", columns="FILTER", values="mag_cal_werr", aggfunc="median")
+            wide_mag_med = grp_cal.pivot_table(index="ID", columns="FILTER", values="mag_cal_med", aggfunc="median")
+            wide_err_med = grp_cal.pivot_table(index="ID", columns="FILTER", values="mag_cal_med_err", aggfunc="median")
             wide_mag = wide_mag_w.combine_first(wide_mag_med)
             wide_err = wide_err_w.combine_first(wide_err_med)
             wide_snr = grp_cal.pivot_table(index="ID", columns="FILTER", values="snr_med", aggfunc="median")
 
-            wide_mag.columns = [f"mag_inst_{c}" for c in wide_mag.columns]
-            wide_err.columns = [f"mag_inst_err_{c}" for c in wide_err.columns]
+            wide_mag.columns = [f"mag_cal_{c}" for c in wide_mag.columns]
+            wide_err.columns = [f"mag_cal_err_{c}" for c in wide_err.columns]
             wide_snr.columns = [f"snr_{c}" for c in wide_snr.columns]
-            wide_mag_w.columns = [f"mag_inst_wmean_{c}" for c in wide_mag_w.columns]
-            wide_err_w.columns = [f"mag_inst_werr_{c}" for c in wide_err_w.columns]
-            wide_mag_med.columns = [f"mag_inst_med_{c}" for c in wide_mag_med.columns]
-            wide_err_med.columns = [f"mag_inst_med_err_{c}" for c in wide_err_med.columns]
+            wide_mag_w.columns = [f"mag_cal_wmean_{c}" for c in wide_mag_w.columns]
+            wide_err_w.columns = [f"mag_cal_werr_{c}" for c in wide_err_w.columns]
+            wide_mag_med.columns = [f"mag_cal_med_{c}" for c in wide_mag_med.columns]
+            wide_err_med.columns = [f"mag_cal_med_err_{c}" for c in wide_err_med.columns]
 
             wide = pd.concat(
                 [
@@ -1193,23 +1203,50 @@ class ZeropointCalibrationWorker(QThread):
                     df_out[col] = df[col]
 
             wide_by_id = wide.drop_duplicates(subset=["ID"], keep="first").set_index("ID", drop=False)
+            cal_cols_added = []
             std_cols_added = []
             for filt in fit_params:
-                c_inst = f"mag_inst_{filt}"
-                c_std  = f"mag_std_{filt}"
-                if c_inst in wide.columns:
-                    df_out[c_std] = pd.to_numeric(
-                        wide_by_id.reindex(df_out["ID"])[c_inst],
+                c_cal = f"mag_cal_{filt}"
+                c_cal_err = f"mag_cal_err_{filt}"
+                c_std = f"mag_std_{filt}"
+                c_std_err = f"mag_std_err_{filt}"
+                if c_cal in wide.columns:
+                    cal_values = pd.to_numeric(
+                        wide_by_id.reindex(df_out["ID"])[c_cal],
                         errors="coerce",
                     ).to_numpy(float)
+                    df_out[c_cal] = cal_values
+                    df_out[c_std] = cal_values
                 else:
+                    df_out[c_cal] = np.nan
                     df_out[c_std] = np.nan
+                if c_cal_err in wide.columns:
+                    cal_err_values = pd.to_numeric(
+                        wide_by_id.reindex(df_out["ID"])[c_cal_err],
+                        errors="coerce",
+                    ).to_numpy(float)
+                    df_out[c_cal_err] = cal_err_values
+                    df_out[c_std_err] = cal_err_values
+                else:
+                    df_out[c_cal_err] = np.nan
+                    df_out[c_std_err] = np.nan
+                cal_cols_added.append(c_cal)
                 std_cols_added.append(c_std)
 
             if std_cols_added:
                 n_missing = int(df_out[std_cols_added].isna().all(axis=1).sum())
                 if n_missing:
-                    self._log(f"CMD export: {n_missing} IDs missing all calibrated magnitudes; keeping mag_std_* as NaN.")
+                    self._log(f"CMD export: {n_missing} IDs missing all calibrated magnitudes; keeping mag_cal_* as NaN.")
+                # Per-band finite counts. A CMD needs BOTH bands of its color
+                # pair calibrated, so an all-NaN single band silently empties
+                # the Std CMD even when n_missing is small (that count only
+                # flags rows where EVERY band is NaN). Log each band so an empty
+                # one is obvious.
+                _band_counts = []
+                for c_cal in cal_cols_added:
+                    _nf = int(np.isfinite(df_out[c_cal].to_numpy(float)).sum())
+                    _band_counts.append(f"{c_cal}={_nf}/{len(df_out)}")
+                self._log("CMD export: calibrated-band finite counts | " + ", ".join(_band_counts))
 
             # Synthetic Gaia magnitudes: prefer SDSS g-i, fall back to Johnson V-I
             gaia_G_syn     = np.full(len(df_out), np.nan)
@@ -1254,7 +1291,7 @@ class CmdViewerWindow(QWidget):
 
     def __init__(self, df: pd.DataFrame, result_dir: Path, parent=None, embedded: bool = False, params=None):
         super().__init__(parent)
-        self.df = df
+        self.df = self._with_calibrated_aliases(df)
         self.result_dir = Path(result_dir)
         self.params = params
 
@@ -1267,27 +1304,29 @@ class CmdViewerWindow(QWidget):
             self.resize(1200, 900)
             self.setMinimumSize(1000, 720)
 
-        # View mode: 0=inst, 1=std, 2=gaia, 3=all
+        # View mode is selected after available magnitude products are detected.
         self.view_mode = 0
 
-        self.inst_bands = _filter_bands_from_columns(df.columns, "mag_inst_")
-        self.std_bands  = _filter_bands_from_columns(df.columns, "mag_std_")
-        self.has_std = (len(self.std_bands) > 0) and np.isfinite(df[[c for c in df.columns if c.startswith("mag_std_")]].to_numpy(float)).any()
+        self.inst_bands = _filter_bands_from_columns(self.df.columns, "mag_inst_")
+        self.std_bands  = _filter_bands_from_columns(self.df.columns, "mag_std_")
+        std_value_cols = [f"mag_std_{band}" for band in self.std_bands if f"mag_std_{band}" in self.df.columns]
+        self.has_std = bool(std_value_cols) and np.isfinite(self.df[std_value_cols].to_numpy(float)).any()
 
         self.all_bands = sorted(set(self.inst_bands) | set(self.std_bands))
 
         # X axis: adjacent color pairs only (e.g. B-V, V-R — standard CMD indices)
         # Y axis: scalar magnitudes only (CMD viewer convention)
-        x_allowed = _build_color_pairs(self.inst_bands, adjacent_only=True)
+        axis_bands = self.inst_bands or self.std_bands
+        x_allowed = _build_color_pairs(axis_bands, adjacent_only=True)
         self.x_allowed         = x_allowed
-        self.y_allowed_scalars = self.inst_bands  # already wavelength-sorted
+        self.y_allowed_scalars = axis_bands  # already wavelength-sorted
         self.y_allowed_colors  = []
 
         self.x_pairs       = x_allowed
-        self.y_scalar_opts = self.inst_bands
+        self.y_scalar_opts = axis_bands
         self.y_color_pairs = []
 
-        self.snr_cols = [c for c in df.columns if c.startswith("snr_")]
+        self.snr_cols = [c for c in self.df.columns if c.startswith("snr_")]
         self.has_snr = len(self.snr_cols) > 0
 
         self.has_gaia_inst = (
@@ -1334,12 +1373,18 @@ class CmdViewerWindow(QWidget):
         self.color_anchors = _TEFF_COLOR_ANCHORS
 
         # Determine available views
-        self.available_views = ["inst"]
+        self.available_views = []
+        if self.inst_bands:
+            self.available_views.append("inst")
         if self.has_std:
             self.available_views.append("std")
         if self.gaia_mode is not None:
             self.available_views.append("gaia")
-        self.available_views.append("all")
+        if len(self.available_views) > 1:
+            self.available_views.append("all")
+        if not self.available_views:
+            self.available_views = ["inst"]
+        self.view_mode = self.available_views.index("std") if "std" in self.available_views else 0
 
         self._plot_cache = {}
         self.last_pick_info = None
@@ -1351,11 +1396,32 @@ class CmdViewerWindow(QWidget):
         self._parallax_range_initialized = False
         self._roi_data: dict | None = None
         self._build_ui()
+        self._update_view_label()
         self._load_roi()
         self._initialize_parallax_range(force=True)
         self._build_figure()
         self._redraw()
         self.setFocusPolicy(Qt.StrongFocus)
+
+    @staticmethod
+    def _with_calibrated_aliases(df: pd.DataFrame) -> pd.DataFrame:
+        out = df.copy()
+        for band in _filter_bands_from_columns(out.columns, "mag_cal_"):
+            cal_col = f"mag_cal_{band}"
+            std_col = f"mag_std_{band}"
+            if std_col not in out.columns and cal_col in out.columns:
+                out[std_col] = out[cal_col]
+            cal_err_col = f"mag_cal_err_{band}"
+            std_err_col = f"mag_std_err_{band}"
+            if std_err_col not in out.columns and cal_err_col in out.columns:
+                out[std_err_col] = out[cal_err_col]
+        return out
+
+    def _update_view_label(self) -> None:
+        view_name = self.available_views[self.view_mode] if self.available_views else "inst"
+        view_labels = {"inst": "Instrumental", "std": "Calibrated", "gaia": "Gaia", "all": "All CMDs"}
+        if hasattr(self, "view_label"):
+            self.view_label.setText(f"View: {view_labels.get(view_name, view_name)}")
 
     def _build_ui(self):
         layout = QVBoxLayout(self)
@@ -1384,6 +1450,27 @@ class CmdViewerWindow(QWidget):
         self.invert_y = QCheckBox("Invert Y")
         self.invert_y.setChecked(True)
         controls.addWidget(self.invert_y)
+
+        # Optional extra ZP nudge for the Instrumental view. Instrumental
+        # magnitudes already carry the IRAF Z=25 convention baked in at Step 7
+        # (mag_inst = 25 - 2.5*log10(flux_e/exptime)), so they read in the
+        # usual positive range without any shift — this control defaults to 0
+        # and is only for manual fine-tuning. Colors (X = a-b) are unaffected
+        # because a constant ZP cancels in a difference.
+        self.manual_zp_check = QCheckBox("Manual ZP")
+        self.manual_zp_check.setToolTip(
+            "Add an extra constant zeropoint to Instrumental magnitudes for display only.\n"
+            "mag_inst already includes the IRAF Z=25 convention, so leave at 0 normally.\n"
+            "Colors are unchanged."
+        )
+        controls.addWidget(self.manual_zp_check)
+        self.manual_zp_spin = QDoubleSpinBox()
+        self.manual_zp_spin.setRange(0.0, 50.0)
+        self.manual_zp_spin.setDecimals(3)
+        self.manual_zp_spin.setSingleStep(0.1)
+        self.manual_zp_spin.setValue(0.0)
+        self.manual_zp_spin.setToolTip("Extra Instrumental-view zeropoint added to Y (display only).")
+        controls.addWidget(self.manual_zp_spin)
 
         controls.addSpacing(8)
         controls.addWidget(QLabel("Membership:"))
@@ -1421,6 +1508,16 @@ class CmdViewerWindow(QWidget):
         self.save_btn = QPushButton("Save PNG")
         controls_row2.addWidget(self.save_btn)
 
+        self.xerr_check = QCheckBox("X err")
+        self.xerr_check.setToolTip("Show color-index error bars for foreground CMD points.")
+        self.xerr_check.setChecked(False)
+        controls_row2.addWidget(self.xerr_check)
+
+        self.yerr_check = QCheckBox("Y err")
+        self.yerr_check.setToolTip("Show magnitude error bars for foreground CMD points.")
+        self.yerr_check.setChecked(False)
+        controls_row2.addWidget(self.yerr_check)
+
         controls_row2.addStretch()
         self.view_label = QLabel("View: Instrumental")
         self.view_label.setStyleSheet("QLabel { color: #2196F3; font-weight: bold; }")
@@ -1438,8 +1535,11 @@ class CmdViewerWindow(QWidget):
         self.figure = Figure(figsize=(10, 6), dpi=100)
         self.figure.subplots_adjust(bottom=0.14)
         self.canvas = FigureCanvas(self.figure)
+        # Canvas is the only stretch=1 widget below; let it absorb ALL
+        # spare vertical space.  (A maxHeight here caused leftover space
+        # to be distributed as ugly gaps between the control rows in the
+        # standalone CMD+Isochrone tool.)
         self.canvas.setMinimumSize(800, 360)
-        self.canvas.setMaximumHeight(560)
 
         # Prev/Next View are mounted next to the matplotlib navigation
         # toolbar (above the canvas) so they cannot visually collide with
@@ -1462,6 +1562,10 @@ class CmdViewerWindow(QWidget):
         self.y_combo.currentTextChanged.connect(self._redraw)
         self.snr_spin.valueChanged.connect(self._redraw)
         self.invert_y.stateChanged.connect(self._redraw)
+        self.manual_zp_check.stateChanged.connect(self._redraw)
+        self.manual_zp_spin.valueChanged.connect(self._redraw)
+        self.xerr_check.stateChanged.connect(self._redraw)
+        self.yerr_check.stateChanged.connect(self._redraw)
         self.member_mode_combo.currentIndexChanged.connect(self._on_membership_ui_changed)
         self.member_compare.stateChanged.connect(self._on_membership_ui_changed)
         self.btn_save_membership.clicked.connect(self._save_membership_csv)
@@ -1519,6 +1623,8 @@ class CmdViewerWindow(QWidget):
             self.invert_y,
             self.member_mode_combo,
             self.member_compare,
+            self.xerr_check,
+            self.yerr_check,
             self.plx_check,
             self.plx_min_spin,
             self.plx_max_spin,
@@ -1530,6 +1636,8 @@ class CmdViewerWindow(QWidget):
         self.invert_y.setChecked(True)
         self.member_mode_combo.setCurrentIndex(2)  # Normal (P>=0.50)
         self.member_compare.setChecked(True)
+        self.xerr_check.setChecked(False)
+        self.yerr_check.setChecked(False)
         self.plx_check.setChecked(False)
         self.plx_min_spin.setValue(-0.5)
         self.plx_max_spin.setValue(0.5)
@@ -1541,6 +1649,8 @@ class CmdViewerWindow(QWidget):
             self.invert_y,
             self.member_mode_combo,
             self.member_compare,
+            self.xerr_check,
+            self.yerr_check,
             self.plx_check,
             self.plx_min_spin,
             self.plx_max_spin,
@@ -2105,6 +2215,15 @@ class CmdViewerWindow(QWidget):
             if col_y not in self.df.columns:
                 return np.array([]), np.array([]), np.zeros(len(self.df), bool), np.array([])
             y = self._safe_float(self.df[col_y])
+            # Display-only manual ZP: optional extra shift of the Instrumental
+            # magnitude axis. mag_inst already carries the IRAF Z=25 convention
+            # (baked in at Step 7), so this defaults to 0; it only adds a manual
+            # nudge on top. Only the magnitude (scalar) axis of the Instrumental
+            # view is shifted; colors and the Std view are untouched (a constant
+            # ZP cancels in any a-b color).
+            if system == "inst" and getattr(self, "manual_zp_check", None) is not None \
+                    and self.manual_zp_check.isChecked():
+                y = y + float(self.manual_zp_spin.value())
             involved.add(by)
         elif y_mode == "color":
             ya, yb = y_param
@@ -2134,6 +2253,85 @@ class CmdViewerWindow(QWidget):
             mask &= np.asarray(membership_mask, bool)
 
         return x[mask], y[mask], mask, xcolor[mask]
+
+    def _mag_error_array(self, system: str, band: str) -> np.ndarray:
+        candidates = []
+        if system == "std":
+            candidates.append(f"mag_std_err_{band}")
+        candidates.append(f"mag_inst_err_{band}")
+        for col in candidates:
+            if col in self.df.columns:
+                arr = self._safe_float(self.df[col])
+                return np.where(np.isfinite(arr) & (arr >= 0), arr, np.nan)
+        return np.full(len(self.df), np.nan, dtype=float)
+
+    def _quadrature_error(self, *arrays: np.ndarray) -> np.ndarray:
+        if not arrays:
+            return np.full(len(self.df), np.nan, dtype=float)
+        stack = np.vstack([np.asarray(a, dtype=float) for a in arrays])
+        finite = np.isfinite(stack).all(axis=0)
+        out = np.full(stack.shape[1], np.nan, dtype=float)
+        out[finite] = np.sqrt(np.sum(stack[:, finite] ** 2, axis=0))
+        return out
+
+    def _compute_cmd_error_arrays(self, system: str, x_pair, y_choice, mask: np.ndarray):
+        if mask is None or len(mask) != len(self.df):
+            return np.array([]), np.array([])
+        a, b = x_pair
+        xerr_full = self._quadrature_error(
+            self._mag_error_array(system, a),
+            self._mag_error_array(system, b),
+        )
+
+        y_mode, y_param = self._get_y_mode(y_choice)
+        if y_mode == "scalar":
+            yerr_full = self._mag_error_array(system, y_param)
+        elif y_mode == "color":
+            ya, yb = y_param
+            yerr_full = self._quadrature_error(
+                self._mag_error_array(system, ya),
+                self._mag_error_array(system, yb),
+            )
+        else:
+            yerr_full = np.full(len(self.df), np.nan, dtype=float)
+
+        return xerr_full[mask], yerr_full[mask]
+
+    def _plot_cmd_errorbars(self, ax, x, y, mask: np.ndarray, system: str, x_pair, y_choice):
+        show_x = getattr(self, "xerr_check", None) is not None and self.xerr_check.isChecked()
+        show_y = getattr(self, "yerr_check", None) is not None and self.yerr_check.isChecked()
+        if not (show_x or show_y) or len(x) == 0:
+            return
+
+        xerr, yerr = self._compute_cmd_error_arrays(system, x_pair, y_choice, mask)
+        if len(xerr) != len(x) or len(yerr) != len(y):
+            return
+
+        finite = np.isfinite(x) & np.isfinite(y)
+        if show_x:
+            finite &= np.isfinite(xerr) & (xerr > 0)
+        if show_y:
+            finite &= np.isfinite(yerr) & (yerr > 0)
+        idx = np.flatnonzero(finite)
+        if idx.size == 0:
+            return
+
+        max_bars = 400
+        if idx.size > max_bars:
+            idx = idx[np.linspace(0, idx.size - 1, max_bars).astype(int)]
+
+        ax.errorbar(
+            np.asarray(x)[idx],
+            np.asarray(y)[idx],
+            xerr=np.asarray(xerr)[idx] if show_x else None,
+            yerr=np.asarray(yerr)[idx] if show_y else None,
+            fmt="none",
+            ecolor="#DDE7F0",
+            elinewidth=0.55,
+            alpha=0.35,
+            capsize=0,
+            zorder=1,
+        )
 
     def _compute_gaia_arrays_and_mask(self, snr_cut: float, membership_mask=None):
         if self.gaia_mode is None:
@@ -2283,6 +2481,7 @@ class CmdViewerWindow(QWidget):
             if member_compare and len(x_i_all) > 0:
                 self.ax_inst.scatter(x_i_all, y_i_all, s=10, alpha=0.22, linewidths=0, rasterized=True, c="#9E9E9E")
             if len(x_i) > 0:
+                self._plot_cmd_errorbars(self.ax_inst, x_i, y_i, mask_i, "inst", x_pair, yval)
                 self.ax_inst.scatter(x_i, y_i, s=12, alpha=0.92, linewidths=0, rasterized=True, c=teff_i, cmap=self.ob_cmap, norm=self.ob_norm)
                 self.ax_inst.set_title(
                     format_cmd_title(
@@ -2322,6 +2521,7 @@ class CmdViewerWindow(QWidget):
             if member_compare and len(x_s_all) > 0:
                 self.ax_std.scatter(x_s_all, y_s_all, s=10, alpha=0.22, linewidths=0, rasterized=True, c="#9E9E9E")
             if len(x_s) > 0:
+                self._plot_cmd_errorbars(self.ax_std, x_s, y_s, mask_s, "std", x_pair, yval)
                 self.ax_std.scatter(x_s, y_s, s=12, alpha=0.92, linewidths=0, rasterized=True, c=teff_s, cmap=self.ob_cmap, norm=self.ob_norm)
                 self.ax_std.set_title(
                     format_cmd_title(
@@ -2441,9 +2641,10 @@ class CmdViewerWindow(QWidget):
                     f"Parallax: {self.plx_min_spin.value():.3f}..{self.plx_max_spin.value():.3f} mas | "
                     f"selected={n_sel}/{int(finite.sum())}"
                 )
-        lines.append(f"[Inst] N={len(x_i)}{'/' + str(len(x_i_all)) if member_active else ''} | Teff range: {_rng(teff_i)}")
+        if self.inst_bands:
+            lines.append(f"[Inst] N={len(x_i)}{'/' + str(len(x_i_all)) if member_active else ''} | Teff range: {_rng(teff_i)}")
         if self.has_std:
-            lines.append(f"[Std]  N={len(x_s)}{'/' + str(len(x_s_all)) if member_active else ''} | Teff range: {_rng(teff_s)}")
+            lines.append(f"[Cal]  N={len(x_s)}{'/' + str(len(x_s_all)) if member_active else ''} | Teff range: {_rng(teff_s)}")
         if self.gaia_mode is not None:
             lines.append(f"[Gaia:{self.gaia_mode}] N={len(x_g)}{'/' + str(len(x_g_all)) if member_active else ''} | Teff range: {_rng(teff_g)}")
         if not self.has_snr:
@@ -2491,6 +2692,10 @@ class CmdViewerWindow(QWidget):
             c_inst = f"mag_inst_{band}"
             if c_inst in row:
                 parts.append(f"{band}_inst={self._fmt_val(row.get(c_inst))}")
+        for band in ("g", "r", "i"):
+            c_cal = f"mag_cal_{band}"
+            if c_cal in row:
+                parts.append(f"{band}_cal={self._fmt_val(row.get(c_cal))}")
         for band in ("g", "r", "i"):
             c_std = f"mag_std_{band}"
             if c_std in row:
@@ -2546,17 +2751,7 @@ class CmdViewerWindow(QWidget):
     def _switch_view(self, delta: int):
         """Switch between views: inst, std, gaia, all"""
         self.view_mode = (self.view_mode + delta) % len(self.available_views)
-        view_name = self.available_views[self.view_mode]
-        std_sys = "Standard"
-        try:
-            x_text = self.x_combo.currentText()
-            if "-" in x_text:
-                a, b = x_text.split("-", 1)
-                std_sys = photometric_system_label(a, b, self.y_combo.currentText())
-        except Exception:
-            pass
-        view_labels = {"inst": "Instrumental", "std": f"{std_sys} Standard", "gaia": "Gaia", "all": "All CMDs"}
-        self.view_label.setText(f"View: {view_labels.get(view_name, view_name)}")
+        self._update_view_label()
         self._build_figure()
         self._redraw()
 
@@ -3034,6 +3229,8 @@ class ZeropointCalibrationWindow(StepWindowBase):
         self.file_manager = file_manager
         self.worker = None
         self.viewer = None
+        self._current_zp_signature = None
+        self._zp_cache_validation_result = None
 
         super().__init__(
             step_index=9,
@@ -3225,17 +3422,165 @@ class ZeropointCalibrationWindow(StepWindowBase):
         self.params.P.gaia_snr_calib_min = self.param_gaia_snr.value()
         self.params.P.gaia_gi_min = self.param_gi_min.value()
         self.params.P.gaia_gi_max = self.param_gi_max.value()
+        self._zp_cache_validation_result = None
         self.save_state()
         saved = self.persist_params()
         msg = "Parameters saved to TOML." if saved else "Parameters saved (TOML save failed)."
         QMessageBox.information(dialog, "Success", msg)
         dialog.accept()
 
+    @staticmethod
+    def _signature_value(value):
+        if isinstance(value, np.generic):
+            value = value.item()
+        if isinstance(value, Path):
+            return str(value)
+        if isinstance(value, float):
+            return float(value) if np.isfinite(value) else None
+        if isinstance(value, (bool, int, str)) or value is None:
+            return value
+        if isinstance(value, (list, tuple, set)):
+            return [ZeropointCalibrationWindow._signature_value(v) for v in value]
+        if isinstance(value, dict):
+            return {
+                str(k): ZeropointCalibrationWindow._signature_value(v)
+                for k, v in sorted(value.items(), key=lambda item: str(item[0]))
+            }
+        return str(value)
+
+    @staticmethod
+    def _file_signature(path: Path | None) -> dict | None:
+        if path is None:
+            return None
+        try:
+            path = Path(path)
+            if not path.is_file():
+                return None
+            stat = path.stat()
+            return {
+                "path": str(path.resolve()),
+                "size": int(stat.st_size),
+                "mtime_ns": int(stat.st_mtime_ns),
+            }
+        except OSError:
+            return None
+
+    def _build_zp_output_signature(self) -> dict:
+        result_dir = Path(self.params.P.result_dir)
+        upstream_paths: list[Path] = [
+            step5_wcs_dir(result_dir) / "wcs_solve_summary.csv",
+            step7_forced_phot_dir(result_dir) / "photometry_index.csv",
+            step8_psf_dir(result_dir) / "photometry_index.csv",
+        ]
+        for directory, patterns in (
+            (step7_forced_phot_dir(result_dir), ("photometry_*.tsv", "apcorr_summary.csv")),
+            (step8_psf_dir(result_dir), ("photometry_*.tsv",)),
+            (step9_selection_dir(result_dir), ("*.csv", "*.tsv", "*.json")),
+            (tool_extinction_dir(result_dir), ("*.csv", "*.json")),
+        ):
+            if directory.exists():
+                for pattern in patterns:
+                    upstream_paths.extend(sorted(directory.glob(pattern)))
+
+        frame_paths: list[Path] = []
+        try:
+            for filename in self.file_manager.get_file_list():
+                frame_paths.append(Path(self.file_manager.get_file_path(filename)))
+        except Exception:
+            frame_paths = []
+
+        def _unique_signatures(paths: list[Path]) -> list[dict]:
+            signatures: list[dict] = []
+            seen: set[str] = set()
+            for path in paths:
+                signature = self._file_signature(path)
+                if not signature:
+                    continue
+                key = signature["path"]
+                if key in seen:
+                    continue
+                seen.add(key)
+                signatures.append(signature)
+            return sorted(signatures, key=lambda item: item["path"])
+
+        payload = {
+            "signature_version": _ZP_SIGNATURE_VERSION,
+            "step": "cmd_step10_zeropoint_calibration",
+            "params": {
+                key: self._signature_value(getattr(self.params.P, key, None))
+                for key in _ZP_SIGNATURE_PARAMS
+            },
+            "inputs": {
+                "upstream": _unique_signatures(upstream_paths),
+                "frames": _unique_signatures(frame_paths),
+            },
+        }
+        encoded = json.dumps(payload, sort_keys=True, ensure_ascii=False, allow_nan=False)
+        payload["signature_hash"] = hashlib.sha1(encoded.encode("utf-8")).hexdigest()
+        return payload
+
+    def _stored_zp_signature(self) -> dict | None:
+        path = step10_zp_dir(self.params.P.result_dir) / _ZP_SIGNATURE_FILE
+        try:
+            data = json.loads(path.read_text(encoding="utf-8"))
+            return data if isinstance(data, dict) else None
+        except Exception:
+            return None
+
+    def _write_zp_signature(self, signature: dict) -> None:
+        out_dir = step10_zp_dir(self.params.P.result_dir)
+        out_dir.mkdir(parents=True, exist_ok=True)
+        path = out_dir / _ZP_SIGNATURE_FILE
+        temp_path = path.with_name(path.name + ".tmp")
+        temp_path.write_text(
+            json.dumps(signature, ensure_ascii=False, indent=2, sort_keys=True, allow_nan=False),
+            encoding="utf-8",
+        )
+        temp_path.replace(path)
+
+    def _remove_zp_signature(self) -> None:
+        path = step10_zp_dir(self.params.P.result_dir) / _ZP_SIGNATURE_FILE
+        try:
+            path.unlink()
+        except FileNotFoundError:
+            pass
+        except OSError:
+            pass
+
+    def _zp_cache_status(self) -> tuple[bool, str, dict | None]:
+        if self._zp_cache_validation_result is not None:
+            return self._zp_cache_validation_result
+        stored = self._stored_zp_signature()
+        if not stored:
+            result = (False, "missing signature", None)
+            self._zp_cache_validation_result = result
+            return result
+        if stored.get("signature_version") != _ZP_SIGNATURE_VERSION:
+            result = (False, "signature version mismatch", None)
+            self._zp_cache_validation_result = result
+            return result
+        current = self._build_zp_output_signature()
+        if stored.get("signature_hash") != current.get("signature_hash"):
+            result = (False, "signature hash mismatch", None)
+            self._zp_cache_validation_result = result
+            return result
+        summary = self._existing_output_summary()
+        if not summary:
+            result = (False, "calibration output missing or empty", None)
+            self._zp_cache_validation_result = result
+            return result
+        result = (True, "ok", summary)
+        self._zp_cache_validation_result = result
+        return result
+
     def run_analysis(self):
         if self.worker and self.worker.isRunning():
             return
         self.log_text.clear()
         self.progress_label.setText("Starting...")
+        self._zp_cache_validation_result = None
+        self._current_zp_signature = self._build_zp_output_signature()
+        self._remove_zp_signature()
 
         self.worker = ZeropointCalibrationWorker(
             self.params,
@@ -3271,15 +3616,24 @@ class ZeropointCalibrationWindow(StepWindowBase):
         else:
             self.progress_label.setText("Done")
             self.log("ZP calibration complete")
+            if self._current_zp_signature and self._existing_output_summary():
+                try:
+                    self._write_zp_signature(self._current_zp_signature)
+                    self.log("[ZP][CACHE] Output signature saved for future reuse.")
+                except Exception as exc:
+                    self.log(f"[ZP][CACHE] Signature write failed: {exc}")
+            self._zp_cache_validation_result = None
             self.save_state()
             self.update_navigation_buttons()
             self.fit_tab.reload()
+        self._current_zp_signature = None
         self._cleanup_worker()
 
     def on_error(self, message):
         self.run_bar.set_running(False)
         self.progress_label.setText("Error")
         self.log(f"ERROR: {message}")
+        self._current_zp_signature = None
         self._cleanup_worker()
 
     def _cleanup_worker(self, timeout_ms=5000):
@@ -3317,14 +3671,88 @@ class ZeropointCalibrationWindow(StepWindowBase):
             return
         super().closeEvent(event)
 
-    def validate_step(self) -> bool:
-        result_dir = self.params.P.result_dir
-        wide_cmd = step10_zp_dir(result_dir) / "median_by_ID_filter_wide_cmd.csv"
-        wide = step10_zp_dir(result_dir) / "median_by_ID_filter_wide.csv"
+    def _existing_output_summary(self) -> dict | None:
+        out_dir = step10_zp_dir(self.params.P.result_dir)
+        wide_cmd = out_dir / "median_by_ID_filter_wide_cmd.csv"
+        wide = out_dir / "median_by_ID_filter_wide.csv"
         if not wide_cmd.exists() and not wide.exists():
-            wide_cmd = result_dir / "median_by_ID_filter_wide_cmd.csv"
-            wide = result_dir / "median_by_ID_filter_wide.csv"
-        return wide_cmd.exists() or wide.exists()
+            legacy_cmd = self.params.P.result_dir / "median_by_ID_filter_wide_cmd.csv"
+            legacy = self.params.P.result_dir / "median_by_ID_filter_wide.csv"
+            wide_cmd = legacy_cmd
+            wide = legacy
+        main_path = wide_cmd if wide_cmd.exists() else wide if wide.exists() else None
+        if main_path is None:
+            return None
+
+        n_sources = 0
+        try:
+            n_sources = len(pd.read_csv(main_path, nrows=1000000))
+        except Exception:
+            return None
+        if n_sources <= 0:
+            return None
+
+        coeff_path = out_dir / "zp_fit_coefficients.csv"
+        frame_path = out_dir / "frame_zeropoint.csv"
+        cal_path = out_dir / "gaia_sdss_calibrator_by_ID.csv"
+        n_coeff = 0
+        n_frames = 0
+        n_cal = 0
+        try:
+            if coeff_path.exists():
+                n_coeff = len(pd.read_csv(coeff_path))
+        except Exception:
+            n_coeff = 0
+        try:
+            if frame_path.exists():
+                n_frames = len(pd.read_csv(frame_path))
+        except Exception:
+            n_frames = 0
+        try:
+            if cal_path.exists():
+                n_cal = len(pd.read_csv(cal_path))
+        except Exception:
+            n_cal = 0
+
+        return {
+            "main_path": str(main_path),
+            "n_sources": int(n_sources),
+            "n_coeff": int(n_coeff),
+            "n_frames": int(n_frames),
+            "n_calibrators": int(n_cal),
+        }
+
+    def _try_load_existing_results(self) -> bool:
+        valid, reason, summary = self._zp_cache_status()
+        if not valid or not summary:
+            if self._existing_output_summary():
+                try:
+                    self.log(f"[ZP][CACHE] Previous output not restored ({reason}).")
+                except Exception:
+                    pass
+            return False
+        try:
+            self.fit_tab.reload(self.params.P.result_dir)
+        except Exception:
+            pass
+        parts = [f"{summary.get('n_sources', 0)} sources"]
+        if summary.get("n_frames", 0):
+            parts.append(f"{summary['n_frames']} frame ZPs")
+        if summary.get("n_coeff", 0):
+            parts.append(f"{summary['n_coeff']} fit coeffs")
+        if summary.get("n_calibrators", 0):
+            parts.append(f"{summary['n_calibrators']} calibrators")
+        self.progress_label.setText("Loaded previous ZP calibration (" + ", ".join(parts) + ")")
+        try:
+            self.log("[ZP][CACHE] Loaded previous Step 10 ZP calibration from disk.")
+        except Exception:
+            pass
+        self.update_navigation_buttons()
+        return True
+
+    def validate_step(self) -> bool:
+        valid, _, _ = self._zp_cache_status()
+        return valid
 
     def save_state(self):
         state_data = {
@@ -3355,3 +3783,4 @@ class ZeropointCalibrationWindow(StepWindowBase):
                     continue
                 if hasattr(self.params.P, key):
                     setattr(self.params.P, key, val)
+        self._try_load_existing_results()

@@ -12,6 +12,7 @@ import json
 import hashlib
 import re
 import time
+from collections import Counter
 from pathlib import Path
 from typing import Dict, List, Optional
 
@@ -38,7 +39,12 @@ from .step_window_base import StepWindowBase
 from .run_control import RunControlBar, format_duration, progress_status_text
 from .param_dialog import ParamSpec, run_param_dialog
 from .log_panel import WorkflowLogWindow, WorkerStatusPanel, append_timestamped_log, show_raised
-from .ui_helpers import create_output_reuse_checkbox, create_parameter_button
+from .ui_helpers import (
+    create_output_reuse_checkbox,
+    create_parameter_button,
+    set_table_row_background,
+    status_row_background,
+)
 from apex.utils.step_paths import (
     step5_wcs_dir,
     step6_refbuild_dir,
@@ -47,7 +53,7 @@ from apex.utils.step_paths import (
     crop_is_active,
     crop_rect_path,
 )
-from apex.utils.common_helpers import safe_float as _safe_float
+from apex.utils.common_helpers import normalize_filter_key, safe_float as _safe_float
 from apex.utils.io_utils import coerce_int64_source_id
 from apex.utils.qc_utils import filter_files_by_qc
 from apex.utils.cache_utils import (
@@ -96,6 +102,8 @@ _REF_SIGNATURE_PARAMS = (
     "ref_wcs_max_dup_rate",
     "ref_per_date",
     "ref_build_mode",
+    "ref_master_union",
+    "ref_union_min_frames",
     "idmatch_gaia_g_limit",
     "gaia_mag_max",
 )
@@ -103,7 +111,7 @@ _REF_SIGNATURE_PARAMS = (
 
 def _get_filter_from_filename(filename: str) -> Optional[str]:
     match = _FILTER_RE.search(str(filename))
-    return match.group(1).lower() if match else None
+    return normalize_filter_key(match.group(1)) if match else None
 
 
 def _parse_date_key(value: str, params) -> Optional[str]:
@@ -189,6 +197,8 @@ class RefBuildWorker(QThread):
         ref_per_date: bool,
         ref_build_mode: str = "hybrid",
         gaia_mag_limit: float = 18.0,
+        ref_master_union: bool = True,
+        ref_union_min_frames: int = 1,
     ):
         super().__init__()
         self.params = params
@@ -215,6 +225,8 @@ class RefBuildWorker(QThread):
         self.ref_per_date = bool(ref_per_date)
         self.ref_build_mode = str(ref_build_mode).lower()
         self.gaia_mag_limit = float(gaia_mag_limit)
+        self.ref_master_union = bool(ref_master_union)
+        self.ref_union_min_frames = max(1, int(ref_union_min_frames))
         self._stop_requested = False
         # Cache for WCS headers (path -> fits.Header)
         self._wcs_header_cache: Dict[str, fits.Header] = {}
@@ -831,7 +843,7 @@ class RefBuildWorker(QThread):
         meta = self._load_meta(fname)
         if not meta:
             return None
-        filt = str(meta.get("filter", "") or "").strip().lower()
+        filt = normalize_filter_key(meta.get("filter", ""))
         if not filt:
             filt = _get_filter_from_filename(fname) or "unknown"
         fwhm_px = _safe_float(meta.get("fwhm_px"), np.nan)
@@ -869,7 +881,7 @@ class RefBuildWorker(QThread):
             raise RuntimeError("No detection metrics available")
 
         df = metrics.copy()
-        filt = ref_filter.strip().lower()
+        filt = normalize_filter_key(ref_filter)
         if filt:
             cand = df[df["filter"] == filt].copy()
             if cand.empty:
@@ -1132,6 +1144,105 @@ class RefBuildWorker(QThread):
 
         return base[["ID", "source_id", "ra_deg", "dec_deg", "x_ref", "y_ref"]].copy(), ref_stats
 
+    def _build_master_for_group(
+        self, group_metrics: pd.DataFrame, anchor_fname: str, match_radius_arcsec: float
+    ) -> tuple[pd.DataFrame, dict]:
+        """Build the master catalog for a group of frames.
+
+        With ``ref_master_union`` enabled, detections from *all* frames in the
+        group are projected to sky coordinates and merged (deduped by position)
+        so that stars only reachable in some frames — faint stars in deep
+        exposures, and bright stars that saturate in long exposures but are
+        clean in short ones — all enter the master. Otherwise the catalog is
+        built from the single anchor (reference) frame only.
+        """
+        if not self.ref_master_union:
+            return self._build_master_catalog(anchor_fname)
+        return self._build_union_master(group_metrics, anchor_fname, match_radius_arcsec)
+
+    def _build_union_master(
+        self, group_metrics: pd.DataFrame, anchor_fname: str, match_radius_arcsec: float
+    ) -> tuple[pd.DataFrame, dict]:
+        """Union per-frame detections into one position-deduped master catalog.
+
+        Each frame's detections (after the same per-frame quality cuts as the
+        single-frame build) are matched to the accumulating master by sky
+        position; matches reuse the existing source_id, new sources are added.
+        ``n_det_frames`` records how many frames each source was detected in.
+        """
+        files = [str(f) for f in group_metrics["file"].tolist()]
+        # Anchor first: its detections seed the source_ids and the union x_ref/
+        # y_ref share the anchor's pixel system.
+        ordered = [anchor_fname] + [f for f in files if f != anchor_fname]
+
+        master: Optional[pd.DataFrame] = None
+        det_counts: Counter = Counter()
+        last_stats: dict = {}
+        n_used = 0
+        for fname in ordered:
+            if self._stop_requested:
+                break
+            try:
+                cat, stats = self._build_master_catalog(fname)
+            except RuntimeError as e:
+                self._log(f"[REF][UNION] skip {fname}: {e}")
+                continue
+            last_stats = stats
+            n_used += 1
+            master, merged = self._merge_ref_catalogs(master, cat, match_radius_arcsec)
+            sids = coerce_int64_source_id(merged.get("source_id")).dropna()
+            if len(sids):
+                det_counts.update(int(s) for s in sids.to_numpy(dtype=np.int64))
+
+        if master is None or master.empty:
+            self._log("[REF][UNION] union produced no sources; falling back to anchor frame.")
+            return self._build_master_catalog(anchor_fname)
+
+        master = master.copy().reset_index(drop=True)
+        sid_int = coerce_int64_source_id(master["source_id"])
+        master["n_det_frames"] = [
+            int(det_counts.get(int(s), 0)) if pd.notna(s) else 0 for s in sid_int
+        ]
+
+        if self.ref_union_min_frames > 1:
+            before = len(master)
+            master = master[master["n_det_frames"] >= self.ref_union_min_frames].copy()
+            self._log(
+                f"[REF][UNION] min_frames>={self.ref_union_min_frames}: "
+                f"{before}->{len(master)} sources"
+            )
+
+        # Express x_ref/y_ref in a single (anchor) pixel system so neighbor /
+        # crowding geometry is consistent across stars added from different frames.
+        anchor_wcs = self._load_wcs_for_frame(anchor_fname)
+        if anchor_wcs is not None and {"ra_deg", "dec_deg"} <= set(master.columns):
+            try:
+                xr, yr = anchor_wcs.all_world2pix(
+                    master["ra_deg"].to_numpy(float),
+                    master["dec_deg"].to_numpy(float),
+                    0,
+                )
+                master["x_ref"] = xr
+                master["y_ref"] = yr
+            except Exception as e:
+                self._log(f"[REF][UNION] anchor reprojection failed: {e}")
+
+        # Dense, position-ordered IDs (matches the single-frame build contract).
+        sort_cols = [c for c in ("y_ref", "x_ref") if c in master.columns]
+        if sort_cols:
+            master = master.sort_values(sort_cols).reset_index(drop=True)
+        master["source_id"] = np.arange(1, len(master) + 1, dtype=int)
+        master["ID"] = master["source_id"]
+
+        stats = dict(last_stats)
+        stats["n_master_union"] = int(len(master))
+        stats["n_union_frames"] = int(n_used)
+        self._log(
+            f"[REF][UNION] {n_used} frames -> {len(master)} master sources "
+            f"(anchor={anchor_fname}, match_r={match_radius_arcsec:.2f}\")"
+        )
+        return master, stats
+
     def run(self):
         try:
             self._run_impl()
@@ -1265,7 +1376,7 @@ class RefBuildWorker(QThread):
                 ref_filters_by_date[str(date_key)] = ref_filter_date
                 self._log(f"[REF][QC] date={date_key} ref={ref_fname_date} (filter={ref_filter_date})")
 
-                date_df, date_ref_stats = self._build_master_catalog(ref_fname_date)
+                date_df, date_ref_stats = self._build_master_for_group(group, ref_fname_date, match_r)
                 date_df = self._attach_gaia_photometry(date_df, gaia_df)
                 if ref_catalogs_by_date:
                     master_df, date_df = self._merge_ref_catalogs(
@@ -1284,7 +1395,7 @@ class RefBuildWorker(QThread):
         self._log(f"[REF] Selected reference frame: {ref_fname} (filter={ref_filter})")
 
         if not self.ref_per_date:
-            master_df, ref_catalog_stats = self._build_master_catalog(ref_fname)
+            master_df, ref_catalog_stats = self._build_master_for_group(metrics, ref_fname, match_r)
             master_df = self._attach_gaia_photometry(master_df, gaia_df)
 
         # Apply hybrid source_id assignment if mode is "hybrid"
@@ -1447,6 +1558,8 @@ _STEP6_SPECS: tuple[ParamSpec, ...] = (
     ParamSpec("Drop top saturation frames", "ref_select_sat_pct", "float", 0.0, 100.0, 1.0, 1, "%", default=20.0),
     ParamSpec("Drop top elongation frames", "ref_select_elong_pct", "float", 0.0, 100.0, 1.0, 1, "%", default=20.0),
     ParamSpec("Per-date reference", "ref_per_date", "bool", default=True),
+    ParamSpec("Union master (all frames)", "ref_master_union", "bool", default=True),
+    ParamSpec("Union min detections/star", "ref_union_min_frames", "int", 1, 1000, default=1),
     ParamSpec("Ref catalog max sources (0=all)", "ref_cat_max_sources", "int", 0, 50000, default=0),
     ParamSpec("Ref catalog min sources", "ref_cat_min_sources", "int", 0, 50000, default=50),
     ParamSpec("Ref max elongation", "ref_cat_max_elong", "float", 0.0, 10.0, 0.1, 2, default=1.5),
@@ -1740,6 +1853,30 @@ class RefBuildWindow(StepWindowBase):
             return False, "signature hash mismatch"
         return True, "ok"
 
+    def _current_ref_cache_status(self) -> tuple[bool, str, dict | None]:
+        try:
+            files = list(self.file_manager.get_file_list())
+        except Exception as exc:
+            return False, f"file list unavailable: {exc}", None
+        if not files:
+            return False, "no current frames", None
+        use_qc = bool(getattr(self.params.P, "wcs_require_qc_pass", True))
+        files, _ = filter_files_by_qc(
+            Path(self.params.P.result_dir),
+            files,
+            require_qc=use_qc,
+        )
+        if not files:
+            return False, "no current frames after QC", None
+        signature = self._build_ref_output_signature(list(files))
+        matches, reason = self._ref_signature_matches(signature)
+        if not matches:
+            return False, reason, None
+        summary = self._load_existing_summary()
+        if not summary or int(summary.get("n_sources", 0) or 0) <= 0:
+            return False, "reference output missing or empty", None
+        return True, "ok", summary
+
     def _sync_cache_params(self) -> None:
         use_existing = bool(
             getattr(self, "chk_use_existing_output", None)
@@ -1771,7 +1908,7 @@ class RefBuildWindow(StepWindowBase):
             QMessageBox.warning(self, "Warning", "No frames after QC filter.")
             return
 
-        ref_filter = str(getattr(self.params.P, "global_ref_filter", "") or "").strip().lower()
+        ref_filter = normalize_filter_key(getattr(self.params.P, "global_ref_filter", ""))
         self.params.P.ref_select_sat_pct = float(getattr(self.params.P, "ref_select_sat_pct", 20.0))
         self.params.P.ref_select_elong_pct = float(getattr(self.params.P, "ref_select_elong_pct", 20.0))
         self.params.P.ref_cat_max_sources = int(getattr(self.params.P, "ref_cat_max_sources", 0))
@@ -1788,6 +1925,8 @@ class RefBuildWindow(StepWindowBase):
         self.params.P.ref_wcs_max_sep_p90_arcsec = float(getattr(self.params.P, "ref_wcs_max_sep_p90_arcsec", 2.5))
         self.params.P.ref_wcs_max_dup_rate = float(getattr(self.params.P, "ref_wcs_max_dup_rate", 0.1))
         self.params.P.ref_per_date = bool(getattr(self.params.P, "ref_per_date", True))
+        self.params.P.ref_master_union = bool(getattr(self.params.P, "ref_master_union", True))
+        self.params.P.ref_union_min_frames = int(getattr(self.params.P, "ref_union_min_frames", 1))
 
         signature = self._build_ref_output_signature(files)
         self._current_ref_signature = signature
@@ -1831,6 +1970,8 @@ class RefBuildWindow(StepWindowBase):
             wcs_max_sep_p90_arcsec=self.params.P.ref_wcs_max_sep_p90_arcsec,
             wcs_max_dup_rate=self.params.P.ref_wcs_max_dup_rate,
             ref_per_date=self.params.P.ref_per_date,
+            ref_master_union=self.params.P.ref_master_union,
+            ref_union_min_frames=self.params.P.ref_union_min_frames,
             ref_build_mode=getattr(self.params.P, "ref_build_mode", "hybrid"),
             gaia_mag_limit=float(
                 getattr(
@@ -1917,6 +2058,12 @@ class RefBuildWindow(StepWindowBase):
                     sat = str(int(row.iloc[0].get('sat_star_count', 0) or 0))
             return fwhm, sat
 
+        def _has_sources(value) -> bool:
+            try:
+                return int(float(value)) > 0
+            except (TypeError, ValueError):
+                return False
+
         if ref_frames_by_date:
             for date_key, fname in sorted(ref_frames_by_date.items()):
                 fwhm, sat = _row_stats(fname)
@@ -1928,6 +2075,11 @@ class RefBuildWindow(StepWindowBase):
                 self.results_table.setItem(row, 3, QTableWidgetItem(str(n_sources)))
                 self.results_table.setItem(row, 4, QTableWidgetItem(str(fwhm)))
                 self.results_table.setItem(row, 5, QTableWidgetItem(str(sat)))
+                set_table_row_background(
+                    self.results_table,
+                    row,
+                    status_row_background(bool(fname) and _has_sources(n_sources)),
+                )
         else:
             fwhm, sat = _row_stats(ref_frame)
             row = self.results_table.rowCount()
@@ -1938,6 +2090,11 @@ class RefBuildWindow(StepWindowBase):
             self.results_table.setItem(row, 3, QTableWidgetItem(str(n_sources)))
             self.results_table.setItem(row, 4, QTableWidgetItem(str(fwhm)))
             self.results_table.setItem(row, 5, QTableWidgetItem(str(sat)))
+            set_table_row_background(
+                self.results_table,
+                row,
+                status_row_background(bool(ref_frame) and _has_sources(n_sources)),
+            )
 
     def _update_stats_table(self):
         stats_path = step6_refbuild_dir(self.params.P.result_dir) / "ref_frame_stats.csv"
@@ -2247,8 +2404,8 @@ class RefBuildWindow(StepWindowBase):
         }
 
     def validate_step(self) -> bool:
-        out_dir = step6_refbuild_dir(self.params.P.result_dir)
-        return (out_dir / "ref_build_meta.json").exists()
+        valid, _, _ = self._current_ref_cache_status()
+        return valid
 
     def save_state(self, summary: Optional[dict] = None):
         if summary is None:
@@ -2288,12 +2445,29 @@ class RefBuildWindow(StepWindowBase):
 
     def restore_state(self):
         state = self.project_state.get_step_data("ref_build")
-        if not state:
+        valid, reason, summary = self._current_ref_cache_status()
+        if valid and summary:
+            self.results = summary
+            ref_frame = summary.get("ref_frame")
+            if ref_frame:
+                self.file_manager.ref_filename = ref_frame
+            self._update_results_table(summary)
+            self._update_stats_table()
+            self._update_plot_tab(summary)
+            n_sources = summary.get("n_sources", 0)
+            self.progress_label.setText(f"Loaded previous reference build ({n_sources} sources)")
+            self.update_navigation_buttons()
+            try:
+                self.log("[REF][CACHE] Loaded previous Step 6 reference build from disk.")
+            except Exception:
+                pass
             return
-        if state.get("ref_frame"):
-            self.file_manager.ref_filename = state.get("ref_frame")
-        self._update_stats_table()
-        self._update_plot_tab(state)
+
+        if state or self._load_existing_summary():
+            try:
+                self.log(f"[REF][CACHE] Previous Step 6 output not restored ({reason}).")
+            except Exception:
+                pass
 
     def log(self, msg: str):
         append_timestamped_log(self.log_text, msg)

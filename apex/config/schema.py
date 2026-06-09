@@ -194,19 +194,19 @@ class InstrumentConfig(BaseModel):
         ge=1, le=8,
         description="Camera binning (1, 2, 4, etc.)"
     )
-    gain_e_per_adu: float = Field(
-        default=0.1,
+    gain_e_per_adu: Optional[float] = Field(
+        default=None,
         gt=0,
-        description="Gain in electrons per ADU"
+        description="Measured gain in electrons per ADU; if unset, FITS EGAIN is used when available"
     )
-    rdnoise_e: float = Field(
-        ...,  # Required field
+    rdnoise_e: Optional[float] = Field(
+        default=None,
         gt=0,
-        description="Read noise in electrons (REQUIRED)"
+        description="Measured read noise in electrons; if unset, FITS RDNOISE is used when available"
     )
     noise_use_fits_header: bool = Field(
-        default=True,
-        description="Use FITS EGAIN/RDNOISE keywords when available"
+        default=False,
+        description="Use FITS EGAIN/RDNOISE keywords instead of manual measured values when available"
     )
     noise_reference_binning: Optional[int] = Field(
         default=None,
@@ -214,7 +214,7 @@ class InstrumentConfig(BaseModel):
         description="Binning of manual gain/read-noise values; unset means values are already effective"
     )
     noise_scale_by_binning: bool = Field(
-        default=True,
+        default=False,
         description="Scale manual gain/read-noise from reference binning to image binning"
     )
     saturation_adu: float = Field(
@@ -1062,6 +1062,15 @@ class RefBuildConfig(BaseModel):
     per_date: bool = Field(
         default=True,
         description="Build reference per date (YYYYMMDD) and merge"
+    )
+    master_union: bool = Field(
+        default=True,
+        description="Union detections from all frames into the master (dedup by sky position) instead of using a single reference frame"
+    )
+    union_min_frames: int = Field(
+        default=1,
+        ge=1,
+        description="Minimum number of frames a star must be detected in to enter the union master"
     )
     sat_drop_pct: float = Field(
         default=20.0,

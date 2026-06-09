@@ -33,7 +33,11 @@ from PyQt5.QtCore import Qt, QPoint
 from apex.gui.widgets.fits_viewer import FITSViewerWidget, OverlayMarker
 
 from apex.gui.workflow.step_window_base import StepWindowBase
-from apex.gui.workflow.ui_helpers import create_parameter_button, build_scroll_param_dialog
+from apex.gui.workflow.ui_helpers import (
+    add_parameter_reset_button,
+    build_scroll_param_dialog,
+    create_parameter_button,
+)
 from apex.utils.step_paths import (
     crop_is_active,
     step2_cropped_dir,
@@ -135,8 +139,9 @@ class MasterIdEditorWindow(StepWindowBase):
 
     def setup_step_ui(self):
         info = QLabel(
-            "Inspect forced-photometry results from step7. Click a star to see info.\n"
-            "Shortcuts: G=Radial profile (at cursor), [ / ]=Prev/Next frame\n"
+            "Inspect forced-photometry results from step7. Click a star to select it.\n"
+            "Shortcuts: A=Add to master, D=Remove from master, Shift+D=Remove box, "
+            "G=Radial profile, [ / ]=Prev/Next frame\n"
             "Green=Gaia in master, Yellow=Local, Cyan=forced-only. Members ● = Gaia member dot."
         )
         info.setStyleSheet("QLabel { background-color: #E3F2FD; padding: 10px; border-radius: 5px; }")
@@ -1415,7 +1420,9 @@ class MasterIdEditorWindow(StepWindowBase):
 
                 is_member = np.zeros(len(sids), dtype=bool)
                 if self._show_members:
-                    self._ensure_membership_map()
+                    # The user checkbox is the explicit intent — load the map
+                    # even if the params-side overlay flag is off.
+                    self._ensure_membership_map(force=True)
                     thr = float(getattr(self.params.P, "step8_membership_threshold", 0.5))
                     idx_g = np.where(is_gaia)[0]
                     if idx_g.size > 0:
@@ -1695,6 +1702,16 @@ class MasterIdEditorWindow(StepWindowBase):
 
         layout.addLayout(form)
         layout.addStretch(1)
+        add_parameter_reset_button(
+            buttons,
+            [
+                (self.param_search, 7.0),
+                (self.param_box, 24),
+                (self.param_gaia_sep, 2.0),
+                (self.param_mem_overlay, True),
+                (self.param_mem_thr, 0.5),
+            ],
+        )
         buttons.accepted.connect(lambda: self.save_parameters(dialog))
         buttons.rejected.connect(dialog.reject)
         dialog.exec_()
@@ -1982,7 +1999,79 @@ class MasterIdEditorWindow(StepWindowBase):
             self.file_combo.blockSignals(False)
             self.load_and_display(quick_switch=True)
 
+    def add_master_selected(self):
+        """A key: add the selected source to the master star list."""
+        if self.selected_source_id is None:
+            QMessageBox.information(self, "Master", "Select a detected source first (click a circled star).")
+            return
+        sid = int(self.selected_source_id)
+        if sid == 0:
+            return
+        if sid in self.master_ids:
+            self.log(f"Master add skipped (already in master): {sid}")
+            return
+        self._ensure_stable_id(sid)
+        self.master_ids.add(sid)
+        self.save_master_ids(log_action="manual_add")
+        self.update_master_table()
+        self.select_source_in_table(sid)
+        self.update_overlay()
+        self.log(f"Master add: {sid}")
+
+    def remove_master_selected(self):
+        """D key: remove the selected source from the master star list.
+
+        For cleaning binaries, crowded-centre blends, and diffraction-spike
+        detections around saturated stars that slip into the (union) master.
+        """
+        if self.selected_source_id is None:
+            QMessageBox.information(self, "Master", "Select a source first (click a circled star).")
+            return
+        sid = int(self.selected_source_id)
+        if sid not in self.master_ids:
+            self.log(f"Master remove skipped (not in master): {sid}")
+            return
+        self.master_ids.discard(sid)
+        self.save_master_ids(log_action="manual_remove")
+        self.update_master_table()
+        self.update_overlay()
+        self.log(f"Master remove: {sid}")
+
+    def remove_master_box(self):
+        """Shift+D: remove every master source inside a box at the last click."""
+        if self.last_click_xy is None or self.phot_df is None or self.phot_df.empty:
+            self.log("Master box remove skipped (no position or detections).")
+            return
+        x0, y0 = self.last_click_xy
+        box = int(getattr(self.params.P, "bulk_drop_box_px", 200))
+        half = box / 2.0
+        df = self.phot_df
+        in_box = df["x"].between(x0 - half, x0 + half) & df["y"].between(y0 - half, y0 + half)
+        sids = set(
+            int(s)
+            for s in parse_int64_series(df.loc[in_box, "source_id"]).dropna().astype("int64").tolist()
+        )
+        sids &= self.master_ids
+        sids.discard(0)
+        if not sids:
+            self.log("Master box remove: no master sources in box.")
+            return
+        self.master_ids -= sids
+        self.save_master_ids(log_action="box_remove")
+        self.update_master_table()
+        self.update_overlay()
+        self.log(f"Master box remove: {len(sids)} sources ({box}x{box}px)")
+
     def keyPressEvent(self, event):
+        if event.key() == Qt.Key_A:
+            self.add_master_selected()
+            return
+        if event.key() == Qt.Key_D:
+            if event.modifiers() & Qt.ShiftModifier:
+                self.remove_master_box()
+            else:
+                self.remove_master_selected()
+            return
         if event.key() == Qt.Key_G:
             self.show_radial_profile()
             return
