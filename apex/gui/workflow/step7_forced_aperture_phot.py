@@ -139,15 +139,16 @@ def _to_int(val, default: int) -> int:
         return int(default)
 
 
-def _exptime_from_header(header, default: float = 1.0) -> float:
+def _exptime_from_header(header, default: float = 1.0) -> tuple[float, bool]:
     """Exposure time (seconds) from a FITS header, for count-rate magnitudes.
 
-    Falls back to ``default`` (1.0 s) when no usable EXPTIME-like key is
-    present, which keeps single-exposure datasets behaving sensibly while
-    still normalizing mixed-exposure sets correctly.
+    Returns ``(exptime, found)``. ``found`` is False when no usable EXPTIME-like
+    key is present and ``default`` (1.0 s) is used; the caller should warn,
+    because a frame silently defaulting to 1.0 s inside a mixed-exposure set
+    would land on the wrong magnitude scale.
     """
     if header is None:
-        return float(default)
+        return float(default), False
     for key in EXPTIME_HEADER_KEYS:
         if key in header:
             try:
@@ -155,8 +156,8 @@ def _exptime_from_header(header, default: float = 1.0) -> float:
             except (TypeError, ValueError):
                 continue
             if np.isfinite(val) and val > 0:
-                return val
-    return float(default)
+                return val, True
+    return float(default), False
 
 
 def _catalog_series(df: pd.DataFrame, col: str, fallback) -> pd.Series:
@@ -770,7 +771,14 @@ class ForcedPhotWorker(QThread):
         noise        = resolve_effective_noise_params(P, header)
         gain         = noise.gain_e_per_adu
         rn_e         = noise.rdnoise_e
-        exptime      = _exptime_from_header(header)
+        exptime, _exptime_found = _exptime_from_header(header)
+        if not _exptime_found:
+            self._log(
+                f"[FORCED][{fname}] WARNING: no usable EXPTIME in header "
+                f"(tried {', '.join(EXPTIME_HEADER_KEYS)}); using {exptime:.3g}s for "
+                f"count-rate magnitudes — in a mixed-exposure set this frame may be "
+                f"on the wrong scale."
+            )
         noise_info = {
             "gain_e_per_adu": float(noise.gain_e_per_adu),
             "rdnoise_e": float(noise.rdnoise_e),

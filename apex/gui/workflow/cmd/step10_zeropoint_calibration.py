@@ -504,7 +504,11 @@ class ZeropointCalibrationWorker(QThread):
                 else:
                     self._log(f"Step4 QC: frame_quality.csv ignored ({qc_info['reason']}); using all frames.")
 
-            min_snr_for_mag = float(getattr(P, "min_snr_for_mag", 0.0))
+            # Canonical default is 3.0 everywhere (schema ge=1.0, step8, TOML loaders);
+            # a 0.0 fallback here would silently disable the per-measurement SNR floor
+            # that guards the CMD faint end against positive-flux noise fluctuations
+            # (worse with union/forced photometry of undetected stars in short frames).
+            min_snr_for_mag = float(getattr(P, "min_snr_for_mag", 3.0))
             # Restrict calibration measurements to Step 4 apcorr-quality refs
             # (isolated, unsaturated, high-flux). Per-measurement: a star is
             # kept only on frames where it was an apcorr_candidate. Falls back
