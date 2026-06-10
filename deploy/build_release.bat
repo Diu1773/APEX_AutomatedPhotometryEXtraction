@@ -28,13 +28,13 @@ echo ============================================================
 echo.
 
 set "PYTHON_CMD="
-where py >nul 2>nul
+where python >nul 2>nul
 if not errorlevel 1 (
-    set "PYTHON_CMD=py -3"
+    set "PYTHON_CMD=python"
 ) else (
-    where python >nul 2>nul
+    where py >nul 2>nul
     if not errorlevel 1 (
-        set "PYTHON_CMD=python"
+        set "PYTHON_CMD=py -3"
     ) else (
         where python3 >nul 2>nul
         if not errorlevel 1 set "PYTHON_CMD=python3"
