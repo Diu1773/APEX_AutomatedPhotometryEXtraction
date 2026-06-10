@@ -32,7 +32,7 @@ from PyQt5.QtWidgets import (
     QTextEdit, QComboBox, QDialog, QFormLayout, QLineEdit, QDialogButtonBox,
     QProgressBar, QCheckBox, QSpinBox, QDoubleSpinBox, QTableWidget,
     QTableWidgetItem, QHeaderView, QAbstractItemView, QWidget, QTabWidget,
-    QListWidget, QListWidgetItem, QScrollArea, QFileDialog
+    QScrollArea, QFileDialog
 )
 
 from PyQt5.QtCore import Qt, QThread, pyqtSignal
@@ -63,7 +63,7 @@ from apex.utils.gaia_catalog_service import (
     GaiaCatalogService,
     gaia_runtime_available,
 )
-from apex.utils.qc_utils import filter_files_by_qc, resolve_frame_quality_path, frame_name
+from apex.utils.qc_utils import filter_files_by_qc
 from apex.utils.cache_utils import (
     norm_path_key,
     build_file_signature,
@@ -2291,7 +2291,9 @@ class WcsWorker(QThread):
                 finally:
                     _slot_q.put(slot)
 
-            with ThreadPoolExecutor(max_workers=max(1, max_workers)) as ex:
+            # Explicit ownership allows queued ASTAP solves to be cancelled.
+            ex = ThreadPoolExecutor(max_workers=max(1, max_workers))
+            try:
                 futures = {ex.submit(_slotted_solve, f): f for f in files}
                 for fut in as_completed(futures):
                     if self._stop_requested:
@@ -2311,6 +2313,8 @@ class WcsWorker(QThread):
                         L(f"{fname}: worker_exception={_exc_brief(e)}")
                         self.error.emit(fname, str(e))
                     self.progress.emit(completed, len(files), fname)
+            finally:
+                ex.shutdown(wait=True, cancel_futures=True)
 
             # Save summary CSV
             try:
@@ -3403,7 +3407,9 @@ class AstrometryNetWorker(QThread):
             finally:
                 _slot_q.put(slot)
 
-        with ThreadPoolExecutor(max_workers=max_workers) as executor:
+        # Explicit ownership allows queued solves to be cancelled on Stop.
+        executor = ThreadPoolExecutor(max_workers=max_workers)
+        try:
             # 모든 작업을 큐에 등록
             future_to_file = {executor.submit(_slotted_process, f): f for f in self.file_list}
 
@@ -3451,6 +3457,8 @@ class AstrometryNetWorker(QThread):
 
                 completed_count += 1
                 self.progress.emit(completed_count, total, f"Solved {completed_count}/{total}")
+        finally:
+            executor.shutdown(wait=True, cancel_futures=True)
 
         # --- Gaia 쿼리 및 WCS Refine ---
         if self._stop_requested:
@@ -3987,14 +3995,32 @@ class InternalWcsWorker(QThread):
                 if pnx > 0 and pny > 0:
                     diag_deg = float(np.hypot(pnx, pny) * approx_scale / 3600.0)
                     gaia_fudge = float(getattr(P, "gaia_radius_fudge", 1.35))
-                    gaia_radius_deg = max(0.4, 0.5 * diag_deg * max(gaia_fudge, 1.0) * 1.25)
+                    # Use the SAME radius formula as the ASTAP worker
+                    # (0.5·diag·fudge).  The old ×1.25 made the Internal
+                    # tab download ~56 % more stars AND mismatch the ASTAP
+                    # cache, forcing a fresh Gaia query every time the user
+                    # switched tabs.  Shared radius = shared gaia_fov.ecsv.
+                    gaia_radius_deg = max(0.4, 0.5 * diag_deg * max(gaia_fudge, 1.0))
                     self._log(f"[Internal WCS] Gaia query radius={gaia_radius_deg:.4f}deg")
                     break
         except Exception as exc:
             self._log(f"[Internal WCS] Gaia radius estimate failed: {exc}")
+
+        # Surface "querying Gaia" feedback immediately, like the ASTAP
+        # worker does — otherwise the Worker Status panel sits blank for
+        # the whole (blocking) download and the step looks frozen.
+        try:
+            self.progress.emit(0, len(self.file_list), "Querying Gaia catalog...")
+            self.worker_status.emit(0, "Gaia catalog", "Querying", 5)
+        except Exception:
+            pass
         gaia_ra, gaia_dec, gaia_g, gaia_pmra, gaia_pmdec = self._load_or_fetch_gaia(
             step5_out, approx_ra, approx_dec, P, radius_deg=gaia_radius_deg,
         )
+        try:
+            self.worker_status.emit(0, "Gaia catalog", "Ready", 100)
+        except Exception:
+            pass
         if gaia_ra is None:
             self.error.emit(
                 "Gaia catalog unavailable and download failed.\n\n"
@@ -4049,17 +4075,18 @@ class InternalWcsWorker(QThread):
                 _slot_q.put(slot)
 
         done_count = 0
-        with ThreadPoolExecutor(max_workers=max_workers) as ex:
+        # Keep ownership explicit so queued work can be cancelled on Stop.
+        ex = ThreadPoolExecutor(max_workers=max_workers)
+        try:
             fut_to_name = {
                 ex.submit(_slotted_solve, f): f
                 for f in self.file_list
             }
             for fut in as_completed(fut_to_name):
                 if self._stop:
-                    # Best-effort cancellation: outstanding futures still run
-                    # to completion (no way to interrupt a numpy kernel) but
-                    # we stop emitting progress and break out so the worker
-                    # exits promptly once they wind down.
+                    # Running frames are joined below before finished emits.
+                    for f_cancel in fut_to_name:
+                        f_cancel.cancel()
                     break
                 fname = fut_to_name[fut]
                 try:
@@ -4077,6 +4104,8 @@ class InternalWcsWorker(QThread):
                 done_count += 1
                 self.progress.emit(done_count, total, fname)
                 self.frame_done.emit(fname, info)
+        finally:
+            ex.shutdown(wait=True, cancel_futures=True)
 
         self.finished.emit({
             "total": total,
@@ -4207,26 +4236,80 @@ class InternalWcsWorker(QThread):
         if len(det_xy_for_qc) == 0:
             det_xy_for_qc = np.asarray(src_xy, dtype=float)
 
-        # Solve. Normal mode trusts the Step 1 target centre enough to crop Gaia
-        # to the projected field. If that produces no robust solution, retry
-        # once in local-blind mode: same target tangent plane and pixel scale,
-        # but a wider Gaia window so RANSAC can solve translation.
+        # Solve. Crowded fields are sensitive to how many Gaia stars enter quad
+        # construction: too many bright off-frame/cluster-core stars can swamp
+        # the correct pattern. Try an AstralImage-style catalogue-size ladder
+        # before falling back to the wider local-blind search.
         solve_params = dict(self.advanced_params)
         local_blind_fallback = bool(solve_params.pop("local_blind_fallback", True))
         solve_params["local_blind"] = bool(solve_params.get("local_blind", False))
         try:
-            result = solve_wcs_internal(
-                src_xy,
-                src_flux,
-                gaia_ra, gaia_dec, gaia_g,
-                approx_ra, approx_dec, approx_scale,
-                (ny, nx),
-                min_matches=self.min_matches,
-                log_fn=self._log,
-                gaia_pmra=gaia_pmra,
-                gaia_pmdec=gaia_pmdec,
-                obs_epoch_jyear=obs_epoch_jyear,
-                **solve_params,
+            def _cat_ladder_values(base_params: dict) -> list[int]:
+                configured = int(base_params.get("n_brightest_cat", 900) or 900)
+                src_cap = int(base_params.get("n_brightest_src", len(src_xy)) or len(src_xy))
+                src_count = max(int(self.min_matches), min(src_cap, len(src_xy)))
+                cat_limit = max(int(self.min_matches), len(gaia_ra))
+                raw_values = [
+                    src_count,
+                    int(round(src_count * 1.5)),
+                    configured,
+                    int(round(src_count * 2.5)),
+                    int(round(src_count * 4.0)),
+                ]
+                out: list[int] = []
+                for value in raw_values:
+                    value = max(int(self.min_matches), min(int(value), cat_limit))
+                    if value not in out:
+                        out.append(value)
+                return out
+
+            def _acceptable_result(res) -> bool:
+                if not getattr(res, "converged", False):
+                    return False
+                rms = float(getattr(res, "rms_arcsec", np.nan))
+                return (not np.isfinite(rms)) or rms <= float(self.rms_max_arcsec)
+
+            def _run_solver_ladder(base_params: dict, *, local_blind: bool):
+                ladder = _cat_ladder_values(base_params)
+                self._log(
+                    f"[Internal WCS] Cat ladder for {fname}"
+                    f"{' (local-blind)' if local_blind else ''}: {ladder}"
+                )
+                best = None
+                for n_cat in ladder:
+                    attempt_params = dict(base_params)
+                    attempt_params["local_blind"] = bool(local_blind)
+                    attempt_params["n_brightest_cat"] = int(n_cat)
+                    result_i = solve_wcs_internal(
+                        src_xy,
+                        src_flux,
+                        gaia_ra, gaia_dec, gaia_g,
+                        approx_ra, approx_dec, approx_scale,
+                        (ny, nx),
+                        min_matches=self.min_matches,
+                        log_fn=self._log,
+                        gaia_pmra=gaia_pmra,
+                        gaia_pmdec=gaia_pmdec,
+                        obs_epoch_jyear=obs_epoch_jyear,
+                        **attempt_params,
+                    )
+                    if _acceptable_result(result_i):
+                        return result_i
+                    if getattr(result_i, "converged", False):
+                        if best is None:
+                            best = result_i
+                        else:
+                            best_rms = float(getattr(best, "rms_arcsec", np.inf))
+                            this_rms = float(getattr(result_i, "rms_arcsec", np.inf))
+                            if np.isfinite(this_rms) and this_rms < best_rms:
+                                best = result_i
+                    elif best is None:
+                        best = result_i
+                return best
+
+            result = _run_solver_ladder(
+                solve_params,
+                local_blind=bool(solve_params.get("local_blind", False)),
             )
             retry_reason = None
             if not result.converged:
@@ -4242,22 +4325,8 @@ class InternalWcsWorker(QThread):
                     f"[Internal WCS] Local-blind retry for {fname} "
                     f"after {retry_reason}"
                 )
-                retry_params = dict(solve_params)
-                retry_params["local_blind"] = True
-                retry_result = solve_wcs_internal(
-                    src_xy,
-                    src_flux,
-                    gaia_ra, gaia_dec, gaia_g,
-                    approx_ra, approx_dec, approx_scale,
-                    (ny, nx),
-                    min_matches=self.min_matches,
-                    log_fn=self._log,
-                    gaia_pmra=gaia_pmra,
-                    gaia_pmdec=gaia_pmdec,
-                    obs_epoch_jyear=obs_epoch_jyear,
-                    **retry_params,
-                )
-                if retry_result.converged or not result.converged:
+                retry_result = _run_solver_ladder(solve_params, local_blind=True)
+                if _acceptable_result(retry_result) or not result.converged:
                     result = retry_result
         except Exception as exc:
             self._log(f"[Internal WCS] Solver error {fname}: {exc}")
@@ -5016,6 +5085,117 @@ class WcsPlateSolvingWindow(StepWindowBase):
             f"Solved frames ({total}) — " + ",&nbsp; ".join(parts)
         )
 
+    @staticmethod
+    def _finite_result_float(value, default=np.nan) -> float:
+        try:
+            out = float(value)
+        except Exception:
+            return float(default)
+        return out if np.isfinite(out) else float(default)
+
+    def _append_restored_internal_row(self, fname: str, info: dict) -> None:
+        if not hasattr(self, "internal_results_table"):
+            return
+        t = self.internal_results_table
+        row = t.rowCount()
+        t.insertRow(row)
+        ok = self._is_successful_wcs_result(info)
+
+        def _fmt(keys, fmt, default=""):
+            for key in keys:
+                val = self._finite_result_float(info.get(key))
+                if np.isfinite(val):
+                    return fmt.format(val)
+            return default
+
+        if ok:
+            ra_s = _fmt(("center_ra_deg", "ra"), "{:.4f}")
+            dec_s = _fmt(("center_dec_deg", "dec"), "{:.4f}")
+            pix_s = _fmt(("scale_arcsec_per_px", "pix_fit", "pixscale"), "{:.4f}\"/px")
+            model_s = str(info.get("model", "") or "").strip()
+            refine_s = str(info.get("refine", "") or "").strip()
+            if not refine_s and info.get("n_matches") is not None:
+                try:
+                    refine_s = f"{model_s} m={int(info.get('n_matches', 0) or 0)}".strip()
+                except Exception:
+                    refine_s = model_s
+            resid_s = _fmt(("rms_arcsec", "resid_med", "resid_med_px"), "{:.3f}")
+            status_s = str(info.get("status", "") or "ok")
+        else:
+            ra_s = dec_s = pix_s = refine_s = resid_s = ""
+            status_s = str(info.get("status", "") or info.get("reason", "") or "fail")
+
+        elapsed_s = _fmt(("elapsed_s", "elapsed"), "{:.2f}")
+        values = [fname, status_s, ra_s, dec_s, pix_s, refine_s, resid_s, elapsed_s]
+        for col, val in enumerate(values):
+            t.setItem(row, col, QTableWidgetItem(val))
+        set_table_row_background(t, row, self._wcs_result_row_background(info))
+
+    def _append_restored_astnet_row(self, fname: str, info: dict) -> None:
+        if not hasattr(self, "astrometrynet_results_table"):
+            return
+        t = self.astrometrynet_results_table
+        row = t.rowCount()
+        t.insertRow(row)
+        pixscale = self._finite_result_float(info.get("pixscale", info.get("pix_fit")))
+        resid_med = self._finite_result_float(info.get("resid_med", info.get("resid_med_px")))
+        elapsed = self._finite_result_float(info.get("elapsed_s", info.get("elapsed")))
+        values = [
+            fname,
+            str(info.get("status", "") or "solved"),
+            f"{pixscale:.4f}" if np.isfinite(pixscale) and pixscale > 0 else "-",
+            str(info.get("refine", "") or "-"),
+            f"{resid_med:.2f}" if np.isfinite(resid_med) else "-",
+            f"{elapsed:.1f}" if np.isfinite(elapsed) and elapsed > 0 else "-",
+        ]
+        for col, val in enumerate(values):
+            t.setItem(row, col, QTableWidgetItem(val))
+        set_table_row_background(t, row, self._wcs_result_row_background(info))
+
+    def _append_restored_astap_row(self, fname: str, info: dict) -> None:
+        if not hasattr(self, "results_table"):
+            return
+        row = self.results_table.rowCount()
+        self.results_table.insertRow(row)
+        self.results_table.setItem(row, 0, QTableWidgetItem(fname))
+        self.results_table.setItem(row, 1, QTableWidgetItem(str(info.get("status", "") or "ok")))
+        pix_fit = self._finite_result_float(info.get("pix_fit", info.get("pixscale")))
+        self.results_table.setItem(
+            row, 2,
+            QTableWidgetItem(f"{pix_fit:.4f}" if np.isfinite(pix_fit) and pix_fit > 0 else "-"),
+        )
+        self.results_table.setItem(row, 3, QTableWidgetItem(str(info.get("refine", "") or "-")))
+        resid_med = self._finite_result_float(info.get("resid_med"))
+        if np.isfinite(resid_med):
+            resid_str = f"{resid_med:.3f}\""
+        else:
+            resid_px = self._finite_result_float(info.get("resid_med_px"))
+            resid_str = f"{resid_px:.3f}px" if np.isfinite(resid_px) else "-"
+        self.results_table.setItem(row, 4, QTableWidgetItem(resid_str))
+        elapsed = self._finite_result_float(info.get("elapsed", info.get("elapsed_s")), 0.0)
+        self.results_table.setItem(row, 5, QTableWidgetItem(f"{elapsed:.1f}" if np.isfinite(elapsed) else "0.0"))
+        set_table_row_background(self.results_table, row, self._wcs_result_row_background(info))
+
+    def _populate_restored_wcs_tables(self, restored: dict[str, dict]) -> dict[str, int]:
+        counts = {"internal": 0, "astnet": 0, "astap": 0}
+        for table_name in ("internal_results_table", "results_table", "astrometrynet_results_table"):
+            table = getattr(self, table_name, None)
+            if table is not None:
+                table.setRowCount(0)
+
+        for fname, info in restored.items():
+            tag = str(info.get("wcssrc") or info.get("solver") or "").strip().lower()
+            if "internal" in tag or "apex_internal" in tag:
+                self._append_restored_internal_row(fname, info)
+                counts["internal"] += 1
+            elif "astnet" in tag or "astrometry" in tag or "solve-field" in tag:
+                self._append_restored_astnet_row(fname, info)
+                counts["astnet"] += 1
+            else:
+                self._append_restored_astap_row(fname, info)
+                counts["astap"] += 1
+        return counts
+
     def _write_internal_summary_csv(self):
         """Persist ``self.results`` to ``step5/wcs_solve_summary.csv``.
 
@@ -5148,20 +5328,6 @@ class WcsPlateSolvingWindow(StepWindowBase):
         info.setStyleSheet(info_style)
         layout.addWidget(info)
 
-        ref_group = QGroupBox("Frame List")
-        ref_layout = QVBoxLayout(ref_group)
-
-        ref_info = QLabel("Frames listed below will be solved automatically.")
-        ref_info.setWordWrap(True)
-        ref_layout.addWidget(ref_info)
-
-        self.ref_frame_list = QListWidget()
-        self.ref_frame_list.setSelectionMode(QListWidget.NoSelection)
-        self.ref_frame_list.setMaximumHeight(150)
-        ref_layout.addWidget(self.ref_frame_list)
-
-        layout.addWidget(ref_group)
-
         control_layout = QHBoxLayout()
 
         btn_astnet_params = create_parameter_button("Astrometry.net Parameters")
@@ -5196,9 +5362,9 @@ class WcsPlateSolvingWindow(StepWindowBase):
         results_layout = QVBoxLayout(results_group)
 
         self.astrometrynet_results_table = QTableWidget()
-        self.astrometrynet_results_table.setColumnCount(8)
+        self.astrometrynet_results_table.setColumnCount(6)
         self.astrometrynet_results_table.setHorizontalHeaderLabels([
-            "File", "Status", "RA", "Dec", "PixScale", "Refine", "Resid(\")", "Elapsed (s)"
+            "File", "Status", "PixScale", "Refine", "Resid(\")", "Elapsed (s)"
         ])
         self.astrometrynet_results_table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeToContents)
         self.astrometrynet_results_table.horizontalHeader().setStretchLastSection(True)
@@ -5207,42 +5373,6 @@ class WcsPlateSolvingWindow(StepWindowBase):
         results_layout.addWidget(self.astrometrynet_results_table)
 
         layout.addWidget(results_group)
-
-    def auto_select_ref_frame(self):
-        best_frame = None
-        best_count = 0
-
-        # Use the shared QC summary instead of re-reading every detect_*.csv.
-        nsrc_map: dict[str, int] = {}
-        fq_path = resolve_frame_quality_path(self.params.P.result_dir)
-        if fq_path is not None:
-            try:
-                fq_df = pd.read_csv(fq_path, usecols=["file", "n_sources"])
-                for f, n in zip(fq_df["file"], fq_df["n_sources"]):
-                    if pd.notna(n):
-                        nsrc_map[frame_name(f)] = int(n)
-            except Exception:
-                pass
-
-        for fname in self.file_list:
-            n = nsrc_map.get(fname)
-            if n is not None and n > best_count:
-                best_count = n
-                best_frame = fname
-
-        if best_frame:
-            for i in range(self.ref_frame_list.count()):
-                item = self.ref_frame_list.item(i)
-                if item.text() == best_frame:
-                    item.setSelected(True)
-                    self.log(f"Auto-selected: {best_frame} ({best_count} stars)")
-                    break
-        else:
-            QMessageBox.warning(self, "Warning", "No detection data found. Run Step 4 first.")
-
-    def select_all_ref_frames(self):
-        for i in range(self.ref_frame_list.count()):
-            self.ref_frame_list.item(i).setSelected(True)
 
     def run_astrometrynet_solve(self):
         if not self.file_list:
@@ -5342,18 +5472,14 @@ class WcsPlateSolvingWindow(StepWindowBase):
         self.astrometrynet_results_table.insertRow(row)
         self.astrometrynet_results_table.setItem(row, 0, QTableWidgetItem(filename))
         self.astrometrynet_results_table.setItem(row, 1, QTableWidgetItem(result.get("status", "")))
-        ra = float(result.get("ra", 0.0))
-        dec = float(result.get("dec", 0.0))
         pixscale = float(result.get("pixscale", 0.0))
         refine = result.get("refine", "-")
         resid_med = result.get("resid_med", np.nan)
         elapsed = float(result.get("elapsed_s", 0.0))
-        self.astrometrynet_results_table.setItem(row, 2, QTableWidgetItem(f"{ra:.6f}" if np.isfinite(ra) else "-"))
-        self.astrometrynet_results_table.setItem(row, 3, QTableWidgetItem(f"{dec:.6f}" if np.isfinite(dec) else "-"))
-        self.astrometrynet_results_table.setItem(row, 4, QTableWidgetItem(f"{pixscale:.4f}" if np.isfinite(pixscale) and pixscale > 0 else "-"))
-        self.astrometrynet_results_table.setItem(row, 5, QTableWidgetItem(str(refine) if refine else "-"))
-        self.astrometrynet_results_table.setItem(row, 6, QTableWidgetItem(f"{resid_med:.2f}" if np.isfinite(resid_med) else "-"))
-        self.astrometrynet_results_table.setItem(row, 7, QTableWidgetItem(f"{elapsed:.1f}" if np.isfinite(elapsed) and elapsed > 0 else "-"))
+        self.astrometrynet_results_table.setItem(row, 2, QTableWidgetItem(f"{pixscale:.4f}" if np.isfinite(pixscale) and pixscale > 0 else "-"))
+        self.astrometrynet_results_table.setItem(row, 3, QTableWidgetItem(str(refine) if refine else "-"))
+        self.astrometrynet_results_table.setItem(row, 4, QTableWidgetItem(f"{resid_med:.2f}" if np.isfinite(resid_med) else "-"))
+        self.astrometrynet_results_table.setItem(row, 5, QTableWidgetItem(f"{elapsed:.1f}" if np.isfinite(elapsed) and elapsed > 0 else "-"))
         set_table_row_background(
             self.astrometrynet_results_table,
             row,
@@ -5379,8 +5505,8 @@ class WcsPlateSolvingWindow(StepWindowBase):
             if item and item.text() == filename:
                 refine = result.get("refine", "-")
                 resid_med = result.get("resid_med", np.nan)
-                self.astrometrynet_results_table.setItem(row, 5, QTableWidgetItem(str(refine) if refine else "-"))
-                self.astrometrynet_results_table.setItem(row, 6, QTableWidgetItem(f"{resid_med:.2f}" if np.isfinite(resid_med) else "-"))
+                self.astrometrynet_results_table.setItem(row, 3, QTableWidgetItem(str(refine) if refine else "-"))
+                self.astrometrynet_results_table.setItem(row, 4, QTableWidgetItem(f"{resid_med:.2f}" if np.isfinite(resid_med) else "-"))
                 # results에도 업데이트
                 if filename in self.results:
                     self.results[filename].update(result)
@@ -5456,29 +5582,6 @@ class WcsPlateSolvingWindow(StepWindowBase):
             self.use_cropped = False
 
         self.file_list = list(files)
-
-        # Source counts for tooltips come from step4's frame_quality.csv (the
-        # shared QC SSOT) — one read instead of opening every detect_*.csv on
-        # the main thread, which used to add multiple seconds to window open.
-        nsrc_map: dict[str, int] = {}
-        fq_path = resolve_frame_quality_path(self.params.P.result_dir)
-        if fq_path is not None:
-            try:
-                fq_df = pd.read_csv(fq_path, usecols=["file", "n_sources"])
-                for f, n in zip(fq_df["file"], fq_df["n_sources"]):
-                    if pd.notna(n):
-                        nsrc_map[frame_name(f)] = int(n)
-            except Exception:
-                pass
-
-        # Also populate ref_frame_list for Astrometry.net tab
-        self.ref_frame_list.clear()
-        for fname in self.file_list:
-            item = QListWidgetItem(fname)
-            n = nsrc_map.get(fname)
-            if n is not None:
-                item.setToolTip(f"{n} sources detected")
-            self.ref_frame_list.addItem(item)
 
     def open_parameters_dialog(self):
         dialog = QDialog(self)
@@ -6056,17 +6159,50 @@ class WcsPlateSolvingWindow(StepWindowBase):
         if not file_col:
             return
 
+        current_files = {Path(str(f)).name for f in getattr(self, "file_list", []) or []}
         restored = {}
+        skipped_foreign = 0
         for row in df.to_dict("records"):
             if not self._is_successful_wcs_result(row):
                 continue
             filename = row.get(file_col)
             if filename is None or pd.isna(filename):
                 continue
-            restored[str(filename)] = row
+            fname = Path(str(filename)).name
+            if current_files and fname not in current_files:
+                skipped_foreign += 1
+                continue
+            row["file"] = fname
+            row.setdefault("fname", fname)
+            restored[fname] = row
 
         if restored:
             self.results = restored
+            counts = self._populate_restored_wcs_tables(restored)
+            total = len(restored)
+            parts = []
+            if counts.get("internal"):
+                parts.append(f"Internal {counts['internal']}")
+                if hasattr(self, "internal_status"):
+                    self.internal_status.setText(f"Loaded previous results: {counts['internal']} solved")
+            if counts.get("astap"):
+                parts.append(f"ASTAP {counts['astap']}")
+            if counts.get("astnet"):
+                parts.append(f"Astrometry.net {counts['astnet']}")
+                if hasattr(self, "astrometrynet_status"):
+                    self.astrometrynet_status.setText(f"Loaded previous results: {counts['astnet']} solved")
+            if hasattr(self, "progress_label"):
+                detail = ", ".join(parts) if parts else f"{total} solved"
+                self.progress_label.setText(f"Loaded previous WCS summary: {detail}")
+            try:
+                self.log(f"[WCS][CACHE] Loaded previous WCS summary: {total} solved frame(s).")
+            except Exception:
+                pass
+        elif skipped_foreign:
+            try:
+                self.log(f"[WCS][CACHE] Ignored {skipped_foreign} WCS row(s) not in the current file list.")
+            except Exception:
+                pass
         try:
             self._refresh_solver_breakdown_label()
         except Exception:
@@ -6251,3 +6387,24 @@ class WcsPlateSolvingWindow(StepWindowBase):
                         self._internal_params[key] = val
         self._restore_success_results_from_summary()
         self.update_navigation_buttons()
+
+    def closeEvent(self, event):
+        workers = [
+            (getattr(self, "worker", None), self.stop_wcs),
+            (getattr(self, "astrometrynet_worker", None), self.stop_astrometrynet_solve),
+            (getattr(self, "_internal_worker", None), self.stop_wcs_internal_solver),
+        ]
+        for worker, stop_fn in workers:
+            if worker is not None and worker.isRunning():
+                stop_fn()
+
+        for worker, _ in workers:
+            if worker is not None and worker.isRunning() and not worker.wait(10000):
+                QMessageBox.warning(
+                    self,
+                    "Background Task Running",
+                    "A WCS solver is still stopping. Please wait and close again.",
+                )
+                event.ignore()
+                return
+        super().closeEvent(event)
