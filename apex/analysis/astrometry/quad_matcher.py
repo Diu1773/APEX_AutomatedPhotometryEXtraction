@@ -357,27 +357,32 @@ def match_quads(
     tree = cKDTree(cat_codes)
     k_eff = max(1, min(int(k_nearest), len(cat_quads)))
 
-    pairs: list[tuple[Quad, Quad]] = []
-    queries = [(False, np.array([1.0, 1.0, 1.0, 1.0]))]
-    if allow_reflection:
-        queries.append((True, np.array([1.0, -1.0, 1.0, -1.0])))
+    src_codes = np.array([q.code for q in src_quads], dtype=float)     # (Ns, 4)
+    src_sides = np.array([q.side_len for q in src_quads], dtype=float) # (Ns,)
+    log_src = np.where(src_sides > 0, np.log(np.where(src_sides > 0, src_sides, 1.0)), np.nan)
+    log_cat = np.where(cat_scales > 0, np.log(np.where(cat_scales > 0, cat_scales, 1.0)), np.nan)
 
-    for sq in src_quads:
-        for _is_mirror, sign in queries:
-            qcode = sq.code * sign
-            dists, idxs = tree.query(qcode, k=k_eff)
-            dists = np.atleast_1d(dists)
-            idxs = np.atleast_1d(idxs)
-            for d, ci in zip(dists, idxs):
-                if not np.isfinite(d) or d > code_tol:
-                    continue
-                ci = int(ci)
-                cat_side = float(cat_scales[ci])
-                if cat_side <= 0 or sq.side_len <= 0:
-                    continue
-                if abs(np.log(sq.side_len / cat_side)) > scale_ratio_tol:
-                    continue
-                pairs.append((sq, cat_quads[ci]))
+    signs = [np.array([1.0, 1.0, 1.0, 1.0])]
+    if allow_reflection:
+        signs.append(np.array([1.0, -1.0, 1.0, -1.0]))
+
+    pairs: list[tuple[Quad, Quad]] = []
+    for sign in signs:
+        # One batched kd-tree query for ALL source quads (cKDTree.query is
+        # vectorised) instead of a Python per-quad loop — this was the main
+        # remaining hotspot after build_quads was vectorised.
+        dists, idxs = tree.query(src_codes * sign, k=k_eff)
+        # cKDTree.query returns 1-D arrays when k_eff == 1; normalise to (Ns, k).
+        if dists.ndim == 1:
+            dists = dists.reshape(-1, 1)
+            idxs = idxs.reshape(-1, 1)
+        # Scale-ratio test vectorised across (Ns, k_eff).
+        scale_ok = np.abs(log_src[:, None] - log_cat[idxs]) <= scale_ratio_tol
+        keep = np.isfinite(dists) & (dists <= code_tol) & np.isfinite(log_src)[:, None] & scale_ok
+        si_arr, kk_arr = np.nonzero(keep)
+        for si, kk in zip(si_arr.tolist(), kk_arr.tolist()):
+            ci = int(idxs[si, kk])
+            pairs.append((src_quads[si], cat_quads[ci]))
     return pairs
 
 
