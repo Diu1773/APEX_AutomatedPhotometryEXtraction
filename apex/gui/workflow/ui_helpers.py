@@ -1,14 +1,21 @@
 """Small shared UI helpers for workflow step controls."""
 from __future__ import annotations
 
+from PyQt5.QtCore import QEvent, QObject, Qt, QTimer
+from PyQt5.QtGui import QColor
 from PyQt5.QtWidgets import (
+    QAbstractSpinBox,
     QCheckBox,
+    QComboBox,
     QDialog,
     QDialogButtonBox,
     QGroupBox,
     QLabel,
+    QLineEdit,
     QPushButton,
     QScrollArea,
+    QTableWidget,
+    QTableWidgetItem,
     QVBoxLayout,
     QWidget,
 )
@@ -163,6 +170,7 @@ def configure_parameter_dialog(dialog: QDialog, title: str, width: int = 560, he
     dialog.setWindowTitle(title)
     dialog.resize(width, height)
     dialog.setStyleSheet(PARAM_DIALOG_STYLE)
+    QTimer.singleShot(0, lambda: install_parameter_wheel_guard(dialog))
 
 
 def create_collapsible_section(
@@ -216,6 +224,120 @@ def create_cache_action_button(text: str) -> QPushButton:
 
 
 _INFO_LABEL_STYLE = "QLabel { background-color: #E3F2FD; padding: 10px; margin-bottom: 10px; }"
+
+STATUS_ROW_OK_BG = "#C8E6C9"
+STATUS_ROW_WARN_BG = "#FFF3CD"
+STATUS_ROW_FAIL_BG = "#FFCDD2"
+STATUS_ROW_NEUTRAL_BG = "#ECEFF1"
+
+
+def status_row_background(ok: bool | None, *, warning: bool = False) -> str:
+    """Return the standard workflow table background for a row status."""
+    if ok is None:
+        return STATUS_ROW_NEUTRAL_BG
+    if ok:
+        return STATUS_ROW_WARN_BG if warning else STATUS_ROW_OK_BG
+    return STATUS_ROW_FAIL_BG
+
+
+def set_table_row_background(table: QTableWidget, row: int, color: str | QColor) -> None:
+    """Apply one background color across an existing QTableWidget row."""
+    bg = color if isinstance(color, QColor) else QColor(str(color))
+    for col in range(table.columnCount()):
+        item = table.item(row, col)
+        if item is None:
+            item = QTableWidgetItem("")
+            table.setItem(row, col, item)
+        item.setBackground(bg)
+
+
+def set_parameter_widget_value(widget: QWidget, value) -> None:
+    """Set a common parameter widget to *value* without knowing its concrete type."""
+    if isinstance(widget, QCheckBox):
+        widget.setChecked(bool(value))
+        return
+    if isinstance(widget, QComboBox):
+        idx = widget.findData(value)
+        if idx < 0:
+            idx = widget.findText(str(value), Qt.MatchFixedString)
+        if idx >= 0:
+            widget.setCurrentIndex(idx)
+        elif widget.isEditable():
+            widget.setEditText(str(value))
+        return
+    if isinstance(widget, QLineEdit):
+        widget.setText("" if value is None else str(value))
+        return
+    if hasattr(widget, "setValue"):
+        widget.setValue(value)
+
+
+def reset_parameter_widgets(defaults) -> None:
+    """Reset parameter widgets from a mapping or sequence of ``(widget, value)`` pairs."""
+    items = defaults.items() if hasattr(defaults, "items") else defaults
+    for widget, value in list(items):
+        if widget is None:
+            continue
+        previous = widget.blockSignals(True)
+        try:
+            set_parameter_widget_value(widget, value)
+        finally:
+            widget.blockSignals(previous)
+
+
+def add_parameter_reset_button(
+    buttons: QDialogButtonBox,
+    defaults,
+    *,
+    on_reset=None,
+    text: str = "Reset Defaults",
+) -> QPushButton:
+    """Attach a standard reset button to a parameter dialog button box.
+
+    The reset only changes visible widget values. The caller's existing Save
+    action remains responsible for persisting those values.
+    """
+    btn = buttons.addButton(text, QDialogButtonBox.ResetRole)
+
+    def _reset() -> None:
+        reset_parameter_widgets(defaults() if callable(defaults) else defaults)
+        if callable(on_reset):
+            on_reset()
+
+    btn.clicked.connect(_reset)
+    return btn
+
+
+class _WheelGuard(QObject):
+    """Prevent accidental wheel edits in parameter widgets while scrolling."""
+
+    def eventFilter(self, obj, event):
+        if event.type() == QEvent.Wheel and isinstance(obj, (QAbstractSpinBox, QComboBox)):
+            if not obj.hasFocus():
+                event.ignore()
+                return True
+        return super().eventFilter(obj, event)
+
+
+def install_parameter_wheel_guard(root: QWidget) -> None:
+    """Ignore mouse-wheel edits on spin boxes and combos unless focused.
+
+    Parameter dialogs often live inside a scroll area. Without this guard, just
+    scrolling the page over a spin box/combobox silently changes persisted
+    runtime parameters.
+    """
+    guard = getattr(root, "_apex_wheel_guard", None)
+    if guard is None:
+        guard = _WheelGuard(root)
+        setattr(root, "_apex_wheel_guard", guard)
+
+    for widget in [root] + list(root.findChildren(QWidget)):
+        if isinstance(widget, (QAbstractSpinBox, QComboBox)):
+            widget.setFocusPolicy(Qt.StrongFocus)
+            try:
+                widget.installEventFilter(guard)
+            except Exception:
+                pass
 
 
 def build_scroll_param_dialog(

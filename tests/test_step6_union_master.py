@@ -8,6 +8,11 @@ bare worker via ``__new__`` and stubbing the per-frame catalog/WCS helpers.
 
 import numpy as np
 import pandas as pd
+import pytest
+
+# step6_ref_build pulls in PyQt5 (RefBuildWorker is a QThread); skip on the
+# no-GUI CI where PyQt5 isn't installed, matching the project convention.
+pytest.importorskip("PyQt5")
 
 from apex.gui.workflow.step6_ref_build import RefBuildWorker
 
