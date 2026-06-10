@@ -74,6 +74,7 @@ for package in (
     "matplotlib",
     "astropy",
     "photutils",
+    "pyvo",
     "pydantic",
 ):
     package_datas, package_binaries, package_hidden = _collect_all(package)
