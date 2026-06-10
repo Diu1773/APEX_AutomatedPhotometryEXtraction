@@ -135,7 +135,8 @@ def build_detrend_summary_report_text(
         elif mode == "offset":
             lines.append(f"{'Date':<12} {'Filter':<6} {'N':>5} {'ZP₀':>10} {'±σ':>8} {'RMS_before':>10} {'RMS_after':>10}")
         else:
-            lines.append(f"{'Date':<12} {'Filter':<6} {'N':>5} {'ZP₀':>10} {'k\"':>10} {'RMS_before':>10} {'RMS_after':>10}")
+            extinction_label = 'k"'
+            lines.append(f"{'Date':<12} {'Filter':<6} {'N':>5} {'ZP₀':>10} {extinction_label:>10} {'RMS_before':>10} {'RMS_after':>10}")
         lines.append("-" * 60)
         for _, row in params_df.iterrows():
             if mode == "sysrem":
