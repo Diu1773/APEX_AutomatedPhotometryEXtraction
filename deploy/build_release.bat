@@ -130,8 +130,15 @@ if not exist "%DIST_DIR%\APEX\APEX.exe" (
 )
 
 echo [7/10] Smoke testing PyInstaller app bundle...
-start "" /wait "%DIST_DIR%\APEX\APEX.exe" --smoke
-if errorlevel 1 exit /b 1
+set "APEX_SMOKE_EXE=%DIST_DIR%\APEX\APEX.exe"
+set "APEX_SMOKE_STDOUT=%BUILD_DIR%\smoke-stdout.log"
+set "APEX_SMOKE_STDERR=%BUILD_DIR%\smoke-stderr.log"
+powershell -NoProfile -ExecutionPolicy Bypass -Command ^
+  "$p = Start-Process -FilePath $env:APEX_SMOKE_EXE -ArgumentList '--smoke' -Wait -PassThru -NoNewWindow -RedirectStandardOutput $env:APEX_SMOKE_STDOUT -RedirectStandardError $env:APEX_SMOKE_STDERR; exit $p.ExitCode"
+set "SMOKE_EXIT=!ERRORLEVEL!"
+if exist "%APEX_SMOKE_STDOUT%" type "%APEX_SMOKE_STDOUT%"
+if exist "%APEX_SMOKE_STDERR%" type "%APEX_SMOKE_STDERR%"
+if not "!SMOKE_EXIT!"=="0" exit /b !SMOKE_EXIT!
 
 echo [8/10] Creating portable ZIP...
 "%VENV_PY%" "%DEPLOY_DIR%\make_portable_zip.py" --source "%DIST_DIR%\APEX" --output "%SETUP_DIR%\APEX-Portable-%APP_VERSION%-x64.zip"
