@@ -129,6 +129,26 @@ def _format_coord_hint(coord: SkyCoord | None) -> str:
         return "invalid"
 
 
+def _header_pointing_coord(hdr) -> SkyCoord | None:
+    """Return a SkyCoord from a frame header's mount-pointing keys, or None.
+
+    Reuses the shared ``astro_utils._parse_ra_dec_from_header`` key-priority
+    parser (OBJCTRA/OBJRA/RA/RA_OBJ, sexagesimal or decimal) so the internal
+    solver reads pointing the same way the rest of APEX does.
+    """
+    try:
+        from apex.utils.astro_utils import _parse_ra_dec_from_header
+        rd = _parse_ra_dec_from_header(hdr)
+        if rd is None:
+            return None
+        ra_deg, dec_deg = rd
+        if not (np.isfinite(ra_deg) and np.isfinite(dec_deg)):
+            return None
+        return SkyCoord(float(ra_deg) * u.deg, float(dec_deg) * u.deg)
+    except Exception:
+        return None
+
+
 def _strip_outer_quotes(value: str) -> str:
     value = str(value or "").strip()
     if len(value) >= 2 and value[0] == value[-1] and value[0] in {"'", '"'}:
@@ -4046,6 +4066,18 @@ class InternalWcsWorker(QThread):
         max_workers = max(1, int(max_workers))
         self._log(f"[Internal WCS] Solving {total} frames with {max_workers} worker(s)")
 
+        # Target SkyCoord for the per-frame hint chain (header -> target ->
+        # blind). The single Gaia cone above stays target-centred (mosaic is
+        # out of scope), so for non-mosaic data every candidate resolves
+        # against the same catalogue; the chain just rescues frames whose
+        # header pointing is stale/missing or whose target is slightly off.
+        target_coord = None
+        if np.isfinite(approx_ra) and np.isfinite(approx_dec):
+            try:
+                target_coord = SkyCoord(float(approx_ra) * u.deg, float(approx_dec) * u.deg)
+            except Exception:
+                target_coord = None
+
         bundle = dict(
             gaia_ra=gaia_ra, gaia_dec=gaia_dec, gaia_g=gaia_g,
             gaia_pmra=gaia_pmra, gaia_pmdec=gaia_pmdec,
@@ -4053,6 +4085,7 @@ class InternalWcsWorker(QThread):
             approx_scale=approx_scale,
             result_dir=result_dir,
             solve_fn=solve_wcs_internal,
+            target_coord=target_coord,
         )
 
         # Per-thread slot index for the Worker Status panel, same pattern as the
@@ -4129,6 +4162,7 @@ class InternalWcsWorker(QThread):
         approx_scale = bundle["approx_scale"]
         result_dir   = bundle["result_dir"]
         solve_wcs_internal = bundle["solve_fn"]
+        target_coord = bundle.get("target_coord")
 
         _t_frame_start = time.time()
 
@@ -4138,8 +4172,10 @@ class InternalWcsWorker(QThread):
             return {"ok": False, "reason": "fits_not_found",
                     "elapsed_s": time.time() - _t_frame_start}
 
-        # Load FITS shape + observation epoch (J-year) for Gaia PM update.
+        # Load FITS shape + observation epoch (J-year) for Gaia PM update,
+        # plus this frame's own pointing for the hint chain.
         obs_epoch_jyear: float | None = None
+        header_coord = None
         try:
             with fits.open(fits_path, memmap=False) as hdul:
                 hdr = hdul[0].header.copy()
@@ -4152,6 +4188,7 @@ class InternalWcsWorker(QThread):
                         obs_epoch_jyear = None
                 ny = int(hdr.get("NAXIS2", 0))
                 nx = int(hdr.get("NAXIS1", 0))
+                header_coord = _header_pointing_coord(hdr)
         except Exception as exc:
             self._log(f"[Internal WCS] FITS read error {fname}: {exc}")
             return {"ok": False, "reason": "fits_error",
@@ -4269,7 +4306,8 @@ class InternalWcsWorker(QThread):
                 rms = float(getattr(res, "rms_arcsec", np.nan))
                 return (not np.isfinite(rms)) or rms <= float(self.rms_max_arcsec)
 
-            def _run_solver_ladder(base_params: dict, *, local_blind: bool):
+            def _run_solver_ladder(base_params: dict, *, local_blind: bool,
+                                   cra: float, cdec: float):
                 ladder = _cat_ladder_values(base_params)
                 self._log(
                     f"[Internal WCS] Cat ladder for {fname}"
@@ -4284,7 +4322,7 @@ class InternalWcsWorker(QThread):
                         src_xy,
                         src_flux,
                         gaia_ra, gaia_dec, gaia_g,
-                        approx_ra, approx_dec, approx_scale,
+                        cra, cdec, approx_scale,
                         (ny, nx),
                         min_matches=self.min_matches,
                         log_fn=self._log,
@@ -4307,27 +4345,99 @@ class InternalWcsWorker(QThread):
                         best = result_i
                 return best
 
-            result = _run_solver_ladder(
-                solve_params,
-                local_blind=bool(solve_params.get("local_blind", False)),
-            )
-            retry_reason = None
-            if not result.converged:
-                retry_reason = "no_solution"
-            elif np.isfinite(result.rms_arcsec) and result.rms_arcsec > self.rms_max_arcsec:
-                retry_reason = f"rms_exceeded_{result.rms_arcsec:.2f}"
+            # ── Hint chain: header pointing → Step 1 target → blind ───────
+            # Each candidate only changes the seed/projection CENTER fed to the
+            # solver (the solver is translation-invariant, so a wrong center
+            # just selects the wrong catalogue subset). The first candidate
+            # that produces an acceptable solution wins, and its label is
+            # recorded as provenance. A stale/wrong header is rescued by the
+            # target candidate; both failing falls through to a local-blind
+            # search.
+            candidates = _astnet_center_candidates(header_coord, target_coord)
+            if header_coord is not None and target_coord is not None:
+                sep = _coord_sep_deg(header_coord, target_coord)
+                if np.isfinite(sep) and sep > 5.0:
+                    self._log(
+                        f"[Internal WCS] {fname}: header pointing is {sep:.2f}° "
+                        f"from Step 1 target — possible stale mount header."
+                    )
+
+            def _candidate_center(coord) -> tuple[float, float] | None:
+                if coord is not None:
+                    try:
+                        return float(coord.ra.deg), float(coord.dec.deg)
+                    except Exception:
+                        return None
+                # blind: re-use the target/cone centre as the projection point
+                if np.isfinite(approx_ra) and np.isfinite(approx_dec):
+                    return float(approx_ra), float(approx_dec)
+                if header_coord is not None:
+                    try:
+                        return float(header_coord.ra.deg), float(header_coord.dec.deg)
+                    except Exception:
+                        return None
+                return None
+
+            result = None
+            hint_source = "none"
+            best_fallback = None
+            best_fallback_hint = "none"
+            for label, coord in candidates:
+                center = _candidate_center(coord)
+                if center is None:
+                    continue
+                cra, cdec = center
+                use_blind = (label == "blind") or bool(solve_params.get("local_blind", False))
+                cand_res = _run_solver_ladder(
+                    solve_params, local_blind=use_blind, cra=cra, cdec=cdec,
+                )
+                if cand_res is None:
+                    continue
+                if _acceptable_result(cand_res):
+                    result = cand_res
+                    hint_source = label
+                    break
+                # Track the best non-accepted result so a marginal solution is
+                # still reported rather than a bare "no_solution".
+                if best_fallback is None or (
+                    getattr(cand_res, "converged", False)
+                    and not getattr(best_fallback, "converged", False)
+                ):
+                    best_fallback = cand_res
+                    best_fallback_hint = label
+
+            # Explicit local-blind retry if the chain never produced an
+            # acceptable solution and we have not already tried blind.
             if (
-                local_blind_fallback
-                and retry_reason
+                result is None
+                and local_blind_fallback
                 and not bool(solve_params.get("local_blind", False))
             ):
-                self._log(
-                    f"[Internal WCS] Local-blind retry for {fname} "
-                    f"after {retry_reason}"
+                center = _candidate_center(None)
+                if center is not None:
+                    self._log(f"[Internal WCS] Local-blind retry for {fname}")
+                    retry_result = _run_solver_ladder(
+                        solve_params, local_blind=True, cra=center[0], cdec=center[1],
+                    )
+                    if retry_result is not None and _acceptable_result(retry_result):
+                        result = retry_result
+                        hint_source = "blind"
+                    elif retry_result is not None and best_fallback is None:
+                        best_fallback = retry_result
+                        best_fallback_hint = "blind"
+
+            if result is None:
+                result = best_fallback
+                hint_source = best_fallback_hint
+            if result is None:
+                # Synthesize a non-converged result so downstream handling is
+                # uniform (no candidate produced anything at all).
+                from apex.analysis.astrometry import WCSSolveResult as _WSR
+                result = _WSR(
+                    converged=False, wcs=None, n_matches=0, rms_arcsec=float("nan"),
+                    rotation_deg=float("nan"), scale_arcsec_per_px=float("nan"),
+                    flip_x=False, flip_y=False,
                 )
-                retry_result = _run_solver_ladder(solve_params, local_blind=True)
-                if _acceptable_result(retry_result) or not result.converged:
-                    result = retry_result
         except Exception as exc:
             self._log(f"[Internal WCS] Solver error {fname}: {exc}")
             return {"ok": False, "reason": f"solver_exception: {exc}",
@@ -4352,7 +4462,7 @@ class InternalWcsWorker(QThread):
                 reason_line = ""
             reason_short = reason_line[:200] if reason_line else "no_solution"
             self._log(f"[Internal WCS] No solution: {fname}  ({reason_short})")
-            return {"ok": False, "reason": reason_short,
+            return {"ok": False, "reason": reason_short, "hint_source": hint_source,
                     "elapsed_s": time.time() - _t_frame_start}
 
         if np.isfinite(result.rms_arcsec) and result.rms_arcsec > self.rms_max_arcsec:
@@ -4360,6 +4470,7 @@ class InternalWcsWorker(QThread):
                 f"[Internal WCS] RMS={result.rms_arcsec:.3f}\" > limit={self.rms_max_arcsec}\" → rejected: {fname}"
             )
             return {"ok": False, "reason": f"rms_exceeded_{result.rms_arcsec:.2f}",
+                    "hint_source": hint_source,
                     "elapsed_s": time.time() - _t_frame_start}
 
         center_ra_deg = float("nan")
@@ -4430,7 +4541,7 @@ class InternalWcsWorker(QThread):
                     "elapsed_s": time.time() - _t_frame_start}
 
         self._log(
-            f"[Internal WCS] ✓ {fname}  "
+            f"[Internal WCS] ✓ {fname}  hint={hint_source}  "
             f"matches={result.n_matches}  RMS={result.rms_arcsec:.3f}\"  "
             f"rot={result.rotation_deg:.1f}°  "
             f"model={getattr(result, 'model', 'TAN')}  "
@@ -4440,6 +4551,7 @@ class InternalWcsWorker(QThread):
             "ok": True,
             "wcs_ok": True,
             "status": "ok",
+            "hint_source": hint_source,
             "n_matches": result.n_matches,
             "rms_arcsec": result.rms_arcsec,
             "resid_med": result.rms_arcsec,
@@ -4654,9 +4766,9 @@ class WcsPlateSolvingWindow(StepWindowBase):
         results_layout = QVBoxLayout(results_group)
 
         self.internal_results_table = QTableWidget()
-        self.internal_results_table.setColumnCount(8)
+        self.internal_results_table.setColumnCount(9)
         self.internal_results_table.setHorizontalHeaderLabels([
-            "File", "Status", "RA", "Dec", "PixScale", "Refine", "Resid(\")", "Elapsed (s)"
+            "File", "Status", "Hint", "RA", "Dec", "PixScale", "Refine", "Resid(\")", "Elapsed (s)"
         ])
         self.internal_results_table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeToContents)
         self.internal_results_table.horizontalHeader().setStretchLastSection(True)
@@ -5017,8 +5129,9 @@ class WcsPlateSolvingWindow(StepWindowBase):
             status_s = "✗ " + str(info.get("reason", "fail"))
 
         elapsed_s = _fmt_num("elapsed_s", "{:.2f}")
+        hint_s = str(info.get("hint_source", "") or "")
 
-        values = [fname, status_s, ra_s, dec_s, pix_s, refine_s, resid_s, elapsed_s]
+        values = [fname, status_s, hint_s, ra_s, dec_s, pix_s, refine_s, resid_s, elapsed_s]
         for col, val in enumerate(values):
             t.setItem(row, col, QTableWidgetItem(val))
         set_table_row_background(t, row, self._wcs_result_row_background(info))
@@ -5126,7 +5239,8 @@ class WcsPlateSolvingWindow(StepWindowBase):
             status_s = str(info.get("status", "") or info.get("reason", "") or "fail")
 
         elapsed_s = _fmt(("elapsed_s", "elapsed"), "{:.2f}")
-        values = [fname, status_s, ra_s, dec_s, pix_s, refine_s, resid_s, elapsed_s]
+        hint_s = str(info.get("hint_source", "") or "")
+        values = [fname, status_s, hint_s, ra_s, dec_s, pix_s, refine_s, resid_s, elapsed_s]
         for col, val in enumerate(values):
             t.setItem(row, col, QTableWidgetItem(val))
         set_table_row_background(t, row, self._wcs_result_row_background(info))
@@ -5231,6 +5345,7 @@ class WcsPlateSolvingWindow(StepWindowBase):
             row.setdefault("status", "ok" if ok else "fail")
             row.setdefault("solver", "apex_internal")
             row.setdefault("wcssrc", "APEX_INTERNAL")
+            row.setdefault("hint_source", "")
             if "rms_arcsec" in row and "resid_med" not in row:
                 row["resid_med"] = row["rms_arcsec"]
             if "scale_arcsec_per_px" in row and "pix_fit" not in row:
