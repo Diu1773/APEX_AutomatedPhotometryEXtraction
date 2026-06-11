@@ -124,7 +124,7 @@ def get_filter_from_fits(path: Path) -> str:
         with fits.open(path) as hdul:
             f = hdul[0].header.get("FILTER", None)
             if f:
-                return str(f).strip().lower()
+                return normalize_filter_name(f)
     except Exception:
         pass
 
@@ -139,7 +139,7 @@ def get_filter_from_fits(path: Path) -> str:
         if df_headers is not None:
             row = df_headers[df_headers["Filename"] == base]
             if not row.empty:
-                return str(row["FILTER"].values[0]).strip().lower()
+                return normalize_filter_name(row["FILTER"].values[0])
     except Exception:
         pass
 
@@ -285,65 +285,57 @@ def _parse_radec_from_wcs(header: fits.Header) -> tuple[float, float] | None:
         ny = header.get("NAXIS2", None)
         if nx is None or ny is None:
             return None
-        x = float(nx) / 2.0
-        y = float(ny) / 2.0
+        # 0-based pixel coords: geometric image centre is ((nx-1)/2, (ny-1)/2).
+        x = (float(nx) - 1.0) / 2.0
+        y = (float(ny) - 1.0) / 2.0
         ra, dec = w.celestial.wcs_pix2world([[x, y]], 0)[0]
         return float(ra), float(dec)
     except Exception:
         return None
 
 
-def kasten_young_airmass(alt_deg):
-    """Kasten & Young (1989) airmass approximation with horizon correction."""
+def _airmass_from_alt(alt_deg, fn):
+    """Apply *fn(z_deg) → airmass* with scalar/array handling and horizon guard."""
     alt = np.asarray(alt_deg, dtype=float)
     out = np.full_like(alt, np.nan, dtype=float)
     mask = np.isfinite(alt) & (alt > 0.0)
     if np.any(mask):
-        z = 90.0 - alt[mask]
-        out[mask] = 1.0 / (np.cos(np.deg2rad(z)) + 0.50572 * (96.07995 - z) ** (-1.6364))
-    if out.shape == ():
-        return float(out) if np.isfinite(out) else np.nan
-    return out
+        out[mask] = fn(90.0 - alt[mask])
+    return (float(out) if np.isfinite(out) else np.nan) if out.shape == () else out
+
+
+def kasten_young_airmass(alt_deg):
+    """Kasten & Young (1989) airmass approximation with horizon correction."""
+    return _airmass_from_alt(
+        alt_deg,
+        lambda z: 1.0 / (np.cos(np.deg2rad(z)) + 0.50572 * (96.07995 - z) ** (-1.6364)),
+    )
 
 
 def secz_airmass(alt_deg):
     """Simple sec(z) airmass."""
-    alt = np.asarray(alt_deg, dtype=float)
-    out = np.full_like(alt, np.nan, dtype=float)
-    mask = np.isfinite(alt) & (alt > 0.0)
-    if np.any(mask):
-        z = 90.0 - alt[mask]
-        out[mask] = 1.0 / np.cos(np.deg2rad(z))
-    if out.shape == ():
-        return float(out) if np.isfinite(out) else np.nan
-    return out
+    return _airmass_from_alt(alt_deg, lambda z: 1.0 / np.cos(np.deg2rad(z)))
 
 
 def young_irvine_airmass(alt_deg):
     """Young & Irvine (1967) airmass correction."""
-    secz = secz_airmass(alt_deg)
-    secz_arr = np.asarray(secz, dtype=float)
-    out = np.full_like(secz_arr, np.nan, dtype=float)
-    mask = np.isfinite(secz_arr)
-    if np.any(mask):
-        out[mask] = secz_arr[mask] * (1.0 - 0.0012 * (secz_arr[mask] ** 2 - 1.0))
-    if out.shape == ():
-        return float(out) if np.isfinite(out) else np.nan
-    return out
+    sz = np.asarray(secz_airmass(alt_deg), dtype=float)
+    out = np.full_like(sz, np.nan, dtype=float)
+    m = np.isfinite(sz)
+    if np.any(m):
+        out[m] = sz[m] * (1.0 - 0.0012 * (sz[m] ** 2 - 1.0))
+    return (float(out) if np.isfinite(out) else np.nan) if out.shape == () else out
 
 
 def hardie_airmass(alt_deg):
     """Hardie (1962) polynomial correction."""
-    secz = secz_airmass(alt_deg)
-    secz_arr = np.asarray(secz, dtype=float)
-    out = np.full_like(secz_arr, np.nan, dtype=float)
-    mask = np.isfinite(secz_arr)
-    if np.any(mask):
-        x = secz_arr[mask] - 1.0
-        out[mask] = secz_arr[mask] - 0.0018167 * x - 0.002875 * x**2 - 0.0008083 * x**3
-    if out.shape == ():
-        return float(out) if np.isfinite(out) else np.nan
-    return out
+    sz = np.asarray(secz_airmass(alt_deg), dtype=float)
+    out = np.full_like(sz, np.nan, dtype=float)
+    m = np.isfinite(sz)
+    if np.any(m):
+        x = sz[m] - 1.0
+        out[m] = sz[m] - 0.0018167 * x - 0.002875 * x**2 - 0.0008083 * x**3
+    return (float(out) if np.isfinite(out) else np.nan) if out.shape == () else out
 
 
 DEFAULT_AIRMASS_FORMULA = "Kasten & Young (1989)"

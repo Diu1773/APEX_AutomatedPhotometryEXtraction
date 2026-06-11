@@ -11,6 +11,7 @@ from astropy.io import fits
 from astropy.wcs import WCS
 
 from apex.utils.io_utils import parse_int64_series
+from apex.utils.gaia_transforms import filter_bands_from_columns
 from apex.utils.step_paths import (
     crop_is_active,
     crop_rect_path,
@@ -226,6 +227,21 @@ def _pick_first_existing(columns: list[str], candidates: tuple[str, ...]) -> Opt
     for c in candidates:
         if c in cset:
             return c
+    return None
+
+
+def _preferred_cmd_mag_column(columns: list[str]) -> Optional[str]:
+    direct = _pick_first_existing(
+        columns,
+        ("mag_V", "mag_R", "mag_r", "mag_g", "mag_B", "mag_I", "gaia_G", "phot_g_mean_mag"),
+    )
+    if direct:
+        return direct
+    for prefix in ("mag_cal_", "mag_std_", "mag_inst_"):
+        bands = filter_bands_from_columns(columns, prefix)
+        for band in ("V", "R", "r", "g", "B", "I", "i"):
+            if band in bands and f"{prefix}{band}" in columns:
+                return f"{prefix}{band}"
     return None
 
 
@@ -452,17 +468,7 @@ def load_star_table(result_dir: Path, star_table_path: Path) -> tuple[pd.DataFra
     dec_col = _pick_first_existing(cols, ("dec", "dec_deg", "gaia_dec_deg"))
 
     ruwe_col = _pick_first_existing(cols, ("ruwe",))
-    mag_col = _pick_first_existing(
-        cols,
-        (
-            "mag_r",
-            "mag_g",
-            "mag_std_r",
-            "mag_std_g",
-            "gaia_G",
-            "phot_g_mean_mag",
-        ),
-    )
+    mag_col = _preferred_cmd_mag_column(cols)
     mag_err_col = _pick_first_existing(
         cols,
         (

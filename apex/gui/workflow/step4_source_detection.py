@@ -36,11 +36,14 @@ from scipy.spatial import cKDTree as KDTree
 from .step_window_base import StepWindowBase
 from .run_control import RunControlBar, format_duration, progress_status_text
 from .ui_helpers import (
+    add_parameter_reset_button,
     create_cache_action_button,
     create_collapsible_section,
     create_detection_cache_checkbox,
     create_parameter_button,
     configure_parameter_dialog,
+    set_table_row_background,
+    status_row_background,
 )
 from apex.core.cache_manager import StepCacheManager
 from .log_panel import WorkflowLogWindow, WorkerStatusPanel, append_timestamped_log, show_raised
@@ -58,7 +61,8 @@ from apex.utils.cache_utils import (
     norm_path_key,
     normalize_detect_engine as _normalize_detect_engine_util,
 )
-from apex.utils.astro_utils import compute_airmass_from_header
+from apex.utils.astro_utils import compute_airmass_from_header, normalize_filter_name
+from apex.utils.noise_params import resolve_effective_noise_params
 from apex.utils.qc_utils import is_passed_value
 from apex.utils.source_quality import compute_source_quality
 
@@ -271,16 +275,14 @@ class DetectionWorker(QThread):
 
                     # Get filter - preserve original case from header
                     filt = header.get('FILTER', '').strip()
-                    filt_lower = filt.lower()
+                    filt_key = normalize_filter_name(filt)
 
                     # Get sigma for this filter from flexible mapping
                     nsig = detect_sigma_base
-                    if filt in self.filter_sigma_map:
-                        nsig = float(self.filter_sigma_map[filt])
-                    elif filt_lower in self.filter_sigma_map:
-                        nsig = float(self.filter_sigma_map[filt_lower])
-                    elif filt.upper() in self.filter_sigma_map:
-                        nsig = float(self.filter_sigma_map[filt.upper()])
+                    for key in dict.fromkeys((filt_key, filt, filt.lower(), filt.upper())):
+                        if key and key in self.filter_sigma_map:
+                            nsig = float(self.filter_sigma_map[key])
+                            break
 
                     # Stage 2: Background
                     self.worker_status.emit(worker_id, short_name, "Background", 25)
@@ -1216,6 +1218,8 @@ class DetectionWorker(QThread):
 
                     self.progress.emit(completed_count, total, filename, active)
             finally:
+                # Running frames can still write cache products. Join them
+                # before emitting finished so a rerun cannot overlap writes.
                 self._executor.shutdown(wait=True, cancel_futures=True)
                 self._executor = None
 
@@ -1474,6 +1478,11 @@ class QCInspectionPanel(QWidget):
                     formula=getattr(self.params.P, "airmass_formula", None),
                 )
                 meta["airmass"] = self._safe_float(info.get("airmass"), np.nan)
+                noise = resolve_effective_noise_params(self.params.P, h)
+                meta["gain_e_per_adu"] = noise.gain_e_per_adu
+                meta["rdnoise_e"] = noise.rdnoise_e
+                meta["binning_x"] = noise.bin_x
+                meta["binning_y"] = noise.bin_y
                 tval, tsrc = self._parse_time_value(h)
                 meta["time_val"] = tval
                 meta["time_src"] = tsrc
@@ -1529,6 +1538,10 @@ class QCInspectionPanel(QWidget):
                 "time_val": hmeta.get("time_val", np.nan),
                 "time_src": hmeta.get("time_src", "index"),
                 "airmass": hmeta.get("airmass", np.nan),
+                "gain_e_per_adu": hmeta.get("gain_e_per_adu", np.nan),
+                "rdnoise_e": hmeta.get("rdnoise_e", np.nan),
+                "binning_x": hmeta.get("binning_x", np.nan),
+                "binning_y": hmeta.get("binning_y", np.nan),
                 "sky_med": self._safe_float(meta.get("bkg_median"), np.nan),
                 "sky_sigma": self._safe_float(meta.get("bkg_rms"), np.nan),
                 "fwhm_med": self._safe_float(meta.get("fwhm_px"), np.nan),
@@ -1880,9 +1893,12 @@ class QCInspectionPanel(QWidget):
             return None
         out_dir = step4_dir(self.params.P.result_dir)
         out_dir.mkdir(parents=True, exist_ok=True)
-        gain = self._safe_float(getattr(self.params.P, "gain_e_per_adu", np.nan), np.nan)
-        if np.isfinite(gain) and "sky_sigma" in df.columns:
-            df["sky_sigma_med_e"] = df["sky_sigma"] * gain
+        if "sky_sigma" in df.columns:
+            if "gain_e_per_adu" in df.columns:
+                gain_vals = pd.to_numeric(df["gain_e_per_adu"], errors="coerce")
+            else:
+                gain_vals = self._safe_float(getattr(self.params.P, "gain_e_per_adu", np.nan), np.nan)
+            df["sky_sigma_med_e"] = pd.to_numeric(df["sky_sigma"], errors="coerce") * gain_vals
         if "sky_sigma" in df.columns:
             df.rename(columns={
                 "sky_sigma": "sky_sigma_med_adu",
@@ -2228,26 +2244,29 @@ class SourceDetectionWindow(StepWindowBase):
         if isinstance(sigma_by_filter, dict):
             for filt, val in sigma_by_filter.items():
                 try:
-                    self.filter_sigma_map[str(filt)] = float(val)
+                    key = normalize_filter_name(str(filt))
+                    if key:
+                        self.filter_sigma_map[key] = float(val)
                 except Exception:
                     pass
 
-        # Read all detect_sigma_* patterns
+        # Read legacy custom detect_sigma_<filter> patterns, but do not let the
+        # old fixed g/r/i keys re-populate the dynamic filter UI.
         for key, val in raw.items():
-            if key.startswith('detect_sigma_') and key != 'detect_sigma':
+            if key.startswith('detect_sigma_') and key not in {
+                'detect_sigma',
+                'detect_sigma_by_filter',
+                'detect_sigma_g',
+                'detect_sigma_r',
+                'detect_sigma_i',
+            }:
                 filt = key.replace('detect_sigma_', '')
                 try:
-                    self.filter_sigma_map[filt] = float(val)
+                    filt_key = normalize_filter_name(filt)
+                    if filt_key:
+                        self.filter_sigma_map[filt_key] = float(val)
                 except Exception:
                     pass
-
-        # Also check uppercase parameter names.
-        if hasattr(P, 'detect_sigma_g') and P.detect_sigma_g:
-            self.filter_sigma_map['g'] = float(P.detect_sigma_g)
-        if hasattr(P, 'detect_sigma_r') and P.detect_sigma_r:
-            self.filter_sigma_map['r'] = float(P.detect_sigma_r)
-        if hasattr(P, 'detect_sigma_i') and P.detect_sigma_i:
-            self.filter_sigma_map['i'] = float(P.detect_sigma_i)
 
     # === Detection Mode Preset System ===
 
@@ -2270,14 +2289,63 @@ class SourceDetectionWindow(StepWindowBase):
     def _sync_engine_dependent_dialog_state(self):
         engine = self._selected_detect_engine()
         is_sep = engine == "sep"
+        is_segm = engine == "segm"
+        is_dao = engine == "dao"
+        is_peak = engine == "peak"
+        uses_deblend = is_sep or is_segm
+        dao_visible = is_segm or is_dao
+        peak_visible = is_segm or is_peak
 
         # SEP already performs fast C-level background, extraction, deblending,
         # and cheap morphology measurements. Full-frame DAO/peak passes would
         # defeat the point of selecting the fast engine.
+        if hasattr(self, "param_dao_group"):
+            self.param_dao_group.setVisible(dao_visible)
+        if hasattr(self, "param_peak_group"):
+            self.param_peak_group.setVisible(peak_visible)
+
+        for name in (
+            "param_minarea",
+            "param_deblend",
+            "param_deblend_nthresh",
+            "param_deblend_cont",
+            "param_deblend_max_labels",
+            "param_deblend_label_hard_max",
+        ):
+            widget = getattr(self, name, None)
+            if widget is not None:
+                widget.setEnabled(uses_deblend)
+
+        deblend_active = uses_deblend and bool(
+            getattr(self, "param_deblend", None) is not None
+            and self.param_deblend.isChecked()
+        )
+        for name in (
+            "param_deblend_nthresh",
+            "param_deblend_cont",
+            "param_deblend_max_labels",
+            "param_deblend_label_hard_max",
+        ):
+            widget = getattr(self, name, None)
+            if widget is not None:
+                widget.setEnabled(deblend_active)
+        if hasattr(self, "param_bkg_box"):
+            self.param_bkg_box.setEnabled(
+                bool(getattr(self, "param_bkg2d", None) is not None and self.param_bkg2d.isChecked())
+            )
+
         if hasattr(self, "param_dao_enable"):
-            if is_sep:
+            if is_sep or is_peak:
                 self.param_dao_enable.setChecked(False)
-            self.param_dao_enable.setEnabled(not is_sep)
+            elif is_dao:
+                self.param_dao_enable.setChecked(True)
+            self.param_dao_enable.setEnabled(is_segm)
+        dao_params_enabled = dao_visible and (
+            is_dao or bool(
+                getattr(self, "param_dao_enable", None) is not None
+                and self.param_dao_enable.isChecked()
+            )
+        )
         for name in (
             "param_dao_fwhm",
             "param_dao_sharp_lo",
@@ -2288,11 +2356,31 @@ class SourceDetectionWindow(StepWindowBase):
         ):
             widget = getattr(self, name, None)
             if widget is not None:
-                widget.setEnabled(not is_sep)
+                widget.setEnabled(dao_params_enabled)
         if hasattr(self, "param_peak_enable"):
-            if is_sep:
+            if is_sep or is_dao:
                 self.param_peak_enable.setChecked(False)
-            self.param_peak_enable.setEnabled(not is_sep)
+            elif is_peak:
+                self.param_peak_enable.setChecked(True)
+            self.param_peak_enable.setEnabled(is_segm)
+        peak_params_enabled = peak_visible and (
+            is_peak or bool(
+                getattr(self, "param_peak_enable", None) is not None
+                and self.param_peak_enable.isChecked()
+            )
+        )
+        for name in (
+            "param_peak_nsigma",
+            "param_peak_scales",
+            "param_peak_min_sep",
+            "param_peak_max_add",
+            "param_peak_max_elong",
+            "param_peak_sharp_lo",
+            "param_peak_skip_if_nsrc",
+        ):
+            widget = getattr(self, name, None)
+            if widget is not None:
+                widget.setEnabled(peak_params_enabled)
 
     def _apply_detect_mode_preset_to_dialog(self, mode: str) -> bool:
         mode_key = _normalize_detect_mode(mode)
@@ -2430,23 +2518,37 @@ class SourceDetectionWindow(StepWindowBase):
         """Scan FITS files to detect which filters are actually present"""
         filters_found = set()
 
+        try:
+            headers_df = getattr(self.file_manager, "df_headers", None)
+            if headers_df is not None and "FILTER" in headers_df.columns:
+                subset = headers_df
+                fname_col = "Filename" if "Filename" in headers_df.columns else None
+                if fname_col and self.file_list:
+                    wanted = set(str(f) for f in self.file_list)
+                    subset = headers_df[headers_df[fname_col].astype(str).isin(wanted)]
+                for raw_filter in subset["FILTER"].dropna().astype(str):
+                    filt = normalize_filter_name(raw_filter)
+                    if filt:
+                        filters_found.add(filt)
+                if filters_found:
+                    return sorted(filters_found)
+        except Exception:
+            filters_found.clear()
+
         # Determine data directory
         if self.use_cropped:
             data_dir = step2_cropped_dir(self.params.P.result_dir)
         else:
             data_dir = self.params.P.data_dir
 
-        # Sample files (first 20 or all if less)
-        sample_files = self.file_list[:min(20, len(self.file_list))]
-
-        for filename in sample_files:
+        for filename in self.file_list:
             try:
                 if self.use_cropped:
-                    file_path = step2_cropped_dir(self.params.P.result_dir) / filename
+                    file_path = data_dir / filename
                 else:
                     file_path = self.params.get_file_path(filename)
-                with fits.open(file_path) as hdul:
-                    filt = hdul[0].header.get('FILTER', '').strip()
+                with fits.open(file_path, memmap=True) as hdul:
+                    filt = normalize_filter_name(hdul[0].header.get('FILTER', '').strip())
                     if filt:
                         filters_found.add(filt)
             except Exception:
@@ -3275,6 +3377,11 @@ class SourceDetectionWindow(StepWindowBase):
         self.results_table.setItem(row, 4, QTableWidgetItem(result['filter']))
         # Sigma used
         self.results_table.setItem(row, 5, QTableWidgetItem(f"{result.get('sigma_used', 3.2):.1f}"))
+        try:
+            has_sources = int(result.get("n_sources", 0) or 0) > 0
+        except (TypeError, ValueError):
+            has_sources = False
+        set_table_row_background(self.results_table, row, status_row_background(has_sources))
 
         self.log(
             f"{filename}: {result['n_sources']} sources, "
@@ -3359,7 +3466,14 @@ class SourceDetectionWindow(StepWindowBase):
         """Ensure worker thread is stopped before closing window"""
         if self.detection_worker and self.detection_worker.isRunning():
             self.stop_detection()
-            self.detection_worker.wait(5000)
+            if not self.detection_worker.wait(10000):
+                QMessageBox.warning(
+                    self,
+                    "Background Task Running",
+                    "Source detection is still stopping. Please wait and close again.",
+                )
+                event.ignore()
+                return
         super().closeEvent(event)
 
     def populate_results_table(self):
@@ -3380,6 +3494,11 @@ class SourceDetectionWindow(StepWindowBase):
             self.results_table.setItem(row, 3, QTableWidgetItem(f"{float(result.get('bkg_median', 0.0)):.1f}"))
             self.results_table.setItem(row, 4, QTableWidgetItem(result.get('filter', '')))
             self.results_table.setItem(row, 5, QTableWidgetItem(f"{float(result.get('sigma_used', 3.2)):.1f}"))
+            try:
+                has_sources = int(result.get("n_sources", 0) or 0) > 0
+            except (TypeError, ValueError):
+                has_sources = False
+            set_table_row_background(self.results_table, row, status_row_background(has_sources))
 
     def update_summary_from_results(self, title: str = "Detection Loaded"):
         """Update summary label from detection_results"""
@@ -3526,9 +3645,12 @@ class SourceDetectionWindow(StepWindowBase):
 
         self.filter_sigma_edits = {}
         current_filters = set(detected_filters)
-        current_filters.update(self.filter_sigma_map.keys())
         if not current_filters:
-            current_filters = {'g', 'r', 'i'}
+            current_filters.update(
+                normalize_filter_name(filt)
+                for filt in self.filter_sigma_map.keys()
+                if normalize_filter_name(filt)
+            )
 
         row = 1
         for filt in sorted(current_filters):
@@ -3536,7 +3658,12 @@ class SourceDetectionWindow(StepWindowBase):
             spin.setRange(1.0, 10.0)
             spin.setSingleStep(0.1)
             spin.setDecimals(2)
-            spin.setValue(self.filter_sigma_map.get(filt, self.param_detect_sigma.value()))
+            sigma_value = self.param_detect_sigma.value()
+            for key in dict.fromkeys((filt, filt.lower(), filt.upper())):
+                if key in self.filter_sigma_map:
+                    sigma_value = self.filter_sigma_map[key]
+                    break
+            spin.setValue(float(sigma_value))
             spin.setSpecialValueText("use base")
             filter_layout.addWidget(QLabel(f"{filt}:"), row, 0)
             filter_layout.addWidget(spin, row, 1)
@@ -3546,7 +3673,7 @@ class SourceDetectionWindow(StepWindowBase):
         filter_layout.addWidget(QLabel("Add filter:"), row, 0)
         custom_layout = QHBoxLayout()
         self.custom_filter_name = QLineEdit()
-        self.custom_filter_name.setPlaceholderText("e.g., u or z")
+        self.custom_filter_name.setPlaceholderText("e.g., B or Ha")
         self.custom_filter_name.setMaximumWidth(60)
         custom_layout.addWidget(self.custom_filter_name)
         self.custom_filter_sigma = QDoubleSpinBox()
@@ -3616,6 +3743,7 @@ class SourceDetectionWindow(StepWindowBase):
         detect_opts_form.addRow("Background Box:", self.param_bkg_box)
 
         layout.addWidget(detect_opts_group)
+        self.param_detect_opts_group = detect_opts_group
 
         # === DAO Refine (collapsible) ===
         dao_group, dao_container = create_collapsible_section("DAO Refine (hot pixel filter)")
@@ -3663,9 +3791,10 @@ class SourceDetectionWindow(StepWindowBase):
         dao_layout.addRow("Match tolerance (px):", self.param_dao_match_tol)
 
         layout.addWidget(dao_group)
+        self.param_dao_group = dao_group
 
         # === Peak Assist (collapsible) ===
-        peak_group, peak_container = create_collapsible_section("Peak Assist (segm supplement)")
+        peak_group, peak_container = create_collapsible_section("Peak Detection / Assist")
         peak_layout = QFormLayout(peak_container)
         peak_layout.setContentsMargins(0, 0, 0, 0)
         peak_layout.setSpacing(4)
@@ -3713,17 +3842,67 @@ class SourceDetectionWindow(StepWindowBase):
         peak_layout.addRow("Skip if Nsrc >=:", self.param_peak_skip_if_nsrc)
 
         layout.addWidget(peak_group)
+        self.param_peak_group = peak_group
         layout.addStretch(1)
 
         # Connect detect mode signals
         self.param_detect_mode.currentIndexChanged.connect(self._update_detect_mode_ui_state)
         self.param_detect_mode_apply.clicked.connect(self._on_apply_detect_mode_clicked)
         self.param_engine.currentIndexChanged.connect(self._sync_engine_dependent_dialog_state)
+        self.param_deblend.stateChanged.connect(self._sync_engine_dependent_dialog_state)
+        self.param_bkg2d.stateChanged.connect(self._sync_engine_dependent_dialog_state)
+        self.param_dao_enable.stateChanged.connect(self._sync_engine_dependent_dialog_state)
+        self.param_peak_enable.stateChanged.connect(self._sync_engine_dependent_dialog_state)
         self._update_detect_mode_ui_state()
         self._sync_engine_dependent_dialog_state()
 
         # Buttons outside the scroll area
         buttons = QDialogButtonBox(QDialogButtonBox.Save | QDialogButtonBox.Cancel)
+        def _detection_reset_defaults():
+            defaults = [
+                (self.param_detect_mode, "normal"),
+                (self.param_engine, "sep"),
+                (self.param_detect_sigma, 3.2),
+                (self.custom_filter_name, ""),
+                (self.custom_filter_sigma, 3.2),
+                (self.param_minarea, 3),
+                (self.param_fwhm_all_sources, False),
+                (self.param_deblend, True),
+                (self.param_deblend_nthresh, 64),
+                (self.param_deblend_cont, 0.004),
+                (self.param_deblend_max_labels, 4000),
+                (self.param_deblend_label_hard_max, 7000),
+                (self.param_bkg2d, True),
+                (self.param_bkg_box, 61),
+                (self.param_dao_enable, False),
+                (self.param_dao_fwhm, 5.5),
+                (self.param_dao_sharp_lo, 0.1),
+                (self.param_dao_sharp_hi, 2.0),
+                (self.param_dao_round_lo, -1.5),
+                (self.param_dao_round_hi, 1.5),
+                (self.param_dao_match_tol, 2.0),
+                (self.param_peak_enable, False),
+                (self.param_peak_nsigma, 3.4),
+                (self.param_peak_scales, "0.9,1.3"),
+                (self.param_peak_min_sep, 4.0),
+                (self.param_peak_max_add, 500),
+                (self.param_peak_max_elong, 1.6),
+                (self.param_peak_sharp_lo, 0.12),
+                (self.param_peak_skip_if_nsrc, 4500),
+            ]
+            defaults.extend(
+                (spin, 3.2) for spin in self.filter_sigma_edits.values()
+            )
+            return defaults
+
+        add_parameter_reset_button(
+            buttons,
+            _detection_reset_defaults,
+            on_reset=lambda: (
+                self._update_detect_mode_ui_state(),
+                self._sync_engine_dependent_dialog_state(),
+            ),
+        )
         buttons.accepted.connect(lambda: self.save_parameters(dialog))
         buttons.rejected.connect(dialog.reject)
         outer_layout.addWidget(buttons)
@@ -3732,7 +3911,7 @@ class SourceDetectionWindow(StepWindowBase):
 
     def add_custom_filter(self, layout, row):
         """Add custom filter to the dialog"""
-        name = self.custom_filter_name.text().strip()
+        name = normalize_filter_name(self.custom_filter_name.text().strip())
         if not name:
             return
 
@@ -3789,7 +3968,9 @@ class SourceDetectionWindow(StepWindowBase):
         self.filter_sigma_map = {}
         for filt, spin in self.filter_sigma_edits.items():
             val = spin.value()
-            self.filter_sigma_map[filt] = val
+            key = normalize_filter_name(filt)
+            if key:
+                self.filter_sigma_map[key] = val
         self.params.P.detect_sigma_by_filter = dict(self.filter_sigma_map)
         self.params.P.detect_sigma_g = self.filter_sigma_map.get("g")
         self.params.P.detect_sigma_r = self.filter_sigma_map.get("r")
@@ -3852,7 +4033,17 @@ class SourceDetectionWindow(StepWindowBase):
         if state_data:
             # Restore filter sigma map
             if 'filter_sigma_map' in state_data:
-                self.filter_sigma_map = state_data['filter_sigma_map']
+                restored_map = {}
+                if isinstance(state_data['filter_sigma_map'], dict):
+                    for filt, val in state_data['filter_sigma_map'].items():
+                        key = normalize_filter_name(filt)
+                        if not key:
+                            continue
+                        try:
+                            restored_map[key] = float(val)
+                        except Exception:
+                            pass
+                self.filter_sigma_map = restored_map
             for key in [
                 "detect_mode",
                 "detect_engine",

@@ -102,12 +102,32 @@ def file_signature_matches(saved_sig: dict, current_sig: dict) -> bool:
     return saved_mtime_ns == curr_mtime_ns
 
 
-def file_signature_matches_relaxed(saved_sig: dict, current_sig: dict) -> bool:
-    """Accept mtime drift when path/crop/size are stable.
+#: FITS header block size (bytes). A Step 5 WCS write may inject extra cards
+#: (CD matrix, SIP polynomial coefficients, provenance keys) that push the
+#: header across one or more block boundaries, so the file size after solving
+#: differs from the size recorded when Step 4 ran. The image payload is
+#: untouched, so detection XY is still valid — we just need to ignore the
+#: header-only drift. Allow up to _MAX_HEADER_GROWTH_BLOCKS of growth before
+#: declaring the file truly modified.
+_FITS_HEADER_BLOCK_BYTES = 2880
+_MAX_HEADER_GROWTH_BLOCKS = 16  # ~46 KB, easily covers SIP degree 5
 
-    Step5 can update FITS headers in-place after solving, which changes mtime
-    without invalidating detection XY. In that case, accept cache when path,
-    crop mode, and file size still match.
+
+def file_signature_matches_relaxed(saved_sig: dict, current_sig: dict) -> bool:
+    """Accept mtime drift when path/crop are stable and size drift is bounded.
+
+    Step 5 updates FITS headers in-place after solving, which changes mtime
+    and, when SIP/PV polynomial keys are added, can also enlarge the file by a
+    few 2880-byte FITS header blocks. Detection XY is independent of the WCS
+    header, so we keep the Step 4 cache valid as long as:
+
+    * path and crop mode are unchanged
+    * the size delta is non-negative (file shouldn't shrink under header
+      growth) and within ``_MAX_HEADER_GROWTH_BLOCKS`` blocks
+
+    A real edit to the image data would change the size by orders of magnitude
+    more than this allowance, so the relaxation cannot hide actual content
+    changes.
     """
     if file_signature_matches(saved_sig, current_sig):
         return True
@@ -124,7 +144,12 @@ def file_signature_matches_relaxed(saved_sig: dict, current_sig: dict) -> bool:
         return False
     if saved_size <= 0 or curr_size <= 0:
         return False
-    return saved_size == curr_size
+    if saved_size == curr_size:
+        return True
+    delta = curr_size - saved_size
+    if delta < 0:
+        return False
+    return delta <= _MAX_HEADER_GROWTH_BLOCKS * _FITS_HEADER_BLOCK_BYTES
 
 
 def detection_cache_signature_matches(

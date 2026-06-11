@@ -23,7 +23,7 @@ from PyQt5.QtWidgets import (
     QSpinBox,
 )
 
-from apex.gui.workflow.ui_helpers import build_scroll_param_dialog
+from apex.gui.workflow.ui_helpers import add_parameter_reset_button, build_scroll_param_dialog
 
 
 @dataclass
@@ -130,6 +130,18 @@ def read_param_form(
             setattr(params_P, extra, value)
 
 
+def _spec_default_value(spec: ParamSpec) -> Any:
+    if spec.default is not None:
+        return spec.default
+    if spec.kind == "bool":
+        return False
+    if spec.kind == "int":
+        return int(spec.lo)
+    if spec.kind == "float":
+        return float(spec.lo)
+    return None
+
+
 def run_param_dialog(
     parent: Any,
     title: str,
@@ -153,6 +165,15 @@ def run_param_dialog(
     form, widgets = build_param_form(params_P, specs, overrides)
     layout.addLayout(form)
     layout.addStretch(1)
+
+    add_parameter_reset_button(
+        buttons,
+        [
+            (widgets[spec.attr], _spec_default_value(spec))
+            for spec in specs
+            if spec.kind != "sep" and spec.attr in widgets
+        ],
+    )
 
     def _save() -> None:
         read_param_form(widgets, params_P, specs)

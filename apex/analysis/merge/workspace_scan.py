@@ -7,6 +7,7 @@ from pathlib import Path
 
 import pandas as pd
 
+from apex.utils.common_helpers import normalize_filter_key as _canonical_filter_key
 from apex.utils.io_utils import coerce_int64_source_id, read_csv_int64_source_id
 from apex.utils.run_workspace import (
     build_merged_workspace_dir,
@@ -18,7 +19,7 @@ from apex.utils.step_paths_lc import step7_forced_phot_dir, step8_selection_dir,
 
 
 def normalize_filter_key(value) -> str:
-    return str(value or "").strip().lower() or "unknown"
+    return _canonical_filter_key(value) or "unknown"
 
 
 def folder_tag(index: int, folder: Path) -> str:

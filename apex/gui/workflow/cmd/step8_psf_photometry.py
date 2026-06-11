@@ -65,10 +65,13 @@ from matplotlib.patches import Rectangle, Patch
 from apex.gui.workflow.step_window_base import StepWindowBase
 from apex.gui.workflow.log_panel import WorkflowLogWindow, WorkerStatusPanel, append_timestamped_log, show_raised
 from apex.gui.workflow.ui_helpers import (
+    add_parameter_reset_button,
     create_collapsible_section,
     create_output_reuse_checkbox,
     create_parameter_button,
     configure_parameter_dialog,
+    set_table_row_background,
+    status_row_background,
 )
 from apex.utils.step_paths_cmd import (
     step2_cropped_dir, step4_dir, step8_psf_dir,
@@ -77,6 +80,7 @@ from apex.utils.step_paths_cmd import (
 from apex.utils.step_paths import step7_forced_phot_dir
 from apex.utils.astro_utils import normalize_filter_name
 from apex.utils.constants import get_parallel_workers
+from apex.utils.noise_params import resolve_effective_noise_params
 from apex.utils.qc_utils import filter_files_by_qc
 
 
@@ -143,6 +147,9 @@ _PSF_SIGNATURE_PARAMS = (
     "gain_e_per_adu",
     "zp_initial",
     "rdnoise_e",
+    "noise_use_fits_header",
+    "noise_reference_binning",
+    "noise_scale_by_binning",
     "saturation_adu",
     "min_snr_for_mag",
     "fwhm_pix_guess",
@@ -502,11 +509,11 @@ def _allstar_newton_one(cleaned_patch: np.ndarray,
 
     Solves 3×3 normal equations for (dflux, dx, dy) simultaneously.
     One matrix solve replaces 20-40 LM iterations.
-    Returns (x_new, y_new, flux_new, ok).
+    Returns (x_new, y_new, flux_new, chi2, ok).
     """
     ny, nx = cleaned_patch.shape
     if ny < 3 or nx < 3:
-        return x0, y0, max(flux0, 1.0), False
+        return x0, y0, max(flux0, 1.0), np.nan, False
 
     xc = float(x0)
     yc = float(y0)
@@ -538,7 +545,7 @@ def _allstar_newton_one(cleaned_patch: np.ndarray,
     try:
         dflux, dx, dy = np.linalg.solve(A, b)
     except np.linalg.LinAlgError:
-        return x0, y0, flux_safe, False
+        return x0, y0, flux_safe, np.nan, False
 
     if abs(dx) > max_shift or abs(dy) > max_shift:
         return x0, y0, flux_safe, np.nan, False
@@ -562,7 +569,7 @@ def _allstar_newton_group(cleaned_patch: np.ndarray,
     """Single Newton step for N close stars simultaneously (3N×3N normal equations).
 
     group_info: list of (x, y, flux) — absolute image coordinates.
-    Returns list of (x_new, y_new, flux_new, ok).
+    Returns list of (x_new, y_new, flux_new, chi2, ok).
     """
     N = len(group_info)
     if N == 0:
@@ -574,7 +581,7 @@ def _allstar_newton_group(cleaned_patch: np.ndarray,
 
     ny, nx = cleaned_patch.shape
     if ny < 3 or nx < 3:
-        return [(x, y, max(fl, 1.0), False) for x, y, fl in group_info]
+        return [(x, y, max(fl, 1.0), np.nan, False) for x, y, fl in group_info]
 
     yy_abs = np.arange(ny, dtype=float) + patch_y0
     xx_abs = np.arange(nx, dtype=float) + patch_x0
@@ -1252,6 +1259,22 @@ class Step6PSFWorker(QThread):
                 except Exception as e:
                     self.worker_status.emit(wid, fname, "FITS error", 100)
                     return {"file": fname, "status": "no_fits", "reason": f"FITS read: {e}"}
+
+                try:
+                    header = fits.getheader(img_path)
+                except Exception:
+                    header = None
+                noise = resolve_effective_noise_params(P, header)
+                GAIN = noise.gain_e_per_adu
+                rn_e = noise.rdnoise_e
+                noise_info = {
+                    "gain_e_per_adu": float(noise.gain_e_per_adu),
+                    "rdnoise_e": float(noise.rdnoise_e),
+                    "binning_x": int(noise.bin_x),
+                    "binning_y": int(noise.bin_y),
+                    "gain_source": noise.gain_source,
+                    "rdnoise_source": noise.rdnoise_source,
+                }
 
                 this_filter = _get_filter_lower(img_path)
                 exptime = _get_exptime(img_path, default=1.0)
@@ -2880,6 +2903,12 @@ class Step6PSFWorker(QThread):
                                 "FILTER": this_filter,
                                 "flux_psf_e": round(fe, 4) if np.isfinite(fe) else np.nan,
                                 "flux_psf_err_e": round(float(se), 4) if np.isfinite(se) else np.nan,
+                                "gain_e_per_adu": round(float(GAIN), 8),
+                                "rdnoise_e": round(float(rn_e), 6),
+                                "binning_x": int(noise.bin_x),
+                                "binning_y": int(noise.bin_y),
+                                "gain_source": noise.gain_source,
+                                "rdnoise_source": noise.rdnoise_source,
                                 "mag_psf": round(mag_psf, 6) if np.isfinite(mag_psf) else np.nan,
                                 "mag_psf_err": round(mag_psf_err, 6) if np.isfinite(mag_psf_err) else np.nan,
                                 "snr_psf": round(float(snr), 3) if np.isfinite(snr) else np.nan,
@@ -2981,6 +3010,7 @@ class Step6PSFWorker(QThread):
                         "n_fail": n_rows - n_good,
                         "n_new_iter": int(n_new_total),
                     }
+                    idx_row.update(noise_info)
                     self.worker_status.emit(wid, fname, "Done", 100)
                     return {
                         "file": fname,
@@ -3173,6 +3203,8 @@ class PSFPhotometryWindow(StepWindowBase):
         self._log_worker_frame: dict[int, str] = {}    # worker_id → current frame name
         self._current_psf_run_frames: list[str] = []
         self._current_psf_run_signature: dict | None = None
+        self._psf_cache_validation_key: str | None = None
+        self._psf_cache_validation_result: tuple[bool, str] = (False, "not checked")
 
         super().__init__(
             step_index=7,
@@ -3743,6 +3775,19 @@ class PSFPhotometryWindow(StepWindowBase):
 
         return True, "ok"
 
+    def _current_psf_cache_status(self) -> tuple[bool, str]:
+        frames, _ = self._psf_frames_after_qc()
+        if not frames:
+            return False, "no current frames"
+        signature = self._build_psf_output_signature(frames)
+        key = str(signature.get("signature_hash", ""))
+        if key and key == self._psf_cache_validation_key:
+            return self._psf_cache_validation_result
+        result = self._existing_psf_output_covers(frames, signature)
+        self._psf_cache_validation_key = key
+        self._psf_cache_validation_result = result
+        return result
+
     def _clear_psf_outputs(self) -> int:
         out_dir = step8_psf_dir(self.params.P.result_dir)
         if not out_dir.exists():
@@ -3807,6 +3852,7 @@ class PSFPhotometryWindow(StepWindowBase):
             )
             return
         signature = self._build_psf_output_signature(frames_for_run)
+        self._psf_cache_validation_key = None
         self._current_psf_run_frames = list(frames_for_run)
         self._current_psf_run_signature = signature
 
@@ -3829,6 +3875,8 @@ class PSFPhotometryWindow(StepWindowBase):
         if getattr(self, "chk_use_existing_output", None) is not None and self.chk_use_existing_output.isChecked():
             cache_ok, cache_reason = self._existing_psf_output_covers(frames_for_run, signature)
             if cache_ok:
+                self._psf_cache_validation_key = str(signature.get("signature_hash", ""))
+                self._psf_cache_validation_result = (True, "ok")
                 self.log(
                     f"[PSF][CACHE] Existing Step 8 output is complete "
                     f"({len(frames_for_run)} frame(s)); loading from disk."
@@ -3915,6 +3963,11 @@ class PSFPhotometryWindow(StepWindowBase):
         self.frame_table.setItem(r, 3, QTableWidgetItem(str(result.get("n_goodmag", 0))))
         self.frame_table.setItem(r, 4, QTableWidgetItem(str(result.get("n_fail", 0))))
         self.frame_table.setItem(r, 5, QTableWidgetItem(str(result.get("n_new_iter", 0))))
+        try:
+            has_good_phot = int(result.get("n_goodmag", 0) or 0) > 0
+        except (TypeError, ValueError):
+            has_good_phot = False
+        set_table_row_background(self.frame_table, r, status_row_background(has_good_phot))
         self.frame_table.scrollToBottom()
         # Mark log window worker bar as done
         for w_key, fname in self._log_worker_frame.items():
@@ -3998,6 +4051,7 @@ class PSFPhotometryWindow(StepWindowBase):
         self.update_frame_table()  # refresh Photometry tab from disk
         self._refresh_qc()           # refresh QC tab (stats + Ap vs PSF plot)
         self.save_state()
+        self._psf_cache_validation_key = None
         self.update_navigation_buttons()
         self._current_psf_run_frames = []
         self._current_psf_run_signature = None
@@ -4784,7 +4838,8 @@ class PSFPhotometryWindow(StepWindowBase):
         if hasattr(self, "cmp_filter_combo") and "FILTER" in df.columns:
             _fsel = str(self.cmp_filter_combo.currentText()).strip()
             if _fsel and _fsel.lower() != "all":
-                df = df[df["FILTER"].astype(str).str.lower() == _fsel.lower()].copy()
+                _fkey = normalize_filter_name(_fsel)
+                df = df[df["FILTER"].astype(str).map(normalize_filter_name) == _fkey].copy()
         if hasattr(self, "cmp_frame_combo") and "FRAME" in df.columns:
             _rsel = str(self.cmp_frame_combo.currentText()).strip()
             if _rsel and _rsel.lower() != "all":
@@ -5281,6 +5336,53 @@ class PSFPhotometryWindow(StepWindowBase):
         _refresh_mode_ui()
 
         btns = QDialogButtonBox(QDialogButtonBox.Save | QDialogButtonBox.Cancel)
+        def _after_psf_reset():
+            for w in _manual_widgets:
+                w.setEnabled(True)
+            for w in _photutils_only_widgets:
+                w.setEnabled(False)
+            for w in _epsf_only_widgets:
+                w.setEnabled(True)
+
+        add_parameter_reset_button(
+            btns,
+            [
+                (mode_combo, "crowded"),
+                (self.p_fit_engine, "allstar"),
+                (self.p_build_mode, "epsf"),
+                (self.p_workers, 6),
+                (self.p_oversampling, 2),
+                (self.p_epsf_mult, 4.0),
+                (self.p_n_stars, 30),
+                (self.p_isolation, 2.0),
+                (self.p_fit_mult, 2.0),
+                (self.p_max_iter, 3),
+                (self.p_redetect, 4.5),
+                (self.p_redetect_g, 4.0),
+                (self.p_redetect_r, 4.0),
+                (self.p_redetect_i, 4.5),
+                (self.p_dup_mult, 0.4),
+                (self.p_dup_px, 0.0),
+                (self.p_cap_per_iter, 50),
+                (self.p_cap_frac, 0.01),
+                (self.p_fit_init_max, 3000),
+                (self.p_substar_nei_mult, 5.0),
+                (self.p_substar_max_src, 1000),
+                (self.p_conv_new, 0.02),
+                (self.p_conv_flux, 0.01),
+                (self.p_use_grouper, True),
+                (self.p_grouper_max_size, 4),
+                (self.p_use_error_img, False),
+                (self.p_shared_filter_epsf, False),
+                (self.p_min_epsf_stars, 10),
+                (self.p_sharp_lo, 0.2),
+                (self.p_sharp_hi, 0.9),
+                (self.p_round_max, 0.6),
+                (self.p_save_residuals, True),
+                (self.p_save_all_iter_residuals, False),
+            ],
+            on_reset=_after_psf_reset,
+        )
         btns.accepted.connect(lambda: self._save_params(dialog, mode_combo.currentData()))
         btns.rejected.connect(dialog.reject)
         layout.addWidget(btns)
@@ -5375,8 +5477,8 @@ class PSFPhotometryWindow(StepWindowBase):
         """Step 8 is always valid: either PSF was run or it was skipped."""
         if self._skip_psf:
             return True
-        psf_idx = step8_psf_dir(self.params.P.result_dir) / "photometry_index.csv"
-        return psf_idx.exists()
+        valid, _ = self._current_psf_cache_status()
+        return valid
 
     def save_state(self):
         self.project_state.store_step_data("psf_photometry", {
@@ -5464,8 +5566,22 @@ class PSFPhotometryWindow(StepWindowBase):
             self.params.P.psf_redetect_round_abs_max = 0.8
         self._update_skip_label()
         self.update_frame_table()
-        # Reload EPSF + residual images from disk
-        self._load_from_disk()
+        idx_path = step8_psf_dir(self.params.P.result_dir) / "photometry_index.csv"
+        if (not self._skip_psf) and idx_path.exists():
+            valid, reason = self._current_psf_cache_status()
+            if valid:
+                try:
+                    idx = pd.read_csv(idx_path)
+                    n_frames = len(idx)
+                    self.progress_bar.setMaximum(max(1, n_frames))
+                    self.progress_bar.setValue(n_frames)
+                    self.progress_label.setText(f"Loaded previous PSF output ({n_frames} frames)")
+                    self.log(f"[PSF][CACHE] Loaded previous Step 8 PSF output from disk ({n_frames} frames).")
+                    self._load_from_disk()
+                except Exception as exc:
+                    self.log(f"[PSF][CACHE] Previous output could not be loaded: {exc}")
+            else:
+                self.log(f"[PSF][CACHE] Previous output not restored ({reason}).")
 
     def closeEvent(self, event):
         if self.worker and self.worker.isRunning():

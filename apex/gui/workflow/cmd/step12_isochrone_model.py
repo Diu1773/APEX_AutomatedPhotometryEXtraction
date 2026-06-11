@@ -17,8 +17,8 @@ import numpy as np
 import pandas as pd
 import matplotlib as mpl
 from matplotlib.backends.backend_qt5agg import FigureCanvasQTAgg as FigureCanvas
+from matplotlib.backends.backend_qt5agg import NavigationToolbar2QT as NavigationToolbar
 from matplotlib.figure import Figure
-from matplotlib.widgets import Slider, Button
 from matplotlib.colors import LinearSegmentedColormap, Normalize
 from scipy.spatial import cKDTree
 
@@ -26,13 +26,16 @@ from PyQt5.QtWidgets import (
     QVBoxLayout, QHBoxLayout, QPushButton, QLabel, QGroupBox, QMessageBox,
     QTextEdit, QFormLayout, QDoubleSpinBox, QComboBox,
     QCheckBox, QLineEdit, QWidget, QFileDialog, QProgressBar,
-    QApplication,
-    QTabWidget, QSizePolicy
+    QApplication, QSlider,
+    QTabWidget, QSizePolicy, QScrollArea, QFrame
 )
-from PyQt5.QtCore import Qt, QThread, pyqtSignal
+from PyQt5.QtCore import Qt, QThread, pyqtSignal, QTimer
 
 from apex.gui.workflow.step_window_base import StepWindowBase
 from apex.utils.step_paths_cmd import step9_selection_dir, step10_zp_dir, step12_iso_dir
+from apex.utils.common_helpers import format_cmd_title, target_display_name
+from apex.utils.cmd_gaia_enrichment import merge_gaia_columns_from_catalog
+from apex.utils.gaia_transforms import teff_from_color
 from apex.analysis.cmd.isochrone_fitter_v2 import IsochroneFitterV2, FitMode, FitResult, FitBounds, GridScanResult
 
 # Extinction coefficients R = A/E(B-V) (Cardelli+1989 / Fitzpatrick+1999)
@@ -45,15 +48,17 @@ EXTINCTION_R: dict[str, float] = {
 # Backwards compat alias
 SDSS_R = EXTINCTION_R
 
-# PARSEC isochrone column indices per photometric system.
-# SDSS indices are for standard PARSEC CMD 3.7 SDSS output.
-# Johnson indices are for PARSEC CMD 3.7 Johnson-Cousins output — verify against your file header.
+# PARSEC isochrone column indices per photometric system (CMD 3.9, 0-based).
+# Verified against CMD 3.9 output headers.
+#
+# SDSS  header: ... mbolmag  umag  gmag  rmag  imag  zmag
+# Bessell header: ... mbolmag  UXmag  BXmag  Bmag  Vmag  Rmag  Imag  Jmag  Hmag  Kmag ...
 PARSEC_ISO_COL: dict[str, dict[str, int]] = {
-    "SDSS":    {"g": 29, "r": 30, "i": 31, "z": 32},
-    "Johnson": {"U":  9, "B": 10, "V": 11, "R": 12, "I": 13},
+    "SDSS":    {"u": 28, "g": 29, "r": 30, "i": 31, "z": 32},
+    "Johnson": {"B": 30, "V": 31, "R": 32, "I": 33},
 }
-# Flat lookup: searches SDSS first, then Johnson
-SDSS_ISO_COL: dict[str, int] = {**PARSEC_ISO_COL["Johnson"], **PARSEC_ISO_COL["SDSS"]}
+# Flat lookup: Johnson takes priority for single-letter keys shared between systems
+SDSS_ISO_COL: dict[str, int] = {**PARSEC_ISO_COL["SDSS"], **PARSEC_ISO_COL["Johnson"]}
 
 # Default color pairs/bands (overridden dynamically from loaded data at runtime)
 _DEFAULT_COLOR_PAIRS = [("g", "r"), ("g", "i"), ("r", "i"),
@@ -62,12 +67,93 @@ _DEFAULT_MAG_BANDS   = ["g", "r", "i", "V", "B", "R", "I"]
 
 
 def _bands_from_df(df: "pd.DataFrame") -> tuple[list[tuple[str, str]], list[str]]:
-    """Return (color_pairs, mag_bands) derived from mag_std_* columns in df."""
-    bands = sorted({c[len("mag_std_"):] for c in df.columns if c.startswith("mag_std_")})
+    """Return (adjacent color_pairs, mag_bands) from calibrated columns when available."""
+    from apex.utils.gaia_transforms import build_color_pairs, filter_bands_from_columns
+    bands = (
+        filter_bands_from_columns(df.columns, "mag_cal_")
+        or filter_bands_from_columns(df.columns, "mag_std_")
+        or filter_bands_from_columns(df.columns, "mag_inst_")
+    )
     if not bands:
         return _DEFAULT_COLOR_PAIRS[:3], _DEFAULT_MAG_BANDS[:3]
-    pairs = [(a, b) for i, a in enumerate(bands) for b in bands[i+1:]]
-    return pairs, bands
+    return build_color_pairs(bands, adjacent_only=True), bands
+
+
+def _preferred_mag_col(columns, band: str) -> tuple[str | None, str]:
+    for prefix, label in (
+        ("mag_cal_", "Calibrated"),
+        ("mag_std_", "Standardized"),
+        ("mag_inst_", "Instrumental"),
+    ):
+        col = f"{prefix}{band}"
+        if col in columns:
+            return col, label
+    return None, "Missing"
+
+
+def _preferred_err_col(columns, band: str) -> str | None:
+    for prefix in ("mag_cal_err_", "mag_std_err_", "mag_inst_err_"):
+        col = f"{prefix}{band}"
+        if col in columns:
+            return col
+    return None
+
+
+class IsoCacheWorker(QThread):
+    """Build the ``.apex.npy`` sidecar for a PARSEC isochrone in the
+    background so opening Step 12 doesn't freeze the GUI for the
+    ~30 s it takes to parse a 400 MB text file.
+    """
+
+    progress_msg = pyqtSignal(str)
+    finished_ok = pyqtSignal(str)         # iso_file path
+    failed = pyqtSignal(str, str)         # iso_file path, error message
+
+    def __init__(self, iso_file: Path):
+        super().__init__()
+        self.iso_file = Path(iso_file)
+        self._cancel_requested = False
+
+    def cancel(self) -> None:
+        self._cancel_requested = True
+
+    def run(self):  # type: ignore[override]
+        temp_path = None
+        try:
+            cache_path = self.iso_file.with_suffix(self.iso_file.suffix + ".apex.npy")
+            self.progress_msg.emit(
+                f"Parsing isochrone (one-time, ~30 s): {self.iso_file.name}"
+            )
+            arr = np.loadtxt(self.iso_file, comments="#")
+            if self._cancel_requested:
+                return
+            if arr.ndim == 1:
+                arr = arr.reshape(1, -1)
+            arr = arr[~np.isnan(arr).any(axis=1)]
+            self.progress_msg.emit(f"Writing binary cache: {cache_path.name}")
+            cache_path.parent.mkdir(parents=True, exist_ok=True)
+            temp_path = cache_path.with_name(
+                f"{cache_path.name}.{id(self)}.tmp"
+            )
+            with temp_path.open("wb") as handle:
+                np.save(handle, arr, allow_pickle=False)
+            if self._cancel_requested:
+                return
+            temp_path.replace(cache_path)
+        except Exception as exc:
+            if not self._cancel_requested:
+                self.failed.emit(str(self.iso_file), str(exc))
+            return
+        finally:
+            if temp_path is not None:
+                try:
+                    temp_path.unlink()
+                except FileNotFoundError:
+                    pass
+                except OSError:
+                    pass
+        if not self._cancel_requested:
+            self.finished_ok.emit(str(self.iso_file))
 
 
 class FitWorker(QThread):
@@ -147,13 +233,97 @@ class GridScanWorker(QThread):
             self.finished.emit(e)
 
 
+class FloatSlider(QWidget):
+    """QSlider wrapper that emits float values.
+
+    matplotlib Slider objects float around the figure's pixel coords and
+    collide with subplots once the canvas resizes; a Qt QSlider mounted in
+    its own row never overlaps the plot.
+    """
+
+    valueChanged = pyqtSignal(float)
+
+    def __init__(self, label: str, vmin: float, vmax: float, step: float,
+                 init_val: float, value_fmt: str = "{:.3f}",
+                 snap_values: Optional[np.ndarray] = None, parent=None):
+        super().__init__(parent)
+        self._scale = max(1.0, 1.0 / max(step, 1e-9))
+        self._init = float(init_val)
+        self._value_fmt = value_fmt
+        # When provided, slider output snaps to the nearest grid value
+        # (used for log_age / [Fe/H] so PARSEC lookup hits an actual row
+        # in the isochrone table — otherwise get_iso_points() returns
+        # empty arrays and the viewer shows "No isochrone points").
+        self._snap = None
+        if snap_values is not None and len(snap_values) > 0:
+            self._snap = np.sort(np.asarray(snap_values, dtype=float))
+
+        layout = QHBoxLayout(self)
+        layout.setContentsMargins(2, 0, 2, 0)
+        layout.setSpacing(8)
+
+        self.label = QLabel(label)
+        self.label.setMinimumWidth(80)
+        self.label.setStyleSheet("QLabel { font-weight: bold; }")
+        layout.addWidget(self.label)
+
+        self._slider = QSlider(Qt.Horizontal)
+        self._slider.setMinimum(int(round(vmin * self._scale)))
+        self._slider.setMaximum(int(round(vmax * self._scale)))
+        self._slider.setValue(int(round(init_val * self._scale)))
+        self._slider.setSingleStep(1)
+        self._slider.setPageStep(max(1, int(round((vmax - vmin) * self._scale / 20))))
+        self._slider.valueChanged.connect(self._on_changed)
+        layout.addWidget(self._slider, stretch=1)
+
+        self.value_label = QLabel()
+        self.value_label.setMinimumWidth(70)
+        self.value_label.setStyleSheet("QLabel { font-family: monospace; }")
+        layout.addWidget(self.value_label)
+        self._update_label()
+
+    def _on_changed(self, _: int) -> None:
+        self._update_label()
+        self.valueChanged.emit(self.value())
+
+    def value(self) -> float:
+        raw = float(self._slider.value()) / self._scale
+        if self._snap is not None:
+            idx = int(np.argmin(np.abs(self._snap - raw)))
+            return float(self._snap[idx])
+        return raw
+
+    # Compatibility shim for older matplotlib-Slider call sites.
+    @property
+    def val(self) -> float:
+        return self.value()
+
+    def setValue(self, val: float) -> None:
+        self._slider.blockSignals(True)
+        self._slider.setValue(int(round(float(val) * self._scale)))
+        self._slider.blockSignals(False)
+        self._update_label()
+
+    def reset(self) -> None:
+        self.setValue(self._init)
+        self.valueChanged.emit(self.value())
+
+    def _update_label(self) -> None:
+        self.value_label.setText(self._value_fmt.format(self.value()))
+
+
 class IsochroneViewerWindow(QWidget):
-    """Interactive isochrone viewer using matplotlib sliders."""
+    """Interactive isochrone viewer using Qt sliders.
+
+    Sliders live in their own row below the canvas so they cannot overlap
+    the CMD/residual subplots when the window is resized.
+    """
 
     def __init__(self, df: pd.DataFrame, iso_raw: np.ndarray, params,
                  parent=None, embedded=False,
                  band_mag: str = "g", band_color: tuple = ("g", "r"),
-                 iso_col_1: int = 29, iso_col_2: int = 30):
+                 iso_col_1: int = 29, iso_col_2: int = 30,
+                 iso_col_mag: Optional[int] = None):
         super().__init__(parent)
         self.df = df
         self.iso_raw = iso_raw
@@ -163,6 +333,7 @@ class IsochroneViewerWindow(QWidget):
         self.band_color = band_color
         self.iso_col_1 = iso_col_1
         self.iso_col_2 = iso_col_2
+        self.iso_col_mag = iso_col_1 if iso_col_mag is None else iso_col_mag
         self.color_label = f"{band_color[0]}-{band_color[1]}"
         self.extinction_label = f"E({self.color_label})"
 
@@ -172,15 +343,28 @@ class IsochroneViewerWindow(QWidget):
             self.setMinimumSize(900, 700)
         else:
             self.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
+            # Force a minimum so step12's CMD-Viewer tab actually allocates
+            # enough vertical room for toolbar + canvas + slider row.
+            # toolbar 34 + canvas 280 min + sliders 200 + margins ≈ 540.
+            self.setMinimumHeight(560)
 
         layout = QVBoxLayout(self)
         layout.setContentsMargins(5, 5, 5, 5)
-        fig_size = (14, 10) if not self.embedded else (11, 8)
+        # Slightly more square aspect (was 11×8 → too wide on 1400×900 windows).
+        fig_size = (14, 10) if not self.embedded else (9, 7)
         self.figure = Figure(figsize=fig_size)
         self.canvas = FigureCanvas(self.figure)
         self.canvas.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
         if not self.embedded:
             self.canvas.setMinimumSize(800, 600)
+        # Step 12's outer page (Isochrone Source / Band Selection / Source
+        # Filters / Tabs / Open Log / nav buttons) leaves the embedded
+        # viewer roughly 400–500 px of vertical room.  Use a tight canvas
+        # range so the slider row below never overlaps the plot.
+        self.canvas.setMinimumHeight(280)
+        self.canvas.setMaximumHeight(520)
+        self.toolbar = NavigationToolbar(self.canvas, self)
+        layout.addWidget(self.toolbar)
         layout.addWidget(self.canvas, stretch=1)
 
         self._build_plot()
@@ -227,52 +411,51 @@ class IsochroneViewerWindow(QWidget):
         )
         ob_cmap.set_bad("#777777")
 
-        gr_x = np.array([-0.40, -0.20, 0.00, 0.30, 0.45, 0.80, 1.40, 1.80], float)
-        gr_t = np.array([35000, 20000, 10000, 7500, 6000, 4500, 3200, 2400], float)
-
-        def teff_from_gr(gr):
-            gr = np.asarray(gr, float)
-            t = np.interp(gr, gr_x, gr_t)
-            return np.clip(t, teff_vmin, teff_vmax)
-
         available_ages = np.unique(self.iso_raw[:, 2])
         available_mhs = np.unique(self.iso_raw[:, 1])
 
         b1, b2 = self.band_color
         bm = self.band_mag
-        std1 = f"mag_std_{b1}"
-        std2 = f"mag_std_{b2}"
-        inst1 = f"mag_inst_{b1}"
-        inst2 = f"mag_inst_{b2}"
-        stdm = f"mag_std_{bm}"
-        instm = f"mag_inst_{bm}"
+        col1, color_system1 = _preferred_mag_col(self.df.columns, b1)
+        col2, color_system2 = _preferred_mag_col(self.df.columns, b2)
+        colm, mag_system = _preferred_mag_col(self.df.columns, bm)
 
-        if std1 in self.df.columns and std2 in self.df.columns:
-            obs_band1 = self.df[std1].to_numpy(float)
-            obs_band2 = self.df[std2].to_numpy(float)
+        if col1 is None or col2 is None:
+            obs_band1 = np.asarray([], dtype=float)
+            obs_band2 = np.asarray([], dtype=float)
+            color_system = "Missing"
         else:
-            obs_band1 = self.df.get(inst1, pd.Series([], dtype=float)).to_numpy(float)
-            obs_band2 = self.df.get(inst2, pd.Series([], dtype=float)).to_numpy(float)
-        if stdm in self.df.columns:
-            obs_mag = self.df[stdm].to_numpy(float)
-        elif instm in self.df.columns:
-            obs_mag = self.df[instm].to_numpy(float)
+            obs_band1 = self.df[col1].to_numpy(float)
+            obs_band2 = self.df[col2].to_numpy(float)
+            color_system = color_system1 if color_system1 == color_system2 else "Mixed"
+        if colm is not None:
+            obs_mag = self.df[colm].to_numpy(float)
         else:
             obs_mag = obs_band1.copy()
+            mag_system = color_system
+        obs_system = color_system if color_system == mag_system else "Mixed"
 
         obs_color = obs_band1 - obs_band2
         mask = np.isfinite(obs_mag) & np.isfinite(obs_color)
         obs_mag, obs_color = obs_mag[mask], obs_color[mask]
         obs_pts = np.c_[obs_color, obs_mag]
-        obs_teff = teff_from_gr(obs_color)
+        obs_teff = teff_from_color(obs_color, b1, b2, teff_vmin, teff_vmax)
 
-        gs = self.figure.add_gridspec(2, 2, width_ratios=[2.5, 1], height_ratios=[3, 1], hspace=0.3, wspace=0.2)
+        # Wider gap between subplots (was wspace=0.2/hspace=0.3) so the
+        # right histogram doesn't kiss the CMD's right tick labels and
+        # the residual subplot has breathing room below the CMD title.
+        gs = self.figure.add_gridspec(
+            2, 2, width_ratios=[2.5, 1], height_ratios=[3, 1],
+            hspace=0.45, wspace=0.40,
+        )
         ax_cmd = self.figure.add_subplot(gs[0, 0])
         ax_hist = self.figure.add_subplot(gs[0, 1])
         ax_res = self.figure.add_subplot(gs[1, 0])
 
-        # Leave more space at bottom for sliders (0.22 for sliders + margin)
-        self.figure.subplots_adjust(left=0.08, right=0.88, bottom=0.22, top=0.95)
+        # Two-line CMD title needs more headroom (top=0.84); left=0.07
+        # accommodates a long "M67 - Standardized CMD g vs g-r (N=…)"
+        # without clipping the first character.
+        self.figure.subplots_adjust(left=0.08, right=0.82, bottom=0.13, top=0.84)
 
         self.figure.patch.set_facecolor("black")
         for ax in (ax_cmd, ax_hist, ax_res):
@@ -284,34 +467,37 @@ class IsochroneViewerWindow(QWidget):
             ax.yaxis.label.set_color("white")
             ax.title.set_color("white")
 
-        sc_obs = ax_cmd.scatter(obs_color, obs_mag, s=3, alpha=0.85, linewidths=0, c=obs_teff, cmap=ob_cmap, norm=ob_norm, label="Observed")
+        sc_obs = ax_cmd.scatter(obs_color, obs_mag, s=3, alpha=0.85, linewidths=0, c=obs_teff, cmap=ob_cmap, norm=ob_norm, label=f"Observed ({obs_system})")
         sc_iso = ax_cmd.scatter([np.nan], [np.nan], s=12, alpha=0.95, linewidths=0, c=[np.nan], cmap=ob_cmap, norm=ob_norm, label="Isochrone", zorder=6)
         empty_offset = np.array([[np.nan, np.nan]], dtype=float)
         empty_offsets = np.empty((0, 2), dtype=float)
 
         ax_cmd.invert_yaxis()
-        ax_cmd.set_xlabel(f"Standard ({self.color_label})")
-        ax_cmd.set_ylabel(f"Standard {bm}")
+        ax_cmd.set_xlabel(f"{obs_system} ({self.color_label})")
+        ax_cmd.set_ylabel(f"{obs_system} {bm}")
         ax_cmd.grid(True, linestyle=":", alpha=0.35)
         ax_cmd.legend(loc="upper right")
 
         res_scat = ax_res.scatter([], [], s=3, alpha=0.75, linewidths=0, color="cyan")
         ax_res.axhline(0, color="white", lw=1, ls="--", alpha=0.6)
-        ax_res.set_xlabel(f"Standard {bm}")
+        ax_res.set_xlabel(f"{obs_system} {bm}")
         ax_res.set_ylabel("Residual (NN dist in CMD)")
 
         sm = mpl.cm.ScalarMappable(norm=ob_norm, cmap=ob_cmap)
         sm.set_array([])
-        cbar = self.figure.colorbar(sm, ax=[ax_cmd, ax_res], fraction=0.03, pad=0.02)
-        cbar.set_label("Teff (K) + OBAFGKM-like color", color="white")
+        # Manual cax keeps the 'Teff (K) + OBAFGKM-like color' label fully
+        # visible — the auto-positioned colorbar was getting shoved off
+        # the right edge by the long Teff (e.g. "35000 K (O)") tick labels.
+        cax = self.figure.add_axes([0.86, 0.13, 0.018, 0.75])
+        cbar = self.figure.colorbar(sm, cax=cax)
+        cbar.set_label("Teff (K) + OBAFGKM-like color", color="white", labelpad=14)
         cbar.ax.tick_params(colors="white")
         for sp in cbar.ax.spines.values():
             sp.set_color("white")
 
         c1 = self.iso_col_1
         c2 = self.iso_col_2
-        # mag band column: same as band1 if band_mag == band_color[0]
-        cm = c1 if self.band_mag == self.band_color[0] else c2
+        cm = self.iso_col_mag
 
         def get_iso_points(age, mh, h_shift, v_shift):
             m = (self.iso_raw[:, 2] == age) & (self.iso_raw[:, 1] == mh)
@@ -338,39 +524,71 @@ class IsochroneViewerWindow(QWidget):
         if len(available_mhs) > 0:
             mh_init = float(available_mhs[np.argmin(np.abs(available_mhs - mh_init))])
 
-        ax_color = "#222222"
-        s_age = Slider(self.figure.add_axes([0.2, 0.15, 0.6, 0.02], facecolor=ax_color),
-                       "log Age", available_ages.min(), available_ages.max(),
-                       valinit=age_init, valstep=available_ages)
-        s_mh = Slider(self.figure.add_axes([0.2, 0.12, 0.6, 0.02], facecolor=ax_color),
-                      "[Fe/H]", available_mhs.min(), available_mhs.max(),
-                      valinit=mh_init, valstep=available_mhs)
-        s_hshift = Slider(self.figure.add_axes([0.2, 0.09, 0.6, 0.02], facecolor=ax_color),
-                          self.extinction_label, -0.1, 0.8,
-                          valinit=float(getattr(self.params.P, "iso_eg_r_init", 0.0033)),
-                          valstep=0.0001)
-        s_vshift = Slider(self.figure.add_axes([0.2, 0.06, 0.6, 0.02], facecolor=ax_color),
-                          "Dist. Mod", 5.0, 20.0,
-                          valinit=float(getattr(self.params.P, "iso_dm_init", 9.46)),
-                          valstep=0.01)
+        # Qt sliders mounted in their own row below the canvas.  Each
+        # slider snaps to the same grid the old matplotlib widget used.
+        age_min_v = float(available_ages.min()) if len(available_ages) else 6.0
+        age_max_v = float(available_ages.max()) if len(available_ages) else 10.5
+        mh_min_v = float(available_mhs.min()) if len(available_mhs) else -2.2
+        mh_max_v = float(available_mhs.max()) if len(available_mhs) else 1.0
+        # Step sizes inferred from grid spacing (fall back to sensible defaults).
+        age_step = float(np.median(np.diff(available_ages))) if len(available_ages) > 1 else 0.05
+        mh_step = float(np.median(np.diff(available_mhs))) if len(available_mhs) > 1 else 0.1
+        if not np.isfinite(age_step) or age_step <= 0:
+            age_step = 0.05
+        if not np.isfinite(mh_step) or mh_step <= 0:
+            mh_step = 0.1
 
-        for s in (s_age, s_mh, s_hshift, s_vshift):
-            s.label.set_color("white")
-            s.valtext.set_color("white")
+        # Pass the discrete PARSEC age/[M/H] grid to the sliders so each
+        # tick lands on a row that exists in the isochrone table; otherwise
+        # interpolation between rows yields empty point lists and the
+        # viewer shows "No isochrone points".
+        s_age = FloatSlider("log Age", age_min_v, age_max_v, age_step,
+                             age_init, value_fmt="{:.2f}",
+                             snap_values=available_ages)
+        s_mh = FloatSlider("[Fe/H]", mh_min_v, mh_max_v, mh_step,
+                            mh_init, value_fmt="{:.2f}",
+                            snap_values=available_mhs)
+        s_hshift = FloatSlider(self.extinction_label, -0.1, 0.8, 0.0001,
+                                float(getattr(self.params.P, "iso_eg_r_init", 0.0033)),
+                                value_fmt="{:.4f}")
+        s_vshift = FloatSlider("Dist. Mod", 5.0, 20.0, 0.01,
+                                float(getattr(self.params.P, "iso_dm_init", 9.46)),
+                                value_fmt="{:.2f}")
 
-        resetax = self.figure.add_axes([0.85, 0.01, 0.1, 0.04], facecolor="#111111")
-        button = Button(resetax, "Reset", color="#333333", hovercolor="#444444")
-        button.label.set_color("white")
+        sliders_box = QGroupBox()
+        sliders_box.setFlat(True)
+        sliders_box.setStyleSheet("QGroupBox { border: 0; }")
+        sliders_layout = QVBoxLayout(sliders_box)
+        sliders_layout.setContentsMargins(4, 4, 4, 4)
+        sliders_layout.setSpacing(4)
+        sliders_layout.addWidget(s_age)
+        sliders_layout.addWidget(s_mh)
+        sliders_layout.addWidget(s_hshift)
+        sliders_layout.addWidget(s_vshift)
+
+        reset_row = QHBoxLayout()
+        reset_row.addStretch()
+        self.reset_button = QPushButton("Reset")
+        self.reset_button.setFixedWidth(80)
+        self.reset_button.setStyleSheet(
+            "QPushButton { background-color: #455A64; color: white; padding: 4px 10px; }"
+            "QPushButton:hover { background-color: #607D8B; }"
+        )
+        reset_row.addWidget(self.reset_button)
+        sliders_layout.addLayout(reset_row)
+        # _build_plot runs after __init__ set up `self.layout()` (QVBoxLayout
+        # containing the canvas).  Add the slider row to that same layout
+        # so it sits below the canvas.
+        self.layout().addWidget(sliders_box)
 
         self.s_age = s_age
         self.s_mh = s_mh
         self.s_hshift = s_hshift
         self.s_vshift = s_vshift
-        self.reset_button = button
 
-        def update(_):
-            age, mh = s_age.val, s_mh.val
-            h_s, v_s = s_hshift.val, s_vshift.val
+        def update(_=None):
+            age, mh = s_age.value(), s_mh.value()
+            h_s, v_s = s_hshift.value(), s_vshift.value()
 
             # Keep current manual values in sync for subsequent auto-fit runs.
             self.params.P.iso_age_init = float(age)
@@ -381,7 +599,7 @@ class IsochroneViewerWindow(QWidget):
             new_gr, new_g = get_iso_points(age, mh, h_s, v_s)
 
             if len(new_gr) > 0:
-                iso_teff = teff_from_gr(new_gr)
+                iso_teff = teff_from_color(new_gr, b1, b2, teff_vmin, teff_vmax)
                 sc_iso.set_offsets(np.c_[new_gr, new_g])
                 sc_iso.set_array(iso_teff)
             else:
@@ -401,29 +619,46 @@ class IsochroneViewerWindow(QWidget):
                 style_axis_dark(ax_hist)
                 hi = np.percentile(dist, 98)
                 ax_hist.hist(dist, bins=30, range=(0, hi), color="deepskyblue", edgecolor="white", alpha=0.75)
-                ax_hist.set_title(f"Mean Res: {np.mean(dist):.4f}", color="white")
+                ax_hist.set_title(f"Mean Res: {np.mean(dist):.4f}", color="white", pad=10)
             else:
                 res_scat.set_offsets(empty_offsets)
                 ax_hist.clear()
                 style_axis_dark(ax_hist)
-                ax_hist.set_title("No isochrone points", color="white")
+                ax_hist.set_title("No isochrone points", color="white", pad=10)
 
-            ax_cmd.set_title(f"Age: 10^{age:.2f} | [Fe/H]: {mh:.2f} | DM: {v_s:.2f} | {self.extinction_label}: {h_s:.4f}", color="white")
+            base_title = format_cmd_title(
+                self.params,
+                bm,
+                self.color_label,
+                system_label=obs_system,
+                count_text=f"N={len(obs_mag)}",
+            )
+            # Split into two lines so the long parameter readout
+            # doesn't push the title off the left edge of the canvas.
+            ax_cmd.set_title(
+                f"{base_title}\n"
+                f"log(Age)={age:.2f}, [M/H]={mh:.2f}, DM={v_s:.2f}, "
+                f"{self.extinction_label}={h_s:.4f}",
+                color="white",
+                pad=10,
+                fontsize=10,
+            )
             self.canvas.draw_idle()
 
-        def reset(_):
+        def reset(_=None):
             s_age.reset()
             s_mh.reset()
             s_hshift.reset()
             s_vshift.reset()
+            update()
 
-        s_age.on_changed(update)
-        s_mh.on_changed(update)
-        s_hshift.on_changed(update)
-        s_vshift.on_changed(update)
-        button.on_clicked(reset)
+        s_age.valueChanged.connect(update)
+        s_mh.valueChanged.connect(update)
+        s_hshift.valueChanged.connect(update)
+        s_vshift.valueChanged.connect(update)
+        self.reset_button.clicked.connect(reset)
 
-        update(None)
+        update()
 
 
 class IsochroneModelWindow(StepWindowBase):
@@ -434,11 +669,17 @@ class IsochroneModelWindow(StepWindowBase):
         self.viewer = None
         self.iso_path_edit = None
         self.iso_status_label = None
+        self._iso_cache_worker = None
+        self._pending_iso_cache_path = None
         # Data cache – avoids re-reading files on every slider change
         self._cache_key = None          # (iso_path, csv_path)
         self._cached_df = None          # pd.DataFrame
         self._cached_iso_raw = None     # np.ndarray
         self._cached_iso_file = None    # Path
+        self._fitter_cache_key = None
+        self._pending_band_color_text = None
+        self._pending_band_mag_text = None
+        self._active_fit_labels = None
         self._cc_ax = None              # color-color axes cache
         # ZP perpendicular offset from auto-fit
         self._cc_zp_perp = 0.0
@@ -561,10 +802,13 @@ class IsochroneModelWindow(StepWindowBase):
 
         # Internal ROI state
         self._roi_data: dict | None = None
+        self._parallax_auto_range_pending = False
+        self._parallax_unavailable_logged = False
+        self._parallax_range_initialized = False
         self._load_roi_data()
 
         # Connect filter signals
-        self.plx_check.stateChanged.connect(self._on_source_filter_changed)
+        self.plx_check.stateChanged.connect(self._on_parallax_filter_changed)
         self.plx_min_spin.valueChanged.connect(self._on_source_filter_changed)
         self.plx_max_spin.valueChanged.connect(self._on_source_filter_changed)
         self.roi_check.stateChanged.connect(self._on_source_filter_changed)
@@ -617,9 +861,13 @@ class IsochroneModelWindow(StepWindowBase):
 
         cc_layout.addLayout(cc_controls)
 
+        self.cc_source_label = QLabel("Observed: not loaded")
+        self.cc_source_label.setStyleSheet("QLabel { color: #455A64; font-size: 9pt; }")
+        cc_layout.addWidget(self.cc_source_label)
+
         # Action buttons row
         cc_action = QHBoxLayout()
-        btn_cc_autofit = QPushButton("Auto Fit E(B-V)")
+        btn_cc_autofit = QPushButton("Estimate E(B-V)")
         btn_cc_autofit.setStyleSheet(
             "QPushButton { background-color: #00897B; color: white; font-weight: bold; padding: 8px 16px; border-radius: 4px; }"
             "QPushButton:hover { background-color: #00796B; }"
@@ -647,83 +895,82 @@ class IsochroneModelWindow(StepWindowBase):
         fit_tab = QWidget()
         fit_layout = QVBoxLayout(fit_tab)
 
-        # Bounds configuration
-        bounds_group = QGroupBox("Parameter Bounds")
-        bounds_form = QFormLayout(bounds_group)
+        # Search Region (Seed ± Delta)
+        # ──────────────────────────────────────────────────────────────────
+        # Reworked from raw min/max into a "best-guess seed ± tolerance"
+        # form so the user only has to know roughly where the cluster sits
+        # in parameter space.  The fit & grid-scan code still ultimately
+        # works in (low, high) bounds; we compute those from seed ± delta
+        # in `_get_fit_bounds()` below.
+        bounds_group = QGroupBox("Search Region (Seed ± Delta)")
+        bounds_outer = QVBoxLayout(bounds_group)
+        bounds_outer.setContentsMargins(8, 10, 8, 8)
+        bounds_outer.setSpacing(6)
 
-        # log(Age) bounds - M38 is ~200-300 Myr (log age ~8.3-8.5)
-        age_row = QHBoxLayout()
-        self.age_min = QDoubleSpinBox()
-        self.age_min.setRange(6.0, 10.5)
-        self.age_min.setValue(8.0)
-        self.age_min.setDecimals(1)
-        self.age_min.setSingleStep(0.1)
-        age_row.addWidget(QLabel("min:"))
-        age_row.addWidget(self.age_min)
-        self.age_max = QDoubleSpinBox()
-        self.age_max.setRange(6.0, 10.5)
-        self.age_max.setValue(9.0)
-        self.age_max.setDecimals(1)
-        self.age_max.setSingleStep(0.1)
-        age_row.addWidget(QLabel("max:"))
-        age_row.addWidget(self.age_max)
+        seed_hint = QLabel(
+            "Enter a best-guess value and how much it can drift; the grid "
+            "scan and auto-fit explore [seed − Δ, seed + Δ]."
+        )
+        seed_hint.setStyleSheet("QLabel { color: #546E7A; font-style: italic; }")
+        seed_hint.setWordWrap(True)
+        bounds_outer.addWidget(seed_hint)
+
+        bounds_form = QFormLayout()
+        bounds_form.setLabelAlignment(Qt.AlignRight | Qt.AlignVCenter)
+        bounds_form.setHorizontalSpacing(8)
+
+        def _seed_delta_row(seed_default, delta_default, seed_range,
+                            delta_range, decimals, step):
+            row = QHBoxLayout()
+            row.setSpacing(6)
+            seed_spin = QDoubleSpinBox()
+            seed_spin.setRange(*seed_range)
+            seed_spin.setDecimals(decimals)
+            seed_spin.setSingleStep(step)
+            seed_spin.setValue(seed_default)
+            row.addWidget(QLabel("seed:"))
+            row.addWidget(seed_spin)
+            row.addSpacing(6)
+            delta_spin = QDoubleSpinBox()
+            delta_spin.setRange(*delta_range)
+            delta_spin.setDecimals(decimals)
+            delta_spin.setSingleStep(step)
+            delta_spin.setPrefix("± ")
+            delta_spin.setValue(delta_default)
+            row.addWidget(QLabel("Δ:"))
+            row.addWidget(delta_spin)
+            row.addStretch()
+            return row, seed_spin, delta_spin
+
+        age_row, self.age_seed, self.age_delta = _seed_delta_row(
+            seed_default=8.5, delta_default=0.5,
+            seed_range=(6.0, 10.5), delta_range=(0.0, 3.0),
+            decimals=2, step=0.05,
+        )
         bounds_form.addRow("log(Age):", age_row)
 
-        # [M/H] bounds - M38 is near solar
-        mh_row = QHBoxLayout()
-        self.mh_min = QDoubleSpinBox()
-        self.mh_min.setRange(-2.2, 1.0)
-        self.mh_min.setValue(-0.3)
-        self.mh_min.setDecimals(1)
-        self.mh_min.setSingleStep(0.1)
-        mh_row.addWidget(QLabel("min:"))
-        mh_row.addWidget(self.mh_min)
-        self.mh_max = QDoubleSpinBox()
-        self.mh_max.setRange(-2.2, 1.0)
-        self.mh_max.setValue(0.3)
-        self.mh_max.setDecimals(1)
-        self.mh_max.setSingleStep(0.1)
-        mh_row.addWidget(QLabel("max:"))
-        mh_row.addWidget(self.mh_max)
+        mh_row, self.mh_seed, self.mh_delta = _seed_delta_row(
+            seed_default=0.0, delta_default=0.3,
+            seed_range=(-2.2, 1.0), delta_range=(0.0, 2.0),
+            decimals=2, step=0.05,
+        )
         bounds_form.addRow("[M/H]:", mh_row)
 
-        # (m-M) bounds - M38 is ~1000 pc (DM ~10)
-        dm_row = QHBoxLayout()
-        self.dm_min = QDoubleSpinBox()
-        self.dm_min.setRange(0.0, 20.0)
-        self.dm_min.setValue(9.0)
-        self.dm_min.setDecimals(1)
-        self.dm_min.setSingleStep(0.5)
-        dm_row.addWidget(QLabel("min:"))
-        dm_row.addWidget(self.dm_min)
-        self.dm_max = QDoubleSpinBox()
-        self.dm_max.setRange(0.0, 20.0)
-        self.dm_max.setValue(12.0)
-        self.dm_max.setDecimals(1)
-        self.dm_max.setSingleStep(0.5)
-        dm_row.addWidget(QLabel("max:"))
-        dm_row.addWidget(self.dm_max)
+        dm_row, self.dm_seed, self.dm_delta = _seed_delta_row(
+            seed_default=10.5, delta_default=1.5,
+            seed_range=(0.0, 20.0), delta_range=(0.0, 5.0),
+            decimals=2, step=0.1,
+        )
         bounds_form.addRow("(m-M)₀:", dm_row)
 
-        # E(g-r) bounds - M38 has moderate reddening ~0.25
-        egr_row = QHBoxLayout()
-        self.egr_min = QDoubleSpinBox()
-        self.egr_min.setRange(0.0, 1.0)
-        self.egr_min.setValue(0.0)
-        self.egr_min.setDecimals(2)
-        self.egr_min.setSingleStep(0.05)
-        egr_row.addWidget(QLabel("min:"))
-        egr_row.addWidget(self.egr_min)
-        self.egr_max = QDoubleSpinBox()
-        self.egr_max.setRange(0.0, 1.0)
-        self.egr_max.setValue(0.5)
-        self.egr_max.setDecimals(2)
-        self.egr_max.setSingleStep(0.05)
-        egr_row.addWidget(QLabel("max:"))
-        egr_row.addWidget(self.egr_max)
+        egr_row, self.egr_seed, self.egr_delta = _seed_delta_row(
+            seed_default=0.1, delta_default=0.2,
+            seed_range=(-0.2, 1.5), delta_range=(0.0, 1.0),
+            decimals=3, step=0.01,
+        )
         bounds_form.addRow("E(color):", egr_row)
 
-        # SNR minimum - lowered for more stars
+        # SNR minimum (kept as before — applies to the source filter, not the seed grid)
         snr_row = QHBoxLayout()
         self.snr_min_spin = QDoubleSpinBox()
         self.snr_min_spin.setRange(1.0, 100.0)
@@ -733,13 +980,31 @@ class IsochroneModelWindow(StepWindowBase):
         snr_row.addStretch()
         bounds_form.addRow("Min SNR:", snr_row)
 
+        bounds_outer.addLayout(bounds_form)
+
+        seed_btn_row = QHBoxLayout()
+        self.btn_seed_from_viewer = QPushButton("Use CMD viewer values as seed")
+        self.btn_seed_from_viewer.setStyleSheet(
+            "QPushButton { background-color: #455A64; color: white; padding: 6px 12px; }"
+            "QPushButton:hover { background-color: #607D8B; }"
+        )
+        self.btn_seed_from_viewer.setToolTip(
+            "Copy log Age / [Fe/H] / DM / E(color) from the CMD Viewer sliders.\n"
+            "Load the isochrone in the viewer first, drag sliders until the "
+            "isochrone roughly hugs the data, then click here."
+        )
+        self.btn_seed_from_viewer.clicked.connect(self._copy_seed_from_viewer)
+        seed_btn_row.addWidget(self.btn_seed_from_viewer)
+        seed_btn_row.addStretch()
+        bounds_outer.addLayout(seed_btn_row)
+
         fit_layout.addWidget(bounds_group)
 
         # Fitting button (single recommended method)
         btn_group = QGroupBox("Run Fitting")
         btn_layout = QHBoxLayout(btn_group)
 
-        self.btn_autofit = QPushButton("Run Auto Fit (Recommended)\nGlobal + Local refinement")
+        self.btn_autofit = QPushButton("Run Auto Fit\nUse after manual seed")
         self.btn_autofit.setStyleSheet("""
             QPushButton {
                 background-color: #FF9800;
@@ -830,11 +1095,31 @@ class IsochroneModelWindow(StepWindowBase):
         fit_layout.addWidget(results_group)
         fit_layout.addStretch()
 
-        self.auto_fit_tab_index = self.tabs.addTab(fit_tab, "Auto Fit")
+        fit_scroll = QScrollArea()
+        fit_scroll.setWidgetResizable(True)
+        fit_scroll.setFrameShape(QFrame.NoFrame)
+        fit_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAsNeeded)
+        fit_scroll.setVerticalScrollBarPolicy(Qt.ScrollBarAsNeeded)
+        fit_scroll.setWidget(fit_tab)
+        self.auto_fit_tab_index = self.tabs.addTab(fit_scroll, "Auto Fit")
 
         # --- Tab 2: CMD Viewer (default tab) ---
+        # Wrap in QScrollArea — the embedded viewer needs ~560px of
+        # vertical room for toolbar + canvas + slider row; on a 900px
+        # Step 12 window the tab area is only ~500px, so a scrollbar
+        # keeps the slider row reachable without forcing the user to
+        # enlarge the window.
         manual_tab = QWidget()
-        manual_layout = QVBoxLayout(manual_tab)
+        manual_outer = QVBoxLayout(manual_tab)
+        manual_outer.setContentsMargins(0, 0, 0, 0)
+        manual_scroll = QScrollArea()
+        manual_scroll.setWidgetResizable(True)
+        manual_scroll.setFrameShape(QFrame.NoFrame)
+        manual_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAsNeeded)
+        manual_scroll.setVerticalScrollBarPolicy(Qt.ScrollBarAsNeeded)
+
+        manual_inner = QWidget()
+        manual_layout = QVBoxLayout(manual_inner)
         manual_layout.setContentsMargins(6, 6, 6, 6)
 
         self.viewer_container = QWidget()
@@ -849,8 +1134,16 @@ class IsochroneModelWindow(StepWindowBase):
             "Auto Fit results can be applied directly to this viewer."
         )
 
-        self.cmd_viewer_tab_index = self.tabs.addTab(manual_tab, "CMD Viewer")
-        self.tabs.setCurrentIndex(self.cc_tab_index)
+        manual_scroll.setWidget(manual_inner)
+        manual_outer.addWidget(manual_scroll)
+        self.cmd_viewer_tab_index = self.tabs.insertTab(0, manual_tab, "CMD Viewer")
+        self.cc_tab_index = self.tabs.indexOf(cc_tab)
+        self.auto_fit_tab_index = self.tabs.indexOf(fit_scroll)
+        self.tabs.setCurrentIndex(self.cmd_viewer_tab_index)
+        # Lazy load: defer the (slow) CMD Viewer first render until the
+        # user actually opens that tab.  See _on_tab_changed below.
+        self._cmd_viewer_pending = False
+        self.tabs.currentChanged.connect(self._on_tab_changed)
 
         # --- Log Window ---
         log_row = QHBoxLayout()
@@ -908,6 +1201,78 @@ class IsochroneModelWindow(StepWindowBase):
             self._roi_data = None
             self.roi_check.setEnabled(False)
 
+    def _enrich_cmd_gaia_columns(self, df: pd.DataFrame) -> pd.DataFrame:
+        if df is None or df.empty:
+            return df
+        needed = [
+            "source_id", "gaia_source_id",
+            "pmra", "pmdec", "parallax",
+            "pmra_error", "pmdec_error", "parallax_error",
+            "ruwe", "visibility_periods_used",
+            "gaia_pmem", "pmem_gaia", "membership_prob_gaia",
+        ]
+        before_plx = 0
+        if "parallax" in df.columns:
+            before_plx = int(pd.to_numeric(df["parallax"], errors="coerce").notna().sum())
+        try:
+            out = merge_gaia_columns_from_catalog(df, Path(self.params.P.result_dir), needed)
+        except Exception as exc:
+            self.log(f"[Source filters] Gaia enrichment skipped: {exc}")
+            return df
+        after_plx = 0
+        if "parallax" in out.columns:
+            after_plx = int(pd.to_numeric(out["parallax"], errors="coerce").notna().sum())
+        if after_plx > before_plx:
+            self.log(f"[Source filters] Gaia astrometry attached: parallax={after_plx}/{len(out)}")
+            self._parallax_unavailable_logged = False
+        return out
+
+    def _set_parallax_range(self, plx_min: float, plx_max: float):
+        if not np.isfinite(plx_min) or not np.isfinite(plx_max):
+            return
+        if plx_min > plx_max:
+            plx_min, plx_max = plx_max, plx_min
+        lo = max(float(self.plx_min_spin.minimum()), float(plx_min))
+        hi = min(float(self.plx_max_spin.maximum()), float(plx_max))
+        if lo >= hi:
+            pad = max(0.05, abs(float(plx_min)) * 0.05)
+            lo = max(float(self.plx_min_spin.minimum()), float(plx_min) - pad)
+            hi = min(float(self.plx_max_spin.maximum()), float(plx_max) + pad)
+        for widget in (self.plx_min_spin, self.plx_max_spin):
+            widget.blockSignals(True)
+        self.plx_min_spin.setValue(lo)
+        self.plx_max_spin.setValue(hi)
+        for widget in (self.plx_min_spin, self.plx_max_spin):
+            widget.blockSignals(False)
+
+    def _auto_set_parallax_range(self, plx: np.ndarray) -> bool:
+        finite = np.isfinite(plx)
+        if int(finite.sum()) == 0:
+            return False
+        vals = plx[finite]
+        center = float(np.nanmedian(vals))
+        mad = float(np.nanmedian(np.abs(vals - center)))
+        robust_sigma = 1.4826 * mad if np.isfinite(mad) and mad > 0 else 0.0
+        half_width = max(0.5, 4.0 * robust_sigma)
+        half_width = min(5.0, half_width)
+        self._set_parallax_range(center - half_width, center + half_width)
+        return True
+
+    def _initialize_parallax_range(self, df: pd.DataFrame, force: bool = False) -> bool:
+        if self._parallax_range_initialized and not force:
+            return False
+        if df is None or df.empty or "parallax" not in df.columns:
+            return False
+        plx = pd.to_numeric(df["parallax"], errors="coerce").to_numpy(float)
+        if self._auto_set_parallax_range(plx):
+            self._parallax_range_initialized = True
+            return True
+        return False
+
+    def _on_parallax_filter_changed(self):
+        self._parallax_auto_range_pending = self.plx_check.isChecked()
+        self._on_source_filter_changed()
+
     def _apply_source_filters(self, df: pd.DataFrame) -> pd.DataFrame:
         """Return a filtered copy of df based on parallax and ROI settings."""
         if df is None:
@@ -915,11 +1280,37 @@ class IsochroneModelWindow(StepWindowBase):
         mask = np.ones(len(df), dtype=bool)
 
         # Parallax filter
-        if self.plx_check.isChecked() and "parallax" in df.columns:
-            plx = pd.to_numeric(df["parallax"], errors="coerce").to_numpy(float)
-            plx_min = float(self.plx_min_spin.value())
-            plx_max = float(self.plx_max_spin.value())
-            mask &= np.isfinite(plx) & (plx >= plx_min) & (plx <= plx_max)
+        if self.plx_check.isChecked():
+            if "parallax" not in df.columns:
+                self.plx_check.blockSignals(True)
+                self.plx_check.setChecked(False)
+                self.plx_check.blockSignals(False)
+                if not self._parallax_unavailable_logged:
+                    self.log(
+                        "[Source filters] Parallax filter disabled: parallax column is unavailable. "
+                        "Rerun Step 10 or ensure Step 5 Gaia cache exists."
+                    )
+                    self._parallax_unavailable_logged = True
+                self._parallax_auto_range_pending = False
+            else:
+                plx = pd.to_numeric(df["parallax"], errors="coerce").to_numpy(float)
+                plx_min = float(self.plx_min_spin.value())
+                plx_max = float(self.plx_max_spin.value())
+                plx_mask = np.isfinite(plx) & (plx >= plx_min) & (plx <= plx_max)
+                default_range = abs(plx_min + 0.5) < 1e-6 and abs(plx_max - 0.5) < 1e-6
+                if int(np.isfinite(plx).sum()) > 0 and int(plx_mask.sum()) < 5 and (
+                    self._parallax_auto_range_pending or default_range
+                ):
+                    if self._auto_set_parallax_range(plx):
+                        plx_min = float(self.plx_min_spin.value())
+                        plx_max = float(self.plx_max_spin.value())
+                        plx_mask = np.isfinite(plx) & (plx >= plx_min) & (plx <= plx_max)
+                        self.log(
+                            "[Source filters] Parallax range auto-centered: "
+                            f"{plx_min:.3f}..{plx_max:.3f} mas ({int(plx_mask.sum())} stars)"
+                        )
+                self._parallax_auto_range_pending = False
+                mask &= plx_mask
 
         # ROI filter
         if self.roi_check.isChecked() and self._roi_data is not None:
@@ -949,6 +1340,7 @@ class IsochroneModelWindow(StepWindowBase):
 
     def _on_source_filter_changed(self):
         """Called when any source filter widget changes."""
+        self._clear_fit_outputs("Source filters changed; rerun fit for the filtered CMD sample.")
         self._cc_ax = None          # force full redraw of color-color plot
         self._update_cc_plot()
         self.refresh_cmd_viewer(show_error=False)
@@ -962,21 +1354,106 @@ class IsochroneModelWindow(StepWindowBase):
         return iso_path
 
     def _get_band_config(self):
-        """Return current band selection as a dict."""
-        color_text = self.color_combo.currentText()  # e.g. "g-r"
+        """Return current band selection. Iso/R values are ``None`` for unsupported filters.
+
+        Use :meth:`_require_iso_config` to validate before fitting / iso-dependent work.
+        """
+        color_text = self.color_combo.currentText()
         parts = color_text.split("-")
         b1, b2 = parts[0].strip(), parts[1].strip()
         bm = self.mag_combo.currentText().strip()
         return {
-            "band_color": (b1, b2),
-            "band_mag": bm,
-            "iso_col_1": SDSS_ISO_COL.get(b1, 29),
-            "iso_col_2": SDSS_ISO_COL.get(b2, 30),
-            "iso_col_mag": SDSS_ISO_COL.get(bm, SDSS_ISO_COL.get(b1, 29)),
-            "R_band1": EXTINCTION_R.get(b1, EXTINCTION_R.get(b1.upper(), 3.116)),
-            "R_band2": EXTINCTION_R.get(b2, EXTINCTION_R.get(b2.upper(), 3.116)),
-            "R_mag":   EXTINCTION_R.get(bm, EXTINCTION_R.get(bm.upper(), 3.116)),
+            "band_color":  (b1, b2),
+            "band_mag":    bm,
+            "iso_col_1":   SDSS_ISO_COL.get(b1),
+            "iso_col_2":   SDSS_ISO_COL.get(b2),
+            "iso_col_mag": SDSS_ISO_COL.get(bm),
+            "R_band1":     EXTINCTION_R.get(b1),
+            "R_band2":     EXTINCTION_R.get(b2),
+            "R_mag":       EXTINCTION_R.get(bm),
         }
+
+    def _require_iso_config(self, bc: dict) -> bool:
+        """Validate band config for iso fitting. Show user dialog and return False on miss."""
+        b1, b2 = bc["band_color"]
+        bm     = bc["band_mag"]
+        missing_iso = [b for b, k in ((b1,"iso_col_1"), (b2,"iso_col_2"), (bm,"iso_col_mag"))
+                       if bc[k] is None]
+        missing_R   = [b for b, k in ((b1,"R_band1"),   (b2,"R_band2"),   (bm,"R_mag"))
+                       if bc[k] is None]
+        if not missing_iso and not missing_R:
+            return True
+        parts = []
+        if missing_iso:
+            parts.append(f"PARSEC isochrone 컬럼 매핑 없음: {', '.join(missing_iso)}")
+        if missing_R:
+            parts.append(f"소광 계수 R(Cardelli) 없음: {', '.join(missing_R)}")
+        parts.append("step12_isochrone_model.py 상단 PARSEC_ISO_COL / EXTINCTION_R에 추가하거나 "
+                     "다른 필터 조합을 선택하세요.")
+        QMessageBox.warning(self, "지원되지 않는 필터", "\n\n".join(parts))
+        return False
+
+    def _current_fit_labels(self) -> dict[str, str]:
+        """Return display labels for the active CMD axes."""
+        bc = self._get_band_config()
+        b1, b2 = bc["band_color"]
+        bm = bc["band_mag"]
+        color_label = f"{b1}-{b2}"
+        return {
+            "extinction_label": f"E({color_label})",
+            "color_label": color_label,
+            "mag_label": bm,
+        }
+
+    def _annotate_fit_result(self, result: Optional[FitResult]) -> None:
+        """Attach current CMD-axis labels to a fit result before displaying/exporting."""
+        if result is None:
+            return
+        labels = self._current_fit_labels()
+        result.extinction_label = labels["extinction_label"]
+        result.color_label = labels["color_label"]
+        result.mag_label = labels["mag_label"]
+
+    def _fit_result_matches_current_axes(self) -> bool:
+        if self.fit_result is None:
+            return False
+        labels = self._current_fit_labels()
+        return (
+            getattr(self.fit_result, "color_label", "") == labels["color_label"]
+            and getattr(self.fit_result, "mag_label", "") == labels["mag_label"]
+            and getattr(self.fit_result, "extinction_label", "") == labels["extinction_label"]
+        )
+
+    def _remove_grid_heatmap_tab(self) -> None:
+        if not hasattr(self, "tabs"):
+            return
+        for i in range(self.tabs.count()):
+            if self.tabs.tabText(i) == "Grid Heatmap":
+                self.tabs.removeTab(i)
+                break
+        self.heatmap_tab_index = None
+
+    def _clear_fit_outputs(self, reason: str = "", reset_fitter: bool = False) -> None:
+        """Clear fit-dependent outputs so stale results cannot be exported/applied."""
+        self.fit_result = None
+        self.grid_scan_result = None
+        self._active_fit_labels = None
+        if reset_fitter:
+            self.fitter = None
+            self._fitter_cache_key = None
+        if hasattr(self, "btn_apply"):
+            self.btn_apply.setEnabled(False)
+        if hasattr(self, "btn_export"):
+            self.btn_export.setEnabled(False)
+        if hasattr(self, "btn_membership"):
+            self.btn_membership.setEnabled(False)
+        if hasattr(self, "results_text") and reason:
+            self.results_text.clear()
+            self.results_text.setPlaceholderText(f"Fit results cleared: {reason}")
+        if hasattr(self, "progress_label") and reason:
+            self.progress_label.setText(reason)
+        if hasattr(self, "heatmap_tab_index"):
+            self._remove_grid_heatmap_tab()
 
     def _default_iso_dir(self) -> Path:
         preferred = Path.cwd() / "isochrone" / "PARSEC"
@@ -1102,6 +1579,7 @@ class IsochroneModelWindow(StepWindowBase):
 
     def _on_band_changed(self):
         """Refresh CMD viewer when band selection changes."""
+        self._clear_fit_outputs("Band selection changed; rerun fit for the selected CMD axes.", reset_fitter=True)
         if self._get_iso_path():
             self.refresh_cmd_viewer(show_error=False)
 
@@ -1132,20 +1610,21 @@ class IsochroneModelWindow(StepWindowBase):
             return self._cached_df, self._cached_iso_raw, self._cached_iso_file
 
         try:
-            df = pd.read_csv(wide_path)
+            df = pd.read_csv(wide_path, dtype={"source_id": str, "gaia_source_id": str})
         except Exception as e:
             if show_error:
                 QMessageBox.critical(self, "Error", f"Failed to load CMD data: {e}")
             return None, None, None
+        df = self._enrich_cmd_gaia_columns(df)
+        self._initialize_parallax_range(df)
 
         try:
             app = QApplication.instance()
             if app is not None:
                 app.setOverrideCursor(Qt.WaitCursor)
                 app.processEvents()
-            iso_raw = np.genfromtxt(iso_file, comments="#")
-            iso_raw = iso_raw[~np.isnan(iso_raw).any(axis=1)]
-            if iso_raw.size == 0:
+            iso_raw = self._load_iso_raw_fast(Path(iso_file))
+            if iso_raw is None or iso_raw.size == 0:
                 if show_error:
                     QMessageBox.warning(self, "Data Error", "Isochrone file is empty")
                 return None, None, None
@@ -1166,12 +1645,61 @@ class IsochroneModelWindow(StepWindowBase):
 
         return df, iso_raw, iso_file
 
+    def _load_iso_raw_fast(self, iso_file: Path) -> Optional[np.ndarray]:
+        """Load a PARSEC isochrone table quickly, with an on-disk .npy cache.
+
+        The text PARSEC files we work with are 400 MB / 1.5 M rows; running
+        ``np.genfromtxt`` on every Step 12 open burned ~30 s and froze the
+        window.  This helper:
+
+          * Uses ``np.loadtxt`` (≈3× faster than genfromtxt on the same data).
+          * Saves a binary ``.apex.npy`` sidecar next to the source file —
+            subsequent loads are <100 ms regardless of file size, and the
+            cache is auto-invalidated when the source's mtime/size changes.
+
+        Falls back to the slow text parse if the cache is unreadable or
+        the sidecar cannot be written (read-only directory).
+        """
+        cache_path = iso_file.with_suffix(iso_file.suffix + ".apex.npy")
+        try:
+            src_stat = iso_file.stat()
+        except OSError:
+            return None
+
+        if cache_path.exists():
+            try:
+                cache_stat = cache_path.stat()
+                if (
+                    cache_stat.st_mtime_ns >= src_stat.st_mtime_ns
+                    and cache_stat.st_size > 0
+                ):
+                    arr = np.load(cache_path, allow_pickle=False)
+                    if arr.ndim == 2 and arr.size > 0:
+                        return arr
+            except Exception:
+                pass  # corrupt cache → fall through to rebuild
+
+        arr = np.loadtxt(iso_file, comments="#")
+        if arr.ndim == 1:
+            arr = arr.reshape(1, -1)
+        arr = arr[~np.isnan(arr).any(axis=1)]
+
+        try:
+            cache_path.parent.mkdir(parents=True, exist_ok=True)
+            np.save(cache_path, arr, allow_pickle=False)
+        except Exception:
+            pass  # cache write failure is non-fatal
+
+        return arr
+
     def _invalidate_cache(self):
         """Force reload on next access (call after file change)."""
         self._cache_key = None
         self._cached_df = None
         self._cached_iso_raw = None
         self._cached_iso_file = None
+        self._fitter_cache_key = None
+        self.fitter = None
         self._cc_ax = None  # force full redraw of color-color plot
 
     def _show_viewer_placeholder(self, message: str):
@@ -1194,10 +1722,12 @@ class IsochroneModelWindow(StepWindowBase):
         self.viewer = None
 
     def _repopulate_band_combos(self, df: "pd.DataFrame") -> None:
-        """Repopulate color/mag combos from mag_std_* columns in df."""
+        """Repopulate color/mag combos from calibrated columns in df."""
         pairs, bands = _bands_from_df(df)
-        prev_color = self.color_combo.currentText()
-        prev_mag   = self.mag_combo.currentText()
+        pending_color = getattr(self, "_pending_band_color_text", None)
+        pending_mag = getattr(self, "_pending_band_mag_text", None)
+        prev_color = pending_color or self.color_combo.currentText()
+        prev_mag   = pending_mag or self.mag_combo.currentText()
 
         self.color_combo.blockSignals(True)
         self.mag_combo.blockSignals(True)
@@ -1212,6 +1742,8 @@ class IsochroneModelWindow(StepWindowBase):
         self.mag_combo.setCurrentIndex(max(idx_m, 0))
         self.color_combo.blockSignals(False)
         self.mag_combo.blockSignals(False)
+        self._pending_band_color_text = None
+        self._pending_band_mag_text = None
 
     def refresh_cmd_viewer(self, show_error=True) -> bool:
         df, iso_raw, iso_file = self._load_cmd_and_iso_data(show_error=show_error)
@@ -1225,10 +1757,25 @@ class IsochroneModelWindow(StepWindowBase):
         df = self._apply_source_filters(df)
         self._clear_viewer_widget()
         bc = self._get_band_config()
+        missing_iso = [
+            b for b, k in (
+                (bc["band_color"][0], "iso_col_1"),
+                (bc["band_color"][1], "iso_col_2"),
+                (bc["band_mag"], "iso_col_mag"),
+            )
+            if bc[k] is None
+        ]
+        if missing_iso:
+            self.log(
+                "[CMD viewer] PARSEC 컬럼 매핑 없음 "
+                f"({', '.join(missing_iso)}) — 아이소크론 뷰어를 표시하지 않습니다."
+            )
+            return False
         viewer = IsochroneViewerWindow(
             df, iso_raw, self.params, self.viewer_container, embedded=True,
             band_mag=bc["band_mag"], band_color=bc["band_color"],
             iso_col_1=bc["iso_col_1"], iso_col_2=bc["iso_col_2"],
+            iso_col_mag=bc["iso_col_mag"],
         )
         self.viewer_layout.addWidget(viewer, stretch=1)
         self.viewer = viewer
@@ -1271,6 +1818,46 @@ class IsochroneModelWindow(StepWindowBase):
     # Color-Color Diagram
     # =========================================================================
 
+    def _get_cc_bands(self, df: "pd.DataFrame"):
+        """Return (b1, b2, b3) — three wavelength-adjacent bands for the cc diagram, or None.
+
+        Prefers calibrated bands; falls back to instrumental.  When the
+        user has already chosen an X color in the main fit panel, the first two
+        bands match that choice so the cc diagram stays consistent.
+        """
+        from apex.utils.gaia_transforms import filter_bands_from_columns
+        bands = (
+            filter_bands_from_columns(df.columns, "mag_cal_")
+            or filter_bands_from_columns(df.columns, "mag_std_")
+            or filter_bands_from_columns(df.columns, "mag_inst_")
+        )
+        if len(bands) < 3:
+            return None
+
+        sel = self.color_combo.currentText().split("-") if hasattr(self, "color_combo") else []
+        if len(sel) == 2 and sel[0] in bands and sel[1] in bands:
+            b1, b2 = sel
+            i2 = bands.index(b2)
+            if i2 + 1 < len(bands):
+                return (b1, b2, bands[i2 + 1])
+            if i2 - 2 >= 0:
+                return (bands[i2 - 2], bands[i2 - 1], b2)
+        return tuple(bands[:3])
+
+    def _get_cc_mag_data(self, df: "pd.DataFrame", bands: tuple[str, str, str]):
+        arrays = []
+        systems = []
+        cols = []
+        for band in bands:
+            col, label = _preferred_mag_col(df.columns, band)
+            if col is None:
+                return None, None, None
+            arrays.append(df[col].to_numpy(float))
+            systems.append(label)
+            cols.append(col)
+        system_label = systems[0] if all(s == systems[0] for s in systems) else "Mixed"
+        return arrays, system_label, cols
+
     def _update_cc_plot(self):
         """Draw/update the color-color diagram (cached – fast on slider changes)."""
         df, iso_raw, iso_file = self._load_cmd_and_iso_data(show_error=False)
@@ -1278,194 +1865,195 @@ class IsochroneModelWindow(StepWindowBase):
             return
         df = self._apply_source_filters(df)
 
-        # ---- First draw: full rebuild ----
-        need_full = not hasattr(self, "_cc_ax") or self._cc_ax is None
+        cc_bands = self._get_cc_bands(df)
+        cc_mag_data = self._get_cc_mag_data(df, cc_bands) if cc_bands is not None else (None, None, None)
+        cc_arrays, cc_system_label, cc_cols = cc_mag_data
+        cc_signature = (cc_bands, cc_system_label, tuple(cc_cols or []))
+
+        need_full = not hasattr(self, "_cc_ax") or self._cc_ax is None or \
+                    getattr(self, "_cc_signature_drawn", None) != cc_signature
 
         if need_full:
             self.cc_fig.clear()
             ax = self.cc_fig.add_subplot(111)
             self._cc_ax = ax
+            self._cc_signature_drawn = cc_signature
 
-            # Observed colors: (g-r) vs (r-i)
-            def _get(band):
-                s = f"mag_std_{band}"
-                i = f"mag_inst_{band}"
-                if s in df.columns:
-                    return df[s].to_numpy(float)
-                if i in df.columns:
-                    return df[i].to_numpy(float)
-                return None
-
-            obs_g = _get("g")
-            obs_r = _get("r")
-            obs_i = _get("i")
-            if obs_g is None or obs_r is None or obs_i is None:
-                ax.text(0.5, 0.5, "Need g, r, i bands for color-color diagram",
+            if cc_bands is None:
+                ax.text(0.5, 0.5, "Need at least 3 filters for color-color diagram",
                         ha='center', va='center', transform=ax.transAxes, fontsize=12)
                 self.cc_canvas.draw()
                 return
 
-            obs_gr = obs_g - obs_r
-            obs_ri = obs_r - obs_i
-            mask = np.isfinite(obs_gr) & np.isfinite(obs_ri)
-            obs_gr, obs_ri = obs_gr[mask], obs_ri[mask]
+            b1, b2, b3 = cc_bands
 
-            ax.scatter(obs_ri, obs_gr, s=3, alpha=0.6, color="gray", label="Observed", zorder=1)
-            ax.set_xlabel("(r - i)", fontsize=12)
-            ax.set_ylabel("(g - r)", fontsize=12)
+            if cc_arrays is None:
+                ax.text(0.5, 0.5, f"Missing band data for {b1}/{b2}/{b3}",
+                        ha='center', va='center', transform=ax.transAxes, fontsize=12)
+                self.cc_canvas.draw()
+                return
+
+            m1, m2, m3 = cc_arrays
+            c_y = m1 - m2   # e.g. B-V
+            c_x = m2 - m3   # e.g. V-R
+            mask = np.isfinite(c_y) & np.isfinite(c_x)
+            ax.scatter(c_x[mask], c_y[mask], s=3, alpha=0.6, color="gray", label=f"Observed ({cc_system_label})", zorder=1)
+            ax.set_xlabel(f"{cc_system_label} ({b2} - {b3})", fontsize=12)
+            ax.set_ylabel(f"{cc_system_label} ({b1} - {b2})", fontsize=12)
             ax.grid(True, linestyle=":", alpha=0.4)
 
-            # Placeholder artists for isochrone lines (updated below)
             self._cc_line_unred, = ax.plot([], [], 'c-', lw=1.5, alpha=0.7, label="Unreddened isochrone", zorder=2)
-            self._cc_line_red, = ax.plot([], [], 'r-', lw=2.0, alpha=0.9, zorder=3)
+            self._cc_line_red,   = ax.plot([], [], 'r-', lw=2.0, alpha=0.9, zorder=3)
             self._cc_arrow = None
             ax.legend(loc="upper left", fontsize=9)
             self.cc_fig.tight_layout()
 
         ax = self._cc_ax
+        if cc_bands is None:
+            return
 
-        # ---- Update isochrone lines (fast path) ----
+        b1, b2, b3 = cc_bands
+        if hasattr(self, "cc_source_label"):
+            cols_text = ", ".join(cc_cols or [])
+            self.cc_source_label.setText(
+                f"Observed: {cc_system_label} magnitudes | X=({b2}-{b3}), Y=({b1}-{b2}) | {cols_text}"
+            )
+
         ref_age = self.cc_age_spin.value()
-        ref_mh = self.cc_mh_spin.value()
-        col_g = SDSS_ISO_COL["g"]
-        col_r = SDSS_ISO_COL["r"]
-        col_i = SDSS_ISO_COL["i"]
+        ref_mh  = self.cc_mh_spin.value()
+        col_1 = SDSS_ISO_COL.get(b1)
+        col_2 = SDSS_ISO_COL.get(b2)
+        col_3 = SDSS_ISO_COL.get(b3)
+        if col_1 is None or col_2 is None or col_3 is None:
+            target = target_display_name(self.params)
+            ax.set_title(f"{target} - Color-Color: no PARSEC column mapping for {b1}/{b2}/{b3}")
+            self.cc_canvas.draw_idle()
+            return
 
         available_ages = np.unique(iso_raw[:, 2])
-        available_mhs = np.unique(iso_raw[:, 1])
+        available_mhs  = np.unique(iso_raw[:, 1])
         nearest_age = float(available_ages[np.argmin(np.abs(available_ages - ref_age))])
-        nearest_mh = float(available_mhs[np.argmin(np.abs(available_mhs - ref_mh))])
-
+        nearest_mh  = float(available_mhs[np.argmin(np.abs(available_mhs - ref_mh))])
         iso_mask = (iso_raw[:, 2] == nearest_age) & (iso_raw[:, 1] == nearest_mh)
-        iso_sub = iso_raw[iso_mask]
+        iso_sub  = iso_raw[iso_mask]
 
         if len(iso_sub) > 0:
-            iso_g = iso_sub[:, col_g]
-            iso_r = iso_sub[:, col_r]
-            iso_i = iso_sub[:, col_i]
-            iso_gr0 = iso_g - iso_r
-            iso_ri0 = iso_r - iso_i
+            i1, i2, i3 = iso_sub[:, col_1], iso_sub[:, col_2], iso_sub[:, col_3]
+            cy0 = i1 - i2
+            cx0 = i2 - i3
+            sort_idx = np.argsort(cx0)
+            cy0, cx0 = cy0[sort_idx], cx0[sort_idx]
+            self._cc_line_unred.set_data(cx0, cy0)
 
-            sort_idx = np.argsort(iso_ri0)
-            iso_gr0 = iso_gr0[sort_idx]
-            iso_ri0 = iso_ri0[sort_idx]
-
-            self._cc_line_unred.set_data(iso_ri0, iso_gr0)
-
-            ebv = self.cc_ebv_spin.value()
-            R_g, R_r, R_i = SDSS_R["g"], SDSS_R["r"], SDSS_R["i"]
-            dEgr = (R_g - R_r) * ebv
-            dEri = (R_r - R_i) * ebv
-
-            self._cc_line_red.set_data(iso_ri0 + dEri, iso_gr0 + dEgr)
+            ebv  = self.cc_ebv_spin.value()
+            R1   = EXTINCTION_R.get(b1, 3.0)
+            R2   = EXTINCTION_R.get(b2, 3.0)
+            R3   = EXTINCTION_R.get(b3, 3.0)
+            dEy  = (R1 - R2) * ebv
+            dEx  = (R2 - R3) * ebv
+            self._cc_line_red.set_data(cx0 + dEx, cy0 + dEy)
             self._cc_line_red.set_label(f"Reddened E(B-V)={ebv:.4f}")
 
-            # Reddening vector arrow
             if self._cc_arrow is not None:
                 self._cc_arrow.remove()
                 self._cc_arrow = None
-            mid = len(iso_ri0) // 3
-            if mid < len(iso_ri0) and ebv > 1e-6:
+            mid = len(cx0) // 3
+            if mid < len(cx0) and ebv > 1e-6:
                 self._cc_arrow = ax.annotate(
-                    "", xy=(iso_ri0[mid] + dEri, iso_gr0[mid] + dEgr),
-                    xytext=(iso_ri0[mid], iso_gr0[mid]),
+                    "", xy=(cx0[mid] + dEx, cy0[mid] + dEy),
+                    xytext=(cx0[mid], cy0[mid]),
                     arrowprops=dict(arrowstyle="->", color="yellow", lw=2))
 
             self.cc_result_label.setText(
-                f"E(B-V)={ebv:.4f}  |  E(g-r)={dEgr:.4f}  |  E(r-i)={dEri:.4f}"
+                f"E(B-V)={ebv:.4f}  |  E({b1}-{b2})={dEy:.4f}  |  E({b2}-{b3})={dEx:.4f}"
             )
 
-        ax.set_title(f"Color-Color Diagram  |  ref: log(Age)={nearest_age:.2f}, [M/H]={nearest_mh:.2f}")
+        target = target_display_name(self.params)
+        ax.set_title(
+            f"{target} - Color-Color {cc_system_label}: ({b1}-{b2}) vs ({b2}-{b3})  |  "
+            f"log(Age)={nearest_age:.2f}, [M/H]={nearest_mh:.2f}"
+        )
         ax.legend(loc="upper left", fontsize=9)
         self.cc_canvas.draw_idle()
 
     def _autofit_ebv(self):
-        """Auto-fit E(B-V) by sliding the isochrone along the reddening vector
-        and minimising the median distance to the observed stellar locus."""
+        """Auto-fit E(B-V) by sliding the isochrone along the reddening vector."""
         df, iso_raw, _ = self._load_cmd_and_iso_data(show_error=True)
         if df is None or iso_raw is None:
             return
         df = self._apply_source_filters(df)
 
-        def _get(band):
-            s = f"mag_std_{band}"
-            i = f"mag_inst_{band}"
-            if s in df.columns:
-                return df[s].to_numpy(float)
-            if i in df.columns:
-                return df[i].to_numpy(float)
-            return None
+        cc_bands = self._get_cc_bands(df)
+        if cc_bands is None:
+            QMessageBox.warning(self, "Missing Data", "Need at least 3 filter bands for color-color fitting")
+            return
+        b1, b2, b3 = cc_bands
 
-        obs_g, obs_r, obs_i = _get("g"), _get("r"), _get("i")
-        if obs_g is None or obs_r is None or obs_i is None:
-            QMessageBox.warning(self, "Missing Data", "Need g, r, i bands for color-color fitting")
+        col_1 = SDSS_ISO_COL.get(b1)
+        col_2 = SDSS_ISO_COL.get(b2)
+        col_3 = SDSS_ISO_COL.get(b3)
+        if col_1 is None or col_2 is None or col_3 is None:
+            QMessageBox.warning(self, "Missing Data",
+                                f"No PARSEC column mapping for {b1}/{b2}/{b3}.\n"
+                                "Download a PARSEC isochrone matching your filter system.")
             return
 
-        obs_gr = obs_g - obs_r
-        obs_ri = obs_r - obs_i
-        mask = np.isfinite(obs_gr) & np.isfinite(obs_ri)
-        obs_gr, obs_ri = obs_gr[mask], obs_ri[mask]
+        cc_arrays, cc_system_label, _ = self._get_cc_mag_data(df, cc_bands)
+        if cc_arrays is None:
+            QMessageBox.warning(self, "Missing Data", f"Missing magnitude data for {b1}/{b2}/{b3}")
+            return
+        m1, m2, m3 = cc_arrays
 
-        # Get reference isochrone locus
+        cy_obs = m1 - m2
+        cx_obs = m2 - m3
+        mask = np.isfinite(cy_obs) & np.isfinite(cx_obs)
+        cy_obs, cx_obs = cy_obs[mask], cx_obs[mask]
+
         ref_age = self.cc_age_spin.value()
-        ref_mh = self.cc_mh_spin.value()
+        ref_mh  = self.cc_mh_spin.value()
         available_ages = np.unique(iso_raw[:, 2])
-        available_mhs = np.unique(iso_raw[:, 1])
+        available_mhs  = np.unique(iso_raw[:, 1])
         nearest_age = float(available_ages[np.argmin(np.abs(available_ages - ref_age))])
-        nearest_mh = float(available_mhs[np.argmin(np.abs(available_mhs - ref_mh))])
-
+        nearest_mh  = float(available_mhs[np.argmin(np.abs(available_mhs - ref_mh))])
         iso_mask = (iso_raw[:, 2] == nearest_age) & (iso_raw[:, 1] == nearest_mh)
-        iso_sub = iso_raw[iso_mask]
+        iso_sub  = iso_raw[iso_mask]
         if len(iso_sub) < 10:
             QMessageBox.warning(self, "No Data", "Not enough isochrone points for this age/[M/H]")
             return
 
-        iso_g = iso_sub[:, SDSS_ISO_COL["g"]]
-        iso_r = iso_sub[:, SDSS_ISO_COL["r"]]
-        iso_i = iso_sub[:, SDSS_ISO_COL["i"]]
-        iso_gr0 = iso_g - iso_r
-        iso_ri0 = iso_r - iso_i
+        cy0 = iso_sub[:, col_1] - iso_sub[:, col_2]
+        cx0 = iso_sub[:, col_2] - iso_sub[:, col_3]
 
-        R_g, R_r, R_i = SDSS_R["g"], SDSS_R["r"], SDSS_R["i"]
-        dgr_per_ebv = R_g - R_r   # E(g-r) per E(B-V) = 1.018
-        dri_per_ebv = R_r - R_i   # E(r-i) per E(B-V) = 0.587
+        R1, R2, R3 = EXTINCTION_R.get(b1, 3.0), EXTINCTION_R.get(b2, 3.0), EXTINCTION_R.get(b3, 3.0)
+        dy_per_ebv = R1 - R2
+        dx_per_ebv = R2 - R3
 
-        obs_pts = np.column_stack([obs_ri, obs_gr])
-
-        # --- Slide isochrone along reddening vector ---
-        # Metric: Gaussian kernel overlap (obs → iso)
+        obs_pts = np.column_stack([cx_obs, cy_obs])
         sigma = 0.05
         ebv_trials = np.linspace(-0.1, 1.5, 800)
         scores = np.empty(len(ebv_trials))
         for j, ebv in enumerate(ebv_trials):
-            shifted = np.column_stack([iso_ri0 + dri_per_ebv * ebv,
-                                       iso_gr0 + dgr_per_ebv * ebv])
+            shifted = np.column_stack([cx0 + dx_per_ebv * ebv, cy0 + dy_per_ebv * ebv])
             iso_tree = cKDTree(shifted)
             dist, _ = iso_tree.query(obs_pts)
             scores[j] = np.sum(np.exp(-0.5 * (dist / sigma) ** 2))
 
-        best_idx = int(np.argmax(scores))
-        best_ebv = float(ebv_trials[best_idx])
-        best_ebv = max(0.0, best_ebv)
-
-        # Reset ZP offset (manual visual adjustment only)
+        best_ebv = max(0.0, float(ebv_trials[int(np.argmax(scores))]))
         self._cc_zp_perp = 0.0
         self._cc_perp_norm = np.array([0.0, 0.0])
-
         self.cc_ebv_spin.setValue(best_ebv)
 
-        # Warn if reddening is small (calibration errors may dominate)
-        warning = ""
-        if best_ebv < 0.1:
-            warning = " ⚠ Low E(B-V): result may be unreliable — use literature value"
-        self.log(f"Color-color auto-fit: E(B-V)={best_ebv:.4f}, "
-                 f"E(g-r)={dgr_per_ebv * best_ebv:.4f}, "
-                 f"E(r-i)={dri_per_ebv * best_ebv:.4f}{warning}")
+        warning = " ⚠ Low E(B-V): result may be unreliable" if best_ebv < 0.1 else ""
+        self.log(f"Color-color estimate ({cc_system_label}): E(B-V)={best_ebv:.4f}, "
+                 f"E({b1}-{b2})={dy_per_ebv * best_ebv:.4f}, "
+                 f"E({b2}-{b3})={dx_per_ebv * best_ebv:.4f}{warning}")
 
     def _apply_ebv_to_bounds(self):
         """Apply the determined E(B-V) to the fitting bounds as E(color)."""
         ebv = self.cc_ebv_spin.value()
         bc = self._get_band_config()
+        if not self._require_iso_config(bc):
+            return
         R1 = bc["R_band1"]
         R2 = bc["R_band2"]
         e_color = (R1 - R2) * ebv
@@ -1499,17 +2087,17 @@ class IsochroneModelWindow(StepWindowBase):
         b1, b2 = bc["band_color"]
         bm = bc["band_mag"]
 
-        def _get_col(band, prefer_std=True):
-            std = f"mag_std_{band}"
-            inst = f"mag_inst_{band}"
-            err = f"mag_inst_err_{band}"
-            if prefer_std and std in self.cmd_df.columns:
-                vals = self.cmd_df[std].to_numpy(float)
-            elif inst in self.cmd_df.columns:
-                vals = self.cmd_df[inst].to_numpy(float)
-            else:
+        def _get_col(band):
+            mag_col, _ = _preferred_mag_col(self.cmd_df.columns, band)
+            if mag_col is None:
                 return None, None
-            errs = self.cmd_df.get(err, pd.Series(np.full(len(vals), 0.01))).to_numpy(float)
+            vals = self.cmd_df[mag_col].to_numpy(float)
+            err_col = _preferred_err_col(self.cmd_df.columns, band)
+            errs = (
+                self.cmd_df[err_col].to_numpy(float)
+                if err_col is not None
+                else np.full(len(vals), 0.01, dtype=float)
+            )
             return vals, errs
 
         v1, e1 = _get_col(b1)
@@ -1525,14 +2113,33 @@ class IsochroneModelWindow(StepWindowBase):
         color_err = np.sqrt(e1**2 + e2**2)
         return color, vm, color_err, em
 
-    def _create_fitter(self, iso_path: str):
+    def _create_fitter(self, iso_path: str, iso_raw: Optional[np.ndarray] = None):
         """Create IsochroneFitterV2 with current band config."""
         bc = self._get_band_config()
+        if not self._require_iso_config(bc):
+            self.fitter = None
+            self._fitter_cache_key = None
+            return None
         col_mh = int(getattr(self.params.P, "iso_col_mh", 1))
         col_age = int(getattr(self.params.P, "iso_col_age", 2))
         fit_fraction = float(getattr(self.params.P, "iso_fit_fraction", 0.85))
 
-        self.fitter = IsochroneFitterV2(
+        fitter_key = (
+            self._cache_key,
+            col_mh,
+            col_age,
+            bc["iso_col_1"],
+            bc["iso_col_2"],
+            bc["iso_col_mag"],
+            fit_fraction,
+            bc["R_band1"],
+            bc["R_band2"],
+            bc["R_mag"],
+        )
+        if self.fitter is not None and self._fitter_cache_key == fitter_key:
+            return self.fitter
+
+        fitter = IsochroneFitterV2(
             iso_path,
             col_mh=col_mh,
             col_age=col_age,
@@ -1543,16 +2150,74 @@ class IsochroneModelWindow(StepWindowBase):
             R_band1=bc["R_band1"],
             R_band2=bc["R_band2"],
             R_mag=bc["R_mag"],
+            iso_data=iso_raw,
         )
+        self.fitter = fitter
+        self._fitter_cache_key = fitter_key
+        return fitter
 
     # =========================================================================
     # Fitting Methods
     # =========================================================================
 
+    def _get_fit_bounds(self) -> FitBounds:
+        """Build a FitBounds from the (seed, Δ) spinboxes in the Auto Fit tab.
+
+        Bounds = [seed − Δ, seed + Δ].  Δ is clamped to a small positive
+        floor so a user accidentally setting Δ=0 still yields a workable
+        (but tiny) search window instead of an empty range that breaks the
+        downstream fitter.
+        """
+        def _band(seed_w, delta_w, lo_clip, hi_clip, floor=1e-3):
+            seed = float(seed_w.value())
+            delta = max(float(delta_w.value()), floor)
+            lo = max(lo_clip, seed - delta)
+            hi = min(hi_clip, seed + delta)
+            if hi <= lo:
+                hi = lo + 2 * floor
+            return (lo, hi)
+
+        return FitBounds(
+            log_age=_band(self.age_seed, self.age_delta, 6.0, 10.5),
+            metallicity=_band(self.mh_seed, self.mh_delta, -2.2, 1.0),
+            distance_mod=_band(self.dm_seed, self.dm_delta, 0.0, 25.0),
+            extinction_gr=_band(self.egr_seed, self.egr_delta, -0.2, 2.0),
+        )
+
+    def _copy_seed_from_viewer(self) -> None:
+        """Populate Seed fields from the CMD viewer's current slider state."""
+        vals = None
+        if getattr(self, "viewer", None) is not None and hasattr(self.viewer, "current_slider_values"):
+            try:
+                vals = self.viewer.current_slider_values()
+            except Exception:
+                vals = None
+        if not vals:
+            QMessageBox.information(
+                self,
+                "CMD viewer not ready",
+                "Load the isochrone in the CMD Viewer tab first, then drag "
+                "the sliders so the isochrone roughly hugs the data.  Click "
+                "this button again afterwards.",
+            )
+            return
+        try:
+            self.age_seed.setValue(float(vals.get("log_age", self.age_seed.value())))
+            self.mh_seed.setValue(float(vals.get("metallicity", self.mh_seed.value())))
+            self.dm_seed.setValue(float(vals.get("distance_mod", self.dm_seed.value())))
+            self.egr_seed.setValue(float(vals.get("extinction_gr", self.egr_seed.value())))
+            self.log(
+                "Seed updated from CMD viewer: "
+                f"logAge={self.age_seed.value():.3f}, [M/H]={self.mh_seed.value():.3f}, "
+                f"DM={self.dm_seed.value():.3f}, E={self.egr_seed.value():.4f}"
+            )
+        except Exception as exc:
+            QMessageBox.warning(self, "Seed copy failed", str(exc))
+
     def run_fitting(self):
         """Run the single recommended auto-fit pipeline."""
 
-        cmd_df, _, iso_file = self._load_cmd_and_iso_data(show_error=True)
+        cmd_df, iso_raw, iso_file = self._load_cmd_and_iso_data(show_error=True)
         if cmd_df is None or iso_file is None:
             return
         self.cmd_df = self._apply_source_filters(cmd_df)
@@ -1563,18 +2228,15 @@ class IsochroneModelWindow(StepWindowBase):
         color, mag, color_err, mag_err = extracted
 
         try:
-            self._create_fitter(str(iso_file))
+            fitter = self._create_fitter(str(iso_file), iso_raw=iso_raw)
         except Exception as e:
             QMessageBox.critical(self, "Error", f"Failed to load isochrone: {e}")
             return
+        if fitter is None:
+            return
 
-        # Get bounds from UI
-        bounds = FitBounds(
-            log_age=(self.age_min.value(), self.age_max.value()),
-            metallicity=(self.mh_min.value(), self.mh_max.value()),
-            distance_mod=(self.dm_min.value(), self.dm_max.value()),
-            extinction_gr=(self.egr_min.value(), self.egr_max.value())
-        )
+        # Bounds = seed ± delta (see "Search Region" UI block).
+        bounds = self._get_fit_bounds()
 
         snr_min = self.snr_min_spin.value()
 
@@ -1594,6 +2256,8 @@ class IsochroneModelWindow(StepWindowBase):
         local_maxiter = int(getattr(self.params.P, "iso_autofit_local_maxiter", 200))
         fit_seed = int(getattr(self.params.P, "iso_autofit_seed", 42))
         em_iters = int(getattr(self.params.P, "iso_autofit_em_iters", 3))
+        fit_labels = self._current_fit_labels()
+        self._active_fit_labels = dict(fit_labels)
         fit_kwargs = {
             "de_maxiter": de_maxiter,
             "local_maxiter": local_maxiter,
@@ -1607,14 +2271,14 @@ class IsochroneModelWindow(StepWindowBase):
         self.log(
             "Initial guess | "
             f"logAge={initial_guess[0]:.3f}, [M/H]={initial_guess[1]:.3f}, "
-            f"DM={initial_guess[2]:.3f}, E(g-r)={initial_guess[3]:.4f}"
+            f"DM={initial_guess[2]:.3f}, {fit_labels['extinction_label']}={initial_guess[3]:.4f}"
         )
         self.log(
             f"AutoFit settings | n_starts={n_starts}, de_maxiter={de_maxiter}, "
             f"local_maxiter={local_maxiter}, em_iters={em_iters}, seed={fit_seed}"
         )
         self.fit_worker = FitWorker(
-            self.fitter, color, mag, color_err, mag_err,
+            fitter, color, mag, color_err, mag_err,
             FitMode.HESSIAN, bounds, snr_min,
             fit_kwargs=fit_kwargs
         )
@@ -1639,13 +2303,28 @@ class IsochroneModelWindow(StepWindowBase):
         self.progress_bar.setVisible(False)
         self._set_fitting_ui_enabled(True)
 
+        active_labels = getattr(self, "_active_fit_labels", None)
+        self.fit_worker = None
+        if active_labels is None:
+            self.log("Discarded autofit result because inputs changed during the run")
+            self.progress_label.setText("Fit discarded because inputs changed; rerun fit.")
+            return
+        if active_labels != self._current_fit_labels():
+            self.log("Discarded autofit result because CMD axes changed during the run")
+            self.progress_label.setText("Fit discarded because CMD axes changed; rerun fit.")
+            self._active_fit_labels = None
+            return
+
         if isinstance(result, Exception):
             self.log(f"Fitting failed: {result}")
             QMessageBox.critical(self, "Fitting Error", str(result))
             self.progress_label.setText("Fitting failed")
+            self._active_fit_labels = None
             return
 
+        self._annotate_fit_result(result)
         self.fit_result = result
+        self._active_fit_labels = None
         self.log(f"Fitting complete in {result.elapsed_sec:.2f} sec")
         if not result.converged:
             self.log("Auto fit did not fully converge; use CMD Viewer sliders for manual refinement.")
@@ -1662,6 +2341,15 @@ class IsochroneModelWindow(StepWindowBase):
     def apply_fit_to_viewer(self):
         """Apply fit results to CMD viewer parameters and refresh the viewer."""
         if self.fit_result is None:
+            return
+        if not self._fit_result_matches_current_axes():
+            QMessageBox.warning(
+                self,
+                "Stale Fit Result",
+                "The saved fit result does not match the current band selection.\n"
+                "Run the fit again for the selected CMD axes.",
+            )
+            self._clear_fit_outputs("Fit result did not match current CMD axes.", reset_fitter=True)
             return
 
         # Store in params for viewer to use
@@ -1682,7 +2370,7 @@ class IsochroneModelWindow(StepWindowBase):
 
     def run_grid_scan(self):
         """Run exhaustive grid scan over all (age, mh) pairs within bounds."""
-        cmd_df, _, iso_file = self._load_cmd_and_iso_data(show_error=True)
+        cmd_df, iso_raw, iso_file = self._load_cmd_and_iso_data(show_error=True)
         if cmd_df is None or iso_file is None:
             return
         self.cmd_df = self._apply_source_filters(cmd_df)
@@ -1693,26 +2381,23 @@ class IsochroneModelWindow(StepWindowBase):
         color, mag, color_err, mag_err = extracted
 
         try:
-            self._create_fitter(str(iso_file))
+            fitter = self._create_fitter(str(iso_file), iso_raw=iso_raw)
         except Exception as e:
             QMessageBox.critical(self, "Error", f"Failed to load isochrone: {e}")
             return
+        if fitter is None:
+            return
 
-        bounds = FitBounds(
-            log_age=(self.age_min.value(), self.age_max.value()),
-            metallicity=(self.mh_min.value(), self.mh_max.value()),
-            distance_mod=(self.dm_min.value(), self.dm_max.value()),
-            extinction_gr=(self.egr_min.value(), self.egr_max.value()),
-        )
+        bounds = self._get_fit_bounds()
         snr_min = self.snr_min_spin.value()
 
         # Count grid cells
         n_ages = int(np.sum(
-            (self.fitter.ages >= bounds.log_age[0]) & (self.fitter.ages <= bounds.log_age[1])
+            (fitter.ages >= bounds.log_age[0]) & (fitter.ages <= bounds.log_age[1])
         ))
         n_mhs = int(np.sum(
-            (self.fitter.metallicities >= bounds.metallicity[0])
-            & (self.fitter.metallicities <= bounds.metallicity[1])
+            (fitter.metallicities >= bounds.metallicity[0])
+            & (fitter.metallicities <= bounds.metallicity[1])
         ))
 
         self._set_fitting_ui_enabled(False)
@@ -1723,6 +2408,7 @@ class IsochroneModelWindow(StepWindowBase):
         self.log(f"Starting grid scan: {n_ages} ages x {n_mhs} [M/H] = {n_ages * n_mhs} cells")
 
         initial_guess = self._get_fit_initial_guess()
+        self._active_fit_labels = self._current_fit_labels()
         fit_kwargs = {
             "initial_dm": float(initial_guess[2]),
             "initial_egr": float(initial_guess[3]),
@@ -1730,7 +2416,7 @@ class IsochroneModelWindow(StepWindowBase):
         }
 
         self.grid_scan_worker = GridScanWorker(
-            self.fitter, color, mag, color_err, mag_err,
+            fitter, color, mag, color_err, mag_err,
             bounds, snr_min, fit_kwargs=fit_kwargs,
         )
         self.grid_scan_worker.progress.connect(self._on_fit_progress)
@@ -1742,14 +2428,29 @@ class IsochroneModelWindow(StepWindowBase):
         self.progress_bar.setVisible(False)
         self._set_fitting_ui_enabled(True)
 
+        active_labels = getattr(self, "_active_fit_labels", None)
+        self.grid_scan_worker = None
+        if active_labels is None:
+            self.log("Discarded grid scan result because inputs changed during the run")
+            self.progress_label.setText("Grid scan discarded because inputs changed; rerun scan.")
+            return
+        if active_labels != self._current_fit_labels():
+            self.log("Discarded grid scan result because CMD axes changed during the run")
+            self.progress_label.setText("Grid scan discarded because CMD axes changed; rerun scan.")
+            self._active_fit_labels = None
+            return
+
         if isinstance(result, Exception):
             self.log(f"Grid scan failed: {result}")
             QMessageBox.critical(self, "Grid Scan Error", str(result))
             self.progress_label.setText("Grid scan failed")
+            self._active_fit_labels = None
             return
 
+        self._annotate_fit_result(result.best_fit)
         self.grid_scan_result = result
         self.fit_result = result.best_fit
+        self._active_fit_labels = None
 
         self.log(f"Grid scan complete: {result.n_evaluated} cells in {result.elapsed_sec:.2f} sec")
         self.progress_label.setText(f"Grid scan: {result.n_evaluated} cells in {result.elapsed_sec:.2f} sec")
@@ -1842,6 +2543,21 @@ class IsochroneModelWindow(StepWindowBase):
         """Export fitting results to files"""
         if self.fit_result is None:
             return
+        if not self._fit_result_matches_current_axes():
+            QMessageBox.warning(
+                self,
+                "Stale Fit Result",
+                "The saved fit result does not match the current band selection.\n"
+                "Run the fit again before exporting.",
+            )
+            self._clear_fit_outputs("Fit result did not match current CMD axes.", reset_fitter=True)
+            return
+        self._annotate_fit_result(self.fit_result)
+        bc = self._get_band_config()
+        b1, b2 = bc["band_color"]
+        bm = bc["band_mag"]
+        color_index = f"{b1}-{b2}"
+        extinction_label = f"E({color_index})"
 
         result_dir = step12_iso_dir(self.params.P.result_dir)
         result_dir.mkdir(parents=True, exist_ok=True)
@@ -1861,8 +2577,21 @@ class IsochroneModelWindow(StepWindowBase):
             "metallicity_err": self.fit_result.metallicity_err,
             "distance_mod": self.fit_result.distance_mod,
             "distance_mod_err": self.fit_result.distance_mod_err,
+            "extinction_label": extinction_label,
+            "extinction_color": self.fit_result.extinction_gr,
+            "extinction_color_err": self.fit_result.extinction_gr_err,
             "extinction_gr": self.fit_result.extinction_gr,
             "extinction_gr_err": self.fit_result.extinction_gr_err,
+            "color_band_1": b1,
+            "color_band_2": b2,
+            "color_index": color_index,
+            "mag_band": bm,
+            "iso_col_1": bc["iso_col_1"],
+            "iso_col_2": bc["iso_col_2"],
+            "iso_col_mag": bc["iso_col_mag"],
+            "R_band1": bc["R_band1"],
+            "R_band2": bc["R_band2"],
+            "R_mag": bc["R_mag"],
             "age_gyr": self.fit_result.age_gyr,
             "distance_pc": self.fit_result.distance_pc,
             "chi2": self.fit_result.chi2,
@@ -1887,6 +2616,9 @@ class IsochroneModelWindow(StepWindowBase):
                 egr_grid=gs.egr_grid,
                 grid_ages=gs.grid_ages,
                 grid_mhs=gs.grid_mhs,
+                color_index=color_index,
+                mag_band=bm,
+                extinction_label=extinction_label,
             )
             export_paths.append(str(npz_path))
 
@@ -1900,18 +2632,32 @@ class IsochroneModelWindow(StepWindowBase):
         """Compute membership probabilities and save to CSV"""
         if self.fit_result is None or self.fitter is None or self.cmd_df is None:
             return
+        if not self._fit_result_matches_current_axes():
+            QMessageBox.warning(
+                self,
+                "Stale Fit Result",
+                "The saved fit result does not match the current band selection.\n"
+                "Run the fit again before computing membership.",
+            )
+            self._clear_fit_outputs("Fit result did not match current CMD axes.", reset_fitter=True)
+            return
 
         # Get CMD data using current band selection
         bc = self._get_band_config()
+        if not self._require_iso_config(bc):
+            return
         b1, b2 = bc["band_color"]
         bm = bc["band_mag"]
-        std1, inst1 = f"mag_std_{b1}", f"mag_inst_{b1}"
-        std2, inst2 = f"mag_std_{b2}", f"mag_inst_{b2}"
-        stdm, instm = f"mag_std_{bm}", f"mag_inst_{bm}"
+        col1, _ = _preferred_mag_col(self.cmd_df.columns, b1)
+        col2, _ = _preferred_mag_col(self.cmd_df.columns, b2)
+        colm, _ = _preferred_mag_col(self.cmd_df.columns, bm)
+        if col1 is None or col2 is None:
+            QMessageBox.warning(self, "Missing Data", f"CMD data missing {b1}/{b2} magnitude columns")
+            return
 
-        v1 = self.cmd_df[std1].to_numpy(float) if std1 in self.cmd_df.columns else self.cmd_df[inst1].to_numpy(float)
-        v2 = self.cmd_df[std2].to_numpy(float) if std2 in self.cmd_df.columns else self.cmd_df[inst2].to_numpy(float)
-        vm = self.cmd_df[stdm].to_numpy(float) if stdm in self.cmd_df.columns else self.cmd_df.get(instm, pd.Series(v1)).to_numpy(float)
+        v1 = self.cmd_df[col1].to_numpy(float)
+        v2 = self.cmd_df[col2].to_numpy(float)
+        vm = self.cmd_df[colm].to_numpy(float) if colm is not None else v1.copy()
         color = v1 - v2
 
         # Compute membership
@@ -1956,6 +2702,7 @@ class IsochroneModelWindow(StepWindowBase):
             self.params.P.iso_file_path = path
             self._set_iso_status("Single file mode")
             self._invalidate_cache()
+            self._clear_fit_outputs("Isochrone source changed; rerun fit.", reset_fitter=True)
             self.save_state()
             self.persist_params()
             self.refresh_cmd_viewer(show_error=True)
@@ -1973,6 +2720,7 @@ class IsochroneModelWindow(StepWindowBase):
             self.params.P.iso_file_path = path
             self._set_iso_status("Folder mode")
             self._invalidate_cache()
+            self._clear_fit_outputs("Isochrone source changed; rerun fit.", reset_fitter=True)
             self.save_state()
             self.persist_params()
             self.refresh_cmd_viewer(show_error=True)
@@ -2007,6 +2755,8 @@ class IsochroneModelWindow(StepWindowBase):
             "iso_dm_init": getattr(self.params.P, "iso_dm_init", 9.46),
             "band_color_idx": self.color_combo.currentIndex(),
             "band_mag_idx": self.mag_combo.currentIndex(),
+            "band_color_text": self.color_combo.currentText(),
+            "band_mag_text": self.mag_combo.currentText(),
         }
         self.project_state.store_step_data("isochrone_model", state_data)
 
@@ -2019,6 +2769,8 @@ class IsochroneModelWindow(StepWindowBase):
             if state_data.get("iso_file_path"):
                 if self.iso_path_edit is not None:
                     self.iso_path_edit.setText(state_data["iso_file_path"])
+            self._pending_band_color_text = state_data.get("band_color_text")
+            self._pending_band_mag_text = state_data.get("band_mag_text")
             if "band_color_idx" in state_data:
                 idx = int(state_data["band_color_idx"])
                 if 0 <= idx < self.color_combo.count():
@@ -2035,6 +2787,126 @@ class IsochroneModelWindow(StepWindowBase):
         if current_iso:
             self._set_iso_status("Folder mode" if Path(current_iso).is_dir() else "Single file mode")
         if self._get_iso_path():
-            self.refresh_cmd_viewer(show_error=False)
-            self._update_cc_plot()
+            # The Color-Color plot is light enough to render up front.
+            # The full CMD viewer (PARSEC load + matplotlib scatter) can
+            # take a few seconds on cold cache, so we mark it pending and
+            # let _on_tab_changed render it the first time the user clicks
+            # the CMD Viewer tab.  Without this the Step 12 window
+            # appears frozen during open.
+            if self.tabs.currentIndex() == getattr(self, "cmd_viewer_tab_index", -1):
+                self._cmd_viewer_pending = False
+            else:
+                self._cmd_viewer_pending = True
+            self._maybe_start_iso_cache_build()
         self.update_navigation_buttons()
+
+    def _maybe_start_iso_cache_build(self) -> None:
+        """Render plots immediately if the binary ``.apex.npy`` cache is
+        ready, otherwise spawn an ``IsoCacheWorker`` to build it in the
+        background while the window stays responsive.
+
+        The PARSEC text file is ~400 MB / 1.5 M rows and takes ~30 s to
+        parse on cold cache; freezing the UI during that period is what
+        the user reported as "step 12가 켜지는데 오래 걸림".
+        """
+        iso_path_str = self._get_iso_path() or ""
+        if not iso_path_str:
+            return
+        iso_path = Path(iso_path_str)
+        if not iso_path.exists():
+            return
+        if iso_path.is_dir():
+            QTimer.singleShot(0, self._render_pending_plots)
+            return
+
+        cache_path = iso_path.with_suffix(iso_path.suffix + ".apex.npy")
+        cache_fresh = False
+        try:
+            if cache_path.exists():
+                if cache_path.stat().st_mtime_ns >= iso_path.stat().st_mtime_ns:
+                    cache_fresh = True
+        except OSError:
+            cache_fresh = False
+
+        if cache_fresh:
+            QTimer.singleShot(0, self._render_pending_plots)
+            return
+
+        worker = self._iso_cache_worker
+        if worker is not None and worker.isRunning():
+            if worker.iso_file == iso_path:
+                return
+            worker.cancel()
+            self._pending_iso_cache_path = iso_path
+            self._set_iso_status("Waiting for previous cache build to stop.")
+            return
+
+        self._set_iso_status(
+            f"Building isochrone cache in background — first open takes "
+            f"~30 s ({iso_path.name})."
+        )
+        self.log(f"[iso] background cache build started: {iso_path.name}")
+        self._iso_cache_worker = IsoCacheWorker(iso_path)
+        self._iso_cache_worker.progress_msg.connect(self.log)
+        self._iso_cache_worker.finished_ok.connect(self._on_iso_cache_ready)
+        self._iso_cache_worker.failed.connect(self._on_iso_cache_failed)
+        self._iso_cache_worker.finished.connect(self._on_iso_cache_worker_finished)
+        self._iso_cache_worker.start()
+
+    def _render_pending_plots(self) -> None:
+        try:
+            self._update_cc_plot()
+        except Exception as exc:
+            self.log(f"[iso] cc plot error: {exc}")
+        if not getattr(self, "_cmd_viewer_pending", False):
+            try:
+                self.refresh_cmd_viewer(show_error=False)
+            except Exception as exc:
+                self.log(f"[iso] viewer error: {exc}")
+
+    def _on_iso_cache_ready(self, iso_path_str: str) -> None:
+        if Path(iso_path_str) != Path(self._get_iso_path() or ""):
+            return
+        self.log(f"[iso] cache ready: {Path(iso_path_str).name}")
+        self._set_iso_status("Single file mode (cache ready)")
+        QTimer.singleShot(0, self._render_pending_plots)
+
+    def _on_iso_cache_failed(self, iso_path_str: str, err: str) -> None:
+        if Path(iso_path_str) != Path(self._get_iso_path() or ""):
+            return
+        self.log(f"[iso] background cache build failed: {err}")
+        # Fall back to synchronous load (slow but at least works).
+        QTimer.singleShot(0, self._render_pending_plots)
+
+    def _on_iso_cache_worker_finished(self) -> None:
+        worker = self._iso_cache_worker
+        if worker is not None:
+            worker.deleteLater()
+        self._iso_cache_worker = None
+        pending = self._pending_iso_cache_path
+        self._pending_iso_cache_path = None
+        if pending is not None and Path(self._get_iso_path() or "") == pending:
+            QTimer.singleShot(0, self._maybe_start_iso_cache_build)
+
+    def closeEvent(self, event):
+        worker = self._iso_cache_worker
+        if worker is not None and worker.isRunning():
+            worker.cancel()
+            if not worker.wait(10000):
+                QMessageBox.warning(
+                    self,
+                    "Background Task Running",
+                    "Isochrone cache generation is still stopping. Please wait and close again.",
+                )
+                event.ignore()
+                return
+        super().closeEvent(event)
+
+    def _on_tab_changed(self, index: int) -> None:
+        if (
+            index == getattr(self, "cmd_viewer_tab_index", -1)
+            and getattr(self, "_cmd_viewer_pending", False)
+        ):
+            self._cmd_viewer_pending = False
+            # singleShot so the tab UI paints before the heavy refresh.
+            QTimer.singleShot(0, lambda: self.refresh_cmd_viewer(show_error=False))

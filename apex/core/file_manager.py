@@ -17,6 +17,7 @@ from apex.utils.astro_utils import (
     DEFAULT_AIRMASS_FORMULA,
     airmass_from_alt,
     compute_airmass_from_header,
+    normalize_filter_name,
 )
 from apex.utils.step_paths import step1_dir
 
@@ -229,6 +230,7 @@ class FileManager:
                     "EXPTIME": exptime,
                     "AIRMASS": airmass,
                     "IMAGETYP": h.get("IMAGETYP", h.get("FRAME", "Unknown")),
+                    "OBJECT": h.get("OBJECT", h.get("TARGET", h.get("OBJNAME", ""))),
                     "JD": jd,
                     "RA_DEG": ra_deg,
                     "DEC_DEG": dec_deg,
@@ -412,10 +414,11 @@ class FileManager:
         ref_candidates = self.df_headers
 
         # Filter by global_ref_filter if specified (any non-empty filter name)
-        grf = str(getattr(self.params.P, "global_ref_filter", "")).strip().lower()
+        grf = normalize_filter_name(getattr(self.params.P, "global_ref_filter", ""))
         if grf:
+            header_filters = self.df_headers["FILTER"].astype(str).map(normalize_filter_name)
             filtered = self.df_headers[
-                self.df_headers["FILTER"].astype(str).str.lower() == grf
+                header_filters == grf
             ]
             if not filtered.empty:
                 ref_candidates = filtered

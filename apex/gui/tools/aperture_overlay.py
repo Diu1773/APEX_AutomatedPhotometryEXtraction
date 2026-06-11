@@ -14,19 +14,22 @@ import pandas as pd
 from astropy.io import fits
 from astropy.stats import sigma_clipped_stats
 from astropy.visualization import ZScaleInterval
+
+from apex.utils.constants import MAD_TO_SIGMA
 from matplotlib.backends.backend_qt5agg import FigureCanvasQTAgg as FigureCanvas
 from matplotlib.figure import Figure
-from matplotlib.patches import Circle, FancyArrowPatch
 
 from PyQt5.QtWidgets import (
     QVBoxLayout, QHBoxLayout, QPushButton, QLabel, QGroupBox, QMessageBox,
     QTextEdit, QDialog, QFormLayout, QDialogButtonBox, QDoubleSpinBox,
     QSpinBox, QCheckBox, QComboBox, QWidget, QSlider, QShortcut
 )
-from PyQt5.QtGui import QKeySequence
+from PyQt5.QtGui import QColor, QKeySequence
 from PyQt5.QtCore import Qt
 
 from apex.gui.workflow.step_window_base import StepWindowBase
+from apex.gui.widgets.fits_viewer import FITSViewerWidget, OverlayMarker
+from apex.utils.common_helpers import normalize_filter_key as _canonical_filter_key
 from apex.utils.photometry_loader import load_frame_photometry
 from apex.utils.step_paths_lc import (
     step1_dir,
@@ -60,7 +63,8 @@ class ApertureOverlayWindow(StepWindowBase):
         self.ap_df = None
         self.overlay_loaded = False
 
-        # Matplotlib
+        # FITS viewer
+        self.fits_viewer: FITSViewerWidget | None = None
         self.figure = None
         self.canvas = None
         self.ax = None
@@ -115,7 +119,7 @@ class ApertureOverlayWindow(StepWindowBase):
     def setup_step_ui(self):
         info = QLabel(
             "Keyboard: [.] next filter | [[/]] prev/next frame\n"
-            "Mouse: Wheel to zoom | Right-click drag to pan"
+            "Mouse: Wheel to zoom | Left-drag to pan"
         )
         info.setStyleSheet("QLabel { background-color: #E3F2FD; padding: 10px; border-radius: 5px; }")
         self.content_layout.addWidget(info)
@@ -151,56 +155,9 @@ class ApertureOverlayWindow(StepWindowBase):
         viewer_layout = QVBoxLayout(viewer_group)
 
         control_layout = QHBoxLayout()
-        control_layout.addWidget(QLabel("Stretch:"))
-        self.scale_combo = QComboBox()
-        self.scale_combo.addItems([
-            "Auto Stretch (Siril)",
-            "Asinh Stretch",
-            "Midtone (MTF)",
-            "Histogram Eq",
-            "Log Stretch",
-            "Sqrt Stretch",
-            "Linear (1-99%)",
-            "ZScale (IRAF)",
-        ])
-        self.scale_combo.currentIndexChanged.connect(self.on_stretch_changed)
-        control_layout.addWidget(self.scale_combo)
-
-        control_layout.addWidget(QLabel("Intensity:"))
-        self.stretch_slider = QSlider(Qt.Horizontal)
-        self.stretch_slider.setMinimum(1)
-        self.stretch_slider.setMaximum(100)
-        self.stretch_slider.setValue(25)
-        self.stretch_slider.setFixedWidth(120)
-        self.stretch_slider.sliderReleased.connect(self.redisplay_image)
-        self.stretch_slider.valueChanged.connect(self.update_stretch_label)
-        control_layout.addWidget(self.stretch_slider)
-
-        self.stretch_value_label = QLabel("25")
-        self.stretch_value_label.setFixedWidth(30)
-        control_layout.addWidget(self.stretch_value_label)
-
-        control_layout.addWidget(QLabel("Black:"))
-        self.black_slider = QSlider(Qt.Horizontal)
-        self.black_slider.setMinimum(0)
-        self.black_slider.setMaximum(100)
-        self.black_slider.setValue(0)
-        self.black_slider.setFixedWidth(80)
-        self.black_slider.sliderReleased.connect(self.redisplay_image)
-        self.black_slider.valueChanged.connect(self.update_black_label)
-        control_layout.addWidget(self.black_slider)
-
-        self.black_value_label = QLabel("0")
-        self.black_value_label.setFixedWidth(25)
-        control_layout.addWidget(self.black_value_label)
-
         btn_reset_zoom = QPushButton("Reset Zoom")
         btn_reset_zoom.clicked.connect(self.reset_zoom)
         control_layout.addWidget(btn_reset_zoom)
-
-        btn_reset_stretch = QPushButton("Reset Stretch")
-        btn_reset_stretch.clicked.connect(self.reset_stretch)
-        control_layout.addWidget(btn_reset_stretch)
 
         btn_2d_plot = QPushButton("2D Plot")
         btn_2d_plot.setStyleSheet("QPushButton { background-color: #FF9800; color: white; font-weight: bold; }")
@@ -210,19 +167,11 @@ class ApertureOverlayWindow(StepWindowBase):
         control_layout.addStretch()
         viewer_layout.addLayout(control_layout)
 
-        self.figure = Figure(figsize=(10, 8))
-        self.canvas = FigureCanvas(self.figure)
-        self.canvas.setMinimumSize(600, 500)
-        self.ax = self.figure.add_subplot(111)
-        self.figure.subplots_adjust(left=0.08, right=0.95, bottom=0.08, top=0.95)
-        self.canvas.setFocusPolicy(Qt.StrongFocus)
-        self.canvas.setFocus()
-        self.canvas.mpl_connect("scroll_event", self.on_scroll)
-        self.canvas.mpl_connect("button_press_event", self.on_button_press)
-        self.canvas.mpl_connect("button_release_event", self.on_button_release)
-        self.canvas.mpl_connect("motion_notify_event", self.on_motion)
-        self.canvas.mpl_connect("key_press_event", self.on_key_press)
-        viewer_layout.addWidget(self.canvas)
+        self.fits_viewer = FITSViewerWidget(self)
+        self.fits_viewer.setMinimumSize(600, 500)
+        self.fits_viewer.setFocusPolicy(Qt.StrongFocus)
+        self.fits_viewer.setFocus()
+        viewer_layout.addWidget(self.fits_viewer)
         self.content_layout.addWidget(viewer_group, stretch=1)
 
         sc_dot = QShortcut(QKeySequence("."), self)
@@ -470,12 +419,8 @@ class ApertureOverlayWindow(StepWindowBase):
             return
         self.current_filename = fname
 
-        if keep_view and self.ax is not None:
-            self._pending_xlim = self.ax.get_xlim()
-            self._pending_ylim = self.ax.get_ylim()
-        else:
-            self._pending_xlim = None
-            self._pending_ylim = None
+        self._pending_xlim = None
+        self._pending_ylim = None
 
         if self.use_cropped:
             file_path = step2_cropped_dir(self.params.P.result_dir) / fname
@@ -535,38 +480,7 @@ class ApertureOverlayWindow(StepWindowBase):
             self._extract_frame_key(fname, self._file_filter_map.get(fname, ""))
         )
 
-        self.display_image(full_redraw=True)
-
-        xy_frame = lab[["x_frame", "y_frame"]].to_numpy(float)
-        xy_frame = xy_frame[np.isfinite(xy_frame).all(axis=1)]
-        for (x, y) in xy_frame:
-            self.ax.add_patch(Circle((x, y), r_ap, ec="gold", fc="none", lw=0.9, alpha=0.95))
-            self.ax.add_patch(Circle((x, y), r_in, ec="cyan", fc="none", lw=0.6, alpha=0.70))
-            self.ax.add_patch(Circle((x, y), r_out, ec="cyan", fc="none", lw=0.6, alpha=0.50))
-
-        if show_ref:
-            xy_ref = lab[["x_ref", "y_ref"]].to_numpy(float)
-            xy_ref = xy_ref[np.isfinite(xy_ref).all(axis=1)]
-            for (x, y) in xy_ref:
-                self.ax.add_patch(Circle((x, y), r_ap, ec="orange", fc="none", lw=0.4, alpha=0.35))
-
-        if show_shift and show_ref:
-            sub = lab.copy()
-            m = np.isfinite(sub["x_ref"]) & np.isfinite(sub["y_ref"]) & np.isfinite(sub["x_frame"]) & np.isfinite(sub["y_frame"])
-            sub = sub.loc[m].copy()
-            sub["dx"] = sub["x_frame"] - sub["x_ref"]
-            sub["dy"] = sub["y_frame"] - sub["y_ref"]
-            sub["dr"] = np.hypot(sub["dx"], sub["dy"])
-            sub = sub[sub["dr"] >= shift_min].sort_values("dr", ascending=False).head(shift_max)
-
-            for _, r in sub.iterrows():
-                x0, y0 = float(r["x_ref"]), float(r["y_ref"])
-                x1, y1 = float(r["x_frame"]), float(r["y_frame"])
-                arr = FancyArrowPatch((x0, y0), (x1, y1),
-                                      arrowstyle='->', mutation_scale=8,
-                                      lw=0.6, color='magenta', alpha=0.65)
-                self.ax.add_patch(arr)
-
+        label_map: dict[int, str] = {}
         for _, r in lab_sel.iterrows():
             x = float(r["x_frame"])
             y = float(r["y_frame"])
@@ -579,16 +493,79 @@ class ApertureOverlayWindow(StepWindowBase):
                 if not show_id_no_mag:
                     continue
                 txt = f"{ID}"
+            label_map[ID] = txt
 
-            self.ax.text(
-                x + label_offset, y + label_offset, txt,
-                color="yellow", fontsize=label_font, ha="left", va="bottom",
-                bbox=dict(boxstyle="round,pad=0.12", fc=(0, 0, 0, 0.45), ec="none")
+        self.display_image(full_redraw=True)
+        markers: list[OverlayMarker] = []
+        label_font_size = max(6, int(round(label_font)))
+        for _, r in lab.iterrows():
+            x = float(r["x_frame"])
+            y = float(r["y_frame"])
+            if (not np.isfinite(x)) or (not np.isfinite(y)):
+                continue
+            try:
+                source_id = int(r["ID"])
+            except Exception:
+                source_id = -1
+            markers.append(
+                OverlayMarker(
+                    col=x,
+                    row=y,
+                    radius=r_ap,
+                    color=QColor(255, 215, 0, 230),
+                    inner_radius=r_in,
+                    outer_radius=r_out,
+                    secondary_color=QColor(0, 220, 255, 155),
+                    line_width=0.9,
+                    label=label_map.get(source_id, ""),
+                    label_offset_col=label_offset,
+                    label_offset_row=label_offset,
+                    label_font_size=label_font_size,
+                )
             )
 
-        self.canvas.draw_idle()
+        if show_ref:
+            for _, r in lab.iterrows():
+                x = float(r["x_ref"])
+                y = float(r["y_ref"])
+                if np.isfinite(x) and np.isfinite(y):
+                    markers.append(
+                        OverlayMarker(
+                            col=x,
+                            row=y,
+                            radius=r_ap,
+                            color=QColor(255, 152, 0, 120),
+                            line_width=0.5,
+                        )
+                    )
+
+        if show_shift and show_ref:
+            sub = lab.copy()
+            m = np.isfinite(sub["x_ref"]) & np.isfinite(sub["y_ref"]) & np.isfinite(sub["x_frame"]) & np.isfinite(sub["y_frame"])
+            sub = sub.loc[m].copy()
+            sub["dx"] = sub["x_frame"] - sub["x_ref"]
+            sub["dy"] = sub["y_frame"] - sub["y_ref"]
+            sub["dr"] = np.hypot(sub["dx"], sub["dy"])
+            sub = sub[sub["dr"] >= shift_min].sort_values("dr", ascending=False).head(shift_max)
+            for _, r in sub.iterrows():
+                markers.append(
+                    OverlayMarker(
+                        col=float(r["x_ref"]),
+                        row=float(r["y_ref"]),
+                        radius=0.0,
+                        color=QColor(255, 0, 255, 170),
+                        target_col=float(r["x_frame"]),
+                        target_row=float(r["y_frame"]),
+                        target_color=QColor(255, 0, 255, 170),
+                        line_width=0.8,
+                    )
+                )
+
+        if self.fits_viewer is not None:
+            self.fits_viewer.set_overlay_markers(markers)
         self.overlay_loaded = True
-        self.canvas.setFocus()
+        if self.fits_viewer is not None:
+            self.fits_viewer.setFocus()
 
         n_ref_ok = int(np.isfinite(lab["x_ref"]).sum()) if "x_ref" in lab.columns else 0
         n_fr_ok = int(np.isfinite(lab["x_frame"]).sum()) if "x_frame" in lab.columns else 0
@@ -600,56 +577,12 @@ class ApertureOverlayWindow(StepWindowBase):
                 self.log(f"Shift px: min/med/max = {dr.min():.3f}/{np.median(dr):.3f}/{dr.max():.3f}")
 
     def display_image(self, full_redraw: bool = False):
-        if self.image_data is None:
+        if self.image_data is None or self.fits_viewer is None:
             return
 
-        normalized = self.normalize_image()
-        if normalized is None:
-            return
-        stretched = self.apply_stretch(normalized)
-
-        if self._imshow_obj is not None and not full_redraw:
-            self._imshow_obj.set_data(stretched)
-            stretch_name = self.scale_combo.currentText()
-            self.ax.set_title(f"{self.current_filename} | {stretch_name}")
-            self.canvas.draw_idle()
-            return
-
-        xlim_current = self._pending_xlim if self._pending_xlim is not None else (
-            self.ax.get_xlim() if self.xlim_original else None
-        )
-        ylim_current = self._pending_ylim if self._pending_ylim is not None else (
-            self.ax.get_ylim() if self.ylim_original else None
-        )
-
-        self.ax.clear()
-        self._imshow_obj = self.ax.imshow(
-            stretched,
-            cmap="gray",
-            origin="lower",
-            vmin=0,
-            vmax=1,
-            interpolation="nearest",
-        )
-        self.ax.set_xlabel("X (pixels)")
-        self.ax.set_ylabel("Y (pixels)")
-        stretch_name = self.scale_combo.currentText()
-        self.ax.set_title(f"{self.current_filename} | {stretch_name}")
-
-        if self.xlim_original is None:
-            self.xlim_original = self.ax.get_xlim()
-            self.ylim_original = self.ax.get_ylim()
-        elif xlim_current is not None:
-            self.ax.set_xlim(xlim_current)
-            self.ax.set_ylim(ylim_current)
-        elif self._pending_xlim is not None:
-            self.ax.set_xlim(self._pending_xlim)
-            self.ax.set_ylim(self._pending_ylim)
-
-        self._pending_xlim = None
-        self._pending_ylim = None
-
-        self.canvas.draw()
+        self.fits_viewer.set_data_auto_stf(np.asarray(self.image_data, dtype=np.float32))
+        if full_redraw:
+            self.fits_viewer.fit_in_view()
 
     def on_stretch_changed(self, index):
         self._normalized_cache = None
@@ -657,18 +590,18 @@ class ApertureOverlayWindow(StepWindowBase):
         self.display_image()
 
     def reset_stretch(self):
-        self.stretch_slider.setValue(25)
-        self.black_slider.setValue(0)
-        self.scale_combo.setCurrentIndex(0)
         self._normalized_cache = None
         self.reset_stretch_plot_values()
-        self.display_image()
+        if self.fits_viewer is not None and self.image_data is not None:
+            self.fits_viewer.set_data_auto_stf(self.image_data)
 
     def update_stretch_label(self, value):
-        self.stretch_value_label.setText(str(value))
+        if hasattr(self, "stretch_value_label"):
+            self.stretch_value_label.setText(str(value))
 
     def update_black_label(self, value):
-        self.black_value_label.setText(str(value))
+        if hasattr(self, "black_value_label"):
+            self.black_value_label.setText(str(value))
 
     def open_stretch_plot(self):
         """Open stretch plot window showing histogram with draggable min/max markers"""
@@ -734,16 +667,9 @@ class ApertureOverlayWindow(StepWindowBase):
         self._stretch_data_range = (float(p_low), float(p_high))
 
         if self._stretch_vmin is None or self._stretch_vmax is None:
-            stretch_idx = self.scale_combo.currentIndex()
-            if stretch_idx == 6:
-                vmin = np.percentile(flat, 1)
-                vmax = np.percentile(flat, 99)
-            elif stretch_idx == 7:
-                vmin, vmax = self.calculate_zscale()
-            else:
-                _, median_val, std_val = sigma_clipped_stats(flat, sigma=3.0, maxiters=5)
-                vmin = max(np.min(flat), median_val - 2.8 * std_val)
-                vmax = min(np.max(flat), np.percentile(flat, 99.9))
+            _, median_val, std_val = sigma_clipped_stats(flat, sigma=3.0, maxiters=5)
+            vmin = max(np.min(flat), median_val - 2.8 * std_val)
+            vmax = min(np.max(flat), np.percentile(flat, 99.9))
 
             if vmax <= vmin:
                 vmin = np.min(flat)
@@ -780,9 +706,8 @@ class ApertureOverlayWindow(StepWindowBase):
         ax.legend(loc='upper right', fontsize=8)
 
         if self.stretch_plot_info_label:
-            stretch_name = self.scale_combo.currentText()
             self.stretch_plot_info_label.setText(
-                f"Stretch: {stretch_name} | Min: {vmin:.2f} | Max: {vmax:.2f}"
+                f"Manual range | Min: {vmin:.2f} | Max: {vmax:.2f}"
             )
 
         self.stretch_plot_canvas.draw_idle()
@@ -833,14 +758,9 @@ class ApertureOverlayWindow(StepWindowBase):
         if vmax <= vmin:
             vmax = vmin + 1
 
-        data = self.image_data.copy()
-        normalized = (data - vmin) / (vmax - vmin + 1e-10)
-        normalized = np.clip(normalized, 0, 1)
-        stretched = self.apply_stretch(normalized)
-
-        if self._imshow_obj is not None:
-            self._imshow_obj.set_data(stretched)
-            self.canvas.draw_idle()
+        if self.fits_viewer is not None:
+            self.fits_viewer.set_stretch_mode("linear")
+            self.fits_viewer.set_linear_range(vmin, vmax)
 
     def reset_stretch_plot_values(self):
         """Reset stretch plot values when changing image or stretch mode"""
@@ -850,24 +770,6 @@ class ApertureOverlayWindow(StepWindowBase):
             self._update_stretch_plot()
 
     def apply_stretch(self, data):
-        stretch_idx = self.scale_combo.currentIndex()
-        intensity = self.stretch_slider.value() / 100.0
-        black_point = self.black_slider.value() / 100.0
-
-        data = np.clip((data - black_point) / (1.0 - black_point + 1e-10), 0, 1)
-
-        if stretch_idx == 0:
-            return self._stretch_auto_siril(data, intensity)
-        if stretch_idx == 1:
-            return self._stretch_asinh(data, intensity)
-        if stretch_idx == 2:
-            return self._stretch_mtf(data, intensity)
-        if stretch_idx == 3:
-            return self._stretch_histogram_eq(data)
-        if stretch_idx == 4:
-            return self._stretch_log(data, intensity)
-        if stretch_idx == 5:
-            return self._stretch_sqrt(data, intensity)
         return data
 
     def _stretch_auto_siril(self, data, intensity):
@@ -876,7 +778,7 @@ class ApertureOverlayWindow(StepWindowBase):
             return data
         median_val = np.median(finite)
         mad = np.median(np.abs(finite - median_val))
-        sigma = mad * 1.4826
+        sigma = mad * MAD_TO_SIGMA
         shadows = max(0.0, median_val - 2.8 * sigma)
         stretched = (data - shadows) / (1.0 - shadows + 1e-10)
         stretched = np.clip(stretched, 0, 1)
@@ -926,8 +828,7 @@ class ApertureOverlayWindow(StepWindowBase):
         if self.image_data is None:
             return None
 
-        stretch_idx = self.scale_combo.currentIndex()
-        cache_key = (id(self.image_data), stretch_idx)
+        cache_key = id(self.image_data)
         if self._normalized_cache is not None and self._normalized_cache[0] == cache_key:
             return self._normalized_cache[1].copy()
 
@@ -936,15 +837,9 @@ class ApertureOverlayWindow(StepWindowBase):
             return np.zeros_like(self.image_data)
 
         data = self.image_data.copy()
-        if stretch_idx == 6:
-            vmin = np.percentile(data[finite], 1)
-            vmax = np.percentile(data[finite], 99)
-        elif stretch_idx == 7:
-            vmin, vmax = self.calculate_zscale()
-        else:
-            _, median_val, std_val = sigma_clipped_stats(data[finite], sigma=3.0, maxiters=5)
-            vmin = max(np.min(data[finite]), median_val - 2.8 * std_val)
-            vmax = min(np.max(data[finite]), np.percentile(data[finite], 99.9))
+        _, median_val, std_val = sigma_clipped_stats(data[finite], sigma=3.0, maxiters=5)
+        vmin = max(np.min(data[finite]), median_val - 2.8 * std_val)
+        vmax = min(np.max(data[finite]), np.percentile(data[finite], 99.9))
 
         if vmax <= vmin:
             vmin = np.min(data[finite])
@@ -970,59 +865,20 @@ class ApertureOverlayWindow(StepWindowBase):
         self.display_image()
 
     def on_button_press(self, event):
-        if event.button == 3:
-            self.panning = True
-            self.pan_start = (event.xdata, event.ydata)
+        return
 
     def on_button_release(self, event):
-        if event.button == 3:
-            self.panning = False
-            self.pan_start = None
+        return
 
     def on_motion(self, event):
-        if self.panning and self.pan_start is not None and event.inaxes == self.ax:
-            dx = self.pan_start[0] - event.xdata
-            dy = self.pan_start[1] - event.ydata
-            xlim = self.ax.get_xlim()
-            ylim = self.ax.get_ylim()
-            self.ax.set_xlim([xlim[0] + dx, xlim[1] + dx])
-            self.ax.set_ylim([ylim[0] + dy, ylim[1] + dy])
-            self.canvas.draw()
-            return
-
-        if event.inaxes == self.ax and event.xdata is not None and event.ydata is not None:
-            self.cursor_x = event.xdata
-            self.cursor_y = event.ydata
-        else:
-            self.cursor_x = None
-            self.cursor_y = None
+        return
 
     def on_scroll(self, event):
-        if event.inaxes != self.ax:
-            return
-        xlim = self.ax.get_xlim()
-        ylim = self.ax.get_ylim()
-        zoom_factor = 1.2 if event.button == "up" else 0.8
-        xdata, ydata = event.xdata, event.ydata
-        x_range = (xlim[1] - xlim[0]) * zoom_factor
-        y_range = (ylim[1] - ylim[0]) * zoom_factor
-        new_xlim = [
-            xdata - x_range * (xdata - xlim[0]) / (xlim[1] - xlim[0]),
-            xdata + x_range * (xlim[1] - xdata) / (xlim[1] - xlim[0]),
-        ]
-        new_ylim = [
-            ydata - y_range * (ydata - ylim[0]) / (ylim[1] - ylim[0]),
-            ydata + y_range * (ylim[1] - ydata) / (ylim[1] - ylim[0]),
-        ]
-        self.ax.set_xlim(new_xlim)
-        self.ax.set_ylim(new_ylim)
-        self.canvas.draw()
+        return
 
     def reset_zoom(self):
-        if self.xlim_original is not None:
-            self.ax.set_xlim(self.xlim_original)
-            self.ax.set_ylim(self.ylim_original)
-            self.canvas.draw()
+        if self.fits_viewer is not None:
+            self.fits_viewer.fit_in_view()
 
     def keyPressEvent(self, event):
         key = event.text().lower()
@@ -1128,9 +984,7 @@ class ApertureOverlayWindow(StepWindowBase):
 
     @staticmethod
     def _normalize_filter_key(value: str | None) -> str:
-        if value is None:
-            return ""
-        return str(value).strip().upper()
+        return _canonical_filter_key(value)
 
     def _extract_filter_from_header(self, header) -> str:
         if header is None:
@@ -1149,9 +1003,9 @@ class ApertureOverlayWindow(StepWindowBase):
                 base = base[: -len(ext)]
         parts = [p for p in base.replace(".", "_").replace("-", "_").split("_") if p]
         for token in reversed(parts):
-            cand = token.lower()
-            if 1 <= len(cand) <= 3 and cand.isalpha():
-                return cand.upper()
+            cand = _canonical_filter_key(token)
+            if cand and 1 <= len(cand) <= 3 and str(cand).isalpha():
+                return cand
         return ""
 
     def _extract_frame_key(self, fname: str, filter_key: str) -> str:
@@ -1161,8 +1015,9 @@ class ApertureOverlayWindow(StepWindowBase):
             if base.lower().endswith(ext):
                 base = base[: -len(ext)]
         base_lower = base.lower()
-        filt = str(filter_key or "").lower() or self._infer_filter_from_filename(fname).lower()
-        if filt:
+        fkey = self._normalize_filter_key(filter_key) or self._infer_filter_from_filename(fname)
+        if fkey:
+            filt = fkey.lower()
             for sep in ("-", "_", "."):
                 suffix = f"{sep}{filt}"
                 if base_lower.endswith(suffix):

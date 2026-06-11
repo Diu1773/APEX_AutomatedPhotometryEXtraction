@@ -31,10 +31,11 @@ from apex.config.parameters_cmd import Parameters as CmdParameters
 from apex.config.parameters_lc import Parameters as LcParameters
 
 
-def _write_minimal_toml(tmp_path):
+def _write_minimal_toml(tmp_path, *, include_filename_prefix=True):
     data_dir = (tmp_path / "data").as_posix()
     result_dir = (tmp_path / "result").as_posix()
     path = tmp_path / "parameters.toml"
+    prefix_line = 'filename_prefix = "pp_"' if include_filename_prefix else ""
     path.write_text(
         textwrap.dedent(
             f"""
@@ -42,7 +43,7 @@ def _write_minimal_toml(tmp_path):
 
             [io]
             data_dir = "{data_dir}"
-            filename_prefix = "pp_"
+            {prefix_line}
             result_dir = "{result_dir}"
             cache_dir = "cache"
 
@@ -176,6 +177,32 @@ def test_cmd_and_lc_load_top_level_schema_version(tmp_path):
     assert lc.P.source_quality_apcorr_flux_pct == 70.0
 
 
+def test_missing_filename_prefix_defaults_to_all_fits(tmp_path):
+    param_path = _write_minimal_toml(tmp_path, include_filename_prefix=False)
+
+    cmd = CmdParameters(param_path)
+    lc = LcParameters(param_path)
+
+    assert cmd.P.filename_prefix == ""
+    assert lc.P.filename_prefix == ""
+
+
+def test_missing_manual_noise_values_load_as_header_fallback_candidates(tmp_path):
+    param_path = _write_minimal_toml(tmp_path)
+    text = param_path.read_text(encoding="utf-8")
+    text = text.replace("gain_e_per_adu = 0.1\n", "")
+    text = text.replace("rdnoise_e = 1.39\n", "")
+    param_path.write_text(text, encoding="utf-8")
+
+    cmd = CmdParameters(param_path)
+    lc = LcParameters(param_path)
+
+    assert cmd.P.gain_e_per_adu is None
+    assert cmd.P.rdnoise_e is None
+    assert lc.P.gain_e_per_adu is None
+    assert lc.P.rdnoise_e is None
+
+
 def test_save_toml_writes_canonical_schema_version(tmp_path):
     pytest.importorskip("tomli_w")
     param_path = _write_minimal_toml(tmp_path)
@@ -187,6 +214,45 @@ def test_save_toml_writes_canonical_schema_version(tmp_path):
         data = tomllib.load(fh)
     assert data["schema_version"] == CANONICAL_SCHEMA_VERSION
     assert data["detection"]["engine"] == "sep"
+
+
+def test_save_toml_removes_blank_manual_noise_values(tmp_path):
+    pytest.importorskip("tomli_w")
+    param_path = _write_minimal_toml(tmp_path)
+    params = CmdParameters(param_path)
+
+    params.P.gain_e_per_adu = None
+    params.P.rdnoise_e = None
+    assert params.save_toml()
+
+    with param_path.open("rb") as fh:
+        data = tomllib.load(fh)
+    assert "gain_e_per_adu" not in data["instrument"]
+    assert "rdnoise_e" not in data["instrument"]
+
+
+@pytest.mark.parametrize("ParamsCls", [CmdParameters, LcParameters])
+def test_save_toml_removes_blank_target_coordinates(tmp_path, ParamsCls):
+    pytest.importorskip("tomli_w")
+    param_path = _write_minimal_toml(tmp_path)
+    param_path.write_text(
+        param_path.read_text(encoding="utf-8")
+        + "\n[target]\nname = \"NGC457\"\nra_deg = 298.30625\ndec_deg = 58.27806\n",
+        encoding="utf-8",
+    )
+    params = ParamsCls(param_path)
+
+    assert params.P.target_name == "NGC457"
+    params.P.target_name = "M37"
+    params.P.target_ra_deg = None
+    params.P.target_dec_deg = None
+    assert params.save_toml()
+
+    with param_path.open("rb") as fh:
+        data = tomllib.load(fh)
+    assert data["target"]["name"] == "M37"
+    assert "ra_deg" not in data["target"]
+    assert "dec_deg" not in data["target"]
 
 
 def test_save_toml_preserves_forced_phot_quality_knobs(tmp_path):

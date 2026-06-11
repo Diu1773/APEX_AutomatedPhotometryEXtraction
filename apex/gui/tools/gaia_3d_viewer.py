@@ -468,7 +468,7 @@ class Gaia3DViewerWindow(ToolWindowBase):
     @staticmethod
     def _cmd_color_value_cols(columns) -> tuple[str, ...]:
         cols: list[str] = []
-        for prefix in ("mag_std_", "mag_inst_"):
+        for prefix in ("mag_cal_", "mag_std_", "mag_inst_"):
             for band in filter_bands_from_columns(columns, prefix):
                 cols.append(f"{prefix}{band}")
         for col in columns:
@@ -805,7 +805,9 @@ class Gaia3DViewerWindow(ToolWindowBase):
         dist_pc = np.where(np.isfinite(plx_arr) & (plx_arr > 0), 1000.0 / plx_arr, np.nan)
         bp_rp   = self._compute_bp_rp(df)[idx]
 
-        cmd_std, cmd_std_label, cmd_std_a, cmd_std_b = self._best_cmd_color(df, "mag_std_", idx)
+        cmd_cal, cmd_cal_label, cmd_cal_a, cmd_cal_b = self._best_cmd_color(df, "mag_cal_", idx)
+        if cmd_cal_a is None or cmd_cal_b is None:
+            cmd_cal, cmd_cal_label, cmd_cal_a, cmd_cal_b = self._best_cmd_color(df, "mag_std_", idx)
         cmd_inst, cmd_inst_label, cmd_inst_a, cmd_inst_b = self._best_cmd_color(df, "mag_inst_", idx)
 
         # --- color mode ---
@@ -823,9 +825,9 @@ class Gaia3DViewerWindow(ToolWindowBase):
             c = _color_to_teff(bp_rp, "BP-RP")
             cmap = _STELLAR_CMAP; cbar = "Teff (K) from BP-RP"
             vmin, vmax = _TEFF_VMIN, _TEFF_VMAX
-        elif c_mode == 4 and cmd_std_a and cmd_std_b:
-            c = teff_from_color(cmd_std, cmd_std_a, cmd_std_b, _TEFF_VMIN, _TEFF_VMAX)
-            cmap = _STELLAR_CMAP; cbar = f"Teff (K) from {cmd_std_label} std"
+        elif c_mode == 4 and cmd_cal_a and cmd_cal_b:
+            c = teff_from_color(cmd_cal, cmd_cal_a, cmd_cal_b, _TEFF_VMIN, _TEFF_VMAX)
+            cmap = _STELLAR_CMAP; cbar = f"Teff (K) from {cmd_cal_label} calibrated"
             vmin, vmax = _TEFF_VMIN, _TEFF_VMAX
         elif c_mode == 5 and cmd_inst_a and cmd_inst_b:
             c = teff_from_color(cmd_inst, cmd_inst_a, cmd_inst_b, _TEFF_VMIN, _TEFF_VMAX)
@@ -841,8 +843,8 @@ class Gaia3DViewerWindow(ToolWindowBase):
             pmem_n=int(np.isfinite(pmem).sum()),
             row_idx=idx, pmem=pmem,
             gmag=gmag, plx=plx_arr, dist_pc=dist_pc,
-            bp_rp=bp_rp, gr_std=cmd_std, gr_inst=cmd_inst,
-            gr_std_label=cmd_std_label, gr_inst_label=cmd_inst_label,
+            bp_rp=bp_rp, gr_std=cmd_cal, gr_inst=cmd_inst,
+            gr_std_label=cmd_cal_label, gr_inst_label=cmd_inst_label,
             ra_arr=ra_arr, dec_arr=dec_arr,
             pmra_arr=pmra_arr, pmdec_arr=pmdec_arr,
             is_sky=is_sky,

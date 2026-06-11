@@ -137,6 +137,16 @@ class OverlayMarker(NamedTuple):
     rejected: bool = False
     label:    str = ""
     member:   bool = False    # if True, draw small filled center dot
+    inner_radius: float = 0.0
+    outer_radius: float = 0.0
+    secondary_color: QColor = QColor(0, 220, 255, 150)
+    line_width: float = 1.4
+    target_col: float = math.nan
+    target_row: float = math.nan
+    target_color: QColor = QColor(255, 0, 255, 180)
+    label_offset_col: float = 0.0
+    label_offset_row: float = 0.0
+    label_font_size: int = 8
 
 
 # ── FitsGLWidget ──────────────────────────────────────────────────────────────
@@ -517,9 +527,6 @@ class FitsGLWidget(QOpenGLWidget):
         painter.setRenderHint(QPainter.TextAntialiasing)
         img_h, img_w = self._raw_data.shape[:2]
         fit_x, fit_y = self._fit_scale()
-        label_font = QFont("Arial", 8, QFont.Bold)
-        painter.setFont(label_font)
-
         if self._sel_rect_img is not None:
             x0, y0, x1, y1 = self._sel_rect_img
             p0 = self._uv_to_widget_pos(x0 / img_w, y0 / img_h)
@@ -539,21 +546,38 @@ class FitsGLWidget(QOpenGLWidget):
                 self.width()  / max(1.0, img_w * fit_x) * self._zoom,
                 self.height() / max(1.0, img_h * fit_y) * self._zoom,
             )
-            r_px = max(4.0, m.radius * scale)
+            r_px = max(4.0, m.radius * scale) if m.radius > 0 else 0.0
+
+            if math.isfinite(m.target_col) and math.isfinite(m.target_row):
+                target_wp = self._uv_to_widget_pos(m.target_col / img_w, m.target_row / img_h)
+                painter.setPen(QPen(m.target_color, max(1.0, m.line_width)))
+                painter.drawLine(wp, target_wp)
 
             pen_color = QColor(255, 80, 80, 230) if m.rejected else m.color
-            painter.setPen(QPen(pen_color, 1.4))
-            painter.setBrush(Qt.NoBrush)
-            painter.drawEllipse(QRectF(wx - r_px, wy - r_px, 2 * r_px, 2 * r_px))
+            if r_px > 0:
+                painter.setPen(QPen(pen_color, max(0.5, m.line_width)))
+                painter.setBrush(Qt.NoBrush)
+                painter.drawEllipse(QRectF(wx - r_px, wy - r_px, 2 * r_px, 2 * r_px))
+                for extra_radius in (m.inner_radius, m.outer_radius):
+                    if extra_radius > 0:
+                        rr_px = max(2.0, extra_radius * scale)
+                        painter.setPen(QPen(m.secondary_color, max(0.5, m.line_width * 0.75)))
+                        painter.drawEllipse(QRectF(wx - rr_px, wy - rr_px, 2 * rr_px, 2 * rr_px))
 
             if m.member:
                 painter.setPen(Qt.NoPen)
                 painter.setBrush(QBrush(pen_color))
-                dot_r = max(1.5, r_px * 0.25)
+                dot_r = max(1.5, r_px * 0.25 if r_px > 0 else 2.0)
                 painter.drawEllipse(QRectF(wx - dot_r, wy - dot_r, 2 * dot_r, 2 * dot_r))
 
             if m.label:
-                tx, ty = wx - r_px - 2, wy - r_px - 2
+                label_font = QFont("Arial", max(6, int(m.label_font_size)), QFont.Bold)
+                painter.setFont(label_font)
+                if m.label_offset_col or m.label_offset_row:
+                    tx = wx + m.label_offset_col * scale
+                    ty = wy + m.label_offset_row * scale
+                else:
+                    tx, ty = wx - r_px - 2, wy - r_px - 2
                 # Dark outline pass
                 painter.setPen(QPen(QColor(0, 0, 0, 180), 2.5))
                 for ox, oy in ((-1, -1), (1, -1), (-1, 1), (1, 1)):
@@ -788,6 +812,7 @@ class FITSViewerWidget(QWidget):
     def set_data_auto_stf(self, data: np.ndarray):
         """Upload data and apply auto-STF immediately."""
         self.set_data(data)
+        self.set_stretch_mode("stf")
         self.auto_stf()
 
     def fit_in_view(self):
@@ -808,6 +833,13 @@ class FITSViewerWidget(QWidget):
     def set_shadow_highlight(self, shadow: float, highlight: float):
         """Update shadow/highlight only (keep current mid). Raw pixel units."""
         self.set_stf(shadow, highlight, self._mid_val)
+
+    def set_linear_range(self, low: float, high: float):
+        """Set linear/log/asinh/sqrt black-white point in raw pixel units."""
+        self._lin_low_raw = float(low)
+        self._lin_high_raw = float(high)
+        self._gl.set_linear_range(low, high)
+        self._update_lin_sliders()
 
     def auto_stf(self):
         """Compute auto-STF from current data and apply."""

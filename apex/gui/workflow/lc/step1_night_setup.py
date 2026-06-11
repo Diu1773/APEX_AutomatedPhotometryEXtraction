@@ -114,7 +114,10 @@ class LightCurveNightSetupMixin:
     """Adds manual folders, subfolder scanning, and night selection to Step 1."""
 
     directory_label = "Root:"
-    header_labels = ["Filename", "Night", "DATE-OBS", "FILTER", "EXPTIME", "AIRMASS", "IMAGETYP"]
+    header_labels = [
+        "Filename", "Night", "DATE-OBS", "FILTER", "EXPTIME", "AIRMASS",
+        "OBJECT", "RA_DEG", "DEC_DEG", "IMAGETYP",
+    ]
 
     def init_mode_state(self) -> None:
         self._manual_input_dirs: list[Path] = []
@@ -497,13 +500,14 @@ class LightCurveNightSetupMixin:
             if night_id != "-" and int(night_id) in self._excluded_nights:
                 use_item.setCheckState(Qt.Unchecked)
             self.header_table.setItem(i, 0, use_item)
-            self.header_table.setItem(i, 1, QTableWidgetItem(filename))
-            self.header_table.setItem(i, 2, QTableWidgetItem(f"N{night_id}"))
-            self.header_table.setItem(i, 3, QTableWidgetItem(str(row["DATE-OBS"])))
-            self.header_table.setItem(i, 4, QTableWidgetItem(str(row["FILTER"])))
-            self.header_table.setItem(i, 5, QTableWidgetItem(str(row["EXPTIME"])))
-            self.header_table.setItem(i, 6, QTableWidgetItem(str(row["AIRMASS"])))
-            self.header_table.setItem(i, 7, QTableWidgetItem(str(row["IMAGETYP"])))
+            values = {
+                "Filename": filename,
+                "Night": f"N{night_id}",
+            }
+            for label in self.header_labels:
+                values.setdefault(label, self._format_header_cell(row, label))
+            for col, label in enumerate(self.header_labels, start=1):
+                self.header_table.setItem(i, col, QTableWidgetItem(values[label]))
         self.header_table.blockSignals(False)
         self._header_table_loading = False
 

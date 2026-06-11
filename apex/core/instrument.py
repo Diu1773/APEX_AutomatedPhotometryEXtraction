@@ -5,6 +5,7 @@ Instrument configuration (Telescope + Camera).
 from __future__ import annotations
 import math
 import re
+import warnings
 import numpy as np
 import pandas as pd
 from pathlib import Path
@@ -18,59 +19,28 @@ from apex.utils.ssl_certificates import configure_ssl_certificates
 configure_ssl_certificates()
 
 try:
-    from astroquery.simbad import Simbad
+    from astroquery.simbad import Simbad, conf as _SIMBAD_CONF
     _HAS_SIMBAD = True
 except Exception as e:
     print(f"[SIMBAD] astroquery.simbad import failed → SIMBAD unavailable: {e}")
+    _SIMBAD_CONF = None
     _HAS_SIMBAD = False
 
 
 _CATALOG_ALIASES = {
-    "M3": ["NGC 5272"],
+    "M3":       ["NGC 5272"],
     "MESSIER3": ["NGC 5272"],
-    "M5": ["NGC 5904"],
+    "M5":       ["NGC 5904"],
     "MESSIER5": ["NGC 5904"],
+    "M13":      ["NGC 6205"],
+    "MESSIER13":["NGC 6205"],
+    "M92":      ["NGC 6341"],
+    "MESSIER92":["NGC 6341"],
+    "M31":      ["NGC 224"],
+    "MESSIER31":["NGC 224"],
+    "M37":      ["NGC 2099"],
+    "MESSIER37":["NGC 2099"],
 }
-
-_OFFLINE_TARGETS = {
-    "M3": {
-        "ra_hms": "13:42:11.62",
-        "dec_dms": "+28:22:38.2",
-        "otype": "GlCl",
-        "canonical": "M 3",
-    },
-    "MESSIER3": {
-        "ra_hms": "13:42:11.62",
-        "dec_dms": "+28:22:38.2",
-        "otype": "GlCl",
-        "canonical": "M 3",
-    },
-    "NGC5272": {
-        "ra_hms": "13:42:11.62",
-        "dec_dms": "+28:22:38.2",
-        "otype": "GlCl",
-        "canonical": "NGC 5272",
-    },
-    "M5": {
-        "ra_hms": "15:18:33.22",
-        "dec_dms": "+02:04:51.7",
-        "otype": "GlCl",
-        "canonical": "M 5",
-    },
-    "MESSIER5": {
-        "ra_hms": "15:18:33.22",
-        "dec_dms": "+02:04:51.7",
-        "otype": "GlCl",
-        "canonical": "M 5",
-    },
-    "NGC5904": {
-        "ra_hms": "15:18:33.22",
-        "dec_dms": "+02:04:51.7",
-        "otype": "GlCl",
-        "canonical": "NGC 5904",
-    },
-}
-
 
 class InstrumentConfig:
     """
@@ -130,6 +100,7 @@ class InstrumentConfig:
         self.primary_coord = None
         self.last_target_attempts = []
         self.last_target_errors = []
+        self.last_simbad_servers = []
 
     def _pixel_scale_arcsec(self, binning: int = 1) -> float:
         return 206.265 * self.pix_size_um * float(binning) / float(self.focal_length_mm)
@@ -181,43 +152,135 @@ class InstrumentConfig:
 
         return aliases
 
+    @staticmethod
+    def _table_value(table, *candidates):
+        names = {str(name).lower(): name for name in getattr(table, "colnames", [])}
+        for candidate in candidates:
+            name = names.get(str(candidate).lower())
+            if name is not None:
+                return table[name][0]
+        raise KeyError(f"none of {candidates} in {getattr(table, 'colnames', [])}")
+
     @classmethod
-    def _offline_target_record(cls, name: str) -> Optional[dict]:
-        for alias in cls._target_query_aliases(name):
-            key = alias.replace(" ", "").upper()
-            rec = _OFFLINE_TARGETS.get(key)
-            if not rec:
-                continue
-            coord = SkyCoord(rec["ra_hms"], rec["dec_dms"], unit=(u.hourangle, u.deg))
-            return {
-                "name": name,
-                "ra_deg": float(coord.ra.deg),
-                "dec_deg": float(coord.dec.deg),
-                "ra_str": coord.ra.to_string(unit="hour", sep=":", precision=2),
-                "dec_str": coord.dec.to_string(unit="deg", sep=":", precision=1, alwayssign=True),
-                "vmag": np.nan,
-                "otype": rec.get("otype", ""),
-                "simbad_query": f"offline:{rec.get('canonical', alias)}",
-            }
-        return None
+    def _record_from_simbad_row(cls, name: str, res, query_used: str | None) -> dict:
+        try:
+            ra_deg = float(cls._table_value(res, "RA_d", "RA(d)", "ra_d"))
+            dec_deg = float(cls._table_value(res, "DEC_d", "DEC(d)", "dec_d"))
+            coord = SkyCoord(ra_deg, dec_deg, unit="deg")
+        except Exception:
+            ra_raw = cls._table_value(res, "ra", "RA")
+            dec_raw = cls._table_value(res, "dec", "DEC")
+            try:
+                ra_deg = float(ra_raw)
+                dec_deg = float(dec_raw)
+                if np.isfinite(ra_deg) and np.isfinite(dec_deg):
+                    coord = SkyCoord(ra_deg, dec_deg, unit="deg")
+                else:
+                    raise ValueError("non-finite numeric coordinates")
+            except Exception:
+                coord = SkyCoord(str(ra_raw), str(dec_raw), unit=(u.hourangle, u.deg))
 
-    def resolve_targets(self, target_names: Optional[list] = None):
-        raw_targets = list(target_names or [])
+        try:
+            vmag_raw = cls._table_value(res, "FLUX_V", "flux_V", "V")
+            vmag = np.nan if np.ma.is_masked(vmag_raw) else float(vmag_raw)
+        except Exception:
+            vmag = np.nan
+        try:
+            otype = str(cls._table_value(res, "OTYPE", "otype"))
+        except Exception:
+            otype = ""
 
-        if hasattr(self.params.P, "_raw"):
-            tn_param = self.params.P._raw.get("target_name", None)
-            if tn_param and str(tn_param).strip():
-                raw_targets.append(str(tn_param).strip())
+        return dict(
+            name=name,
+            ra_deg=float(coord.ra.deg),
+            dec_deg=float(coord.dec.deg),
+            ra_str=coord.ra.to_string(unit="hour", sep=":", precision=2),
+            dec_str=coord.dec.to_string(unit="deg", sep=":", precision=1, alwayssign=True),
+            vmag=vmag,
+            otype=otype,
+            simbad_query=query_used or name,
+        )
 
-        target_list_path = self.params.P.data_dir / "targets.txt"
-        if target_list_path.exists():
-            for line in target_list_path.read_text(encoding="utf-8").splitlines():
-                s = line.strip()
-                if s and not s.startswith("#"):
-                    raw_targets.append(s)
+    def _prepare_simbad(self) -> bool:
+        """Prepare optional SIMBAD fields, but keep default query usable on failure."""
+        if not _HAS_SIMBAD:
+            self.last_target_errors.append("astroquery.simbad is not importable")
+            return False
+        try:
+            Simbad.clear_cache()
+        except Exception:
+            pass
+        try:
+            Simbad.reset_votable_fields()
+        except Exception as e:
+            self.last_target_errors.append(f"SIMBAD reset: {type(e).__name__}: {e}")
+        try:
+            Simbad.add_votable_fields("otype")
+        except Exception as e:
+            self.last_target_errors.append(
+                f"SIMBAD optional field otype: {type(e).__name__}: {e}"
+            )
+        try:
+            timeout_s = float(getattr(self.params.P, "simbad_timeout_s", 60.0))
+            Simbad.TIMEOUT = max(timeout_s, 10.0)
+        except Exception:
+            pass
+        return True
 
-        if not raw_targets:
-            raw_targets = ["M31"]
+    def _simbad_server_candidates(self) -> list[str]:
+        configured = getattr(self.params.P, "simbad_servers", None)
+        if configured is None:
+            configured = getattr(self.params.P, "simbad_server", None)
+
+        servers: list[str] = []
+
+        def add(value) -> None:
+            text = str(value or "").strip().strip("/")
+            if text and text not in servers:
+                servers.append(text)
+
+        if isinstance(configured, (list, tuple)):
+            for item in configured:
+                add(item)
+        elif configured:
+            for item in str(configured).split(","):
+                add(item)
+
+        try:
+            for item in list(getattr(_SIMBAD_CONF, "servers_list", []) or []):
+                add(item)
+        except Exception:
+            pass
+
+        add("simbad.cds.unistra.fr")
+        add("simbad.harvard.edu")
+        return servers
+
+    @staticmethod
+    def _set_simbad_server(server: str) -> str:
+        value = str(server or "").strip().rstrip("/")
+        if not value:
+            value = "simbad.cds.unistra.fr"
+        if value.startswith(("http://", "https://")):
+            if value.endswith("/sim-script"):
+                url = value
+            elif value.endswith("/simbad"):
+                url = f"{value}/sim-script"
+            else:
+                url = f"{value}/simbad/sim-script"
+            label = value.split("://", 1)[-1].split("/", 1)[0]
+        else:
+            label = value
+            url = f"https://{value}/simbad/sim-script"
+        Simbad.SIMBAD_URL = url
+        return label
+
+    def resolve_targets(self, target_names: Optional[list] = None, log_fn=None):
+        raw_targets = [
+            str(name).strip()
+            for name in (target_names or [])
+            if str(name).strip()
+        ]
 
         seen: set = set()
         targets = []
@@ -226,73 +289,82 @@ class InstrumentConfig:
                 seen.add(name)
                 targets.append(name)
 
-        simbad_ready = bool(_HAS_SIMBAD)
-        self.last_target_errors = []
-        if simbad_ready:
-            try:
-                Simbad.reset_votable_fields()
-                Simbad.add_votable_fields("ra(d)", "dec(d)", "flux(V)", "otype")
-            except Exception as e:
-                simbad_ready = False
-                self.last_target_errors.append(f"SIMBAD setup: {type(e).__name__}: {e}")
-        else:
-            self.last_target_errors.append("astroquery.simbad is not importable")
+        _log = log_fn or print
 
-        print("\n=== SIMBAD Target Resolution ===")
+        self.targets_resolved = []
+        self.primary_target = None
+        self.primary_coord = None
+        self.last_target_errors = []
+        simbad_ready = self._prepare_simbad()
+        simbad_servers = self._simbad_server_candidates() if simbad_ready else []
+        self.last_simbad_servers = simbad_servers
+
+        _log("\n=== SIMBAD Target Resolution ===")
+        try:
+            stale_out = step1_dir(Path(self.params.P.result_dir)) / "targets_simbad.tsv"
+            stale_out.unlink(missing_ok=True)
+        except Exception:
+            pass
         self.last_target_attempts = []
         for name in targets:
             res = None
             query_used = None
+            query_server = None
+            query_attempted = False
+            query_failed = False
             aliases = self._target_query_aliases(name)
             self.last_target_attempts.extend(aliases)
             if simbad_ready:
-                for query_name in aliases:
-                    try:
-                        res = Simbad.query_object(query_name)
-                        if res is not None and len(res) > 0:
-                            query_used = query_name
-                            break
-                    except Exception as e:
-                        self.last_target_errors.append(
-                            f"{query_name}: {type(e).__name__}: {e}"
-                        )
+                for server in simbad_servers:
+                    server_label = self._set_simbad_server(server)
+                    for query_name in aliases:
+                        try:
+                            query_attempted = True
+                            with warnings.catch_warnings():
+                                warnings.simplefilter("ignore")
+                                res = Simbad.query_object(query_name)
+                            if res is not None and len(res) > 0:
+                                query_used = query_name
+                                query_server = server_label
+                                break
+                        except Exception as e:
+                            query_failed = True
+                            self.last_target_errors.append(
+                                f"{query_name}@{server_label}: {type(e).__name__}: {e}"
+                            )
+                    if res is not None and len(res) > 0:
+                        break
 
             if res is None or len(res) == 0:
-                offline = self._offline_target_record(name)
-                if offline is not None:
-                    self.targets_resolved.append(offline)
-                    print(
-                        f"[SIMBAD] {name:20s} ({offline['simbad_query']}) -> "
-                        f"RA={offline['ra_str']}  DEC={offline['dec_str']}  "
-                        f"({offline['ra_deg']:9.5f} deg, {offline['dec_deg']:9.5f} deg)  "
-                        f"V~n/a  [{offline['otype']}]"
-                    )
-                    continue
-
                 err_txt = "; ".join(self.last_target_errors[-3:])
-                suffix = f" errors: {err_txt}" if err_txt else ""
-                print(f"[SIMBAD] Not found: {name} (tried: {', '.join(aliases)}){suffix}")
+                suffix = f"  ({err_txt})" if err_txt else ""
+                server_txt = f"; servers: {', '.join(simbad_servers)}" if simbad_servers else ""
+                if not simbad_ready:
+                    _log(f"[SIMBAD] unavailable: {name} (tried: {', '.join(aliases)}{server_txt}){suffix}")
+                elif query_failed and not query_attempted:
+                    _log(f"[SIMBAD] query failed: {name} (tried: {', '.join(aliases)}{server_txt}){suffix}")
+                elif query_failed and err_txt:
+                    _log(f"[SIMBAD] query failed: {name} (tried: {', '.join(aliases)}{server_txt}){suffix}")
+                else:
+                    _log(f"[SIMBAD] Not found: {name} (tried: {', '.join(aliases)}{server_txt}){suffix}")
                 continue
 
             try:
-                ra_deg = float(res["RA_d"][0])
-                dec_deg = float(res["DEC_d"][0])
-                ra_str = str(res["RA"][0])
-                dec_str = str(res["DEC"][0])
-                vmag = float(res["FLUX_V"][0]) if "FLUX_V" in res.colnames else np.nan
-                otype = str(res["OTYPE"][0]) if "OTYPE" in res.colnames else ""
-
-                rec = dict(name=name, ra_deg=ra_deg, dec_deg=dec_deg,
-                           ra_str=ra_str, dec_str=dec_str, vmag=vmag, otype=otype,
-                           simbad_query=query_used or name)
+                rec = self._record_from_simbad_row(name, res, query_used)
+                rec["simbad_server"] = query_server or ""
                 self.targets_resolved.append(rec)
-                print(
-                    f"[SIMBAD] {name:20s} ({query_used or name}) → RA={ra_str}  DEC={dec_str}  "
-                    f"({ra_deg:9.5f}°, {dec_deg:9.5f}°)  V~{vmag if np.isfinite(vmag) else 'n/a'}  [{otype}]"
+                source_label = query_used or name
+                if query_server:
+                    source_label = f"{source_label} @ {query_server}"
+                _log(
+                    f"[SIMBAD] {name:20s} ({source_label}) -> "
+                    f"RA={rec['ra_str']}  DEC={rec['dec_str']}  "
+                    f"({rec['ra_deg']:9.5f} deg, {rec['dec_deg']:9.5f} deg)  "
+                    f"V~{rec['vmag'] if np.isfinite(rec['vmag']) else 'n/a'}  [{rec['otype']}]"
                 )
             except Exception as e:
                 self.last_target_errors.append(f"{name}: {type(e).__name__}: {e}")
-                print(f"[SIMBAD] ERROR for '{name}': {e}")
+                _log(f"[SIMBAD] parse error for '{name}': {e}")
 
         if self.targets_resolved:
             self.primary_target = self.targets_resolved[0]["name"]
@@ -305,9 +377,9 @@ class InstrumentConfig:
             step1_out.mkdir(parents=True, exist_ok=True)
             out = step1_out / "targets_simbad.tsv"
             pd.DataFrame(self.targets_resolved).to_csv(out, sep="\t", index=False)
-            print(f"→ SIMBAD results saved: {out}")
+            _log(f"[SIMBAD] results saved: {out}")
         else:
-            print("No targets successfully resolved via SIMBAD")
+            _log("No targets successfully resolved via SIMBAD")
 
     def print_summary(self):
         print(f"\n=== Instrument Summary ({self.telescope_name}) ===")

@@ -6,17 +6,20 @@ Popup window with Previous/Next navigation
 import json
 import os
 from collections import defaultdict
+from urllib.parse import quote_plus
 from PyQt5.QtWidgets import (
     QVBoxLayout, QHBoxLayout, QPushButton, QLabel,
     QTableWidget, QTableWidgetItem, QGroupBox, QLineEdit,
     QFileDialog, QMessageBox, QHeaderView, QCheckBox, QDoubleSpinBox,
-    QListWidget, QListWidgetItem, QListView, QTreeView
+    QListWidget, QListWidgetItem, QListView, QTreeView, QTextEdit, QWidget
 )
-from PyQt5.QtCore import Qt
+from PyQt5.QtCore import Qt, QUrl
+from PyQt5.QtGui import QDesktopServices
 from pathlib import Path
 from typing import Optional
 
 from apex.gui.workflow.step_window_base import StepWindowBase
+from apex.gui.workflow.target_resolver import TargetResolveWorker, target_failure_message
 from apex.utils.step_paths_lc import step1_dir
 from apex.utils.run_workspace import build_result_workspace_dir, write_run_manifest
 try:  # Python 3.11+
@@ -152,6 +155,7 @@ class FileSelectionWindow(StepWindowBase):
             main_window: Main window reference
         """
         self.file_manager = file_manager
+        self.simbad_worker = None
         self.root_dir = Path(params.P.data_dir)
         self.last_data_dir = Path(params.P.data_dir)
         self._manual_input_dirs: list[Path] = []
@@ -281,23 +285,66 @@ class FileSelectionWindow(StepWindowBase):
 
         # === SIMBAD Target ===
         target_group = QGroupBox("SIMBAD Target")
-        target_layout = QHBoxLayout(target_group)
+        target_vbox = QVBoxLayout(target_group)
 
-        target_layout.addWidget(QLabel("Target Name:"))
+        # Row 1: name input + buttons + result label
+        target_row = QHBoxLayout()
+        target_row.addWidget(QLabel("Target:"))
         self.target_edit = QLineEdit()
         self.target_edit.setPlaceholderText("e.g., M31 or WASP-12")
-        self.target_edit.setMaximumWidth(200)
-        target_layout.addWidget(self.target_edit)
+        self.target_edit.setMaximumWidth(160)
+        target_row.addWidget(self.target_edit)
 
-        btn_resolve = QPushButton("Resolve SIMBAD")
-        btn_resolve.clicked.connect(self.resolve_target)
-        target_layout.addWidget(btn_resolve)
+        self.btn_resolve_simbad = QPushButton("Resolve SIMBAD")
+        self.btn_resolve_simbad.clicked.connect(self.resolve_target)
+        target_row.addWidget(self.btn_resolve_simbad)
+
+        btn_open_simbad = QPushButton("Open SIMBAD")
+        btn_open_simbad.setToolTip("Open the target name in the SIMBAD web page.")
+        btn_open_simbad.clicked.connect(self.open_simbad_page)
+        target_row.addWidget(btn_open_simbad)
+
+        btn_manual = QPushButton("수동 입력")
+        btn_manual.setToolTip("SIMBAD 없이 RA/Dec를 직접 입력합니다.")
+        btn_manual.clicked.connect(self._toggle_manual_radec)
+        target_row.addWidget(btn_manual)
 
         self.target_result = QLabel("(not resolved)")
         self.target_result.setStyleSheet("QLabel { font-weight: bold; color: #4CAF50; }")
-        target_layout.addWidget(self.target_result)
+        target_row.addWidget(self.target_result)
+        target_row.addStretch()
+        target_vbox.addLayout(target_row)
 
-        target_layout.addStretch()
+        # Row 2: manual RA/Dec input (hidden by default)
+        self._manual_radec_widget = QWidget()
+        manual_row = QHBoxLayout(self._manual_radec_widget)
+        manual_row.setContentsMargins(0, 0, 0, 0)
+        manual_row.addWidget(QLabel("RA:"))
+        self.manual_ra_edit = QLineEdit()
+        self.manual_ra_edit.setPlaceholderText("HH:MM:SS  또는  deg")
+        self.manual_ra_edit.setMaximumWidth(130)
+        manual_row.addWidget(self.manual_ra_edit)
+        manual_row.addWidget(QLabel("Dec:"))
+        self.manual_dec_edit = QLineEdit()
+        self.manual_dec_edit.setPlaceholderText("±DD:MM:SS  또는  deg")
+        self.manual_dec_edit.setMaximumWidth(130)
+        manual_row.addWidget(self.manual_dec_edit)
+        btn_apply = QPushButton("적용")
+        btn_apply.clicked.connect(self._apply_manual_radec)
+        manual_row.addWidget(btn_apply)
+        manual_row.addStretch()
+        self._manual_radec_widget.setVisible(False)
+        target_vbox.addWidget(self._manual_radec_widget)
+
+        # Row 3: SIMBAD log (hidden until query runs)
+        self.simbad_log = QTextEdit()
+        self.simbad_log.setReadOnly(True)
+        self.simbad_log.setFixedHeight(80)
+        self.simbad_log.setStyleSheet(
+            "QTextEdit { font-family: monospace; font-size: 8pt; background: #1e1e1e; color: #d4d4d4; }"
+        )
+        self.simbad_log.setVisible(False)
+        target_vbox.addWidget(self.simbad_log)
         self.content_layout.addWidget(target_group)
 
         # === Header Table ===
@@ -305,9 +352,10 @@ class FileSelectionWindow(StepWindowBase):
         table_layout = QVBoxLayout(table_group)
 
         self.header_table = QTableWidget()
-        self.header_table.setColumnCount(7)
+        self.header_table.setColumnCount(10)
         self.header_table.setHorizontalHeaderLabels([
-            "Filename", "Night", "DATE-OBS", "FILTER", "EXPTIME", "AIRMASS", "IMAGETYP"
+            "Filename", "Night", "DATE-OBS", "FILTER", "EXPTIME", "AIRMASS",
+            "OBJECT", "RA_DEG", "DEC_DEG", "IMAGETYP"
         ])
         self.header_table.horizontalHeader().setSectionResizeMode(
             QHeaderView.ResizeToContents
@@ -325,7 +373,89 @@ class FileSelectionWindow(StepWindowBase):
 
     def validate_step(self) -> bool:
         """Validate if step can be completed"""
-        return len(self.file_manager.filenames) > 0
+        return len(self.file_manager.filenames) > 0 and self._has_target_coordinates()
+
+    def _has_target_coordinates(self) -> bool:
+        try:
+            ra = float(getattr(self.params.P, "target_ra_deg", float("nan")))
+            dec = float(getattr(self.params.P, "target_dec_deg", float("nan")))
+        except (TypeError, ValueError):
+            return False
+        return (0.0 <= ra < 360.0) and (-90.0 <= dec <= 90.0)
+
+    @staticmethod
+    def _format_header_cell(row, key: str) -> str:
+        try:
+            value = row.get(key, "")
+        except Exception:
+            value = ""
+        if value is None:
+            return ""
+        try:
+            if value != value:
+                return ""
+        except Exception:
+            pass
+        if key in {"RA_DEG", "DEC_DEG"}:
+            try:
+                return f"{float(value):.5f}"
+            except (TypeError, ValueError):
+                return str(value)
+        return str(value)
+
+    def _invalidate_workflow_from_here(self) -> None:
+        for idx in list(self.project_state.state.get("completed_steps", [])):
+            if int(idx) >= self.step_index:
+                self.project_state.mark_step_incomplete(int(idx))
+        if hasattr(self.main_window, "update_step_buttons"):
+            self.main_window.update_step_buttons()
+
+    def open_simbad_page(self) -> None:
+        name = self.target_edit.text().strip()
+        url = "https://simbad.cds.unistra.fr/simbad/sim-id"
+        if name:
+            url = f"{url}?Ident={quote_plus(name)}"
+        QDesktopServices.openUrl(QUrl(url))
+
+    def _clear_target_coordinates(self) -> None:
+        self.params.P.target_name = ""
+        self.params.P.target_ra_deg = None
+        self.params.P.target_dec_deg = None
+        try:
+            inst = self.main_window.instrument
+            inst.targets_resolved = []
+            inst.primary_target = None
+            inst.primary_coord = None
+        except Exception:
+            pass
+        self.target_edit.clear()
+        self.target_result.setText("(not resolved)")
+
+    def _clear_resolved_target_state(self, name: str | None = None, *, persist: bool = False) -> None:
+        target_name = str(name if name is not None else self.target_edit.text()).strip()
+        self.params.P.target_name = target_name
+        self.params.P.target_ra_deg = None
+        self.params.P.target_dec_deg = None
+        try:
+            inst = self.main_window.instrument
+            inst.targets_resolved = []
+            inst.primary_target = None
+            inst.primary_coord = None
+        except Exception:
+            pass
+        if persist:
+            self._persist_param_file(
+                target_updates={
+                    "name": target_name,
+                    "ra_deg": None,
+                    "dec_deg": None,
+                }
+            )
+        try:
+            self._invalidate_workflow_from_here()
+        except Exception:
+            pass
+        self.update_navigation_buttons()
 
     # -------------------------------------------------------------------------
     # Directory / file scanning
@@ -340,6 +470,10 @@ class FileSelectionWindow(StepWindowBase):
         if dir_path:
             self.root_dir = Path(dir_path)
             self._set_data_dir(self.root_dir)
+            self.params.P.filename_prefix = ""
+            self._clear_target_coordinates()
+            self._invalidate_workflow_from_here()
+            self._persist_param_file(io_updates={"filename_prefix": ""})
             self.dir_edit.setText(dir_path)
             self.file_manager.filenames = []
             self.file_manager.df_headers = None
@@ -466,6 +600,7 @@ class FileSelectionWindow(StepWindowBase):
                     "data_dir": str(self.params.P.data_dir),
                     "result_dir": str(self.params.P.result_dir),
                     "cache_dir": str(self.params.P.cache_dir.name),
+                    "filename_prefix": str(getattr(self.params.P, "filename_prefix", "")),
                 }
             )
 
@@ -609,13 +744,24 @@ class FileSelectionWindow(StepWindowBase):
         for i, row in df_headers.iterrows():
             fn = str(row["Filename"])
             nid = night_map.get(fn, "-")
-            self.header_table.setItem(i, 0, QTableWidgetItem(fn))
-            self.header_table.setItem(i, 1, QTableWidgetItem(f"N{nid}"))
-            self.header_table.setItem(i, 2, QTableWidgetItem(str(row["DATE-OBS"])))
-            self.header_table.setItem(i, 3, QTableWidgetItem(str(row["FILTER"])))
-            self.header_table.setItem(i, 4, QTableWidgetItem(str(row["EXPTIME"])))
-            self.header_table.setItem(i, 5, QTableWidgetItem(str(row["AIRMASS"])))
-            self.header_table.setItem(i, 6, QTableWidgetItem(str(row["IMAGETYP"])))
+            values = {
+                "Filename": fn,
+                "Night": f"N{nid}",
+                "DATE-OBS": self._format_header_cell(row, "DATE-OBS"),
+                "FILTER": self._format_header_cell(row, "FILTER"),
+                "EXPTIME": self._format_header_cell(row, "EXPTIME"),
+                "AIRMASS": self._format_header_cell(row, "AIRMASS"),
+                "OBJECT": self._format_header_cell(row, "OBJECT"),
+                "RA_DEG": self._format_header_cell(row, "RA_DEG"),
+                "DEC_DEG": self._format_header_cell(row, "DEC_DEG"),
+                "IMAGETYP": self._format_header_cell(row, "IMAGETYP"),
+            }
+            labels = [
+                "Filename", "Night", "DATE-OBS", "FILTER", "EXPTIME", "AIRMASS",
+                "OBJECT", "RA_DEG", "DEC_DEG", "IMAGETYP",
+            ]
+            for col, label in enumerate(labels):
+                self.header_table.setItem(i, col, QTableWidgetItem(values[label]))
 
     # -------------------------------------------------------------------------
     # Night table interaction
@@ -727,7 +873,11 @@ class FileSelectionWindow(StepWindowBase):
 
         if target_updates:
             tgt_block = data.get("target", {}) if isinstance(data.get("target", {}), dict) else {}
-            tgt_block.update(target_updates)
+            for key, value in target_updates.items():
+                if value is None:
+                    tgt_block.pop(key, None)
+                else:
+                    tgt_block[key] = value
             data["target"] = tgt_block
 
         try:
@@ -747,45 +897,113 @@ class FileSelectionWindow(StepWindowBase):
             QMessageBox.warning(self, "Target Missing", "Please enter a target name.")
             return
 
+        if self.simbad_worker is not None and self.simbad_worker.isRunning():
+            QMessageBox.information(self, "SIMBAD", "SIMBAD lookup is already running.")
+            return
+
+        self.simbad_log.clear()
+        self.simbad_log.setVisible(True)
+        self.target_result.setText("(resolving...)")
+        self.btn_resolve_simbad.setEnabled(False)
+        self._clear_resolved_target_state(name, persist=True)
+
+        self.simbad_worker = TargetResolveWorker(self.main_window.instrument, name, self)
+        self.simbad_worker.log_message.connect(self._append_simbad_log)
+        self.simbad_worker.result_ready.connect(self._on_simbad_result)
+        self.simbad_worker.error_message.connect(self._on_simbad_error)
+        self.simbad_worker.finished.connect(self._on_simbad_finished)
+        self.simbad_worker.start()
+
+    def _append_simbad_log(self, msg: str) -> None:
+        print(msg)
+        self.simbad_log.append(str(msg))
+
+    def _on_simbad_result(self, result: dict) -> None:
+        if not result.get("ok"):
+            name = str(result.get("name") or self.target_edit.text().strip())
+            self._clear_resolved_target_state(name, persist=True)
+            self.target_result.setText(f"(not resolved: {name})")
+            QMessageBox.warning(self, "SIMBAD", target_failure_message(result))
+            return
+
+        name = str(result.get("name") or self.target_edit.text().strip())
+        ra_deg = float(result["ra_deg"])
+        dec_deg = float(result["dec_deg"])
+        self.target_result.setText(f"{result['ra_hms']}, {result['dec_dms']}")
+        self.params.P.target_name = name
+        self.params.P.target_ra_deg = ra_deg
+        self.params.P.target_dec_deg = dec_deg
+        self._persist_param_file(target_updates={
+            "name": name,
+            "ra_deg": ra_deg,
+            "dec_deg": dec_deg,
+        })
         try:
-            inst = self.main_window.instrument
-            inst.targets_resolved = []
-            inst.primary_target = None
-            inst.primary_coord = None
-            inst.resolve_targets([name])
-            if inst.primary_coord is None:
-                self.target_result.setText("(not resolved)")
-                tried = getattr(inst, "last_target_attempts", [])
-                errors = getattr(inst, "last_target_errors", [])
-                tried_text = f"\nTried: {', '.join(tried[:8])}" if tried else ""
-                error_text = f"\nLast error: {errors[-1]}" if errors else ""
-                QMessageBox.warning(self, "SIMBAD", f"Target not resolved: {name}{tried_text}{error_text}")
-                return
+            self._write_run_manifest()
+        except Exception:
+            pass
+        self.update_navigation_buttons()
 
-            ra_deg = float(inst.primary_coord.ra.deg)
-            dec_deg = float(inst.primary_coord.dec.deg)
-            ra_hms = inst.primary_coord.ra.to_string(unit="hour", sep=":", precision=2)
-            dec_dms = inst.primary_coord.dec.to_string(
-                unit="deg", sep=":", precision=1, alwayssign=True
-            )
-            self.target_result.setText(f"{ra_hms}, {dec_dms}")
+    def _on_simbad_error(self, message: str) -> None:
+        name = self.target_edit.text().strip()
+        self._clear_resolved_target_state(name, persist=True)
+        self.target_result.setText(f"(not resolved: {name})" if name else "(not resolved)")
+        QMessageBox.warning(self, "SIMBAD Error", message)
+        self.update_navigation_buttons()
 
-            self.params.P.target_name = name
-            self.params.P.target_ra_deg = ra_deg
-            self.params.P.target_dec_deg = dec_deg
+    def _on_simbad_finished(self) -> None:
+        self.btn_resolve_simbad.setEnabled(True)
+        if self.simbad_worker is not None:
+            self.simbad_worker.deleteLater()
+            self.simbad_worker = None
 
-            self._persist_param_file(target_updates={
-                "name": name,
-                "ra_deg": ra_deg,
-                "dec_deg": dec_deg,
-            })
+    def _toggle_manual_radec(self) -> None:
+        visible = not self._manual_radec_widget.isVisible()
+        self._manual_radec_widget.setVisible(visible)
+
+    def _apply_manual_radec(self) -> None:
+        from astropy.coordinates import SkyCoord
+        import astropy.units as u
+
+        ra_text  = self.manual_ra_edit.text().strip()
+        dec_text = self.manual_dec_edit.text().strip()
+        name     = self.target_edit.text().strip() or "manual"
+        if not ra_text or not dec_text:
+            QMessageBox.warning(self, "수동 입력", "RA와 Dec를 모두 입력하세요.")
+            return
+        try:
             try:
-                self._write_run_manifest()
+                coord = SkyCoord(ra_text, dec_text, unit=(u.hourangle, u.deg))
             except Exception:
-                pass
-
+                coord = SkyCoord(float(ra_text), float(dec_text), unit="deg")
         except Exception as e:
-            QMessageBox.warning(self, "SIMBAD Error", str(e))
+            QMessageBox.warning(self, "수동 입력 오류",
+                                f"좌표 파싱 실패: {e}\n\nRA 예시: 16:41:41.63  또는  250.4234\nDec 예시: +36:27:40  또는  36.461")
+            return
+
+        ra_deg  = float(coord.ra.deg)
+        dec_deg = float(coord.dec.deg)
+        ra_hms  = coord.ra.to_string(unit="hour", sep=":", precision=2)
+        dec_dms = coord.dec.to_string(unit="deg", sep=":", precision=1, alwayssign=True)
+
+        inst = self.main_window.instrument
+        inst.targets_resolved = [dict(name=name, ra_deg=ra_deg, dec_deg=dec_deg,
+                                       ra_str=ra_hms, dec_str=dec_dms,
+                                       vmag=float("nan"), otype="", simbad_query="manual")]
+        inst.primary_target = name
+        inst.primary_coord  = coord
+
+        self.target_result.setText(f"{ra_hms}, {dec_dms}")
+        self.params.P.target_name    = name
+        self.params.P.target_ra_deg  = ra_deg
+        self.params.P.target_dec_deg = dec_deg
+        self._persist_param_file(target_updates={"name": name, "ra_deg": ra_deg, "dec_deg": dec_deg})
+        try:
+            self._write_run_manifest()
+        except Exception:
+            pass
+        self._manual_radec_widget.setVisible(False)
+        self.update_navigation_buttons()
 
     # -------------------------------------------------------------------------
     # State persistence
@@ -909,3 +1127,4 @@ class FileSelectionWindow(StepWindowBase):
                 self.target_result.setText(f"{float(ra):.6f}, {float(dec):.6f}")
             except (ValueError, TypeError):
                 pass
+        self.update_navigation_buttons()

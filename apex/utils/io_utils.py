@@ -8,7 +8,7 @@ from pathlib import Path
 import json
 import time
 from collections import deque
-from typing import Union
+from typing import Union, Optional
 from decimal import Decimal, InvalidOperation
 
 import pandas as pd
@@ -20,7 +20,35 @@ def _parse_int64_col(series: pd.Series) -> pd.array:
     - Exact integer strings: "2823345641878527872" → preserved with full precision
     - Float strings (old format): "2823345641878528000.0" → int (already-rounded)
     - Blank / nan / NA → pd.NA
+
+    Fast paths (avoid the per-element Decimal loop, which cost ~4 s on a
+    40 k-row Gaia ECSV cache):
+      1. Already an integer dtype  → just view as Int64.
+      2. Clean integer strings     → vectorised ``pd.to_numeric``.
+    The slow element-wise Decimal parse only runs for genuinely mixed /
+    float-formatted data.
     """
+    # Fast path 1: column is already integer (typical for an ECSV cache
+    # where astropy preserved source_id as int64) — no parsing needed.
+    try:
+        if pd.api.types.is_integer_dtype(series.dtype):
+            return series.astype("Int64").array
+    except Exception:
+        pass
+
+    # Fast path 2: object/string column that is purely integer strings.
+    # 19-digit Gaia ids fit in int64 (max 9.2e18), so to_numeric is exact
+    # as long as no value needs float (decimal point / exponent / NaN).
+    try:
+        s = series.astype("string").str.strip()
+        s = s.replace({"": pd.NA, "nan": pd.NA, "NaN": pd.NA,
+                       "<NA>": pd.NA, "None": pd.NA})
+        non_null = s.dropna()
+        if len(non_null) and not non_null.str.contains(r"[.eE]", regex=True).any():
+            return pd.array(pd.to_numeric(s, errors="raise"), dtype="Int64")
+    except Exception:
+        pass
+
     def _parse(s):
         if pd.isna(s):
             return pd.NA
@@ -79,8 +107,45 @@ def read_csv_int64_source_id(path: Union[str, Path], sep: str = ",", **kwargs) -
     return df
 
 
+def _fast_read_ecsv(path: Union[str, Path]) -> Optional[pd.DataFrame]:
+    """Read an ECSV body with pandas, bypassing astropy.
+
+    An ECSV file is a whitespace-delimited table whose schema lives in
+    ``#``-comment lines; the first non-comment line is the column header.
+    For the all-numeric Gaia catalogue this lets pandas parse it in
+    ~0.3 s vs ~3.7 s for ``Table.read`` + ``to_pandas`` on a 40 k-row
+    cache.  source_id columns are read as strings to preserve 19-digit
+    precision.  Returns None if the structure looks unexpected so the
+    caller can fall back to the robust astropy reader.
+    """
+    try:
+        df = pd.read_csv(
+            path,
+            sep=r"\s+",
+            comment="#",
+            dtype={"source_id": str, "gaia_source_id": str},
+        )
+        if df.empty or df.shape[1] < 2:
+            return None
+        # ECSV header line itself starts with no '#', so the column names
+        # must look like real identifiers, not numeric data.
+        if any(str(c).replace(".", "", 1).lstrip("-").isdigit() for c in df.columns):
+            return None
+        return df
+    except Exception:
+        return None
+
+
 def read_ecsv_int64_source_id(path: Union[str, Path], **kwargs) -> pd.DataFrame:
     """Read an Astropy ECSV table preserving Gaia source_id precision."""
+    if not kwargs:
+        df = _fast_read_ecsv(path)
+        if df is not None:
+            for col in ("source_id", "gaia_source_id"):
+                if col in df.columns:
+                    df[col] = coerce_int64_source_id(df[col])
+            return df
+
     from astropy.table import Table
 
     table = Table.read(str(path), format="ascii.ecsv", **kwargs)

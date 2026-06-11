@@ -130,6 +130,7 @@ from apex.utils.step_paths_lc import (
     step6_refbuild_dir,
     step8_selection_dir,
     step9_lc_dir,
+    list_lightcurve_csvs,
     tool_extinction_dir,
 )
 from apex.utils.qc_utils import load_frame_excludes, save_frame_excludes as save_frame_excludes_file
@@ -626,7 +627,7 @@ def _get_color_index_map(result_dir: Path, color_index_by_filter: dict[str, str]
             continue
         col_a = None
         col_b = None
-        for prefix in ("mag_std_", "mag_inst_"):
+        for prefix in ("mag_cal_", "mag_std_", "mag_inst_"):
             cand_a = f"{prefix}{bands[0]}"
             cand_b = f"{prefix}{bands[1]}"
             if cand_a in df.columns and cand_b in df.columns:
@@ -4483,7 +4484,33 @@ class LightCurveBuilderWindow(StepWindowBase):
         super().keyPressEvent(event)
 
     def validate_step(self) -> bool:
-        return True
+        target_ids: list[int] = []
+        try:
+            text = self.target_edit.text().strip()
+            if text:
+                target_ids.append(int(text))
+        except (TypeError, ValueError):
+            pass
+        if not target_ids and self.datasets:
+            target_id, _ = _load_selection_ids(self.datasets[0][1])
+            if target_id is not None:
+                target_ids.append(int(target_id))
+
+        result_dir = Path(self.params.P.result_dir)
+        paths = list_lightcurve_csvs(
+            result_dir,
+            target_ids[0] if target_ids else None,
+        )
+        step9_dir = step9_lc_dir(result_dir).resolve()
+        for path in paths:
+            try:
+                if path.resolve().parent != step9_dir:
+                    continue
+                if not pd.read_csv(path, nrows=1).empty:
+                    return True
+            except Exception:
+                continue
+        return False
 
     # ------------------------------------------------------------------
     # Multi-dataset helpers

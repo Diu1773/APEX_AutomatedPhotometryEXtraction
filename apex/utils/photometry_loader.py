@@ -5,6 +5,7 @@ from pathlib import Path
 
 import pandas as pd
 
+from .common_helpers import normalize_filter_key
 from .io_utils import read_csv_int64_source_id, coerce_int64_source_id
 from .step_paths import (
     step7_forced_phot_dir,
@@ -70,7 +71,7 @@ def _load_source_to_id_map(result_dir: Path, filt_hint: str | None = None) -> di
         return {}
 
     candidates: list[tuple[Path, str]] = []
-    filt_key = str(filt_hint or "").strip().lower()
+    filt_key = normalize_filter_key(filt_hint)
     if filt_key:
         candidates.extend(
             [
@@ -155,8 +156,10 @@ def load_frame_photometry(result_dir: Path, fname: str, filt_hint: str | None = 
         if not filt_key:
             for col in ("FILTER", "filter"):
                 if col in df.columns and not df.empty:
-                    filt_key = str(df[col].iloc[0]).strip().lower()
+                    filt_key = normalize_filter_key(df[col].iloc[0])
                     break
+        else:
+            filt_key = normalize_filter_key(filt_key)
         sid_map = _load_source_to_id_map(result_dir, filt_key)
         if sid_map:
             mapped_ids = df["source_id"].map(sid_map).astype("Int64")

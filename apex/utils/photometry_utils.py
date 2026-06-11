@@ -8,14 +8,14 @@ from __future__ import annotations
 
 import numpy as np
 import pandas as pd
-from astropy.stats import SigmaClip, sigma_clipped_stats
+from astropy.stats import SigmaClip
 
 # ---------------------------------------------------------------------------
 # Constants
 # ---------------------------------------------------------------------------
-
-MAG_ERR_COEFF = 2.5 / np.log(10)   # magnitude error coefficient (approx 1.0857)
-MAD_TO_SIGMA = 1.4826               # MAD -> Gaussian sigma conversion factor
+# Re-exported from the canonical single source in apex.utils.constants so that
+# existing call sites importing these names from here keep working.
+from apex.utils.constants import MAG_ERR_COEFF, MAD_TO_SIGMA  # noqa: F401
 
 
 # ---------------------------------------------------------------------------
@@ -47,7 +47,10 @@ def refine_local_centroid(
         return (x, y)
 
     cut = img[y0:y1, x0:x1]
-    _, med, _ = sigma_clipped_stats(cut, sigma=3.0)
+    # np.nanmedian is robust to outliers by construction (50th percentile)
+    # and ~25× faster than sigma_clipped_stats on small boxes.
+    # For recentering (not flux measurement) this precision is sufficient.
+    med = float(np.nanmedian(cut))
     z = cut - med
     z[~np.isfinite(z)] = 0.0
     z[z < 0] = 0.0
@@ -145,8 +148,16 @@ def phot_one_star(
 
     var_source = max(flux_e, 0.0)
     var_bkg_in_ap = ap_area * sigma_pix_e2
-    var_bkg_est = (ap_area ** 2 / max(n_sky, 1)) * sigma_pix_e2
-    var_readnoise = ap_area * rn_param_e ** 2 if sky_sigma_includes_rn else 0.0
+    # Background estimation error: sky annulus pixels carry both sky Poisson
+    # noise and read noise.  When sky_sigma_includes_rn=True, sigma_pix_e2 has
+    # already had RN² subtracted, so we add it back for the bkg-est term only.
+    sky_var_for_bkg_est = (sigma_pix_e2 + rn_param_e ** 2) if sky_sigma_includes_rn else sigma_pix_e2
+    var_bkg_est = (ap_area ** 2 / max(n_sky, 1)) * sky_var_for_bkg_est
+    # Read noise per aperture pixel: always present regardless of the user's
+    # sigma estimate.  When includes_rn=True, RN² was already subtracted from
+    # sigma_pix_e2 above; when False, var_bkg_in_ap = ap_area · pure_sky and we
+    # still need ap_area · RN² for the aperture read-noise.
+    var_readnoise = ap_area * rn_param_e ** 2
 
     var_e = var_source + var_bkg_in_ap + var_bkg_est + var_readnoise
     sigma_e = float(np.sqrt(max(var_e, 0.0)))
@@ -225,7 +236,15 @@ def phot_vectorized(
     ap = CircularAperture(pos_valid, r=r_ap)
     phot_tbl = aperture_photometry(img, ap, method="exact")
     ap_sum = np.asarray(phot_tbl["aperture_sum"], dtype=float)
-    ap_area = float(ap.area)
+    # Per-source effective area from integrating an ones-image over the same
+    # exact aperture — matches the partial-pixel weights used for ap_sum and
+    # clips correctly at image edges.  ap.area would be the analytic πr² for
+    # all sources, over-counting noise for sources whose aperture extends
+    # beyond the image boundary.
+    eff_area_tbl = aperture_photometry(
+        np.ones_like(img, dtype=float), ap, method="exact"
+    )
+    ap_area = np.asarray(eff_area_tbl["aperture_sum"], dtype=float)
 
     # ── Sky from annulus (photutils ApertureStats — vectorized) ────────
     sc = SigmaClip(sigma=sigma_clip_val, maxiters=maxiters)
@@ -260,8 +279,10 @@ def phot_vectorized(
 
     var_source  = np.maximum(flux_e_valid, 0.0)
     var_bkg_ap  = ap_area * sigma_pix_e2
-    var_bkg_est = (ap_area ** 2 / np.maximum(n_sky_arr, 1)) * sigma_pix_e2
-    var_rn      = ap_area * rn_param_e ** 2 if sky_sigma_includes_rn else 0.0
+    sky_var_for_bkg_est = (sigma_pix_e2 + rn_param_e ** 2) if sky_sigma_includes_rn else sigma_pix_e2
+    var_bkg_est = (ap_area ** 2 / np.maximum(n_sky_arr, 1)) * sky_var_for_bkg_est
+    # Read noise per aperture pixel: always present; see phot_one_star comment.
+    var_rn      = ap_area * rn_param_e ** 2
     var_e       = var_source + var_bkg_ap + var_bkg_est + var_rn
 
     sigma_e_valid = np.sqrt(np.maximum(var_e, 0.0))
@@ -297,5 +318,10 @@ def phot_vectorized(
 # ---------------------------------------------------------------------------
 
 def get_numeric_array(df: pd.DataFrame, col: str, default: float = np.nan) -> np.ndarray:
-    """Extract a numeric column as a float64 numpy array, coercing errors."""
+    """Extract a numeric column as a float64 numpy array, coercing errors.
+
+    Returns an array filled with *default* if the column is absent.
+    """
+    if col not in df.columns:
+        return np.full(len(df), default, dtype=float)
     return pd.to_numeric(df[col], errors="coerce").fillna(default).to_numpy(float)

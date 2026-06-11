@@ -1,10 +1,15 @@
 from __future__ import annotations
 
+import numpy as np
 import pandas as pd
 import pytest
 
 pytest.importorskip("PyQt5")
-from apex.gui.workflow.cmd.step8_psf_photometry import _load_detect_positions
+from apex.gui.workflow.cmd.step8_psf_photometry import (
+    _allstar_newton_group,
+    _allstar_newton_one,
+    _load_detect_positions,
+)
 
 
 def test_step8_detection_loader_prefers_step4_quality_flux(tmp_path):
@@ -32,3 +37,37 @@ def test_step8_detection_loader_prefers_step4_quality_flux(tmp_path):
     assert list(out.index) == [0]
     assert out.loc[0, "det_uid"] == 2
     assert out.loc[0, "flux_init"] == 1234.0
+
+
+def test_allstar_newton_degenerate_paths_keep_five_value_contract():
+    eval_psf = lambda x, y: np.ones_like(x, dtype=float)
+
+    small = _allstar_newton_one(
+        np.ones((2, 2)),
+        1.0,
+        1.0,
+        0,
+        0,
+        10.0,
+        eval_psf,
+    )
+    singular = _allstar_newton_one(
+        np.ones((5, 5)),
+        2.0,
+        2.0,
+        0,
+        0,
+        10.0,
+        eval_psf,
+    )
+    grouped = _allstar_newton_group(
+        np.ones((2, 2)),
+        [(1.0, 1.0, 10.0), (2.0, 2.0, 8.0)],
+        0,
+        0,
+        eval_psf,
+    )
+
+    assert len(small) == 5
+    assert len(singular) == 5
+    assert all(len(result) == 5 for result in grouped)

@@ -34,6 +34,7 @@ from matplotlib.figure import Figure
 import sip
 
 from apex.gui.widgets.fits_viewer import FITSViewerWidget, OverlayMarker
+from apex.utils.common_helpers import normalize_filter_key
 
 from PyQt5.QtWidgets import (
     QVBoxLayout, QHBoxLayout, QPushButton, QLabel, QGroupBox, QMessageBox,
@@ -685,9 +686,9 @@ class TargetComparisonSelectionWindow(StepWindowBase):
                     self.step7_status_label.setText("Forced photometry index is missing file column.")
                     self.step7_status_label.setStyleSheet("color: red;")
                     return
-                filt_col = "filter" if "filter" in idx_df.columns else None
+                filt_col = "filter" if "filter" in idx_df.columns else ("FILTER" if "FILTER" in idx_df.columns else None)
                 for _, row in idx_df.iterrows():
-                    flt = str(row.get(filt_col, "unknown") if filt_col else "unknown").strip().lower() or "unknown"
+                    flt = normalize_filter_key(row.get(filt_col, "unknown") if filt_col else "unknown") or "unknown"
                     self.filter_frames.setdefault(flt, []).append(str(row["file"]))
 
             filters = list(self.filter_frames.keys())
@@ -3359,7 +3360,8 @@ class TargetComparisonSelectionWindow(StepWindowBase):
             "QUERY": adql,
         })
         url = f"https://simbad.cds.unistra.fr/simbad/sim-tap/sync?{params}"
-        with urllib.request.urlopen(url, timeout=20) as resp:
+        timeout_s = float(getattr(self.params.P, "simbad_timeout_s", 20.0))
+        with urllib.request.urlopen(url, timeout=timeout_s) as resp:
             raw = resp.read().decode("utf-8")
         df = pd.read_csv(io.StringIO(raw))
         df.columns = [c.strip().lower() for c in df.columns]

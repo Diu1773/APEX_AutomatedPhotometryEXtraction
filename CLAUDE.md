@@ -86,3 +86,38 @@ main.py        — Root launcher; spawns subprocess for chosen mode
 ## Commits and PRs
 
 Use concise lowercase prefixes: `feat:`, `fix:`, `refactor:`, `remove:`, `chore:`. Keep commits scoped and imperative. PRs should note which mode is affected, list validation commands run, and include screenshots for visible GUI changes.
+
+## Review Domain Notes
+
+Domain facts for code review (the generic `/review-math`, `/review-deps`,
+`/review-perf` commands read this section to build project context).
+
+### Math / numerics
+
+- **Magnitude system**: instrumental (`mag_inst`) → per-reference → absolute. Larger value = fainter source. Magnitude errors scale as `MAG_ERR_COEFF / SNR`.
+- **Airmass**: `X ≈ sec(z)`; `X = 1` at zenith (alt 90°), diverges near the horizon.
+- **Extinction model**: `m_ij = s_i + z_j + k1·X_j` (`s_i` = star brightness, `z_j` = frame offset, `k1` = extinction coefficient). `z_j` and `k1` are degenerate, so the frame-offset basis must be SVD-projected to remove any constant and airmass-linear component — otherwise `k1` is not identifiable.
+- **SYSREM** (Tamuz+ 2005, MNRAS 356, 1466): iterate `r_ij -= a_i·c_j` to convergence. Each `a_i`/`c_j` update needs its denominator `Σ_j w_ij·c_j²` (resp. `Σ_i w_ij·a_i²`) `> 0`; missing data carry weight 0.
+- **PDM** (Stellingwerf 1978): `θ = (Σ_k SS_k / Σ_k DOF_k) / σ²_total`. Each bin needs ≥ 2 points (DOF ≥ 1); `σ²_total` uses sample variance (`ddof=1`).
+- **BJD_TDB**: from `JD_UTC` including light-travel + relativistic corrections (~±8 min); easy to get the sign wrong.
+- **WCS TAN**: `CDELT[0] < 0` — RA decreases toward increasing pixel x (east is −x).
+- **Weights**: photometric weight is `w = 1/σ²`. When feeding `np.linalg.lstsq`, rows/values are multiplied by `√w = 1/σ` — do not conflate the two forms.
+
+### Architecture / dependencies
+
+- **Layers**: `gui/` (presentation: Qt, workflow steps, tools) → `analysis/` (pure science calc), `core/` (state/config/files), `utils/` (shared), `config/` (TOML param models). Allowed: gui→analysis/core/utils, analysis→utils, core→utils. Forbidden: analysis/utils/config/core → gui.
+- **Path helpers**: `step_paths.py` (shared Step 1–7), `step_paths_cmd.py` (CMD 8–12), `step_paths_lc.py` (LC 8–11). Never build output paths by string concat.
+- **Filter keys**: always via `normalize_filter_key()`. Johnson = uppercase (B,V,R,I), SDSS = lowercase (g,r,i,z), narrowband = title case (Ha, OIII).
+- **source_id**: int64; convert via `coerce_int64_source_id()` (direct casts risk sign errors).
+- **ProjectState**: `store_step_data(key, dict)` / `get_step_data(key)`; a mistyped key silently returns None.
+- **Cache invalidation**: `StepCacheManager`; a parameter missing from the cache signature means stale results are reused after that parameter changes.
+- **QThread safety**: mutate GUI widgets only on the main thread; workers emit signals, main-thread slots touch widgets.
+
+### Performance
+
+- **Typical scale**: N_frames 50–500 (single night), up to ~3000 (multi-night); N_stars 100–5000 (master catalog), 20–200 (references); ~16M px/frame (4000×4000); up to 50,000 PDM/LS trial periods.
+- **Frame loops**: Step 7 forced phot `ThreadPoolExecutor`; LC step9 `_build_star_mag_series` file iteration.
+- **Preload cache**: `_preload_photometry_cache(result_dir, filenames)` exists — flag code that bypasses it and re-reads per star/frame.
+- **Worker count**: use `get_parallel_workers()` (`apex/utils/constants.py`), never hardcode. numpy/C ops release the GIL, so threads help CPU-bound numeric work.
+- **Batched numerics**: `_pdm_theta_vectorized` caps each batch at ~50 MB by design — preserve such memory bounds.
+- **Qt tables**: bulk `setItem` is faster with `setSortingEnabled(False)` around the batch.

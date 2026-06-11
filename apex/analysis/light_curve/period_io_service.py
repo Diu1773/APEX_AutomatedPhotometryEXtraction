@@ -8,6 +8,7 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 
+from apex.utils.common_helpers import normalize_filter_key
 from apex.utils.step_paths_lc import step11_period_dir
 
 
@@ -51,7 +52,9 @@ def load_period_lightcurve_csv(lc_file: Path, flt: str, target_id: int) -> dict:
         raise ValueError("No time column (JD/HJD/BJD) found.")
 
     if "filter" in df.columns:
-        df_flt = df[df["filter"].astype(str).str.strip().str.lower() == flt.lower()].copy()
+        # Compare via canonical key so Johnson R matches R, SDSS r matches r, etc.
+        flt_key = normalize_filter_key(flt)
+        df_flt = df[df["filter"].astype(str).map(normalize_filter_key) == flt_key].copy()
         if df_flt.empty:
             df_flt = df
     else:

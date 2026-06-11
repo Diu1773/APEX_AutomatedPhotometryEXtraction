@@ -26,6 +26,7 @@ from PyQt5.QtWidgets import (
 )
 from PyQt5.QtCore import Qt
 from PyQt5.QtGui import QFont, QFontDatabase, QIcon, QPixmap, QPainter
+from apex.gui.tools.registry import iter_tool_modules
 
 _FROZEN = getattr(sys, "frozen", False)
 _SSL_CERT_OK, _SSL_CERT_DETAIL = configure_ssl_certificates()
@@ -41,6 +42,7 @@ else:
 _SMOKE_IMPORTS = (
     "apex.gui.workflow.ui_helpers",
     "apex.gui.main_window",
+    "apex.gui.workflow.target_resolver",
     "apex.gui.workflow.step6_ref_build",
     "apex.gui.workflow.step7_forced_aperture_phot",
     "apex.gui.workflow.cmd.step8_psf_photometry",
@@ -48,7 +50,7 @@ _SMOKE_IMPORTS = (
     "astroquery.simbad",
     "astroquery.utils.tap.core",
     "certifi",
-)
+) + tuple(iter_tool_modules())
 
 
 def _svg_to_pixmap(svg_path: Path, size: int) -> QPixmap:

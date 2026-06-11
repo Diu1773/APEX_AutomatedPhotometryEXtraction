@@ -3,7 +3,7 @@
 setlocal EnableExtensions
 
 REM Canonical Windows release entry point.
-REM This creates release\Setup\setup.exe plus a portable zip.
+REM This creates release\Setup\setup-APEX-(version).exe plus a portable zip.
 
 call "%~dp0deploy\build_release.bat"
 set "EXIT_CODE=%ERRORLEVEL%"

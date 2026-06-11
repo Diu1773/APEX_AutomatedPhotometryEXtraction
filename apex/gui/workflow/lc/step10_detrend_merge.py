@@ -74,6 +74,7 @@ from apex.utils.step_paths_lc import (
     step10_current_global_diag_path,
     step10_history_dir,
     load_detrend_preference,
+    list_lightcurve_csvs,
 )
 from apex.utils.common_helpers import safe_float as _safe_float, normalize_filter_key as _normalize_filter_key, parse_jd as _parse_jd
 from apex.utils.io_utils import (
@@ -2100,8 +2101,11 @@ Step 10은 여러 밤의 관측을 합칠 때 기준선을 맞추는 단계입�
         df = self._load_color_median_table(result_dir)
         bands: list[str] = []
         if not df.empty:
-            bands = filter_bands_from_columns(df.columns, "mag_std_") \
-                 or filter_bands_from_columns(df.columns, "mag_inst_")
+            bands = (
+                filter_bands_from_columns(df.columns, "mag_cal_")
+                or filter_bands_from_columns(df.columns, "mag_std_")
+                or filter_bands_from_columns(df.columns, "mag_inst_")
+            )
         if not bands and bands_hint:
             bands = [_normalize_filter_key(b) for b in bands_hint if str(b).strip()]
             bands = sorted({b for b in bands if b})
@@ -2133,7 +2137,7 @@ Step 10은 여러 밤의 관측을 합칠 때 기준선을 맞추는 단계입�
                 continue
             col_a = None
             col_b = None
-            for prefix in ("mag_std_", "mag_inst_"):
+            for prefix in ("mag_cal_", "mag_std_", "mag_inst_"):
                 cand_a = f"{prefix}{bands[0]}"
                 cand_b = f"{prefix}{bands[1]}"
                 if cand_a in df.columns and cand_b in df.columns:
@@ -4194,7 +4198,20 @@ Step 10은 여러 밤의 관측을 합칠 때 기준선을 맞추는 단계입�
         self._update_plots()
 
     def validate_step(self) -> bool:
-        return True
+        target_id = None
+        try:
+            text = self.target_edit.text().strip()
+            if text:
+                target_id = int(text)
+        except (TypeError, ValueError):
+            pass
+        for path in list_lightcurve_csvs(self.params.P.result_dir, target_id):
+            try:
+                if not pd.read_csv(path, nrows=1).empty:
+                    return True
+            except Exception:
+                continue
+        return False
 
     def save_state(self):
         state_data = {

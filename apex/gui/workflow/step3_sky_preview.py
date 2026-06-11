@@ -18,6 +18,7 @@ import pandas as pd
 from astropy.io import fits
 from astropy.stats import sigma_clipped_stats, SigmaClip
 from astropy.visualization import ZScaleInterval, ImageNormalize
+from apex.utils.constants import MAG_ERR_COEFF
 from photutils.aperture import CircularAperture, CircularAnnulus, ApertureStats
 from photutils.detection import DAOStarFinder
 from matplotlib.backends.backend_qt5agg import FigureCanvasQTAgg as FigureCanvas
@@ -27,13 +28,24 @@ from PyQt5.QtGui import QColor
 from apex.gui.widgets.fits_viewer import FITSViewerWidget, OverlayMarker
 
 from .step_window_base import StepWindowBase
-from .ui_helpers import create_parameter_button, build_scroll_param_dialog
+from .ui_helpers import (
+    add_parameter_reset_button,
+    build_scroll_param_dialog,
+    create_parameter_button,
+)
 from apex.utils.step_paths import (
     step1_dir,
     step2_cropped_dir,
     step7_forced_phot_dir,
     crop_is_active,
 )
+from apex.utils.common_helpers import normalize_filter_key as _canonical_filter_key
+from apex.utils.noise_params import resolve_effective_noise_params
+
+
+_MIN_R_AP_PX = 4.0
+_MIN_R_IN_PX = 12.0
+_MIN_R_OUT_PX = 20.0
 
 
 class SkyPreviewWindow(StepWindowBase):
@@ -64,9 +76,10 @@ class SkyPreviewWindow(StepWindowBase):
         self.aperture_scale = float(hud5.get("5x.aperture_scale", "") or 1.0)
         self.annulus_in_scale = float(hud5.get("5x.annulus_in_scale", "") or 4.0)
         self.annulus_out_scale = float(hud5.get("5x.annulus_out_scale", "") or 2.0)  # width
-        self.min_r_ap_px = float(hud5.get("5x.min_r_ap_px", "") or 12.0)
-        self.min_r_in_px = float(hud5.get("5x.min_r_in_px", "") or 24.0)
-        self.min_r_out_px = float(hud5.get("5x.min_r_out_px", "") or 36.0)
+        # Hidden safety floors only. User-facing control stays scale-based.
+        self.min_r_ap_px = _MIN_R_AP_PX
+        self.min_r_in_px = _MIN_R_IN_PX
+        self.min_r_out_px = _MIN_R_OUT_PX
         self.sigma_clip_value = float(hud5.get("5x.sigma_clip", "") or 3.0)
         # FWHM seed in arcsec (converted to px using pixel_scale)
         self.fwhm_seed_arcsec = float(getattr(params.P, "fwhm_guess_arcsec", None) or 2.5)
@@ -127,6 +140,13 @@ class SkyPreviewWindow(StepWindowBase):
 
         # Restore state AFTER UI is created
         self.restore_state()
+
+    def _sigma_clip_sigma(self) -> float:
+        try:
+            value = float(self.sigma_clip_value)
+        except Exception:
+            return 3.0
+        return value if np.isfinite(value) and value > 0 else 3.0
 
     def setup_step_ui(self):
         """Setup step-specific UI components"""
@@ -345,7 +365,7 @@ class SkyPreviewWindow(StepWindowBase):
             cutout_max = float(np.max(cutout)) if cutout.size else float("nan")
 
             # Estimate local background
-            mean, median, std = sigma_clipped_stats(cutout, sigma=3.0)
+            mean, median, std = sigma_clipped_stats(cutout, sigma=self._sigma_clip_sigma())
 
             # Convert FWHM seed from arcsec to pixels
             pixscale = self.params.P.pixel_scale_arcsec
@@ -387,7 +407,7 @@ class SkyPreviewWindow(StepWindowBase):
                 rr = np.sqrt((xx - xc)**2 + (yy - yc)**2)
 
                 # Background subtraction
-                _, reg_median, _ = sigma_clipped_stats(region, sigma=3.0)
+                _, reg_median, _ = sigma_clipped_stats(region, sigma=self._sigma_clip_sigma())
                 region_sub = region - reg_median
 
                 # Radial bins
@@ -450,8 +470,9 @@ class SkyPreviewWindow(StepWindowBase):
             flux_source = flux_total - flux_sky
 
             # SNR calculation
-            gain = self.params.P.gain_e_per_adu
-            rdnoise = self.params.P.rdnoise_e
+            noise = resolve_effective_noise_params(self.params.P, self.header)
+            gain = noise.gain_e_per_adu
+            rdnoise = noise.rdnoise_e
 
             flux_e = flux_source * gain
             sky_e = flux_sky * gain
@@ -463,7 +484,7 @@ class SkyPreviewWindow(StepWindowBase):
             exptime = self.header.get('EXPTIME', 1.0)
             zp = self.params.P.zp_initial
             mag = -2.5 * np.log10(flux_source / exptime) + zp if flux_source > 0 else float("nan")
-            mag_err = 1.0857 / snr if snr > 0 else float("nan")  # 2.5/ln(10)
+            mag_err = MAG_ERR_COEFF / snr if snr > 0 else float("nan")  # 2.5/ln(10)
             mag_str = f"{mag:.2f}" if np.isfinite(mag) else "NaN"
             mag_err_str = f"{mag_err:.3f}" if np.isfinite(mag_err) else "NaN"
 
@@ -653,9 +674,7 @@ Mag:  {mag_str} ± {mag_err_str}
 
     @staticmethod
     def _normalize_filter_key(value: str | None) -> str:
-        if value is None:
-            return ""
-        return str(value).strip().upper()
+        return _canonical_filter_key(value)
 
     def _extract_filter_from_header(self, header) -> str:
         if header is None:
@@ -674,9 +693,9 @@ Mag:  {mag_str} ± {mag_err_str}
                 base = base[: -len(ext)]
         parts = [p for p in base.replace(".", "_").replace("-", "_").split("_") if p]
         for token in reversed(parts):
-            cand = token.lower()
-            if 1 <= len(cand) <= 3 and cand.isalpha():
-                return cand.upper()
+            cand = _canonical_filter_key(token)
+            if cand and 1 <= len(cand) <= 3 and str(cand).isalpha():
+                return cand
         return ""
 
     def _extract_frame_key(self, fname: str, filter_key: str) -> str:
@@ -686,8 +705,9 @@ Mag:  {mag_str} ± {mag_err_str}
             if base.lower().endswith(ext):
                 base = base[: -len(ext)]
         base_lower = base.lower()
-        filt = str(filter_key or "").lower() or self._infer_filter_from_filename(fname).lower()
-        if filt:
+        fkey = self._normalize_filter_key(filter_key) or self._infer_filter_from_filename(fname)
+        if fkey:
+            filt = fkey.lower()
             for sep in ("-", "_", "."):
                 suffix = f"{sep}{filt}"
                 if base_lower.endswith(suffix):
@@ -815,7 +835,7 @@ Mag:  {mag_str} ± {mag_err_str}
 
         # Update plot
         self.hist_ax.clear()
-        mean, median, std = sigma_clipped_stats(region_finite, sigma=3.0)
+        mean, median, std = sigma_clipped_stats(region_finite, sigma=self._sigma_clip_sigma())
 
         self.hist_ax.hist(region_finite.flatten(), bins=50, alpha=0.7, color='steelblue', edgecolor='black')
         self.hist_ax.axvline(median, color='red', linestyle='--', linewidth=2, label=f'Median: {median:.2f}')
@@ -853,7 +873,7 @@ Mag:  {mag_str} ± {mag_err_str}
             x1 = min(self.image_data.shape[1], x + size)
 
             cutout = self.image_data[y0:y1, x0:x1]
-            mean, median, std = sigma_clipped_stats(cutout, sigma=3.0)
+            mean, median, std = sigma_clipped_stats(cutout, sigma=self._sigma_clip_sigma())
 
             # Convert FWHM seed from arcsec to pixels
             pixscale = self.params.P.pixel_scale_arcsec
@@ -895,7 +915,7 @@ Mag:  {mag_str} ± {mag_err_str}
             rr = np.sqrt((xx - xc)**2 + (yy - yc)**2)
 
             # Background subtraction
-            mean, median, std = sigma_clipped_stats(region, sigma=3.0)
+            mean, median, std = sigma_clipped_stats(region, sigma=self._sigma_clip_sigma())
             region_sub = region - median
 
             # Radial bins
@@ -1030,27 +1050,6 @@ Mag:  {mag_str} ± {mag_err_str}
         spin_ann_out.setValue(self.annulus_out_scale)
         form.addRow("Annulus Outer Width (× FWHM):", spin_ann_out)
 
-        spin_min_ap = QDoubleSpinBox()
-        spin_min_ap.setRange(1.0, 200.0)
-        spin_min_ap.setSingleStep(0.5)
-        spin_min_ap.setDecimals(1)
-        spin_min_ap.setValue(self.min_r_ap_px)
-        form.addRow("Min Aperture Radius (px):", spin_min_ap)
-
-        spin_min_in = QDoubleSpinBox()
-        spin_min_in.setRange(1.0, 500.0)
-        spin_min_in.setSingleStep(0.5)
-        spin_min_in.setDecimals(1)
-        spin_min_in.setValue(self.min_r_in_px)
-        form.addRow("Min Annulus Inner (px):", spin_min_in)
-
-        spin_min_out = QDoubleSpinBox()
-        spin_min_out.setRange(1.0, 500.0)
-        spin_min_out.setSingleStep(0.5)
-        spin_min_out.setDecimals(1)
-        spin_min_out.setValue(self.min_r_out_px)
-        form.addRow("Min Annulus Outer (px):", spin_min_out)
-
         spin_sigma = QDoubleSpinBox()
         spin_sigma.setRange(1.0, 10.0)
         spin_sigma.setSingleStep(0.1)
@@ -1058,26 +1057,44 @@ Mag:  {mag_str} ± {mag_err_str}
         spin_sigma.setValue(self.sigma_clip_value)
         form.addRow("Sigma Clipping (σ):", spin_sigma)
 
+        spin_zp = QDoubleSpinBox()
+        spin_zp.setRange(0.0, 50.0)
+        spin_zp.setSingleStep(0.1)
+        spin_zp.setDecimals(2)
+        spin_zp.setValue(float(getattr(self.params.P, "zp_initial", 25.0)))
+        spin_zp.setToolTip("Display-only zero point for Step 3 preview magnitude.")
+        form.addRow("Preview ZP:", spin_zp)
+
         layout.addLayout(form)
         layout.addStretch(1)
+
+        add_parameter_reset_button(
+            buttons,
+            [
+                (spin_fwhm, 2.5),
+                (spin_ap, 1.0),
+                (spin_ann_in, 4.0),
+                (spin_ann_out, 2.0),
+                (spin_sigma, 3.0),
+                (spin_zp, 25.0),
+            ],
+        )
 
         def _save():
             self.fwhm_seed_arcsec = spin_fwhm.value()
             self.aperture_scale = spin_ap.value()
             self.annulus_in_scale = spin_ann_in.value()
             self.annulus_out_scale = spin_ann_out.value()
-            self.min_r_ap_px = spin_min_ap.value()
-            self.min_r_in_px = spin_min_in.value()
-            self.min_r_out_px = spin_min_out.value()
+            self.min_r_ap_px = _MIN_R_AP_PX
+            self.min_r_in_px = _MIN_R_IN_PX
+            self.min_r_out_px = _MIN_R_OUT_PX
             self.sigma_clip_value = spin_sigma.value()
             self.params.P.fwhm_guess_arcsec = self.fwhm_seed_arcsec
             self.params.P.phot_aperture_scale = self.aperture_scale
             self.params.P.fitsky_annulus_scale = self.annulus_in_scale
             self.params.P.fitsky_dannulus_scale = self.annulus_out_scale
-            self.params.P.min_r_ap_px = self.min_r_ap_px
-            self.params.P.min_r_in_px = self.min_r_in_px
-            self.params.P.min_r_out_px = self.min_r_out_px
             self.params.P.annulus_sigma_clip = self.sigma_clip_value
+            self.params.P.zp_initial = spin_zp.value()
             self.persist_params()
             self.save_state()
             QMessageBox.information(dialog, "Saved", "Parameters updated and saved!")
@@ -1165,7 +1182,9 @@ Mag:  {mag_str} ± {mag_err_str}
                 s, h, _ = self._viewer.get_stf_params()
                 vmin, vmax = s, h
             else:
-                _, median_val, std_val = sigma_clipped_stats(flat, sigma=3.0, maxiters=5)
+                _, median_val, std_val = sigma_clipped_stats(
+                    flat, sigma=self._sigma_clip_sigma(), maxiters=5
+                )
                 vmin = max(np.min(flat), median_val - 2.8 * std_val)
                 vmax = min(np.max(flat), np.percentile(flat, 99.9))
             if vmax <= vmin:
@@ -1283,9 +1302,6 @@ Mag:  {mag_str} ± {mag_err_str}
             "aperture_scale": self.aperture_scale,
             "annulus_in_scale": self.annulus_in_scale,
             "annulus_out_scale": self.annulus_out_scale,
-            "min_r_ap_px": self.min_r_ap_px,
-            "min_r_in_px": self.min_r_in_px,
-            "min_r_out_px": self.min_r_out_px,
             "sigma_clip_value": self.sigma_clip_value,
         }
         self.project_state.store_step_data("sky_preview", state_data)
@@ -1303,11 +1319,8 @@ Mag:  {mag_str} ± {mag_err_str}
                 self.annulus_in_scale = float(state_data["annulus_in_scale"])
             if "annulus_out_scale" in state_data:
                 self.annulus_out_scale = float(state_data["annulus_out_scale"])
-            if "min_r_ap_px" in state_data:
-                self.min_r_ap_px = float(state_data["min_r_ap_px"])
-            if "min_r_in_px" in state_data:
-                self.min_r_in_px = float(state_data["min_r_in_px"])
-            if "min_r_out_px" in state_data:
-                self.min_r_out_px = float(state_data["min_r_out_px"])
+            self.min_r_ap_px = _MIN_R_AP_PX
+            self.min_r_in_px = _MIN_R_IN_PX
+            self.min_r_out_px = _MIN_R_OUT_PX
             if "sigma_clip_value" in state_data:
                 self.sigma_clip_value = float(state_data["sigma_clip_value"])

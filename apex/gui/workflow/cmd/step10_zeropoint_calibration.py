@@ -366,6 +366,105 @@ class ZeropointCalibrationWorker(QThread):
             self._log(f"Saved {out_path.name} | rows={len(df)}")
         return df
 
+    def _write_nonlinearity_diag(self, obs: pd.DataFrame, output_dir) -> None:
+        """Bridge-star detector-linearity diagnostic for multi-exposure sets.
+
+        For stars measured at >= 2 distinct exposure times, compare the
+        calibrated magnitude between exposure levels. A linear detector gives a
+        flat delta-vs-magnitude relation; a brightness-dependent slope flags
+        non-linearity that the (per-frame-constant) zeropoint cannot absorb.
+
+        Writes ``nonlinearity_by_exposure.csv`` (per star/filter/level median),
+        ``nonlinearity_summary.csv`` (per filter/level-pair slope+offset+scatter)
+        and ``nonlinearity_check.png``. Quietly skips single-exposure data.
+        """
+        try:
+            need = {"ID", "FILTER", "mag_cal", "exptime"}
+            if not need <= set(obs.columns):
+                return
+            d = obs[["ID", "FILTER", "mag_cal", "exptime"]].copy()
+            d["mag_cal"] = pd.to_numeric(d["mag_cal"], errors="coerce")
+            d["exptime"] = pd.to_numeric(d["exptime"], errors="coerce")
+            d["snr"] = pd.to_numeric(obs["snr"], errors="coerce") if "snr" in obs.columns else np.nan
+            d = d[np.isfinite(d["mag_cal"]) & np.isfinite(d["exptime"]) & (d["exptime"] > 0)]
+            if d.empty:
+                return
+            # Exposure level = rounded exptime (absorbs sub-second jitter).
+            d["exp_level"] = d["exptime"].round(1)
+            if d["exp_level"].nunique() < 2:
+                self._log("[ZP][NLIN] single exposure level; linearity check skipped.")
+                return
+
+            grp = (
+                d.groupby(["ID", "FILTER", "exp_level"], as_index=False)
+                 .agg(mag=("mag_cal", "median"), n=("mag_cal", "size"), snr=("snr", "median"))
+            )
+            grp.to_csv(output_dir / "nonlinearity_by_exposure.csv", index=False, na_rep="NaN")
+
+            import matplotlib
+            matplotlib.use("Agg")
+            import matplotlib.pyplot as plt
+
+            filters = sorted(grp["FILTER"].dropna().astype(str).unique().tolist())
+            summary = []
+            panels = []  # (filter, short, long, x, delta, slope, intercept)
+            for filt in filters:
+                sub = grp[grp["FILTER"].astype(str) == filt]
+                flevels = sorted(sub["exp_level"].unique().tolist())
+                for short_lv, long_lv in zip(flevels[:-1], flevels[1:]):
+                    a = sub[sub["exp_level"] == short_lv][["ID", "mag"]].rename(columns={"mag": "mag_s"})
+                    b = sub[sub["exp_level"] == long_lv][["ID", "mag"]].rename(columns={"mag": "mag_l"})
+                    m = a.merge(b, on="ID", how="inner")
+                    x = m["mag_l"].to_numpy(float)
+                    delta = (m["mag_s"].to_numpy(float) - x)
+                    ok = np.isfinite(x) & np.isfinite(delta)
+                    x, delta = x[ok], delta[ok]
+                    if len(delta) < 5:
+                        continue
+                    slope, intercept = (float(v) for v in np.polyfit(x, delta, 1))
+                    med = float(np.median(delta))
+                    scatter = float(MAD_TO_SIGMA * np.median(np.abs(delta - med)))
+                    flagged = abs(slope) > 0.02
+                    summary.append({
+                        "FILTER": filt, "exp_short_s": short_lv, "exp_long_s": long_lv,
+                        "n_bridge": int(len(delta)), "delta_median": med,
+                        "slope_mag_per_mag": slope, "scatter_mag": scatter,
+                        "nonlinearity_flag": bool(flagged),
+                    })
+                    panels.append((filt, short_lv, long_lv, x, delta, slope, intercept))
+                    self._log(
+                        f"[ZP][NLIN] {filt} {short_lv:g}s-{long_lv:g}s: n={len(delta)} "
+                        f"slope={slope:+.4f} mag/mag offset={med:+.4f} scatter={scatter:.4f}"
+                        + ("  *** slope flags non-linearity ***" if flagged else "")
+                    )
+
+            if summary:
+                pd.DataFrame(summary).to_csv(output_dir / "nonlinearity_summary.csv", index=False, na_rep="NaN")
+
+            if panels:
+                ncol = min(3, len(panels))
+                nrow = int(np.ceil(len(panels) / ncol))
+                fig, axes = plt.subplots(nrow, ncol, figsize=(4.2 * ncol, 3.4 * nrow), squeeze=False)
+                for ax, (filt, s_lv, l_lv, x, delta, slope, intercept) in zip(axes.ravel(), panels):
+                    ax.axhline(0.0, color="0.6", lw=0.8, ls="--")
+                    ax.scatter(x, delta, s=10, alpha=0.5, color="#1f77b4")
+                    xs = np.linspace(np.min(x), np.max(x), 50)
+                    ax.plot(xs, slope * xs + intercept, color="#d62728", lw=1.5,
+                            label=f"slope={slope:+.3f}")
+                    ax.set_title(f"{filt}: {s_lv:g}s - {l_lv:g}s", fontsize=9)
+                    ax.set_xlabel("mag_cal (long)", fontsize=8)
+                    ax.set_ylabel("Δmag (short - long)", fontsize=8)
+                    ax.legend(fontsize=7, loc="best")
+                for ax in axes.ravel()[len(panels):]:
+                    ax.set_visible(False)
+                fig.suptitle("Bridge-star linearity check (flat = linear)", fontsize=10)
+                fig.tight_layout()
+                fig.savefig(output_dir / "nonlinearity_check.png", dpi=110)
+                plt.close(fig)
+                self._log(f"Saved nonlinearity_check.png | {len(panels)} exposure-pair panel(s)")
+        except Exception as e:
+            self._log(f"[ZP][NLIN] linearity diagnostic failed: {e}")
+
     def _poly_eval(self, x, coeffs):
         x = np.asarray(x, float)
         y = np.zeros_like(x, dtype=float)
@@ -613,7 +712,12 @@ class ZeropointCalibrationWorker(QThread):
                 _has_apcorr_col = "step4_apcorr_candidate" in dfp.columns
                 if _has_apcorr_col:
                     _keep_cols.append("step4_apcorr_candidate")
+                _has_exptime_col = "exptime" in dfp.columns
+                if _has_exptime_col:
+                    _keep_cols.append("exptime")
                 tmp = dfp[_keep_cols].copy()
+                if not _has_exptime_col:
+                    tmp["exptime"] = np.nan
                 tmp = tmp.rename(columns={mag_col: "mag_inst", err_col: "mag_err"})
                 if _has_apcorr_col:
                     tmp["step4_apcorr_candidate"] = (
@@ -1162,6 +1266,9 @@ class ZeropointCalibrationWorker(QThread):
             grp_path = output_dir / "median_by_ID_filter.csv"
             grp_cal.to_csv(grp_path, index=False, na_rep="NaN")
             self._log(f"Saved {grp_path.name} | rows={len(grp_cal)}")
+
+            # Multi-exposure detector-linearity diagnostic (no-op for single exposure).
+            self._write_nonlinearity_diag(obs, output_dir)
 
             wide_mag_w = grp_cal.pivot_table(index="ID", columns="FILTER", values="mag_cal_wmean", aggfunc="median")
             wide_err_w = grp_cal.pivot_table(index="ID", columns="FILTER", values="mag_cal_werr", aggfunc="median")

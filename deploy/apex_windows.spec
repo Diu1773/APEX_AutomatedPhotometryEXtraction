@@ -117,10 +117,22 @@ hiddenimports += [
     "scipy.sparse.csgraph._validation",
     "scipy.ndimage",
     "scipy.ndimage._filters",
+    "scipy.optimize",
+    "scipy.spatial",
     "astropy.visualization",
     "astropy.visualization.interval",
     "astropy.visualization.stretch",
+    "astropy.wcs",
+    "astropy.wcs.utils",
     "certifi",
+    # Step 5 Internal solver — lazily imported by InternalWcsWorker.
+    # Ensure PyInstaller pins it so frozen builds don't silent-fail
+    # with an ImportError that leaves the Run button disabled.
+    "apex.analysis.astrometry",
+    "apex.analysis.astrometry.solver",
+    "apex.analysis.astrometry.quad_matcher",
+    "apex.utils.io_utils",
+    "apex.utils.step_paths",
 ]
 
 # APEX uses mode-specific windows and tool windows through lazy imports. Collect

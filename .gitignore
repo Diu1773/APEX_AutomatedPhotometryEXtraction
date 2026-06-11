@@ -1,6 +1,7 @@
 __pycache__/
 *.pyc
 *.pyo
+.pytest_cache/
 .env
 .codex
 .claude/
@@ -8,10 +9,14 @@ __pycache__/
 build/
 dist/
 *.egg-info/
-release/Setup/*.exe
-release/Setup/*.zip
+release/Setup/
+*.log
 .DS_Store
 
 # User/runtime state
 parameters.toml
 apex/.state/
+
+# Local science data / external catalogs
+isochrone/
+validation/reports/

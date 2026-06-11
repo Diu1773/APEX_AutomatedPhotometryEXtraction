@@ -17,6 +17,7 @@ LC pipeline layout:
 """
 
 from __future__ import annotations
+import csv
 from pathlib import Path
 from typing import Union
 
@@ -32,6 +33,19 @@ LC_SELECTION_DIRNAME = "lc_selection"
 LC_LC_DIRNAME        = "lc_lightcurve"
 LC_DETREND_DIRNAME   = "lc_detrend"
 LC_PERIOD_DIRNAME    = "lc_period"
+
+
+def _is_usable_lightcurve_csv(path: Path) -> bool:
+    try:
+        if not path.is_file() or path.stat().st_size <= 0:
+            return False
+        with path.open("r", encoding="utf-8-sig", newline="") as handle:
+            reader = csv.reader(handle)
+            header = next(reader, [])
+            first_row = next(reader, [])
+        return len(header) >= 2 and len(first_row) >= 2
+    except (OSError, UnicodeError, csv.Error):
+        return False
 
 
 def step8_selection_dir(result_dir: PathLike) -> Path:
@@ -91,15 +105,9 @@ def step12_period_dir(result_dir: PathLike) -> Path:
 
 
 def find_best_lightcurve_csv(result_dir: PathLike, star_id: int) -> Path | None:
-    """Find the best detrended lightcurve CSV for a given star ID."""
-    lc_dir = step9_lc_dir(result_dir)
-    detrend_dir = step10_detrend_dir(result_dir)
-    for base_dir in (detrend_dir, lc_dir):
-        for pattern in (f"lc_{star_id}_*.csv", f"lc_{star_id}.csv"):
-            matches = sorted(base_dir.glob(pattern))
-            if matches:
-                return matches[-1]
-    return None
+    """Find the preferred usable light-curve CSV for a target star."""
+    candidates = list_lightcurve_csvs(result_dir, target_id=star_id)
+    return candidates[0] if candidates else None
 
 
 def step5_photometry_dir(result_dir: PathLike) -> Path:
@@ -251,14 +259,18 @@ def list_lightcurve_csvs(result_dir: PathLike, target_id: int | None = None) -> 
     candidates: list[Path] = []
     if target_id is not None:
         candidates.append(_step10_current_lc_path(d, target_id))
-        for mode in ("global", "color", "offset"):
+        for mode in ("global", "sysrem", "color", "offset"):
             candidates.append(step10_out / f"lightcurve_ID{int(target_id)}_{mode}.csv")
         candidates.append(step9_out / f"lightcurve_combined_ID{int(target_id)}_raw.csv")
         candidates.append(step9_out / f"lightcurve_ID{int(target_id)}_raw.csv")
+        candidates.extend(sorted(step10_out.glob(f"lc_{int(target_id)}_*.csv"), reverse=True))
+        candidates.append(step10_out / f"lc_{int(target_id)}.csv")
+        candidates.extend(sorted(step9_out.glob(f"lc_{int(target_id)}_*.csv"), reverse=True))
+        candidates.append(step9_out / f"lc_{int(target_id)}.csv")
     else:
         if step10_out.exists():
             candidates.extend(sorted(step10_out.glob("lightcurve_ID*_current.csv"), reverse=True))
-            for mode in ("global", "color", "offset"):
+            for mode in ("global", "sysrem", "color", "offset"):
                 candidates.extend(sorted(step10_out.glob(f"lightcurve_ID*_{mode}.csv"), reverse=True))
         if step9_out.exists():
             candidates.extend(sorted(step9_out.glob("lightcurve_combined_ID*_raw.csv"), reverse=True))
@@ -268,4 +280,15 @@ def list_lightcurve_csvs(result_dir: PathLike, target_id: int | None = None) -> 
             for f in sorted(base_dir.glob("lightcurve_*.csv"), reverse=True):
                 if f not in candidates:
                     candidates.append(f)
-    return candidates
+
+    existing: list[Path] = []
+    seen: set[Path] = set()
+    for path in candidates:
+        try:
+            key = path.resolve()
+        except OSError:
+            continue
+        if _is_usable_lightcurve_csv(path) and key not in seen:
+            seen.add(key)
+            existing.append(path)
+    return existing

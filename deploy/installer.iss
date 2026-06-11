@@ -30,7 +30,7 @@ DefaultGroupName={#MyAppName}
 AllowNoIcons=yes
 
 OutputDir={#OutputDir}
-OutputBaseFilename=setup
+OutputBaseFilename=setup-APEX-{#MyAppVersion}
 
 Compression=lzma2/ultra64
 SolidCompression=yes
