@@ -20,3 +20,7 @@ apex/.state/
 # Local science data / external catalogs
 isochrone/
 validation/reports/
+
+# Watchtower runtime
+.venv-watchtower/
+watchtower/data/
