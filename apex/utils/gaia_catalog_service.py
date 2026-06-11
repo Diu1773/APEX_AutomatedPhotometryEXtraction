@@ -99,6 +99,43 @@ def tap_launch_job_async(service, adql: str, *, timeout_s: float | None = None, 
     return service.launch_job_async(adql, **kwargs)
 
 
+def tap_query_with_deadline(service, adql: str, *, timeout_s: float | None = None,
+                            deadline_s: float | None = None, **kwargs):
+    """Run an async TAP job and fetch its results under a HARD wall-clock deadline.
+
+    astroquery's ``job.get_results()`` polls the server and does NOT honour the
+    requested timeout, so a stuck ESA/VizieR queue blocks the caller forever
+    (the "10-minute hang" seen in practice). Run launch + fetch on a worker
+    thread and abandon it if it exceeds ``deadline_s``, raising a ``TimeoutError``
+    (message contains "timed out" so ``_classify_query_failure`` maps it to
+    TIMEOUT and callers fall back to another mirror).
+
+    The abandoned thread is not awaited (``shutdown(wait=False)``); a hung
+    network read cannot be cancelled, but it is bounded to one leaked thread per
+    timed-out query and the process keeps moving.
+    """
+    import concurrent.futures as _cf
+
+    if not (deadline_s is not None and np.isfinite(deadline_s) and deadline_s > 0):
+        base = float(timeout_s) if (timeout_s and np.isfinite(timeout_s) and timeout_s > 0) else 30.0
+        deadline_s = max(base * 2.0, 60.0)
+
+    def _run():
+        job = tap_launch_job_async(service, adql, timeout_s=timeout_s, **kwargs)
+        return job.get_results()
+
+    ex = _cf.ThreadPoolExecutor(max_workers=1)
+    fut = ex.submit(_run)
+    try:
+        return fut.result(timeout=float(deadline_s))
+    except _cf.TimeoutError as exc:
+        raise TimeoutError(
+            f"TAP query timed out (hard deadline {deadline_s:.0f}s)"
+        ) from exc
+    finally:
+        ex.shutdown(wait=False)
+
+
 def gaia_runtime_available() -> tuple[bool, str]:
     ssl_detail = "" if _SSL_CERT_OK else f" SSL setup issue: {_SSL_CERT_DETAIL}"
     _get_gaia()  # probe lazily; safe to call repeatedly
@@ -250,9 +287,11 @@ WHERE 1=CONTAINS(
 {mag_where}
         """.strip()
         tap = TapPlus(url="https://tapvizier.cds.unistra.fr/TAPVizieR/tap")
+        deadline_s = float(getattr(self.P, "gaia_hard_deadline_s", 0.0) or 0.0) or None
         try:
-            job = tap_launch_job_async(tap, adql, timeout_s=timeout_s)
-            tab = job.get_results()
+            tab = tap_query_with_deadline(
+                tap, adql, timeout_s=timeout_s, deadline_s=deadline_s,
+            )
         except Exception as exc:
             raise RuntimeError(f"VizieR fallback query failed: {_exc_brief(exc)}") from exc
         df = _normalise_gaia_columns(tab.to_pandas())
@@ -286,9 +325,11 @@ WHERE 1=CONTAINS(
         Gaia.ROW_LIMIT = -1
         if self._stopped():
             raise RuntimeError("stopped")
+        deadline_s = float(getattr(self.P, "gaia_hard_deadline_s", 0.0) or 0.0) or None
         try:
-            job = tap_launch_job_async(Gaia, adql, timeout_s=timeout_s, dump_to_file=False)
-            tab = job.get_results()
+            tab = tap_query_with_deadline(
+                Gaia, adql, timeout_s=timeout_s, deadline_s=deadline_s, dump_to_file=False,
+            )
         except Exception as exc:
             cause = self._classify_query_failure(exc)
             if cause in {"IP_BANNED", "SERVER_JOB_LOST", "SERVER_DOWN", "TIMEOUT", "NETWORK_ERROR"}:

@@ -38,11 +38,11 @@ canvas_px = 900
 telescope_focal_mm = 3947.0
 camera_pixel_um = 3.76
 binning = 2
-gain_e_per_adu = 0.1
-rdnoise_e = 1.39
-noise_use_fits_header = true
-noise_reference_binning = 2
-noise_scale_by_binning = true
+gain_e_per_adu = 0.689
+rdnoise_e = 2.5
+noise_use_fits_header = false
+noise_reference_binning = 1
+noise_scale_by_binning = false
 saturation_adu = 65000.0
 zp_initial = 25.0
 datamin_adu = 0.1
@@ -218,8 +218,8 @@ scale = 1.0
 emission = true
 datamax = 60000.0
 noise = "poisson"
-readnoise = 1.39
-epadu = 0.1
+readnoise = 2.5
+epadu = 0.689
 exposure = "EXPTIME"
 itime = 1.0
 
@@ -228,8 +228,8 @@ scale = 1.0
 emission = true
 datamax = 60000.0
 noise = "poisson"
-readnoise = 1.39
-epadu = 0.1
+readnoise = 2.5
+epadu = 0.689
 exposure = "EXPTIME"
 itime = 60.0
 seeing_g = 2.5
@@ -371,6 +371,12 @@ match_tol_arcsec = 2.0
 g_limit = 18.0
 retry = 2
 timeout_s = 30.0
+# Hard wall-clock deadline (s) for one ESA/VizieR TAP fetch. astroquery's
+# polling ignores timeout_s, so a stuck server queue can hang the whole step;
+# when this deadline is hit the query is abandoned and the VizieR mirror is
+# tried instead. 0 = auto (max(timeout_s*2, 60)). Affects ASTAP, astrometry.net
+# and the internal solver since all share the Gaia catalog service.
+hard_deadline_s = 0.0
 backoff_s = 6.0
 allow_no_cache = true
 snr_calib_min = 20.0

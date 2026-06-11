@@ -246,6 +246,7 @@ COMMON_TOML_KEY_MAP: tuple[tuple[tuple[str, ...], str], ...] = (
     (('gaia', 'gi_max'), 'gaia_gi_max'),
     (('gaia', 'retry'), 'gaia_retry'),
     (('gaia', 'timeout_s'), 'gaia_timeout_s'),
+    (('gaia', 'hard_deadline_s'), 'gaia_hard_deadline_s'),
     (('gaia', 'backoff_s'), 'gaia_backoff_s'),
     (('gaia', 'allow_no_cache'), 'gaia_allow_no_cache'),
     (('gaia', 'g_limit'), 'idmatch_gaia_g_limit'),

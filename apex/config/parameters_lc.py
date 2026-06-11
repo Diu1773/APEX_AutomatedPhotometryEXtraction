@@ -61,6 +61,17 @@ def _set_path(data: Dict[str, Any], path: Iterable[str], value: Any) -> None:
     cur[keys[-1]] = value
 
 
+def _delete_path(data: Dict[str, Any], path: Iterable[str]) -> None:
+    cur: Any = data
+    keys = list(path)
+    for key in keys[:-1]:
+        if not isinstance(cur, dict) or key not in cur:
+            return
+        cur = cur[key]
+    if isinstance(cur, dict):
+        cur.pop(keys[-1], None)
+
+
 TOML_KEY_MAP: list[tuple[Iterable[str], str]] = [
         (("io", "data_dir"), "data_dir"),
         (("io", "filename_prefix"), "filename_prefix"),
@@ -223,6 +234,7 @@ TOML_KEY_MAP: list[tuple[Iterable[str], str]] = [
         (("gaia", "gi_max"), "gaia_gi_max"),
         (("gaia", "retry"), "gaia_retry"),
         (("gaia", "timeout_s"), "gaia_timeout_s"),
+        (("gaia", "hard_deadline_s"), "gaia_hard_deadline_s"),
         (("gaia", "backoff_s"), "gaia_backoff_s"),
         (("gaia", "allow_no_cache"), "gaia_allow_no_cache"),
         (("gaia", "g_limit"), "idmatch_gaia_g_limit"),
@@ -440,18 +452,11 @@ class Parameters:
         """Load parameters from text file"""
         raw = _read_toml(path)
 
-        # --- rdnoise is REQUIRED ---
         rdnoise_candidate = (
             _as_float_or_none(raw.get("rdnoise_e", ""))
             or _as_float_or_none(raw.get("datapar.readnoise", ""))
             or _as_float_or_none(raw.get("readnoise_e", ""))
         )
-        if rdnoise_candidate is None:
-            raise RuntimeError(
-                "[parameter.txt] read noise value is required.\n"
-                "  Allowed keys: rdnoise_e or datapar.readnoise or readnoise_e\n"
-                "  Example: rdnoise_e = 1.39   # electrons"
-            )
 
         P = types.SimpleNamespace(
             schema_version=_geti(raw, "schema_version", CANONICAL_SCHEMA_VERSION),
@@ -549,11 +554,11 @@ class Parameters:
 
             # Camera/instrument
             saturation_adu=_getf(raw, "saturation_adu", 60000.0),
-            gain_e_per_adu=_getf(raw, "gain_e_per_adu", 0.1),
-            rdnoise_e=float(rdnoise_candidate),
-            noise_use_fits_header=_as_bool(raw.get("noise_use_fits_header", "true"), True),
+            gain_e_per_adu=_as_float_or_none(raw.get("gain_e_per_adu", "")),
+            rdnoise_e=rdnoise_candidate,
+            noise_use_fits_header=_as_bool(raw.get("noise_use_fits_header", "false"), False),
             noise_reference_binning=_as_float_or_none(raw.get("noise_reference_binning", "")),
-            noise_scale_by_binning=_as_bool(raw.get("noise_scale_by_binning", "true"), True),
+            noise_scale_by_binning=_as_bool(raw.get("noise_scale_by_binning", "false"), False),
             zp_initial=_getf(raw, "zp_initial", 25.0),
             binning_default=_geti(raw, "binning_default", 2),
             site_lat_deg=_getf(raw, "site_lat_deg", 0.0),
@@ -734,6 +739,7 @@ class Parameters:
             gaia_wcs_mag_max=_getf(raw, "gaia_wcs_mag_max", 18.0),
             gaia_retry=_geti(raw, "gaia_retry", 2),
             gaia_timeout_s=_getf(raw, "gaia_timeout_s", 30.0),
+            gaia_hard_deadline_s=_getf(raw, "gaia_hard_deadline_s", 0.0),
             simbad_timeout_s=_getf(raw, "simbad_timeout_s", 20.0),
             gaia_backoff_s=_getf(raw, "gaia_backoff_s", 6.0),
             gaia_allow_no_cache=_as_bool(raw.get("gaia_allow_no_cache", "true"), True),
@@ -877,6 +883,13 @@ class Parameters:
                 continue
             val = getattr(self.P, attr)
             if val is None:
+                if attr in {
+                    "gain_e_per_adu",
+                    "rdnoise_e",
+                    "target_ra_deg",
+                    "target_dec_deg",
+                }:
+                    _delete_path(data, path_keys)
                 continue
             _set_path(data, path_keys, toml_value_for_runtime_attr(attr, val, path_keys))
 
