@@ -4198,14 +4198,20 @@ class InternalWcsWorker(QThread):
             return {"ok": False, "reason": "bad_shape",
                     "elapsed_s": time.time() - _t_frame_start}
 
-        # Load Step 4 detections (with isolation weighting for dense fields).
+        # Load Step 4 detections and build an ORDERED LADDER of source sets to
+        # try: isolated "anchor" stars first (cleanest WCS — best RMS on normal
+        # fields), then the raw brightest detections as a safety net. The
+        # benchmark showed that in dense globular cores the isolation filter can
+        # decimate the core and starve quad matching, while the raw brightest
+        # set still solves; the ladder gives the clean path when it works and
+        # the robust path when it doesn't.
         det_candidates = [
             self.params.P.cache_dir / f"detect_{fname}.csv",
             step4_dir(result_dir) / f"detect_{fname}.csv",
         ]
-        src_xy = None
-        src_flux = None
+        src_sets: list[tuple[str, np.ndarray, np.ndarray | None]] = []
         det_xy_for_qc = np.zeros((0, 2), dtype=float)
+        ANCHOR_MIN = 12  # below this an anchor-only set is too sparse to bother
         for dp in det_candidates:
             if not dp.exists():
                 continue
@@ -4213,63 +4219,74 @@ class InternalWcsWorker(QThread):
                 ddf = pd.read_csv(dp)
                 if not ({"x", "y"} <= set(ddf.columns)):
                     continue
-
                 xy_all = ddf[["x", "y"]].to_numpy(float)
-                det_xy_for_qc = xy_all[np.isfinite(xy_all).all(axis=1)]
-
-                if "anchor_candidate" in ddf.columns:
-                    anchors = ddf[ddf["anchor_candidate"].astype(str)
-                                 .str.strip().str.lower()
-                                 .isin({"1", "true", "t", "yes", "y"})]
-                    if len(anchors) >= 12:
-                        ddf = anchors
-                        self._log(
-                            f"[Internal WCS] Using {len(anchors)} anchor stars "
-                            f"(isolated) for {fname}"
-                        )
-                elif "nearest_neighbor_fwhm" in ddf.columns:
-                    nn = pd.to_numeric(ddf["nearest_neighbor_fwhm"], errors="coerce")
-                    isolated = ddf[nn >= 3.0]
-                    if len(isolated) >= 12:
-                        ddf = isolated
-
-                xy = ddf[["x", "y"]].to_numpy(float)
-                valid = np.isfinite(xy).all(axis=1)
-                src_xy = xy[valid]
+                valid_all = np.isfinite(xy_all).all(axis=1)
+                det_xy_for_qc = xy_all[valid_all]
                 flux_col = next(
                     (c for c in ("dao_flux", "flux", "peak_adu") if c in ddf.columns),
                     None,
                 )
-                flux_arr = (
-                    pd.to_numeric(ddf[flux_col], errors="coerce").to_numpy(float)[valid]
-                    if flux_col else np.ones(valid.sum())
+                flux_all = (
+                    pd.to_numeric(ddf[flux_col], errors="coerce").to_numpy(float)
+                    if flux_col else np.ones(len(ddf))
                 )
-                if "nearest_neighbor_fwhm" in ddf.columns:
-                    nn = pd.to_numeric(ddf["nearest_neighbor_fwhm"],
-                                       errors="coerce").to_numpy(float)[valid]
-                    nn = np.where(np.isfinite(nn) & (nn > 0), nn, 1.0)
-                    iso_weight = np.clip(nn / np.nanmedian(nn), 0.3, 3.0)
-                    src_flux = flux_arr * iso_weight
-                else:
-                    src_flux = flux_arr if flux_col else None
+                nn_all = (
+                    pd.to_numeric(ddf["nearest_neighbor_fwhm"], errors="coerce").to_numpy(float)
+                    if "nearest_neighbor_fwhm" in ddf.columns else None
+                )
+
+                # Anchor set: Step 4 anchor_candidate, else a relaxed
+                # nearest-neighbour isolation cut. Flux is isolation-weighted so
+                # the most isolated stars dominate quad construction.
+                anchor_mask = None
+                if "anchor_candidate" in ddf.columns:
+                    anchor_mask = (
+                        ddf["anchor_candidate"].astype(str).str.strip().str.lower()
+                        .isin({"1", "true", "t", "yes", "y"}).to_numpy(bool)
+                    )
+                elif nn_all is not None:
+                    anchor_mask = nn_all >= 3.0
+                if anchor_mask is not None:
+                    am = anchor_mask & valid_all
+                    if int(am.sum()) >= ANCHOR_MIN:
+                        a_xy = xy_all[am]
+                        a_fl = flux_all[am]
+                        if nn_all is not None:
+                            nn = nn_all[am]
+                            nn = np.where(np.isfinite(nn) & (nn > 0), nn, 1.0)
+                            a_fl = a_fl * np.clip(nn / np.nanmedian(nn), 0.3, 3.0)
+                        src_sets.append(("anchor", a_xy, a_fl))
+
+                # Raw set: all valid detections, plain flux. Always available as
+                # the fallback — keeps the crowded core that isolation removes.
+                r_xy = xy_all[valid_all]
+                r_fl = flux_all[valid_all] if flux_col else None
+                if len(r_xy) >= 8:
+                    # Avoid a duplicate pass when anchors == all detections.
+                    if not (src_sets and len(src_sets[0][1]) == len(r_xy)):
+                        src_sets.append(("raw", r_xy, r_fl))
                 break
             except Exception:
                 pass
 
-        if src_xy is None or len(src_xy) < 8:
+        if not src_sets:
             src_xy_fb, src_flux_fb = self._detect_sources_from_fits(fits_path)
             if src_xy_fb is not None and len(src_xy_fb) >= 8:
-                src_xy = src_xy_fb
-                src_flux = src_flux_fb
+                src_sets.append(("fitsdetect", src_xy_fb, src_flux_fb))
                 det_xy_for_qc = src_xy_fb
                 self._log(
                     f"[Internal WCS] Step 4 detections missing/sparse; "
-                    f"fallback detector found {len(src_xy)} peaks for {fname}"
+                    f"fallback detector found {len(src_xy_fb)} peaks for {fname}"
                 )
             else:
                 self._log(f"[Internal WCS] No usable detections for {fname}")
                 return {"ok": False, "reason": "no_detections",
                         "elapsed_s": time.time() - _t_frame_start}
+
+        # Initial binding for the closures below; the source ladder rebinds
+        # these per attempt.
+        src_xy = src_sets[0][1]
+        src_flux = src_sets[0][2]
         if len(det_xy_for_qc) == 0:
             det_xy_for_qc = np.asarray(src_xy, dtype=float)
 
@@ -4350,85 +4367,103 @@ class InternalWcsWorker(QThread):
             # solver (the solver is translation-invariant, so a wrong center
             # just selects the wrong catalogue subset). The first candidate
             # that produces an acceptable solution wins, and its label is
-            # recorded as provenance. A stale/wrong header is rescued by the
-            # target candidate; both failing falls through to a local-blind
-            # search.
-            candidates = _astnet_center_candidates(header_coord, target_coord)
-            if header_coord is not None and target_coord is not None:
-                sep = _coord_sep_deg(header_coord, target_coord)
-                if np.isfinite(sep) and sep > 5.0:
-                    self._log(
-                        f"[Internal WCS] {fname}: header pointing is {sep:.2f}° "
-                        f"from Step 1 target — possible stale mount header."
+            # recorded as provenance. Runs against the CURRENT src_xy/src_flux
+            # binding so the outer source ladder can re-run it with a different
+            # detection set.
+            def _solve_one_source():
+                candidates = _astnet_center_candidates(header_coord, target_coord)
+                if header_coord is not None and target_coord is not None:
+                    sep = _coord_sep_deg(header_coord, target_coord)
+                    if np.isfinite(sep) and sep > 5.0:
+                        self._log(
+                            f"[Internal WCS] {fname}: header pointing is {sep:.2f}° "
+                            f"from Step 1 target — possible stale mount header."
+                        )
+
+                def _candidate_center(coord):
+                    if coord is not None:
+                        try:
+                            return float(coord.ra.deg), float(coord.dec.deg)
+                        except Exception:
+                            return None
+                    if np.isfinite(approx_ra) and np.isfinite(approx_dec):
+                        return float(approx_ra), float(approx_dec)
+                    if header_coord is not None:
+                        try:
+                            return float(header_coord.ra.deg), float(header_coord.dec.deg)
+                        except Exception:
+                            return None
+                    return None
+
+                res_l = None
+                hint_l = "none"
+                best_l = None
+                best_l_hint = "none"
+                for label, coord in candidates:
+                    center = _candidate_center(coord)
+                    if center is None:
+                        continue
+                    cra, cdec = center
+                    use_blind = (label == "blind") or bool(solve_params.get("local_blind", False))
+                    cand_res = _run_solver_ladder(
+                        solve_params, local_blind=use_blind, cra=cra, cdec=cdec,
                     )
+                    if cand_res is None:
+                        continue
+                    if _acceptable_result(cand_res):
+                        return cand_res, label
+                    if best_l is None or (
+                        getattr(cand_res, "converged", False)
+                        and not getattr(best_l, "converged", False)
+                    ):
+                        best_l = cand_res
+                        best_l_hint = label
 
-            def _candidate_center(coord) -> tuple[float, float] | None:
-                if coord is not None:
-                    try:
-                        return float(coord.ra.deg), float(coord.dec.deg)
-                    except Exception:
-                        return None
-                # blind: re-use the target/cone centre as the projection point
-                if np.isfinite(approx_ra) and np.isfinite(approx_dec):
-                    return float(approx_ra), float(approx_dec)
-                if header_coord is not None:
-                    try:
-                        return float(header_coord.ra.deg), float(header_coord.dec.deg)
-                    except Exception:
-                        return None
-                return None
+                if (local_blind_fallback
+                        and not bool(solve_params.get("local_blind", False))):
+                    center = _candidate_center(None)
+                    if center is not None:
+                        self._log(f"[Internal WCS] Local-blind retry for {fname}")
+                        retry_result = _run_solver_ladder(
+                            solve_params, local_blind=True, cra=center[0], cdec=center[1],
+                        )
+                        if retry_result is not None and _acceptable_result(retry_result):
+                            return retry_result, "blind"
+                        if retry_result is not None and best_l is None:
+                            best_l = retry_result
+                            best_l_hint = "blind"
+                return best_l, best_l_hint
 
+            # ── Source ladder: anchor (clean) → raw (robust) ──────────────
             result = None
             hint_source = "none"
-            best_fallback = None
-            best_fallback_hint = "none"
-            for label, coord in candidates:
-                center = _candidate_center(coord)
-                if center is None:
+            src_set_used = "none"
+            overall_best = None
+            overall_best_hint = "none"
+            overall_best_src = "none"
+            for _si, (_src_label, _sxy, _sfl) in enumerate(src_sets):
+                src_xy = _sxy
+                src_flux = _sfl
+                if len(src_xy) < self.min_matches:
                     continue
-                cra, cdec = center
-                use_blind = (label == "blind") or bool(solve_params.get("local_blind", False))
-                cand_res = _run_solver_ladder(
-                    solve_params, local_blind=use_blind, cra=cra, cdec=cdec,
-                )
-                if cand_res is None:
-                    continue
-                if _acceptable_result(cand_res):
-                    result = cand_res
-                    hint_source = label
-                    break
-                # Track the best non-accepted result so a marginal solution is
-                # still reported rather than a bare "no_solution".
-                if best_fallback is None or (
-                    getattr(cand_res, "converged", False)
-                    and not getattr(best_fallback, "converged", False)
-                ):
-                    best_fallback = cand_res
-                    best_fallback_hint = label
-
-            # Explicit local-blind retry if the chain never produced an
-            # acceptable solution and we have not already tried blind.
-            if (
-                result is None
-                and local_blind_fallback
-                and not bool(solve_params.get("local_blind", False))
-            ):
-                center = _candidate_center(None)
-                if center is not None:
-                    self._log(f"[Internal WCS] Local-blind retry for {fname}")
-                    retry_result = _run_solver_ladder(
-                        solve_params, local_blind=True, cra=center[0], cdec=center[1],
+                if _si > 0:
+                    self._log(
+                        f"[Internal WCS] {fname}: '{src_sets[0][0]}' set unsolved — "
+                        f"retrying with '{_src_label}' source set ({len(src_xy)} stars)"
                     )
-                    if retry_result is not None and _acceptable_result(retry_result):
-                        result = retry_result
-                        hint_source = "blind"
-                    elif retry_result is not None and best_fallback is None:
-                        best_fallback = retry_result
-                        best_fallback_hint = "blind"
+                r_i, h_i = _solve_one_source()
+                if r_i is not None and _acceptable_result(r_i):
+                    result, hint_source, src_set_used = r_i, h_i, _src_label
+                    break
+                if r_i is not None and (
+                    overall_best is None
+                    or (getattr(r_i, "converged", False)
+                        and not getattr(overall_best, "converged", False))
+                ):
+                    overall_best, overall_best_hint, overall_best_src = r_i, h_i, _src_label
 
             if result is None:
-                result = best_fallback
-                hint_source = best_fallback_hint
+                result, hint_source, src_set_used = overall_best, overall_best_hint, overall_best_src
             if result is None:
                 # Synthesize a non-converged result so downstream handling is
                 # uniform (no candidate produced anything at all).
@@ -4552,6 +4587,7 @@ class InternalWcsWorker(QThread):
             "wcs_ok": True,
             "status": "ok",
             "hint_source": hint_source,
+            "src_set": src_set_used,
             "n_matches": result.n_matches,
             "rms_arcsec": result.rms_arcsec,
             "resid_med": result.rms_arcsec,
