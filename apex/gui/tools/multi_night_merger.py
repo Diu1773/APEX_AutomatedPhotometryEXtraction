@@ -29,7 +29,7 @@ from PyQt5.QtWidgets import (
     QComboBox,
     QAbstractItemView,
 )
-from PyQt5.QtCore import Qt
+from PyQt5.QtCore import Qt, QThread, pyqtSignal
 from PyQt5.QtGui import QColor, QFont
 
 from apex.analysis.merge.id_match import reconcile_workspace_catalogs
@@ -53,6 +53,118 @@ from apex.utils.run_workspace import (
 from apex.utils.step_paths_lc import (
     step8_selection_dir,
 )
+
+
+def compute_selection_defaults(
+    merged_catalogs: dict[str, pd.DataFrame],
+    base_selection_by_filter: dict[str, dict],
+) -> tuple[dict[str, "int | None"], dict[str, "set[int]"], dict[str, "int | None"]]:
+    """Derive target/comparison/check selections per filter from the base
+    workspace's selection payloads, keeping only source_ids that survive into
+    the merged catalog. Pure — safe to run inside the merge worker thread."""
+    sel_t: dict[str, int | None] = {}
+    sel_c: dict[str, set[int]] = {}
+    sel_k: dict[str, int | None] = {}
+    for flt, df in merged_catalogs.items():
+        if "source_id" in df.columns:
+            available = set(
+                coerce_int64_source_id(df["source_id"]).dropna().astype("int64").tolist()
+            )
+        else:
+            available = set()
+        payload = base_selection_by_filter.get(flt, {})
+        target_sid = payload.get("target_source_id")
+        sel_t[flt] = (
+            int(target_sid)
+            if target_sid is not None and int(target_sid) in available
+            else None
+        )
+        comp_sids: set[int] = set()
+        for sid in payload.get("comparison_source_ids", []):
+            if sid is not None and int(sid) in available:
+                comp_sids.add(int(sid))
+        sel_c[flt] = comp_sids
+        check_sid = payload.get("check_source_id")
+        sel_k[flt] = (
+            int(check_sid)
+            if check_sid is not None and int(check_sid) in available
+            else None
+        )
+    return sel_t, sel_c, sel_k
+
+
+class _MergeWorker(QThread):
+    """Runs the heavy reconcile + materialize off the GUI thread.
+
+    Emits ``progress(str)`` log lines, ``finished_ok(dict)`` with the reconcile
+    result + selection defaults + materialize build_info, or ``failed(str)``.
+    """
+
+    progress = pyqtSignal(str)
+    finished_ok = pyqtSignal(object)
+    failed = pyqtSignal(str)
+
+    def __init__(
+        self,
+        *,
+        folders,
+        catalogs_by_folder,
+        folder_tags,
+        match_radius,
+        base_selection_by_filter,
+        out_dir,
+        cached_reconcile,
+        parent=None,
+    ):
+        super().__init__(parent)
+        self._folders = folders
+        self._catalogs_by_folder = catalogs_by_folder
+        self._folder_tags = folder_tags
+        self._match_radius = match_radius
+        self._base_selection = base_selection_by_filter
+        self._out_dir = out_dir
+        self._cached_reconcile = cached_reconcile
+
+    def run(self):  # QThread entry point
+        try:
+            cached = self._cached_reconcile
+            if cached is None:
+                cached = reconcile_workspace_catalogs(
+                    self._folders,
+                    self._catalogs_by_folder,
+                    self._folder_tags,
+                    self._match_radius,
+                    logger=self.progress.emit,
+                )
+            merged_catalogs = cached["canonical_by_filter"]
+            sel_t, sel_c, sel_k = compute_selection_defaults(
+                merged_catalogs, self._base_selection
+            )
+            build_info = materialize_merged_workspace(
+                out_dir=self._out_dir,
+                folders=self._folders,
+                folder_tags=self._folder_tags,
+                local_id_maps=cached["local_id_maps"],
+                merged_catalogs=merged_catalogs,
+                selection_target_by_filter=sel_t,
+                selection_comp_by_filter=sel_c,
+                selection_check_by_filter=sel_k,
+                match_records=cached["match_records"],
+            )
+            self.finished_ok.emit(
+                {
+                    "cached": cached,
+                    "sel_t": sel_t,
+                    "sel_c": sel_c,
+                    "sel_k": sel_k,
+                    "build_info": build_info,
+                    "out_dir": self._out_dir,
+                }
+            )
+        except Exception as exc:  # surface any failure to the GUI thread
+            import traceback
+
+            self.failed.emit(f"{exc}\n\n{traceback.format_exc()}")
 
 
 class _MergedParamsProxy:
@@ -152,6 +264,10 @@ class MultiNightMergerWindow(QMainWindow):
         self.step10_embedded_window = None
         self.step11_embedded_window = None
         self.step12_embedded_window = None
+
+        self._merge_worker: "_MergeWorker | None" = None
+        self._merge_busy = False
+        self._pending_id_sig: "tuple | None" = None
 
         self.setWindowTitle("Multi-Night Merger Workflow")
         self.resize(1200, 820)
@@ -306,9 +422,9 @@ class MultiNightMergerWindow(QMainWindow):
         self.match_radius_combo.setCurrentText("2.0")
         top.addWidget(self.match_radius_combo)
         top.addStretch()
-        btn_match = QPushButton("ID 매칭 실행")
-        btn_match.clicked.connect(self._run_id_match)
-        top.addWidget(btn_match)
+        self.btn_match = QPushButton("ID 매칭 실행")
+        self.btn_match.clicked.connect(self._run_id_match)
+        top.addWidget(self.btn_match)
         layout.addLayout(top)
 
         self.match_status_label = QLabel("매칭 결과: 아직 실행 안 됨")
@@ -714,6 +830,8 @@ class MultiNightMergerWindow(QMainWindow):
     # ───────────────────────── Step 2: ID match ─────────────────────────
 
     def _run_id_match(self):
+        if self._merge_busy:
+            return
         self.match_log.clear()
         self.match_table.setRowCount(0)
         self.match_summary_rows = []
@@ -728,6 +846,12 @@ class MultiNightMergerWindow(QMainWindow):
         if not ok:
             QMessageBox.warning(self, "ID Match", msg)
             return
+
+        output_dir_text = self.output_dir_edit.text().strip()
+        if not output_dir_text:
+            QMessageBox.warning(self, "Merged Workspace", "출력 폴더를 지정하세요.")
+            return
+        out_dir = Path(output_dir_text)
 
         base_folder = self.folders[0]
         self.base_selection_by_filter = self._get_cached_selection_payloads(base_folder)
@@ -745,29 +869,67 @@ class MultiNightMergerWindow(QMainWindow):
 
         id_sig = self._id_match_signature()
         cached = self._id_match_cache.get(id_sig)
-        if cached is None:
-            cached = reconcile_workspace_catalogs(
-                self.folders,
-                catalogs_by_folder,
-                self.folder_tags,
-                float(self.match_radius_combo.currentText()),
-                logger=self.match_log.append,
-            )
-            self._id_match_cache[id_sig] = cached
-        else:
+        if cached is not None:
             self.match_log.append("[MATCH] Using cached ID match result")
 
+        # Heavy reconcile + materialize run on a worker thread so the UI stays
+        # responsive; GUI wiring happens in _on_merge_finished on the main thread.
+        self._pending_id_sig = id_sig
+        worker = _MergeWorker(
+            folders=list(self.folders),
+            catalogs_by_folder=catalogs_by_folder,
+            folder_tags=dict(self.folder_tags),
+            match_radius=float(self.match_radius_combo.currentText()),
+            base_selection_by_filter=self.base_selection_by_filter,
+            out_dir=out_dir,
+            cached_reconcile=cached,
+            parent=self,
+        )
+        worker.progress.connect(self.match_log.append)
+        worker.finished_ok.connect(self._on_merge_finished)
+        worker.failed.connect(self._on_merge_failed)
+        self._merge_worker = worker
+        self._set_merge_busy(True)
+        self.match_status_label.setText("머징 중… (백그라운드 처리)")
+        worker.start()
+
+    def _set_merge_busy(self, busy: bool):
+        self._merge_busy = busy
+        self.btn_match.setEnabled(not busy)
+
+    def _on_merge_finished(self, result: dict):
+        cached = result["cached"]
+        if self._pending_id_sig is not None:
+            self._id_match_cache[self._pending_id_sig] = cached
         self.merged_catalogs = cached["canonical_by_filter"]
         self.local_id_maps = cached["local_id_maps"]
         self.match_summary_rows = cached["match_summary_rows"]
         self.match_records = cached["match_records"]
+        self.selection_target_by_filter = result["sel_t"]
+        self.selection_comp_by_filter = result["sel_c"]
+        self.selection_check_by_filter = result["sel_k"]
         self._update_match_table()
-        self._load_selection_defaults_from_base()
         n_rows = sum(len(df) for df in self.merged_catalogs.values())
         self.match_status_label.setText(
             f"매칭 완료: filters={len(self.merged_catalogs)} canonical rows={n_rows} mapping rows={len(self.match_records)}"
         )
-        self._build_merged_workspace(show_dialog=False)
+
+        self.merged_result_dir = result["out_dir"]
+        self._build_merged_runtime_context(
+            result["build_info"]["night_assignments"],
+            result["build_info"]["path_map"],
+        )
+        self._refresh_embedded_step_windows_for_current_workspace()
+        self._refresh_step_host_status_labels()
+        self._set_merge_busy(False)
+        self._merge_worker = None
+        self._go_to_step(2)
+
+    def _on_merge_failed(self, message: str):
+        self._set_merge_busy(False)
+        self._merge_worker = None
+        self.match_status_label.setText("머징 실패")
+        QMessageBox.warning(self, "Merged Workspace", message)
 
     def _update_match_table(self):
         self.match_table.setRowCount(0)
@@ -783,68 +945,6 @@ class MultiNightMergerWindow(QMainWindow):
             status_item = QTableWidgetItem(str(row_data["status"]))
             status_item.setForeground(QColor("#2E7D32") if row_data["status"] == "OK" or row_data["status"] == "base" else QColor("#C62828"))
             self.match_table.setItem(row, 6, status_item)
-
-    # ───────────────────────── Step 3: selection ─────────────────────────
-
-    def _load_selection_defaults_from_base(self):
-        self.selection_target_by_filter = {}
-        self.selection_comp_by_filter = {}
-        self.selection_check_by_filter = {}
-        for flt, df in self.merged_catalogs.items():
-            available = set(coerce_int64_source_id(df["source_id"]).dropna().astype("int64").tolist()) if "source_id" in df.columns else set()
-            payload = self.base_selection_by_filter.get(flt, {})
-            target_sid = payload.get("target_source_id")
-            if target_sid is not None and int(target_sid) in available:
-                self.selection_target_by_filter[flt] = int(target_sid)
-            else:
-                self.selection_target_by_filter[flt] = None
-            comp_sids = set()
-            for sid in payload.get("comparison_source_ids", []):
-                if sid is not None and int(sid) in available:
-                    comp_sids.add(int(sid))
-            self.selection_comp_by_filter[flt] = comp_sids
-            check_sid = payload.get("check_source_id")
-            self.selection_check_by_filter[flt] = int(check_sid) if check_sid is not None and int(check_sid) in available else None
-
-    # ───────────────────────── merged workspace build ─────────────────────────
-
-    def _build_merged_workspace(self, show_dialog: bool = True):
-        if not self.merged_catalogs:
-            QMessageBox.warning(self, "Merged Workspace", "Step 2 ID match를 먼저 실행하세요.")
-            return
-
-        output_dir_text = self.output_dir_edit.text().strip()
-        if not output_dir_text:
-            QMessageBox.warning(self, "Merged Workspace", "출력 폴더를 지정하세요.")
-            return
-
-        out_dir = Path(output_dir_text)
-        try:
-            build_info = materialize_merged_workspace(
-                out_dir=out_dir,
-                folders=self.folders,
-                folder_tags=self.folder_tags,
-                local_id_maps=self.local_id_maps,
-                merged_catalogs=self.merged_catalogs,
-                selection_target_by_filter=self.selection_target_by_filter,
-                selection_comp_by_filter=self.selection_comp_by_filter,
-                selection_check_by_filter=self.selection_check_by_filter,
-                match_records=self.match_records,
-            )
-        except RuntimeError as e:
-            QMessageBox.warning(self, "Merged Workspace", str(e))
-            return
-
-        self.merged_result_dir = out_dir
-        self._build_merged_runtime_context(
-            build_info["night_assignments"],
-            build_info["path_map"],
-        )
-        self._refresh_embedded_step_windows_for_current_workspace()
-        self._refresh_step_host_status_labels()
-        if show_dialog:
-            QMessageBox.information(self, "Merged Workspace", f"생성 완료:\n{out_dir}")
-        self._go_to_step(2)
 
     def _build_merged_runtime_context(self, night_assignments: dict[str, int], path_map: dict[str, str]):
         if self.merged_result_dir is None:

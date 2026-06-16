@@ -15,7 +15,7 @@ from apex.utils.io_utils import (
     load_headers_table,
     load_night_assignments,
 )
-from apex.utils.photometry_loader import load_frame_photometry
+from apex.utils.photometry_loader import _load_source_to_id_map, load_frame_photometry
 from apex.utils.run_workspace import infer_result_workspace_label, write_run_manifest
 from apex.utils.step_paths_lc import (
     step1_dir,
@@ -187,8 +187,11 @@ def materialize_merged_workspace(
             header_lookup = {str(fn): row.to_dict() for fn, row in headers_df.set_index("Filename").iterrows()}
 
         night_map_raw = load_night_assignments(folder)
+        # to_dict("records") is much faster than iterrows() and yields plain
+        # dicts reused for both the night-id pass and the main pass below.
+        idx_records = idx.to_dict("records")
         local_night_ids: dict[str, int] = {}
-        for _, row in idx.iterrows():
+        for row in idx_records:
             fname = str(row.get("file", "")).strip()
             if not fname:
                 continue
@@ -203,7 +206,16 @@ def materialize_merged_workspace(
             local_to_merged[local_night] = next_merged_night
             next_merged_night += 1
 
-        for _, row in idx.iterrows():
+        # The Step 8 source_id→ID catalog is identical for every frame of a
+        # filter within a folder; read it once per filter instead of letting
+        # load_frame_photometry re-glob and re-parse it on each frame.
+        sid_map_by_filter: dict[str, dict[int, int]] = {}
+        # Per-filter {local_id: merged_*} lookups are constant across all frames
+        # of a filter; build once and reuse instead of per-cell lambdas.
+        id_lookup_by_filter: dict[str, dict[int, int]] = {}
+        sourceid_lookup_by_filter: dict[str, dict[int, int]] = {}
+
+        for row in idx_records:
             fname = str(row.get("file", "")).strip()
             if not fname:
                 continue
@@ -211,8 +223,19 @@ def materialize_merged_workspace(
             local_map = local_id_maps.get(folder_key, {}).get(flt, {})
             if not local_map:
                 continue
+            if flt not in id_lookup_by_filter:
+                id_lookup_by_filter[flt] = {
+                    int(lid): int(m["merged_id"]) for lid, m in local_map.items()
+                }
+                sourceid_lookup_by_filter[flt] = {
+                    int(lid): int(m["merged_source_id"]) for lid, m in local_map.items()
+                }
 
-            phot_df = load_frame_photometry(folder, fname, flt)
+            if flt not in sid_map_by_filter:
+                sid_map_by_filter[flt] = _load_source_to_id_map(folder, flt)
+            phot_df = load_frame_photometry(
+                folder, fname, flt, sid_map=sid_map_by_filter[flt]
+            )
             if phot_df is None or phot_df.empty or "ID" not in phot_df.columns:
                 continue
 
@@ -223,12 +246,8 @@ def materialize_merged_workspace(
             if phot_df.empty:
                 continue
 
-            phot_df["source_id"] = phot_df["ID_local"].map(
-                lambda lid: int(local_map[int(lid)]["merged_source_id"])
-            )
-            phot_df["ID"] = phot_df["ID_local"].map(
-                lambda lid: int(local_map[int(lid)]["merged_id"])
-            )
+            phot_df["source_id"] = phot_df["ID_local"].map(sourceid_lookup_by_filter[flt])
+            phot_df["ID"] = phot_df["ID_local"].map(id_lookup_by_filter[flt])
 
             merged_fname = f"{folder_tag}__{fname}"
             phot_df["file"] = merged_fname
@@ -245,7 +264,7 @@ def materialize_merged_workspace(
             merged_night_assignments[merged_fname] = merged_night_id
             merged_filter_frames.setdefault(flt, []).append(merged_fname)
 
-            row_dict = row.to_dict()
+            row_dict = dict(row)
             row_dict["file"] = merged_fname
             row_dict["filter"] = flt
             row_dict["night_id"] = merged_night_id

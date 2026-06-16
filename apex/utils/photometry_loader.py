@@ -103,12 +103,22 @@ def _load_source_to_id_map(result_dir: Path, filt_hint: str | None = None) -> di
     return mapping
 
 
-def load_frame_photometry(result_dir: Path, fname: str, filt_hint: str | None = None) -> pd.DataFrame | None:
+def load_frame_photometry(
+    result_dir: Path,
+    fname: str,
+    filt_hint: str | None = None,
+    sid_map: dict[int, int] | None = None,
+) -> pd.DataFrame | None:
     """Load Step 7 forced photometry and enrich it with Step 8 final IDs.
 
     Forced photometry already carries source identity. Downstream steps still
     need the final stable display `ID`, so this loader applies Step 8 selection
     catalogs when available.
+
+    ``sid_map`` lets callers that load many frames from the same workspace pass
+    a pre-built ``{source_id: ID}`` map so the Step 8 selection catalog is read
+    once rather than re-globbed and re-parsed on every frame. Pass an empty dict
+    to mean "no enrichment" while still skipping the per-frame catalog read.
     """
 
     phot_path = _resolve_photometry_path(result_dir, fname)
@@ -152,15 +162,16 @@ def load_frame_photometry(result_dir: Path, fname: str, filt_hint: str | None = 
         df["source_id"] = coerce_int64_source_id(df["source_id"]).astype("Int64")
 
     if "source_id" in df.columns:
-        filt_key = filt_hint
-        if not filt_key:
-            for col in ("FILTER", "filter"):
-                if col in df.columns and not df.empty:
-                    filt_key = normalize_filter_key(df[col].iloc[0])
-                    break
-        else:
-            filt_key = normalize_filter_key(filt_key)
-        sid_map = _load_source_to_id_map(result_dir, filt_key)
+        if sid_map is None:
+            filt_key = filt_hint
+            if not filt_key:
+                for col in ("FILTER", "filter"):
+                    if col in df.columns and not df.empty:
+                        filt_key = normalize_filter_key(df[col].iloc[0])
+                        break
+            else:
+                filt_key = normalize_filter_key(filt_key)
+            sid_map = _load_source_to_id_map(result_dir, filt_key)
         if sid_map:
             mapped_ids = df["source_id"].map(sid_map).astype("Int64")
             if "ID" in df.columns:

@@ -65,6 +65,69 @@ def best_positional_match(row: pd.Series, canonical_df: pd.DataFrame, tol_arcsec
     return int(sid_val), best_sep
 
 
+def _pick_radec(frame: pd.DataFrame, names: tuple[str, ...]) -> pd.Series:
+    for n in names:
+        if n in frame.columns:
+            return pd.to_numeric(frame[n], errors="coerce")
+    return pd.Series(np.nan, index=frame.index, dtype="float64")
+
+
+def _nearest_canon_matches(
+    df: pd.DataFrame, canon: pd.DataFrame
+) -> tuple[dict[int, int | None], dict[int, float]]:
+    """Nearest canonical source per incoming row, by sky position.
+
+    Returns ``(pos -> source_id|None, pos -> separation_arcsec)`` keyed by the
+    positional index of rows in ``df`` (iteration order). Vectorized equivalent
+    of calling :func:`best_positional_match` per row — one
+    ``match_to_catalog_sky`` over all rows instead of a fresh ``SkyCoord`` build
+    per row. ``source_id`` is ``None`` when the nearest canonical row has no
+    usable source_id (mirroring ``best_positional_match``).
+    """
+    nn_sid: dict[int, int | None] = {}
+    nn_sep: dict[int, float] = {}
+    if (
+        canon is None
+        or canon.empty
+        or "ra_deg" not in canon.columns
+        or "dec_deg" not in canon.columns
+        or "source_id" not in canon.columns
+    ):
+        return nn_sid, nn_sep
+
+    canon_ra = pd.to_numeric(canon["ra_deg"], errors="coerce")
+    canon_dec = pd.to_numeric(canon["dec_deg"], errors="coerce")
+    cmask = (canon_ra.notna() & canon_dec.notna()).to_numpy()
+    if not cmask.any():
+        return nn_sid, nn_sep
+    canon_sid = coerce_int64_source_id(canon["source_id"]).to_numpy()[cmask]
+    ccat = SkyCoord(
+        canon_ra.to_numpy(dtype=float)[cmask] * u.deg,
+        canon_dec.to_numpy(dtype=float)[cmask] * u.deg,
+        frame="icrs",
+    )
+
+    src_ra = _pick_radec(df, ("ra_deg", "ra", "RA"))
+    src_dec = _pick_radec(df, ("dec_deg", "dec", "DEC"))
+    smask = (src_ra.notna() & src_dec.notna()).to_numpy()
+    if not smask.any():
+        return nn_sid, nn_sep
+    scat = SkyCoord(
+        src_ra.to_numpy(dtype=float)[smask] * u.deg,
+        src_dec.to_numpy(dtype=float)[smask] * u.deg,
+        frame="icrs",
+    )
+
+    match_idx, sep2d, _ = scat.match_to_catalog_sky(ccat)
+    seps = sep2d.arcsec
+    positions = np.flatnonzero(smask)
+    for k, pos in enumerate(positions):
+        sid_val = canon_sid[int(match_idx[k])]
+        nn_sid[int(pos)] = None if pd.isna(sid_val) else int(sid_val)
+        nn_sep[int(pos)] = float(seps[k])
+    return nn_sid, nn_sep
+
+
 def canonicalize_catalog_row(
     row: pd.Series,
     merged_id: int,
@@ -206,7 +269,12 @@ def reconcile_workspace_catalogs(
             # Collect new rows in a list; concat once at the end to avoid O(N²) copies
             new_canon_rows: list[dict] = []
 
-            for _, row in df.iterrows():
+            # `canon` is fixed during this loop (only metadata columns mutate),
+            # so positionally match every incoming row against it in a single
+            # vectorized pass instead of one SkyCoord build per row.
+            pos_nn_sid, pos_nn_sep = _nearest_canon_matches(df, canon)
+
+            for pos, (_, row) in enumerate(df.iterrows()):
                 local_id = pd.to_numeric(pd.Series([row.get("ID")]), errors="coerce").iloc[0]
                 if not np.isfinite(local_id):
                     continue
@@ -222,8 +290,15 @@ def reconcile_workspace_catalogs(
                     matched_sid = sid_int
                     match_method = "source_id"
                 else:
-                    matched_sid, sep_arcsec = best_positional_match(row, canon, pos_tol_arcsec)
-                    if matched_sid is not None and matched_sid not in used_canonical_sids:
+                    cand_sid = pos_nn_sid.get(pos)
+                    sep_arcsec = pos_nn_sep.get(pos, float("nan"))
+                    if (
+                        cand_sid is not None
+                        and np.isfinite(sep_arcsec)
+                        and sep_arcsec <= pos_tol_arcsec
+                        and cand_sid not in used_canonical_sids
+                    ):
+                        matched_sid = cand_sid
                         match_method = "position"
                     else:
                         matched_sid = None

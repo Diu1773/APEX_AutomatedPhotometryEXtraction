@@ -20,6 +20,7 @@ from apex.utils.step_paths import (
     step6_refbuild_dir,
 )
 from apex.utils.step_paths_cmd import step9_selection_dir, step10_zp_dir
+from apex.gui.tools.common.paths import tool_workspace
 
 
 @dataclass
@@ -36,12 +37,12 @@ class ResolvedInputs:
 
 
 def ensure_output_dirs(result_dir: Path) -> tuple[Path, Path, Path]:
-    out = Path(result_dir) / "Tools_Analyze_Cluster_Structure"
+    # Canonical per-tool workspace: <result_dir>/tools/cluster_structure/{outputs,cache,logs}
+    ws = tool_workspace(result_dir, "cluster_structure", create=True)
+    out = ws.outputs
     diag = out / "diagnostics"
-    cache = out / "cache"
-    out.mkdir(parents=True, exist_ok=True)
+    cache = ws.cache
     diag.mkdir(parents=True, exist_ok=True)
-    cache.mkdir(parents=True, exist_ok=True)
     return out, diag, cache
 
 

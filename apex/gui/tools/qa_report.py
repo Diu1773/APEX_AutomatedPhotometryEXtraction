@@ -30,7 +30,7 @@ from apex.utils.constants import MAD_TO_SIGMA
 from apex.utils.photometry_loader import load_frame_photometry
 from apex.utils.step_paths import step7_forced_phot_dir
 from apex.utils.step_paths_cmd import step10_zp_dir
-from apex.utils.step_paths_lc import step9_lc_dir as step10_lc_dir
+from apex.utils.step_paths_lc import step9_lc_dir
 
 from matplotlib.backends.backend_qt5agg import FigureCanvasQTAgg as FigureCanvas
 from matplotlib.backends.backend_qt5agg import NavigationToolbar2QT as NavigationToolbar
@@ -88,7 +88,7 @@ def _qa_filter_list(values: Any) -> list[str]:
 def _frame_zeropoint_candidates(result_dir: Path) -> list[Path]:
     return [
         step10_zp_dir(result_dir) / "frame_zeropoint.csv",
-        step10_lc_dir(result_dir) / "frame_zeropoint.csv",
+        step9_lc_dir(result_dir) / "frame_zeropoint.csv",
         result_dir / "frame_zeropoint.csv",
     ]
 
