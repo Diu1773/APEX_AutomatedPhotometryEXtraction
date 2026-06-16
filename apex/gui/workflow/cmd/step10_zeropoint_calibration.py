@@ -73,7 +73,7 @@ from apex.utils.gaia_transforms import (
 )
 
 _ZP_SIGNATURE_FILE = "zeropoint_signature.json"
-_ZP_SIGNATURE_VERSION = 1
+_ZP_SIGNATURE_VERSION = 2
 _ZP_SIGNATURE_PARAMS = (
     "match_tol_px",
     "min_master_gaia_matches",
@@ -406,21 +406,62 @@ class ZeropointCalibrationWorker(QThread):
             import matplotlib.pyplot as plt
 
             filters = sorted(grp["FILTER"].dropna().astype(str).unique().tolist())
+            params_holder = self.__dict__.get("params")
+            params_obj = getattr(params_holder, "P", None)
+            try:
+                cmd_snr_min = getattr(params_obj, "cmd_snr_calib_min", 20.0)
+                snr_min = float(
+                    getattr(params_obj, "gaia_snr_calib_min", cmd_snr_min)
+                )
+            except (TypeError, ValueError):
+                snr_min = 20.0
+            snr_min = max(0.0, snr_min)
             summary = []
             panels = []  # (filter, short, long, x, delta, slope, intercept)
             for filt in filters:
                 sub = grp[grp["FILTER"].astype(str) == filt]
                 flevels = sorted(sub["exp_level"].unique().tolist())
                 for short_lv, long_lv in zip(flevels[:-1], flevels[1:]):
-                    a = sub[sub["exp_level"] == short_lv][["ID", "mag"]].rename(columns={"mag": "mag_s"})
-                    b = sub[sub["exp_level"] == long_lv][["ID", "mag"]].rename(columns={"mag": "mag_l"})
+                    a = (
+                        sub[sub["exp_level"] == short_lv][["ID", "mag", "snr"]]
+                        .rename(columns={"mag": "mag_s", "snr": "snr_s"})
+                    )
+                    b = (
+                        sub[sub["exp_level"] == long_lv][["ID", "mag", "snr"]]
+                        .rename(columns={"mag": "mag_l", "snr": "snr_l"})
+                    )
                     m = a.merge(b, on="ID", how="inner")
                     x = m["mag_l"].to_numpy(float)
                     delta = (m["mag_s"].to_numpy(float) - x)
                     ok = np.isfinite(x) & np.isfinite(delta)
+                    snr_s = m["snr_s"].to_numpy(float)
+                    snr_l = m["snr_l"].to_numpy(float)
+                    if np.isfinite(snr_s).any() or np.isfinite(snr_l).any():
+                        ok &= (
+                            np.isfinite(snr_s)
+                            & np.isfinite(snr_l)
+                            & (snr_s >= snr_min)
+                            & (snr_l >= snr_min)
+                        )
                     x, delta = x[ok], delta[ok]
                     if len(delta) < 5:
                         continue
+
+                    # Reject large fit residuals without flattening a real
+                    # brightness-dependent trend.
+                    for _ in range(3):
+                        slope, intercept = (float(v) for v in np.polyfit(x, delta, 1))
+                        residual = delta - (slope * x + intercept)
+                        residual_med = float(np.median(residual))
+                        residual_sigma = float(
+                            MAD_TO_SIGMA * np.median(np.abs(residual - residual_med))
+                        )
+                        if not np.isfinite(residual_sigma) or residual_sigma <= 1e-12:
+                            break
+                        keep = np.abs(residual - residual_med) <= 3.0 * residual_sigma
+                        if keep.all() or int(keep.sum()) < 5:
+                            break
+                        x, delta = x[keep], delta[keep]
                     slope, intercept = (float(v) for v in np.polyfit(x, delta, 1))
                     med = float(np.median(delta))
                     scatter = float(MAD_TO_SIGMA * np.median(np.abs(delta - med)))
@@ -429,12 +470,14 @@ class ZeropointCalibrationWorker(QThread):
                         "FILTER": filt, "exp_short_s": short_lv, "exp_long_s": long_lv,
                         "n_bridge": int(len(delta)), "delta_median": med,
                         "slope_mag_per_mag": slope, "scatter_mag": scatter,
+                        "snr_min": snr_min,
                         "nonlinearity_flag": bool(flagged),
                     })
                     panels.append((filt, short_lv, long_lv, x, delta, slope, intercept))
                     self._log(
                         f"[ZP][NLIN] {filt} {short_lv:g}s-{long_lv:g}s: n={len(delta)} "
-                        f"slope={slope:+.4f} mag/mag offset={med:+.4f} scatter={scatter:.4f}"
+                        f"SNR>={snr_min:g} slope={slope:+.4f} mag/mag "
+                        f"offset={med:+.4f} scatter={scatter:.4f}"
                         + ("  *** slope flags non-linearity ***" if flagged else "")
                     )
 
@@ -958,6 +1001,7 @@ class ZeropointCalibrationWorker(QThread):
             # ── Gaia → filter reference magnitude for each detected filter ──────
             self._log("=== Gaia → Filter Transformations ===")
             ref_col_map: dict[str, str] = {}  # filt -> column name in out_cal
+            ref_source_map: dict[str, str] = {}
             for filt in data_filters:
                 key = _BAND_ALIASES.get(filt, filt)
                 if key not in _GAIA_TO_BAND:
@@ -972,6 +1016,7 @@ class ZeropointCalibrationWorker(QThread):
                 col_name = f"ref_{filt}"
                 out_cal[col_name] = G - G_minus_filt
                 ref_col_map[filt] = col_name
+                ref_source_map[filt] = source
                 self._log(f"[ZP][{filt}] ref_mag valid: {np.isfinite(out_cal[col_name]).sum()}/{len(out_cal)}")
 
             if not ref_col_map:
@@ -1042,7 +1087,8 @@ class ZeropointCalibrationWorker(QThread):
                         out_cal[ccol] = color_x
 
                 coeff_rows.append({"filter": filt, "zp": zp_f, "ct": ct_f, "N": Nf,
-                                   "scatter_rms": sc_f, "color_col": color_col_name})
+                                   "scatter_rms": sc_f, "color_col": color_col_name,
+                                   "ref_source": ref_source_map.get(filt, "")})
                 fit_params[filt] = {"zp": zp_f, "ct": ct_f, "scatter_rms": sc_f,
                                     "color_col": color_col_name}
 

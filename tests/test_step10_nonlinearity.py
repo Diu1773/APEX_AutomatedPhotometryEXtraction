@@ -64,6 +64,23 @@ def test_nonlinear_detector_sloped_delta(tmp_path):
     assert bool(row["nonlinearity_flag"])
 
 
+def test_low_snr_faint_bias_does_not_trigger_nonlinearity(tmp_path):
+    obs = _obs(
+        STARS,
+        [60, 240],
+        lambda m, e: (0.25 * (m - 16.5) if e == 60 and m > 16.5 else 0.0),
+    )
+    faint_short = (obs["exptime"] == 60.0) & (obs["mag_cal"] > 16.5)
+    obs.loc[faint_short, "snr"] = 4.0
+
+    _worker()._write_nonlinearity_diag(obs, tmp_path)
+
+    row = pd.read_csv(tmp_path / "nonlinearity_summary.csv").iloc[0]
+    assert row["snr_min"] == pytest.approx(20.0)
+    assert abs(row["slope_mag_per_mag"]) < 0.02
+    assert not bool(row["nonlinearity_flag"])
+
+
 def test_single_exposure_skips(tmp_path):
     obs = _obs(STARS, [60], lambda m, e: 0.0)
     _worker()._write_nonlinearity_diag(obs, tmp_path)
