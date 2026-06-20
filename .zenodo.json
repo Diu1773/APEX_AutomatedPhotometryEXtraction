@@ -1,0 +1,29 @@
+{
+  "title": "APEX — Automated Photometry EXtraction",
+  "description": "Desktop and headless Python pipeline for astronomical aperture/PSF photometry, color-magnitude diagrams with PARSEC isochrone fitting, and multi-night light-curve and period analysis.",
+  "upload_type": "software",
+  "license": "MIT",
+  "access_right": "open",
+  "creators": [
+    {
+      "name": "The APEX Project"
+    }
+  ],
+  "keywords": [
+    "photometry",
+    "aperture photometry",
+    "PSF photometry",
+    "light curves",
+    "color-magnitude diagram",
+    "isochrone fitting",
+    "astronomy",
+    "FITS"
+  ],
+  "related_identifiers": [
+    {
+      "relation": "isSupplementTo",
+      "identifier": "https://github.com/Diu1773/APEX_AutomatedPhotometryEXtraction",
+      "scheme": "url"
+    }
+  ]
+}

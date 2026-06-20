@@ -2,13 +2,17 @@ from __future__ import annotations
 
 import numpy as np
 import pandas as pd
+import pytest
 
 from apex.analysis.cmd.isochrone_fitter_v2 import FitResult, IsochroneFitterV2
 from apex.gui.workflow.cmd.step10_zeropoint_calibration import CmdViewerWindow
 from apex.gui.workflow.cmd.step12_isochrone_model import (
     _bands_from_df,
+    _extinction_magnitude_shift,
+    _legacy_b_calibration_reason,
     _preferred_err_col,
     _preferred_mag_col,
+    _segmented_isochrone_line,
 )
 
 
@@ -117,3 +121,57 @@ def test_cmd_viewer_aliases_mag_cal_to_legacy_mag_std():
 
     assert out["mag_std_g"].tolist() == [15.0]
     assert out["mag_std_err_g"].tolist() == [0.01]
+
+
+def test_bv_color_excess_also_dims_b_magnitude():
+    shift = _extinction_magnitude_shift(0.1, "B", "V", "B")
+
+    assert shift == pytest.approx(0.4390642)
+
+
+def test_segmented_isochrone_line_breaks_anomalous_model_jump():
+    color = np.array([0.0, 0.1, 0.2, 0.3, 2.0, 2.1])
+    magnitude = np.array([5.0, 4.9, 4.8, 4.7, 30.0, 29.9])
+
+    line_color, line_magnitude = _segmented_isochrone_line(color, magnitude)
+
+    break_indices = np.flatnonzero(np.isnan(line_color))
+    assert break_indices.tolist() == [4]
+    assert np.isnan(line_magnitude[4])
+    assert np.allclose(line_color[~np.isnan(line_color)], color)
+
+
+def test_segmented_isochrone_line_keeps_smooth_sparse_sequence_connected():
+    color = np.array([1.5, 1.3, 1.1, 0.9])
+    magnitude = np.array([18.0, 17.0, 16.0, 15.0])
+
+    line_color, line_magnitude = _segmented_isochrone_line(color, magnitude)
+
+    assert np.array_equal(line_color, color)
+    assert np.array_equal(line_magnitude, magnitude)
+
+
+def test_legacy_b_calibration_requires_step10_rerun(tmp_path):
+    pd.DataFrame(
+        [{"filter": "B", "zp": -3.5, "ct": -0.2}]
+    ).to_csv(tmp_path / "zp_fit_coefficients.csv", index=False)
+
+    reason = _legacy_b_calibration_reason(tmp_path, ("B", "V"))
+
+    assert reason is not None
+    assert "Rerun Step 10" in reason
+
+
+def test_pancino_b_calibration_is_accepted(tmp_path):
+    pd.DataFrame(
+        [
+            {
+                "filter": "B",
+                "zp": -3.5,
+                "ct": -0.2,
+                "ref_source": "Pancino+2022 dwarf",
+            }
+        ]
+    ).to_csv(tmp_path / "zp_fit_coefficients.csv", index=False)
+
+    assert _legacy_b_calibration_reason(tmp_path, ("B", "V")) is None

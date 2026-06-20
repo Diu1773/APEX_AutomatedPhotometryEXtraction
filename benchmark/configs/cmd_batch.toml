@@ -1,0 +1,29 @@
+[cmd_batch]
+# Set this value or pass --project-root on the command line. The directory must
+# contain result/step7_forced_phot and result/cmd_zeropoint.
+project_root = ""
+dataset_name = ""
+benchmark_config = "benchmark/configs/baseline.toml"
+output_root = "benchmark/runs/cmd_batch"
+filters = ["g", "r", "i"]
+
+# Select one unique frame nearest each within-filter FWHM quantile.
+quality_quantiles = { best = 0.0, median = 0.5, worst = 1.0 }
+
+# Coarse magnitudes are frame zp_frame plus these instrumental-magnitude
+# offsets. This keeps the injected electron range comparable across filters.
+coarse_offsets_from_zeropoint = [
+  -12.0, -11.5, -11.0, -10.5, -10.0, -9.5, -9.0, -8.5, -8.0,
+  -7.5, -7.0, -6.5, -6.0,
+]
+coarse_trials = 5
+coarse_stars_per_magnitude_per_trial = 5
+coarse_bootstrap_samples = 300
+
+# The precision pass is centered automatically on the coarse m50.
+precision_half_width_mag = 0.6
+precision_step_mag = 0.2
+precision_trials = 20
+precision_stars_per_magnitude_per_trial = 10
+precision_bootstrap_samples = 1000
+save_injected_fits = false

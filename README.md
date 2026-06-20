@@ -79,6 +79,43 @@ GitHub Actions의 `Windows Build` 아티팩트에는 다음 파일이 포함됩�
 포함합니다. 외부 WCS solver와 해당 catalog/index 데이터는 포함하지
 않습니다.
 
+## 명령줄 인터페이스 (CLI)
+
+APEX는 GUI 없이 동작하는 헤드리스 CLI를 제공합니다. `pip` 설치 시 `apex`
+명령이 등록되며, 소스 체크아웃에서는 `python -m apex`로 동일하게 실행할 수
+있습니다.
+
+```powershell
+# 설치 (editable). 환경이 용도별로 분리되어 있습니다:
+python -m pip install -e .            # headless core (서버/CI/배치용, GUI 제외)
+python -m pip install -e ".[gui]"     # 데스크톱 GUI 포함
+python -m pip install -e ".[dev]"     # 개발(GUI+test+build+docs)
+
+# 런타임 진단: Python·의존성·외부 solver·(옵션)네트워크 점검
+apex doctor
+apex doctor --network
+
+# 설정 파일 관리
+apex config init        # parameters.example.toml -> parameters.toml
+apex config path
+apex config show
+
+# 헤드리스 파이프라인 (공유 Step 1-7)
+apex run --mode cmd --dry-run            # 실행 계획만 미리보기
+apex run --mode cmd --steps 1            # Step 1(헤더 스캔·타깃 해석) 실행
+apex run --mode cmd --steps 4-7 --force  # 일부 단계 강제 재실행
+apex run --mode lc  --result-dir D:\out  # 출력 경로 오버라이드
+
+# GUI 실행
+apex gui              # 런처
+apex gui --mode cmd   # 모드 직접 실행
+```
+
+`apex run`은 단계별 산출물 존재 여부로 완료를 판정해 재실행을 건너뛰고
+(`--force`로 무시), 실행 결과를 `result_dir/pipeline_run.json` 매니페스트로
+남깁니다. 현재 Step 1(scan)이 헤드리스로 동작하며, Step 2-7은 GUI 산출물을
+인식·계획에 포함하고 점진적으로 헤드리스 이식 중입니다(권장 순서 4→7→3→6→5→2).
+
 ## 워크플로
 
 ### Shared Steps 1-7
@@ -93,6 +130,14 @@ GitHub Actions의 `Windows Build` 아티팩트에는 다음 파일이 포함됩�
 | 6 | Master Catalog Build | frame 간 source를 master ID로 통합 | `step6_refbuild/` |
 | 7 | Forced Aperture Phot | master 위치 기반 frame별 aperture 측광 | `step7_forced_phot/` |
 
+Step 1 can use valid RA/Dec values from the selected FITS headers when a
+SIMBAD name lookup is unnecessary or unavailable. Click `Use Header RA/Dec`
+to accept those coordinates and enable the next step.
+
+Step 4 builds `detection.sigma_by_filter` from the active FITS `FILTER`
+headers. Filter keys follow the canonical APEX convention, including
+case-sensitive Johnson-Cousins `R`/`I` and Sloan `r`/`i`.
+
 ### CMD Steps 8-12
 
 | Step | Name | 역할 | 출력 폴더 |
@@ -101,7 +146,21 @@ GitHub Actions의 `Windows Build` 아티팩트에는 다음 파일이 포함됩�
 | 9 | Master ID Editor | source/ROI/membership 검토 | `cmd_selection/` |
 | 10 | Zeropoint Calibration | frame zeropoint와 color term 보정 | `cmd_zeropoint/` |
 | 11 | CMD Plot | calibrated color-magnitude diagram 생성 | `cmd_plot/` |
-| 12 | Isochrone Model | PARSEC isochrone 탐색 및 fitting | `cmd_isochrone/` |
+| 12 | Isochrone Model | PARSEC/BaSTI isochrone 탐색 및 fitting | `cmd_isochrone/` |
+
+Step 12 reads the photometric system and magnitude-column names from the
+isochrone header. The selected observation bands must exist in that file; for
+example, Johnson `B-V` data require a Johnson-Cousins/Bessell file and cannot
+be fitted with an SDSS `ugriz` file. A compact near-solar BaSTI Johnson grid
+can be generated with `python tools/download_basti_isochrones.py`.
+
+Step 10 uses the Pancino et al. (2022) Gaia EDR3 dwarf transformation for
+Johnson `B`, preserving the main-sequence `B-V` color scale. Johnson `V`,
+`R`, and `I` continue to use the Riello et al. (2021) transformations.
+
+Step 12 enables an SNR 20 display and fitting threshold by default. Fainter
+low-SNR points remain available by lowering or disabling the filter, but they
+should not be used to infer the lower-main-sequence slope.
 
 ### LC Steps 8-11
 
@@ -211,4 +270,4 @@ validation/       synthetic and real-data validation runners
   포함되지 않습니다.
 - 일부 Gaia/SIMBAD 기능은 네트워크 상태와 원격 서비스 가용성에
   영향을 받습니다.
-- 이 저장소에는 현재 별도 라이선스 파일이 없습니다.
+- 라이선스는 MIT입니다([LICENSE](LICENSE) 참조).

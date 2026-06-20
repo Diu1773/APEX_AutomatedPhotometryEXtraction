@@ -14,6 +14,7 @@ from pathlib import Path
 from urllib.parse import quote_plus
 
 from apex.gui.workflow.step_window_base import StepWindowBase
+from apex.gui.workflow.step1_header_target import select_header_target
 from apex.gui.workflow.target_resolver import TargetResolveWorker, target_failure_message
 
 
@@ -95,6 +96,14 @@ class FileSelectionWindow(StepWindowBase):
         btn_manual.setToolTip("Enter target coordinates manually when SIMBAD cannot resolve the object.")
         btn_manual.clicked.connect(self._toggle_manual_radec)
         target_row.addWidget(btn_manual)
+
+        btn_header_radec = QPushButton("Use Header RA/Dec")
+        btn_header_radec.setToolTip(
+            "선택한 사용 프레임의 FITS header RA/Dec를 target 좌표로 사용합니다. "
+            "선택 행이 없으면 첫 번째 사용 프레임을 사용합니다."
+        )
+        btn_header_radec.clicked.connect(self._use_header_radec)
+        target_row.addWidget(btn_header_radec)
 
         self.target_result = QLabel("(not resolved)")
         self.target_result.setStyleSheet("QLabel { font-weight: bold; color: #4CAF50; }")
@@ -382,6 +391,75 @@ class FileSelectionWindow(StepWindowBase):
         if hasattr(self.params, 'save_toml'):
             self.params.save_toml()
         self._manual_radec_widget.setVisible(False)
+        self.update_navigation_buttons()
+
+    def _use_header_radec(self) -> None:
+        headers_df = getattr(self.file_manager, "df_headers", None)
+        excluded = set(getattr(self.file_manager, "excluded_files", set()) or set())
+        eligible = [
+            str(name)
+            for name in getattr(self.file_manager, "filenames", [])
+            if str(name) not in excluded
+        ]
+        preferred = []
+        for row in sorted({index.row() for index in self.header_table.selectedIndexes()}):
+            item = self.header_table.item(row, 1)
+            if item is not None:
+                preferred.append(item.text().strip())
+
+        header_target = select_header_target(headers_df, eligible, preferred)
+        if header_target is None:
+            QMessageBox.warning(
+                self,
+                "Header RA/Dec",
+                "사용할 수 있는 FITS header RA/Dec를 찾지 못했습니다.\n\n"
+                "먼저 FITS 파일을 불러오고 RA_DEG/DEC_DEG 열을 확인하세요.",
+            )
+            return
+
+        from astropy.coordinates import SkyCoord
+        import astropy.units as u
+
+        name = self.target_edit.text().strip() or header_target["object_name"]
+        coord = SkyCoord(
+            header_target["ra_deg"],
+            header_target["dec_deg"],
+            unit="deg",
+            frame="icrs",
+        )
+        ra_hms = coord.ra.to_string(unit="hour", sep=":", precision=2)
+        dec_dms = coord.dec.to_string(
+            unit="deg",
+            sep=":",
+            precision=1,
+            alwayssign=True,
+        )
+
+        try:
+            inst = self.main_window.instrument
+            inst.targets_resolved = [dict(
+                name=name,
+                ra_deg=float(coord.ra.deg),
+                dec_deg=float(coord.dec.deg),
+                ra_str=ra_hms,
+                dec_str=dec_dms,
+                vmag=float("nan"),
+                otype="",
+                simbad_query=f"fits_header:{header_target['filename']}",
+            )]
+            inst.primary_target = name
+            inst.primary_coord = coord
+        except Exception:
+            pass
+
+        self.target_edit.setText(name)
+        self.target_result.setText(f"{ra_hms}, {dec_dms} (header)")
+        self.target_result.setToolTip(f"Coordinates from {header_target['filename']}")
+        self.params.P.target_name = name
+        self.params.P.target_ra_deg = float(coord.ra.deg)
+        self.params.P.target_dec_deg = float(coord.dec.deg)
+        if hasattr(self.params, "save_toml"):
+            self.params.save_toml()
         self.update_navigation_buttons()
 
     def load_files(self):

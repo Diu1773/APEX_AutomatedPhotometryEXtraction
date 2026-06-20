@@ -185,6 +185,7 @@ def test_reconcile_positional_collision_and_tolerance():
 
 
 def test_compute_selection_defaults_filters_to_available():
+    pytest.importorskip("PyQt5")  # multi_night_merger imports Qt at module load
     from apex.gui.tools.multi_night_merger import compute_selection_defaults
 
     merged = {"V": pd.DataFrame({"source_id": [1001, 1002, 1003]})}

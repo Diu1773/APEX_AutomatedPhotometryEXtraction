@@ -21,6 +21,19 @@ name = "M13"
 ra_deg = 250.423475
 dec_deg = 36.461319
 
+# Step 2 image crop (headless / config-driven).
+# The GUI gets the crop rectangle from a mouse selection; for headless runs it
+# is read from here. When enable = false (default) the crop step is skipped and
+# the original frames are used. To crop, set enable = true and the pixel
+# rectangle (x0,y0) -> (x1,y1) (0-based; y0:y1, x0:x1 slice). An existing
+# step2_crop/crop_rect.json (written by the GUI) takes precedence over this.
+[crop]
+enable = false
+# x0 = 100
+# y0 = 150
+# x1 = 900
+# y1 = 850
+
 [parallel]
 mode = "auto"
 max_workers = 0
@@ -80,9 +93,8 @@ keep_positions_if_fail = true
 [detection]
 engine = "sep"
 sigma = 3.2
-sigma_g = 3.2
-sigma_r = 3.2
-sigma_i = 3.4
+# Step 4 populates this map from the active FITS FILTER headers.
+sigma_by_filter = {}
 minarea_pix = 3
 keep_max = 6000
 dilate_radius_px = 4

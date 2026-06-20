@@ -28,6 +28,10 @@ from apex.utils.astro_utils import (
 @pytest.mark.parametrize("raw,expected", [
     ("V",       "V"),
     ("B",       "B"),
+    ("R",       "R"),
+    ("r",       "r"),
+    ("I",       "I"),
+    ("i",       "i"),
     ("sdss-r",  "r"),
     ("sdss_g",  "g"),
     ("Rc",      "R"),

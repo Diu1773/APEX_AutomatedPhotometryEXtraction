@@ -1,0 +1,37 @@
+[benchmark]
+# Set this value or pass --input on the command line.
+input_fits = ""
+parameter_file = "parameters.toml"
+output_root = "benchmark/runs"
+seed = 20260607
+trials = 3
+stars_per_trial = 40
+magnitude_min = 15.0
+magnitude_max = 22.0
+# Precision mode example:
+# magnitude_grid = [14.2, 14.4, 14.6, 14.8, 15.0, 15.2, 15.4]
+# stars_per_magnitude_per_trial = 10
+magnitude_bin_width = 1.0
+completeness_bootstrap_samples = 1000
+save_injected_fits = true
+# Requires the matching CMD Step 10 frame zeropoint by default.
+allow_initial_zeropoint_fallback = false
+match_radius_px = 2.0
+baseline_confound_radius_px = 2.0
+
+# Half of the injections test relatively isolated positions. The rest sample
+# the field without excluding real stars and are reported separately.
+isolated_fraction = 0.5
+isolated_min_real_sep_fwhm = 3.0
+min_injected_sep_fwhm = 5.0
+
+# The injection model is a median stack of real stars from the input image.
+psf_radius_fwhm = 4.0
+psf_isolation_fwhm = 4.0
+psf_max_stars = 40
+psf_min_stars = 3
+psf_allow_nonisolated_fallback = false
+
+[detection_overrides]
+# Keys here are runtime Parameters.P attribute names. Leave empty to use the
+# same Step 4 settings as parameters.toml.

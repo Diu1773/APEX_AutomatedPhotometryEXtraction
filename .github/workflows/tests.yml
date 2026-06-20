@@ -8,28 +8,64 @@ on:
   workflow_dispatch:
 
 jobs:
+  # Headless core on every platform/Python: proves `pip install apex-photometry`
+  # (no PyQt5) works and the Qt-free pipeline/analysis/utils tests pass.
+  # GUI-dependent test modules are skipped here via tests/conftest.py.
   test:
-    runs-on: ubuntu-latest
-
+    name: headless py${{ matrix.python-version }} / ${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+        python-version: ["3.10", "3.11", "3.12"]
     steps:
       - uses: actions/checkout@v4
-
-      - name: Set up Python
-        uses: actions/setup-python@v5
+      - uses: actions/setup-python@v5
         with:
-          python-version: "3.11"
-          cache: "pip"
-
-      - name: Install dependencies (no GUI)
+          python-version: ${{ matrix.python-version }}
+          cache: pip
+      - name: Install (headless core + test)
         run: |
-          pip install --upgrade pip
-          pip install \
-            numpy scipy pandas matplotlib astropy \
-            photutils astroquery \
-            pydantic pytest
-
+          python -m pip install --upgrade pip
+          python -m pip install -e ".[test]"
       - name: Syntax check
         run: python -m compileall apex main.py -q
+      - name: Run headless tests
+        run: python -m pytest tests/ -q
+      - name: CLI smoke
+        run: |
+          python -m apex version
+          python -m apex doctor
 
-      - name: Run tests
-        run: python -m pytest tests/ -q --tb=short
+  # Full suite including GUI worker/window tests, with an offscreen Qt platform
+  # so no display is needed. This is how macOS/Linux GUI behaviour is validated
+  # (the maintainer develops on Windows only).
+  test-gui:
+    name: gui py3.11 / ${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+    env:
+      QT_QPA_PLATFORM: offscreen
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+      - name: Install Qt runtime libraries (Linux)
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            libegl1 libgl1 libxkbcommon0 libxkbcommon-x11-0 \
+            libdbus-1-3 libglib2.0-0
+      - name: Install (gui + test)
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -e ".[gui,test]"
+      - name: Run full suite
+        run: python -m pytest tests/ -q

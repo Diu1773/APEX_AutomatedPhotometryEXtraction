@@ -1,0 +1,52 @@
+cff-version: 1.2.0
+title: "APEX — Automated Photometry EXtraction"
+message: "If you use this software, please cite it as below."
+type: software
+# NOTE: replace the entity author below with your real name / ORCID for
+# academic citation (e.g. family-names / given-names / orcid).
+authors:
+  - name: "The APEX Project"
+version: "0.1.0"
+date-released: "2026-06-20"
+repository-code: "https://github.com/Diu1773/APEX_AutomatedPhotometryEXtraction"
+license: MIT
+keywords:
+  - photometry
+  - aperture-photometry
+  - PSF-photometry
+  - light-curves
+  - color-magnitude-diagram
+  - isochrone
+  - astronomy
+  - FITS
+abstract: >-
+  APEX is a desktop and headless Python pipeline for astronomical aperture and
+  PSF photometry, covering source detection, WCS plate solving, forced
+  photometry, color-magnitude diagrams with PARSEC isochrone fitting, and
+  multi-night differential light curves with period analysis.
+references:
+  - type: article
+    title: "The Astropy Project: Sustaining and Growing a Community-oriented Open-source Project"
+    authors:
+      - name: "Astropy Collaboration"
+    year: 2022
+    doi: "10.3847/1538-3881/ac7c74"
+  - type: software
+    title: "photutils: Photometry tools for Astropy"
+    authors:
+      - family-names: "Bradley"
+        given-names: "Larry"
+    url: "https://github.com/astropy/photutils"
+  - type: article
+    title: "SExtractor: Software for source extraction"
+    authors:
+      - family-names: "Bertin"
+        given-names: "Emmanuel"
+      - family-names: "Arnouts"
+        given-names: "Stephane"
+    journal: "Astronomy and Astrophysics Supplement Series"
+    year: 1996
+    volume: 117
+    start: 393
+    end: 404
+    doi: "10.1051/aas:1996164"

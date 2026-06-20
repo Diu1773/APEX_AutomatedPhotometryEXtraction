@@ -9,6 +9,7 @@ import os
 import warnings
 from pathlib import Path
 
+from apex import __version__
 from apex.utils.ssl_certificates import configure_ssl_certificates
 
 warnings.filterwarnings("ignore", message=".*datfix.*MJD-OBS.*", category=UserWarning)
@@ -269,7 +270,7 @@ class LauncherWindow(QWidget):
         btn_row.addWidget(btn_lc)
         root.addLayout(btn_row)
 
-        footer = QLabel("APEX v0.1.0")
+        footer = QLabel(f"APEX v{__version__}")
         footer.setAlignment(Qt.AlignCenter)
         footer.setStyleSheet("color: #aaaaaa; font-size: 9px;")
         root.addSpacing(4)

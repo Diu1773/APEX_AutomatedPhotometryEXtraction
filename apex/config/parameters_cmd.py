@@ -78,6 +78,11 @@ TOML_KEY_MAP: list[tuple[Iterable[str], str]] = [
     (("io", "filename_prefix"), "filename_prefix"),
     (("io", "result_dir"), "result_dir"),
     (("io", "cache_dir"), "cache_dir"),
+    (("crop", "enable"), "crop_enable"),
+    (("crop", "x0"), "crop_x0"),
+    (("crop", "y0"), "crop_y0"),
+    (("crop", "x1"), "crop_x1"),
+    (("crop", "y1"), "crop_y1"),
     (("parallel", "mode"), "parallel_mode"),
     (("parallel", "max_workers"), "max_workers"),
     (("parallel", "resume_mode"), "resume_mode"),
@@ -841,6 +846,13 @@ class Parameters:
             cross_frame_ransac_max_iter=_geti(raw, "cross_frame_ransac_max_iter", 1000),
             cross_frame_ransac_min_inliers=_geti(raw, "cross_frame_ransac_min_inliers", 6),
             cross_frame_match_tol_px=_getf(raw, "cross_frame_match_tol_px", 3.0),
+
+            # Step 2 crop rectangle (config-driven, headless). Default: skip.
+            crop_enable=_as_bool(raw.get("crop_enable", "false"), False),
+            crop_x0=_as_float_or_none(raw.get("crop_x0", "")),
+            crop_y0=_as_float_or_none(raw.get("crop_y0", "")),
+            crop_x1=_as_float_or_none(raw.get("crop_x1", "")),
+            crop_y1=_as_float_or_none(raw.get("crop_y1", "")),
         )
 
         # Store raw dict for compatibility
@@ -981,7 +993,7 @@ class Parameters:
         print(f"FWHM range    : {P.fwhm_px_min:.2f} ~ {P.fwhm_px_max:.2f} px | elong_max={P.fwhm_elong_max} | iso_min_sep={P.iso_min_sep_pix}px")
         print(f"bkg2d detect  : {P.bkg2d_in_detect} | box={P.bkg2d_box}")
         print(f"detect_mode   : {getattr(P, 'detect_mode', 'normal')}")
-        print(f"detect_sigma  : base={P.detect_sigma} | g={P.detect_sigma_g} r={P.detect_sigma_r} i={P.detect_sigma_i}")
+        print(f"detect_sigma  : base={P.detect_sigma} | by_filter={P.detect_sigma_by_filter}")
         print(f"deblend       : enable={P.deblend_enable} nthresh={P.deblend_nthresh} cont={P.deblend_cont} dilate={P.segm_dilate_radius_px}")
         print(f"clip          : sat_adu={P.saturation_adu}")
         print(f"camera        : gain={P.gain_e_per_adu} e-/ADU | rdnoise={P.rdnoise_e} e- | zp_init={P.zp_initial}")

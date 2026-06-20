@@ -1244,314 +1244,55 @@ class RefBuildWorker(QThread):
         return master, stats
 
     def run(self):
+        """Run the master catalog build.
+
+        Thin wrapper that delegates the compute to the Qt-free
+        ``apex.analysis.refbuild.run_refbuild``, re-emitting its callbacks
+        through the existing Qt signals. Behavior is identical to the prior
+        inline ``_run_impl`` implementation.
+        """
+        from apex.analysis.refbuild import run_refbuild
+
         try:
-            self._run_impl()
+            summary = run_refbuild(
+                params=self.params,
+                data_dir=self.data_dir,
+                result_dir=self.result_dir,
+                cache_dir=self.cache_dir,
+                file_list=self.file_list,
+                ref_filter=self.ref_filter,
+                sat_drop_pct=self.sat_drop_pct,
+                elong_drop_pct=self.elong_drop_pct,
+                ref_cat_max_sources=self.ref_cat_max_sources,
+                ref_cat_min_sources=self.ref_cat_min_sources,
+                ref_cat_max_elong=self.ref_cat_max_elong,
+                ref_cat_max_abs_round=self.ref_cat_max_abs_round,
+                ref_cat_sharp_min=self.ref_cat_sharp_min,
+                ref_cat_sharp_max=self.ref_cat_sharp_max,
+                ref_cat_min_peak_adu=self.ref_cat_min_peak_adu,
+                wcs_match_radius_arcsec=self.wcs_match_radius_arcsec,
+                wcs_min_match_rate=self.wcs_min_match_rate,
+                wcs_min_match_n=self.wcs_min_match_n,
+                wcs_max_sep_med_arcsec=self.wcs_max_sep_med_arcsec,
+                wcs_max_sep_p90_arcsec=self.wcs_max_sep_p90_arcsec,
+                wcs_max_dup_rate=self.wcs_max_dup_rate,
+                ref_per_date=self.ref_per_date,
+                ref_build_mode=self.ref_build_mode,
+                gaia_mag_limit=self.gaia_mag_limit,
+                ref_master_union=self.ref_master_union,
+                ref_union_min_frames=self.ref_union_min_frames,
+                progress_cb=self.progress.emit,
+                log_cb=self._log,
+                error_cb=self.error.emit,
+                should_stop=lambda: self._stop_requested,
+            )
         except Exception as e:
             import traceback
             self._log(f"[ERROR] {e}\n{traceback.format_exc()}")
             self.error.emit("WORKER", str(e))
             self.finished.emit({})
-
-    def _run_impl(self):
-        if not self.file_list:
-            raise RuntimeError("No frames available")
-
-        self._log(f"[REF] Gaia hybrid ID mag limit: G<={self.gaia_mag_limit:.2f}")
-
-        metrics_rows = []
-        total = len(self.file_list)
-        for i, fname in enumerate(self.file_list, 1):
-            if self._stop_requested:
-                return
-            row = self._frame_metrics(fname)
-            if row:
-                metrics_rows.append(row)
-            self.progress.emit(i, total, fname)
-
-        if not metrics_rows:
-            raise RuntimeError("No detection metrics found. Run Source Detection first.")
-
-        metrics = pd.DataFrame(metrics_rows)
-
-        gaia_df = self._load_gaia_table()
-        gaia_sky = self._load_gaia_catalog()
-        if gaia_sky is None:
-            self._log("[REF] Gaia catalog not available; WCS match stats will be skipped.")
-        else:
-            self._log(f"[REF] Gaia catalog loaded: {len(gaia_sky)} sources")
-
-        stats_rows = []
-        for row in metrics.to_dict(orient="records"):
-            fname = row["file"]
-            det_path = self._resolve_detect_csv(fname)
-            det_xy = np.zeros((0, 2), float)
-            if det_path is not None and det_path.exists():
-                try:
-                    df_det = pd.read_csv(det_path)
-                    if {"x", "y"} <= set(df_det.columns):
-                        det_xy = df_det[["x", "y"]].to_numpy(float)
-                        det_xy = det_xy[np.isfinite(det_xy).all(axis=1)]
-                except Exception:
-                    det_xy = np.zeros((0, 2), float)
-
-            wcs = self._load_wcs_for_frame(fname)
-            row["wcs_ok"] = bool(wcs is not None)
-            wcs_meta = self._combined_wcs_meta(fname)
-            row["wcs_resid_med"] = _safe_float(wcs_meta.get("resid_med"), np.nan)
-            row["wcs_resid_max"] = _safe_float(wcs_meta.get("resid_max"), np.nan)
-            row["wcs_resid_med_px"] = _safe_float(wcs_meta.get("resid_med_px"), np.nan)
-            row["wcs_rms_px"] = _safe_float(wcs_meta.get("rms_px"), np.nan)
-            row["wcs_center_offset_arcsec"] = _safe_float(wcs_meta.get("center_offset_arcsec"), np.nan)
-            qc_pass_raw = wcs_meta.get("wcs_qc_pass", False)
-            if isinstance(qc_pass_raw, str):
-                row["wcs_qc_pass"] = qc_pass_raw.strip().lower() in {"1", "true", "t", "yes", "y", "pass"}
-            else:
-                row["wcs_qc_pass"] = bool(qc_pass_raw) if not pd.isna(qc_pass_raw) else False
-            row["wcs_qc_reason"] = str(wcs_meta.get("wcs_qc_reason", "") or "")
-            row["gaia_source"] = str(wcs_meta.get("gaia_source", "") or "")
-            row["wcs_match_n"] = int(wcs_meta.get("match_n", wcs_meta.get("n_match", 0)) or 0)
-
-            if wcs is None or gaia_sky is None:
-                row.update(self._wcs_meta_match_stats(wcs_meta))
-            else:
-                row.update(self._compute_match_stats(det_xy, wcs, gaia_sky))
-
-            mr_candidates = [
-                _safe_float(row.get("match_rate"), np.nan),
-                _safe_float(row.get("match_rate_cat"), np.nan),
-                _safe_float(row.get("match_rate_eff"), np.nan),
-            ]
-            mr_candidates = [v for v in mr_candidates if np.isfinite(v)]
-            if mr_candidates:
-                row["match_rate_eff"] = float(max(mr_candidates))
-
-            stats_rows.append(row)
-
-        metrics = pd.DataFrame(stats_rows)
-
-        try:
-            self._log(f"[REF][QC] total frames={len(metrics)}")
-            if "filter" in metrics.columns:
-                counts = metrics["filter"].value_counts(dropna=False)
-                parts = [f"{k}:{v}" for k, v in counts.items()]
-                self._log(f"[REF][QC] filter counts: {', '.join(parts)}")
-            if "wcs_ok" in metrics.columns:
-                wcs_ok = int(metrics["wcs_ok"].fillna(False).astype(bool).sum())
-                self._log(f"[REF][QC] wcs_ok={wcs_ok}/{len(metrics)}")
-            if "match_rate" in metrics.columns and metrics["match_rate"].notna().any():
-                mr = metrics["match_rate"].median()
-                self._log(f"[REF][QC] match_rate median={mr:.3f}")
-            if "match_rate_cat" in metrics.columns and metrics["match_rate_cat"].notna().any():
-                mrc = metrics["match_rate_cat"].median()
-                self._log(f"[REF][QC] match_rate_cat median={mrc:.3f}")
-            if "match_rate_eff" in metrics.columns and metrics["match_rate_eff"].notna().any():
-                mre = metrics["match_rate_eff"].median()
-                self._log(f"[REF][QC] match_rate_eff median={mre:.3f}")
-            if "sep_med_arcsec" in metrics.columns and metrics["sep_med_arcsec"].notna().any():
-                sm = metrics["sep_med_arcsec"].median()
-                self._log(f"[REF][QC] sep_med_arcsec median={sm:.3f}")
-            if "fwhm_px" in metrics.columns and metrics["fwhm_px"].notna().any():
-                fmed = metrics["fwhm_px"].median()
-                self._log(f"[REF][QC] fwhm_px median={fmed:.3f}")
-        except Exception:
-            pass
-
-        ref_frames_by_date: Dict[str, str] = {}
-        ref_filters_by_date: Dict[str, str] = {}
-        ref_catalogs_by_date: Dict[str, pd.DataFrame] = {}
-        master_df: Optional[pd.DataFrame] = None
-        ref_catalog_stats: dict = {}  # Track ref catalog build stats
-
-        match_r = max(0.5, float(self.wcs_match_radius_arcsec))
-        if self.ref_per_date:
-            metrics["date_key"] = metrics.get(
-                "date_key",
-                metrics["file"].apply(lambda x: _extract_date_key(x, self.params)),
-            )
-            for date_key, group in metrics.groupby("date_key", dropna=False):
-                group = group.copy()
-                ref_fname_date = self._select_reference(group, self.ref_filter)
-                ref_filter_date = str(group.loc[group["file"] == ref_fname_date, "filter"].iloc[0])
-                ref_frames_by_date[str(date_key)] = ref_fname_date
-                ref_filters_by_date[str(date_key)] = ref_filter_date
-                self._log(f"[REF][QC] date={date_key} ref={ref_fname_date} (filter={ref_filter_date})")
-
-                date_df, date_ref_stats = self._build_master_for_group(group, ref_fname_date, match_r)
-                date_df = self._attach_gaia_photometry(date_df, gaia_df)
-                if ref_catalogs_by_date:
-                    master_df, date_df = self._merge_ref_catalogs(
-                        master_df, date_df, match_r
-                    )
-                else:
-                    master_df, date_df = self._merge_ref_catalogs(
-                        None, date_df, match_r
-                    )
-                ref_catalogs_by_date[str(date_key)] = date_df
-
-        ref_fname = self._select_reference(metrics, self.ref_filter)
-        ref_filter = str(metrics.loc[metrics["file"] == ref_fname, "filter"].iloc[0])
-
-        self._log("=" * 60)
-        self._log(f"[REF] Selected reference frame: {ref_fname} (filter={ref_filter})")
-
-        if not self.ref_per_date:
-            master_df, ref_catalog_stats = self._build_master_for_group(metrics, ref_fname, match_r)
-            master_df = self._attach_gaia_photometry(master_df, gaia_df)
-
-        # Apply hybrid source_id assignment if mode is "hybrid"
-        if self.ref_build_mode == "hybrid":
-            master_df, sid_map, id_map = self._apply_hybrid_source_ids(master_df, self.gaia_mag_limit)
-            # Also apply to date catalogs if ref_per_date (map to master IDs for consistency)
-            if self.ref_per_date and sid_map:
-                for date_key in ref_catalogs_by_date:
-                    df_date = ref_catalogs_by_date[date_key].copy()
-                    old_sid = coerce_int64_source_id(df_date["source_id"]) if "source_id" in df_date.columns else None
-                    if old_sid is not None:
-                        mapped_sid = old_sid.map(sid_map).astype("Int64")
-                        mapped_id = old_sid.map(id_map).astype("Int64")
-                        # Fallback to original IDs if mapping missing
-                        df_date["source_id"] = mapped_sid.where(mapped_sid.notna(), old_sid).astype("Int64")
-                        fallback_id = coerce_int64_source_id(df_date["ID"]) if "ID" in df_date.columns else old_sid
-                        df_date["ID"] = mapped_id.where(mapped_id.notna(), fallback_id).astype("Int64")
-                    ref_catalogs_by_date[date_key] = df_date
-
-        if "phot_g_mean_mag" in master_df.columns:
-            try:
-                n_g = int(pd.to_numeric(master_df["phot_g_mean_mag"], errors="coerce").notna().sum())
-                self._log(f"[REF] Gaia photometry attached: {n_g}/{len(master_df)}")
-            except Exception:
-                pass
-
-        # ── Neighbor distance + crowding_flag ────────────────────────────────
-        if {"x_ref", "y_ref"} <= set(master_df.columns) and len(master_df) > 1:
-            try:
-                from scipy.spatial import KDTree
-                xy = master_df[["x_ref", "y_ref"]].to_numpy(float)
-                tree = KDTree(xy)
-                dists, _ = tree.query(xy, k=2)  # k=2: self + nearest neighbour
-                master_df["neighbor_dist_px"] = dists[:, 1]
-                ref_fwhm_row = (
-                    metrics.loc[metrics["file"] == ref_fname, "fwhm_px"]
-                    if "fwhm_px" in metrics.columns else None
-                )
-                ref_fwhm = (
-                    float(ref_fwhm_row.iloc[0])
-                    if ref_fwhm_row is not None and ref_fwhm_row.notna().any()
-                    else float(getattr(self.params, "fwhm_guess_arcsec", 6.0))
-                )
-                crowding_mult = float(getattr(self.params, "crowding_fwhm_mult", 2.5))
-                crowding_thresh_px = ref_fwhm * crowding_mult
-                master_df["crowding_flag"] = master_df["neighbor_dist_px"] < crowding_thresh_px
-                n_crowded = int(master_df["crowding_flag"].sum())
-                self._log(
-                    f"[REF] crowding_flag: {n_crowded}/{len(master_df)} crowded "
-                    f"(fwhm={ref_fwhm:.2f}px, thresh={crowding_thresh_px:.2f}px)"
-                )
-            except Exception as exc:
-                self._log(f"[REF] crowding_flag skipped: {exc}")
-                master_df["neighbor_dist_px"] = np.nan
-                master_df["crowding_flag"] = False
-
-        out_dir = step6_refbuild_dir(self.result_dir)
-        out_dir.mkdir(parents=True, exist_ok=True)
-
-        filters = sorted(metrics["filter"].dropna().astype(str).unique().tolist())
-        if not filters:
-            filters = [ref_filter]
-
-        for flt in filters:
-            out_path = out_dir / f"ref_catalog_{flt}.tsv"
-            master_df.to_csv(out_path, sep="\t", index=False, na_rep="NaN", encoding="utf-8-sig")
-            map_path = out_dir / f"sourceid_to_ID_{flt}.csv"
-            master_df[["source_id", "ID"]].to_csv(map_path, index=False, encoding="utf-8-sig")
-            if self.ref_per_date:
-                for date_key, date_df in ref_catalogs_by_date.items():
-                    date_path = out_dir / f"ref_catalog_{flt}_{date_key}.tsv"
-                    date_df.to_csv(date_path, sep="\t", index=False, na_rep="NaN", encoding="utf-8-sig")
-                    date_map = out_dir / f"sourceid_to_ID_{flt}_{date_key}.csv"
-                    date_df[["source_id", "ID"]].to_csv(date_map, index=False, encoding="utf-8-sig")
-
-        # Default (no-filter) copies for downstream compatibility
-        master_df.to_csv(
-            out_dir / "ref_catalog.tsv",
-            sep="\t",
-            index=False,
-            na_rep="NaN",
-            encoding="utf-8-sig",
-        )
-        master_df[["source_id", "ID"]].to_csv(
-            out_dir / "sourceid_to_ID.csv", index=False, encoding="utf-8-sig"
-        )
-
-        metrics["selected"] = metrics["file"] == ref_fname
-        if self.ref_per_date:
-            metrics["date_key"] = metrics.get(
-                "date_key",
-                metrics["file"].apply(lambda x: _extract_date_key(x, self.params)),
-            )
-            metrics["selected_date"] = metrics.apply(
-                lambda r: r["file"] == ref_frames_by_date.get(str(r.get("date_key")), ""),
-                axis=1
-            )
-        metrics_path = out_dir / "ref_frame_stats.csv"
-        metrics.to_csv(metrics_path, index=False, encoding="utf-8-sig")
-
-        # Compute sky statistics summary from frame metrics
-        sky_med_median = np.nan
-        sky_sigma_median = np.nan
-        if "sky_med" in metrics.columns:
-            sky_med_vals = pd.to_numeric(metrics["sky_med"], errors="coerce")
-            if sky_med_vals.notna().any():
-                sky_med_median = float(sky_med_vals.median())
-        if "sky_sigma" in metrics.columns:
-            sky_sigma_vals = pd.to_numeric(metrics["sky_sigma"], errors="coerce")
-            if sky_sigma_vals.notna().any():
-                sky_sigma_median = float(sky_sigma_vals.median())
-
-        meta = {
-            "ref_frame": ref_fname,
-            "ref_filter": ref_filter,
-            "ref_per_date": bool(self.ref_per_date),
-            "ref_frames_by_date": ref_frames_by_date,
-            "ref_filters_by_date": ref_filters_by_date,
-            "sat_drop_pct": float(self.sat_drop_pct),
-            "elong_drop_pct": float(self.elong_drop_pct),
-            "ref_cat_max_sources": int(self.ref_cat_max_sources),
-            "ref_cat_min_sources": int(self.ref_cat_min_sources),
-            "ref_cat_max_elong": float(self.ref_cat_max_elong),
-            "ref_cat_max_abs_round": float(self.ref_cat_max_abs_round),
-            "ref_cat_sharp_min": float(self.ref_cat_sharp_min),
-            "ref_cat_sharp_max": float(self.ref_cat_sharp_max),
-            "ref_cat_min_peak_adu": float(self.ref_cat_min_peak_adu),
-            "wcs_match_radius_arcsec": float(self.wcs_match_radius_arcsec),
-            "wcs_min_match_rate": float(self.wcs_min_match_rate),
-            "wcs_min_match_n": int(self.wcs_min_match_n),
-            "wcs_max_sep_med_arcsec": float(self.wcs_max_sep_med_arcsec),
-            "wcs_max_sep_p90_arcsec": float(self.wcs_max_sep_p90_arcsec),
-            "wcs_max_dup_rate": float(self.wcs_max_dup_rate),
-            "filters": filters,
-            # Reference catalog statistics
-            "n_ref_total": ref_catalog_stats.get("n_ref_total"),
-            "n_ref_after_qualitycuts": ref_catalog_stats.get("n_ref_after_qualitycuts"),
-            "n_ref_used": ref_catalog_stats.get("n_ref_used"),
-            "used_full_detections": ref_catalog_stats.get("used_full_detections"),
-            # Sky statistics (median across frames)
-            "sky_med_median": sky_med_median if np.isfinite(sky_med_median) else None,
-            "sky_sigma_median": sky_sigma_median if np.isfinite(sky_sigma_median) else None,
-            "timestamp": time.strftime("%Y-%m-%d %H:%M:%S"),
-        }
-        (out_dir / "ref_build_meta.json").write_text(
-            json.dumps(meta, indent=2), encoding="utf-8"
-        )
-
-        self.finished.emit({
-            "ref_frame": ref_fname,
-            "ref_filter": ref_filter,
-            "n_sources": len(master_df),
-            "filters": filters,
-            "ref_per_date": bool(self.ref_per_date),
-            "ref_frames_by_date": ref_frames_by_date,
-        })
+            return
+        self.finished.emit(summary if summary else {})
 
 
 _STEP6_SPECS: tuple[ParamSpec, ...] = (

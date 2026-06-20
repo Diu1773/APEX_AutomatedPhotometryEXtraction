@@ -19,6 +19,7 @@ from .step_window_base import StepWindowBase
 from apex.gui.widgets.fits_viewer import FITSViewerWidget
 from apex.utils.constants import get_parallel_workers
 from apex.utils.step_paths import crop_rect_path, step2_dir, step2_cropped_dir
+from apex.analysis.crop import run_crop, _is_crop_cache_valid
 
 
 class CropSelectorWindow(StepWindowBase):
@@ -283,75 +284,22 @@ class CropSelectorWindow(StepWindowBase):
         progress.setWindowModality(Qt.WindowModal)
 
         try:
-            # Create cropped directory only
-            cropped_dir = step2_cropped_dir(self.params.P.result_dir)
-            cropped_dir.mkdir(parents=True, exist_ok=True)
-
             files = list(self.file_manager.filenames)
 
-            def crop_one(filename: str) -> str:
-                original_path = self.params.get_file_path(filename)
-                cropped_path = cropped_dir / filename
+            def _progress_cb(i, total, filename):
+                progress.setValue(i)
+                progress.setLabelText(f"Cropping {filename}...")
+                QApplication.processEvents()
 
-                if self._is_crop_cache_valid(original_path, cropped_path):
-                    return filename  # reuse existing cropped file
-
-                with fits.open(original_path, memmap=False) as hdul:
-                    data = None
-                    header = None
-                    for hdu in hdul:
-                        if hdu.data is not None:
-                            data = hdu.data
-                            header = hdu.header
-                            break
-                    if data is None:
-                        raise RuntimeError(f"No image data found in FITS file: {original_path.name}")
-                    header = header.copy() if header is not None else hdul[0].header.copy()
-
-                cropped_data = data[self.crop_y0:self.crop_y1, self.crop_x0:self.crop_x1]
-
-                header['CROPPED'] = (True, 'Image has been cropped')
-                header['CROP_X0'] = (self.crop_x0, 'Crop region start X')
-                header['CROP_Y0'] = (self.crop_y0, 'Crop region start Y')
-                header['CROP_X1'] = (self.crop_x1, 'Crop region end X')
-                header['CROP_Y1'] = (self.crop_y1, 'Crop region end Y')
-
-                fits.PrimaryHDU(data=cropped_data, header=header).writeto(
-                    cropped_path, overwrite=True
-                )
-                return filename
-
-            max_workers = get_parallel_workers(self.params)
-            max_workers = min(max_workers, len(files)) if files else 1
-
-            errors = []
-            if max_workers <= 1 or len(files) <= 1:
-                for i, filename in enumerate(files, 1):
-                    if progress.wasCanceled():
-                        break
-                    progress.setValue(i)
-                    progress.setLabelText(f"Cropping {filename}...")
-                    QApplication.processEvents()
-                    try:
-                        crop_one(filename)
-                    except Exception as e:
-                        errors.append((filename, str(e)))
-            else:
-                with ThreadPoolExecutor(max_workers=max_workers) as executor:
-                    futures = {executor.submit(crop_one, fn): fn for fn in files}
-                    for i, future in enumerate(as_completed(futures), 1):
-                        if progress.wasCanceled():
-                            for f in futures:
-                                f.cancel()
-                            break
-                        filename = futures[future]
-                        try:
-                            future.result()
-                        except Exception as e:
-                            errors.append((filename, str(e)))
-                        progress.setValue(i)
-                        progress.setLabelText(f"Cropping {filename}...")
-                        QApplication.processEvents()
+            # Delegate the crop compute to the Qt-free run_crop so the GUI and
+            # the headless pipeline share ONE implementation.
+            _, errors = run_crop(
+                files,
+                self.params,
+                self.crop_x0, self.crop_y0, self.crop_x1, self.crop_y1,
+                progress_cb=_progress_cb,
+                should_stop=progress.wasCanceled,
+            )
 
             progress.setValue(len(files))
 
@@ -405,34 +353,15 @@ class CropSelectorWindow(StepWindowBase):
             )
 
     def _is_crop_cache_valid(self, original_path: Path, cropped_path: Path) -> bool:
-        """Return True if existing cropped file can be reused for current crop rectangle."""
-        if not cropped_path.exists():
-            return False
-        try:
-            src_stat = original_path.stat()
-            dst_stat = cropped_path.stat()
-            if int(dst_stat.st_mtime_ns) < int(src_stat.st_mtime_ns):
-                return False
+        """Return True if existing cropped file can be reused for current crop rectangle.
 
-            header = fits.getheader(cropped_path, ext=0)
-            if int(header.get("CROP_X0", -1)) != int(self.crop_x0):
-                return False
-            if int(header.get("CROP_Y0", -1)) != int(self.crop_y0):
-                return False
-            if int(header.get("CROP_X1", -1)) != int(self.crop_x1):
-                return False
-            if int(header.get("CROP_Y1", -1)) != int(self.crop_y1):
-                return False
-
-            expected_w = int(self.crop_x1 - self.crop_x0)
-            expected_h = int(self.crop_y1 - self.crop_y0)
-            if int(header.get("NAXIS1", -1)) != expected_w:
-                return False
-            if int(header.get("NAXIS2", -1)) != expected_h:
-                return False
-            return True
-        except Exception:
-            return False
+        Delegates to the Qt-free :func:`apex.analysis.crop._is_crop_cache_valid`
+        so the GUI and the headless pipeline share ONE cache-validity rule.
+        """
+        return _is_crop_cache_valid(
+            original_path, cropped_path,
+            self.crop_x0, self.crop_y0, self.crop_x1, self.crop_y1,
+        )
 
     def has_completed_step4_or_later(self) -> bool:
         """Return True if Step 4+ has already been completed."""

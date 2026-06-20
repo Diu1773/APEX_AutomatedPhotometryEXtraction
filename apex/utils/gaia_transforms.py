@@ -1,20 +1,14 @@
 """Gaia photometric transformation tables shared across the pipeline.
 
-All transforms use the form:
-    G - band_mag = poly(G_BP - G_RP)
-where poly coefficients are in ascending power order (constant, linear, …).
+All transforms use ``G - band_mag = poly(G_BP - G_RP)`` with coefficients
+stored in ascending power order.
 
-Available transform sources (pass to ``get_gaia_to_band(source=...)``):
+The default table combines Pancino et al. (2022) for Johnson B dwarfs,
+Riello et al. (2021) for Johnson-Cousins V/R/I, and Jordi et al. (2010)
+for Sloan g/r/i/z. Named source tables can be selected with
+``get_gaia_to_band(source=...)``.
 
-  "default"    — merged table: Riello+2021 for Johnson-Cousins (V R I B U),
-                 Jordi+2010 for SDSS (g r i z).  Pipeline default.
-  "riello2021" — Gaia EDR3 (Vega): V, R_c, I_c — Riello+2021 A&A 649 A3 Table 5.7.
-                 B derived from V+empirical B-V, U approximate FGK only.
-                 No SDSS bands.
-  "jordi2010"  — Pre-launch SDSS simulation: g, r, i, z — Jordi+2010 A&A 523 A48.
-                 No Johnson bands.
-
-Each entry is (coefficients, BP-RP_lo, BP-RP_hi, source_label, sigma_mag).
+Each entry is ``(coefficients, BP-RP_lo, BP-RP_hi, source_label, sigma_mag)``.
 """
 from __future__ import annotations
 
@@ -33,6 +27,30 @@ _RIELLO2021: dict[str, tuple] = {
     "U": ([-0.020,   -0.980,   -0.320,    0.050],               0.0, 1.5, "approx",      0.200),
 }
 
+# Pancino et al. (2022), A&A 664, A109, Table 9, row 29.
+# The published relation is B-G = poly(BP-RP) for dwarfs. APEX stores
+# G-band = poly(BP-RP), so the coefficients are sign-reversed here.
+_PANCINO2022: dict[str, tuple] = {
+    "B": (
+        [
+             0.00902616221721914,
+            -0.703856376726825,
+            -0.439617600260539,
+             0.201347189673066,
+             0.545325598993276,
+            -1.3392842024655,
+             1.1141015574016,
+            -0.435726384509969,
+             0.0818759549249881,
+            -0.00597884341541752,
+        ],
+        -0.4,
+        3.5,
+        "Pancino+2022 dwarf",
+        0.0248,
+    ),
+}
+
 _JORDI2010: dict[str, tuple] = {
     "g": ([ 0.2199,  -0.6365,  -0.1548,   0.0064],           0.3, 3.0, "Jordi+2010", 0.050),
     "r": ([-0.09837,  0.08592,  0.1907,  -0.1701, 0.02263],  0.0, 3.0, "Jordi+2010", 0.050),
@@ -42,13 +60,18 @@ _JORDI2010: dict[str, tuple] = {
 
 # Named source registry — extend here when new calibrations are published.
 GAIA_TRANSFORM_TABLES: dict[str, dict[str, tuple]] = {
+    "pancino2022": _PANCINO2022,
     "riello2021": _RIELLO2021,
     "jordi2010":  _JORDI2010,
     # "evans2018": _EVANS2018,   # placeholder for Gaia DR2 SDSS (Evans+2018 A&A 616 A4)
 }
 
 # Default merged table (backward-compatible name kept for existing imports).
-GAIA_TO_BAND: dict[str, tuple] = {**_RIELLO2021, **_JORDI2010}
+GAIA_TO_BAND: dict[str, tuple] = {
+    **_RIELLO2021,
+    **_PANCINO2022,
+    **_JORDI2010,
+}
 
 
 def get_gaia_to_band(source: str | None = None) -> dict[str, tuple]:

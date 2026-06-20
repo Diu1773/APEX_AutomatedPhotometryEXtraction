@@ -20,3 +20,13 @@ apex/.state/
 # Local science data / external catalogs
 isochrone/
 validation/reports/
+
+# Validation harness output (apex validate). docs/validation.md stays tracked.
+validation/report/
+validation/_scratch/
+
+# Scratch: workflow design specs and pipeline temp run dirs
+.wf_specs/
+.tmp_pipeline_proof/
+.tmp_detect_demo/
+pipeline_run.json

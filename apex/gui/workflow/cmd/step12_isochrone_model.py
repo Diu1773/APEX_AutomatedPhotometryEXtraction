@@ -36,6 +36,7 @@ from apex.utils.step_paths_cmd import step9_selection_dir, step10_zp_dir, step12
 from apex.utils.common_helpers import format_cmd_title, target_display_name
 from apex.utils.cmd_gaia_enrichment import merge_gaia_columns_from_catalog
 from apex.utils.gaia_transforms import teff_from_color
+from apex.utils.parsec_columns import read_parsec_header
 from apex.analysis.cmd.isochrone_fitter_v2 import IsochroneFitterV2, FitMode, FitResult, FitBounds, GridScanResult
 
 # Extinction coefficients R = A/E(B-V) (Cardelli+1989 / Fitzpatrick+1999)
@@ -47,18 +48,6 @@ EXTINCTION_R: dict[str, float] = {
 }
 # Backwards compat alias
 SDSS_R = EXTINCTION_R
-
-# PARSEC isochrone column indices per photometric system (CMD 3.9, 0-based).
-# Verified against CMD 3.9 output headers.
-#
-# SDSS  header: ... mbolmag  umag  gmag  rmag  imag  zmag
-# Bessell header: ... mbolmag  UXmag  BXmag  Bmag  Vmag  Rmag  Imag  Jmag  Hmag  Kmag ...
-PARSEC_ISO_COL: dict[str, dict[str, int]] = {
-    "SDSS":    {"u": 28, "g": 29, "r": 30, "i": 31, "z": 32},
-    "Johnson": {"B": 30, "V": 31, "R": 32, "I": 33},
-}
-# Flat lookup: Johnson takes priority for single-letter keys shared between systems
-SDSS_ISO_COL: dict[str, int] = {**PARSEC_ISO_COL["SDSS"], **PARSEC_ISO_COL["Johnson"]}
 
 # Default color pairs/bands (overridden dynamically from loaded data at runtime)
 _DEFAULT_COLOR_PAIRS = [("g", "r"), ("g", "i"), ("r", "i"),
@@ -99,8 +88,115 @@ def _preferred_err_col(columns, band: str) -> str | None:
     return None
 
 
+def _extinction_magnitude_shift(
+    color_excess: float,
+    band_1: str,
+    band_2: str,
+    magnitude_band: str,
+) -> float:
+    """Convert E(band_1-band_2) to extinction in the magnitude band."""
+    r1 = EXTINCTION_R.get(band_1)
+    r2 = EXTINCTION_R.get(band_2)
+    rmag = EXTINCTION_R.get(magnitude_band)
+    if r1 is None or r2 is None or rmag is None:
+        return 0.0
+    denominator = float(r1) - float(r2)
+    if abs(denominator) < 1e-12:
+        return 0.0
+    return float(rmag) * float(color_excess) / denominator
+
+
+def _segmented_isochrone_line(
+    color: np.ndarray,
+    magnitude: np.ndarray,
+    *,
+    min_jump: float = 0.5,
+    jump_factor: float = 8.0,
+    local_window: int = 8,
+) -> tuple[np.ndarray, np.ndarray]:
+    """Insert NaN breaks where adjacent model rows are discontinuous.
+
+    Isochrone tables can append remnant or separately computed evolutionary
+    blocks after the visible stellar sequence. Connecting those rows with a
+    normal line creates long diagonals across the CMD. The original points
+    remain untouched for fitting; only the display line is segmented.
+    """
+    x = np.asarray(color, dtype=float)
+    y = np.asarray(magnitude, dtype=float)
+    if x.shape != y.shape:
+        raise ValueError("Isochrone color and magnitude arrays must match")
+    if x.ndim != 1 or len(x) < 2:
+        return x.copy(), y.copy()
+
+    steps = np.hypot(np.diff(x), np.diff(y))
+    break_after = ~(
+        np.isfinite(x[:-1])
+        & np.isfinite(y[:-1])
+        & np.isfinite(x[1:])
+        & np.isfinite(y[1:])
+    )
+
+    for index, step in enumerate(steps):
+        if break_after[index] or not np.isfinite(step) or step <= min_jump:
+            continue
+        start = max(0, index - local_window)
+        stop = min(len(steps), index + local_window + 1)
+        nearby = np.concatenate((steps[start:index], steps[index + 1:stop]))
+        nearby = nearby[np.isfinite(nearby) & (nearby > 0)]
+        local_step = float(np.median(nearby)) if len(nearby) else 0.0
+        if local_step == 0.0 or step > jump_factor * local_step:
+            break_after[index] = True
+
+    if not break_after.any():
+        return x.copy(), y.copy()
+
+    extra = int(break_after.sum())
+    line_x = np.empty(len(x) + extra, dtype=float)
+    line_y = np.empty(len(y) + extra, dtype=float)
+    output_index = 0
+    for index in range(len(x)):
+        line_x[output_index] = x[index]
+        line_y[output_index] = y[index]
+        output_index += 1
+        if index < len(break_after) and break_after[index]:
+            line_x[output_index] = np.nan
+            line_y[output_index] = np.nan
+            output_index += 1
+    return line_x, line_y
+
+
+def _legacy_b_calibration_reason(input_dir: str | Path, bands) -> str | None:
+    """Return a rerun message when Johnson B still uses legacy calibration."""
+    if "B" not in set(bands):
+        return None
+    coeff_path = Path(input_dir) / "zp_fit_coefficients.csv"
+    if not coeff_path.exists():
+        return None
+    try:
+        coeff = pd.read_csv(coeff_path)
+    except Exception:
+        return None
+    if "filter" not in coeff.columns:
+        return None
+    b_rows = coeff[coeff["filter"].astype(str) == "B"]
+    if b_rows.empty:
+        return None
+    if "ref_source" not in b_rows.columns:
+        return (
+            "The Johnson B calibration predates the corrected Gaia-to-B "
+            "transformation. Rerun Step 10 before using a B-based CMD."
+        )
+    sources = b_rows["ref_source"].fillna("").astype(str)
+    if not sources.str.startswith("Pancino+2022").all():
+        return (
+            "Johnson B was calibrated with a legacy Gaia transformation. "
+            "Rerun Step 10 before using a B-based CMD."
+        )
+    return None
+
+
 class IsoCacheWorker(QThread):
-    """Build the ``.apex.npy`` sidecar for a PARSEC isochrone in the
+    """Build the ``.apex.npy`` sidecar for an isochrone table in the
     background so opening Step 12 doesn't freeze the GUI for the
     ~30 s it takes to parse a 400 MB text file.
     """
@@ -251,7 +347,7 @@ class FloatSlider(QWidget):
         self._init = float(init_val)
         self._value_fmt = value_fmt
         # When provided, slider output snaps to the nearest grid value
-        # (used for log_age / [Fe/H] so PARSEC lookup hits an actual row
+        # (used for log_age / [Fe/H] so grid lookup hits an actual row
         # in the isochrone table — otherwise get_iso_points() returns
         # empty arrays and the viewer shows "No isochrone points").
         self._snap = None
@@ -468,8 +564,17 @@ class IsochroneViewerWindow(QWidget):
             ax.title.set_color("white")
 
         sc_obs = ax_cmd.scatter(obs_color, obs_mag, s=3, alpha=0.85, linewidths=0, c=obs_teff, cmap=ob_cmap, norm=ob_norm, label=f"Observed ({obs_system})")
-        sc_iso = ax_cmd.scatter([np.nan], [np.nan], s=12, alpha=0.95, linewidths=0, c=[np.nan], cmap=ob_cmap, norm=ob_norm, label="Isochrone", zorder=6)
-        empty_offset = np.array([[np.nan, np.nan]], dtype=float)
+        iso_line, = ax_cmd.plot(
+            [],
+            [],
+            color="red",
+            linewidth=1.4,
+            alpha=0.95,
+            label="Isochrone",
+            zorder=6,
+            solid_capstyle="round",
+            solid_joinstyle="round",
+        )
         empty_offsets = np.empty((0, 2), dtype=float)
 
         ax_cmd.invert_yaxis()
@@ -504,7 +609,13 @@ class IsochroneViewerWindow(QWidget):
             filtered = self.iso_raw[m]
             if len(filtered) == 0:
                 return np.array([]), np.array([])
-            mag_model = filtered[:, cm] + v_shift
+            extinction_mag = _extinction_magnitude_shift(
+                h_shift,
+                b1,
+                b2,
+                bm,
+            )
+            mag_model = filtered[:, cm] + v_shift + extinction_mag
             color_model = (filtered[:, c1] - filtered[:, c2]) + h_shift
             return color_model, mag_model
 
@@ -538,7 +649,7 @@ class IsochroneViewerWindow(QWidget):
         if not np.isfinite(mh_step) or mh_step <= 0:
             mh_step = 0.1
 
-        # Pass the discrete PARSEC age/[M/H] grid to the sliders so each
+        # Pass the discrete isochrone age/[M/H] grid to the sliders so each
         # tick lands on a row that exists in the isochrone table; otherwise
         # interpolation between rows yields empty point lists and the
         # viewer shows "No isochrone points".
@@ -599,12 +710,13 @@ class IsochroneViewerWindow(QWidget):
             new_gr, new_g = get_iso_points(age, mh, h_s, v_s)
 
             if len(new_gr) > 0:
-                iso_teff = teff_from_color(new_gr, b1, b2, teff_vmin, teff_vmax)
-                sc_iso.set_offsets(np.c_[new_gr, new_g])
-                sc_iso.set_array(iso_teff)
+                # Isochrone rows are already ordered along the model sequence.
+                # Preserve that order, but break appended/discontinuous model
+                # blocks so they do not draw artificial diagonals across CMD.
+                line_color, line_mag = _segmented_isochrone_line(new_gr, new_g)
+                iso_line.set_data(line_color, line_mag)
             else:
-                sc_iso.set_offsets(empty_offset)
-                sc_iso.set_array(np.array([np.nan]))
+                iso_line.set_data([], [])
 
             if len(new_gr) > 0 and len(obs_pts) > 0:
                 iso_pts = np.c_[new_gr, new_g]
@@ -676,6 +788,9 @@ class IsochroneModelWindow(StepWindowBase):
         self._cached_df = None          # pd.DataFrame
         self._cached_iso_raw = None     # np.ndarray
         self._cached_iso_file = None    # Path
+        self._iso_band_columns: dict[str, int] = {}
+        self._iso_photometric_system = "Unknown"
+        self._iso_header_key = None
         self._fitter_cache_key = None
         self._pending_band_color_text = None
         self._pending_band_mag_text = None
@@ -786,7 +901,7 @@ class IsochroneModelWindow(StepWindowBase):
 
         # SNR display filter
         self.snr_display_check = QCheckBox("SNR >=")
-        self.snr_display_check.setChecked(False)
+        self.snr_display_check.setChecked(True)
         self.snr_display_check.setToolTip("Filter CMD display sources by minimum SNR.")
         sf_layout.addWidget(self.snr_display_check)
 
@@ -794,7 +909,7 @@ class IsochroneModelWindow(StepWindowBase):
         self.snr_display_spin.setRange(0.0, 200.0)
         self.snr_display_spin.setDecimals(1)
         self.snr_display_spin.setSingleStep(1.0)
-        self.snr_display_spin.setValue(5.0)
+        self.snr_display_spin.setValue(20.0)
         sf_layout.addWidget(self.snr_display_spin)
 
         sf_layout.addStretch()
@@ -974,7 +1089,7 @@ class IsochroneModelWindow(StepWindowBase):
         snr_row = QHBoxLayout()
         self.snr_min_spin = QDoubleSpinBox()
         self.snr_min_spin.setRange(1.0, 100.0)
-        self.snr_min_spin.setValue(5.0)
+        self.snr_min_spin.setValue(20.0)
         self.snr_min_spin.setDecimals(1)
         snr_row.addWidget(self.snr_min_spin)
         snr_row.addStretch()
@@ -1360,17 +1475,21 @@ class IsochroneModelWindow(StepWindowBase):
         """
         color_text = self.color_combo.currentText()
         parts = color_text.split("-")
-        b1, b2 = parts[0].strip(), parts[1].strip()
+        b1 = parts[0].strip() if parts else ""
+        b2 = parts[1].strip() if len(parts) > 1 else ""
         bm = self.mag_combo.currentText().strip()
+        iso_columns = self._iso_band_columns
         return {
             "band_color":  (b1, b2),
             "band_mag":    bm,
-            "iso_col_1":   SDSS_ISO_COL.get(b1),
-            "iso_col_2":   SDSS_ISO_COL.get(b2),
-            "iso_col_mag": SDSS_ISO_COL.get(bm),
+            "iso_col_1":   iso_columns.get(b1),
+            "iso_col_2":   iso_columns.get(b2),
+            "iso_col_mag": iso_columns.get(bm),
             "R_band1":     EXTINCTION_R.get(b1),
             "R_band2":     EXTINCTION_R.get(b2),
             "R_mag":       EXTINCTION_R.get(bm),
+            "iso_system":  self._iso_photometric_system,
+            "iso_bands":   tuple(iso_columns),
         }
 
     def _require_iso_config(self, bc: dict) -> bool:
@@ -1385,12 +1504,20 @@ class IsochroneModelWindow(StepWindowBase):
             return True
         parts = []
         if missing_iso:
-            parts.append(f"PARSEC isochrone 컬럼 매핑 없음: {', '.join(missing_iso)}")
+            available = ", ".join(bc.get("iso_bands", ())) or "none detected"
+            parts.append(
+                "Selected observed bands are absent from this isochrone file: "
+                f"{', '.join(missing_iso)}\n"
+                f"Isochrone system: {bc.get('iso_system', 'Unknown')}\n"
+                f"Available isochrone bands: {available}"
+            )
         if missing_R:
-            parts.append(f"소광 계수 R(Cardelli) 없음: {', '.join(missing_R)}")
-        parts.append("step12_isochrone_model.py 상단 PARSEC_ISO_COL / EXTINCTION_R에 추가하거나 "
-                     "다른 필터 조합을 선택하세요.")
-        QMessageBox.warning(self, "지원되지 않는 필터", "\n\n".join(parts))
+            parts.append(f"Missing extinction coefficients: {', '.join(missing_R)}")
+        parts.append(
+            "Choose an isochrone file generated for the same photometric "
+            "system as the observations."
+        )
+        QMessageBox.warning(self, "Isochrone Filter Mismatch", "\n\n".join(parts))
         return False
 
     def _current_fit_labels(self) -> dict[str, str]:
@@ -1456,7 +1583,7 @@ class IsochroneModelWindow(StepWindowBase):
             self._remove_grid_heatmap_tab()
 
     def _default_iso_dir(self) -> Path:
-        preferred = Path.cwd() / "isochrone" / "PARSEC"
+        preferred = Path.cwd() / "isochrone"
         if preferred.exists():
             return preferred
         return Path.cwd()
@@ -1588,9 +1715,60 @@ class IsochroneModelWindow(StepWindowBase):
         if iso_file is None or source_path is None or iso_cache_token is None:
             return None, None, None
 
+        try:
+            header_info = read_parsec_header(iso_file)
+        except Exception as exc:
+            if show_error:
+                QMessageBox.critical(
+                    self,
+                    "Isochrone Header Error",
+                    f"Failed to read isochrone column metadata: {exc}",
+                )
+            return None, None, None
+        if not header_info.band_columns:
+            if show_error:
+                QMessageBox.warning(
+                    self,
+                    "Isochrone Header Error",
+                    "No supported photometric columns were found in the "
+                    "isochrone header. Use a file that includes its column "
+                    "name comment.",
+                )
+            return None, None, None
+
+        self._iso_band_columns = dict(header_info.band_columns)
+        self._iso_photometric_system = header_info.photometric_system
+        header_key = (
+            str(iso_file),
+            header_info.photometric_system,
+            tuple(header_info.band_columns.items()),
+        )
+        if header_key != self._iso_header_key:
+            self._iso_header_key = header_key
+            bands_text = ", ".join(header_info.available_bands)
+            self.log(
+                "Isochrone header detected: "
+                f"{header_info.photometric_system} | bands={bands_text}"
+            )
+            self._set_iso_status(
+                f"{header_info.photometric_system} | bands: {bands_text}"
+            )
+
         input_dir = step10_zp_dir(self.params.P.result_dir)
         if not input_dir.exists():
             input_dir = self.params.P.result_dir
+        selected = self._get_band_config()
+        selected_bands = (*selected["band_color"], selected["band_mag"])
+        legacy_reason = _legacy_b_calibration_reason(input_dir, selected_bands)
+        if legacy_reason:
+            self.log(f"[CMD viewer] {legacy_reason}")
+            if show_error:
+                QMessageBox.warning(
+                    self,
+                    "Step 10 Rerun Required",
+                    legacy_reason,
+                )
+            return None, None, None
         wide_path = input_dir / "median_by_ID_filter_wide_cmd.csv"
         if not wide_path.exists():
             wide_path = input_dir / "median_by_ID_filter_wide.csv"
@@ -1628,6 +1806,13 @@ class IsochroneModelWindow(StepWindowBase):
                 if show_error:
                     QMessageBox.warning(self, "Data Error", "Isochrone file is empty")
                 return None, None, None
+            max_column = max(self._iso_band_columns.values())
+            if max_column >= iso_raw.shape[1]:
+                raise ValueError(
+                    "Isochrone header/data column mismatch: "
+                    f"header requires column {max_column}, data has "
+                    f"{iso_raw.shape[1]} columns"
+                )
         except Exception as e:
             if show_error:
                 QMessageBox.critical(self, "Error", f"Failed to parse isochrone file: {e}")
@@ -1646,9 +1831,9 @@ class IsochroneModelWindow(StepWindowBase):
         return df, iso_raw, iso_file
 
     def _load_iso_raw_fast(self, iso_file: Path) -> Optional[np.ndarray]:
-        """Load a PARSEC isochrone table quickly, with an on-disk .npy cache.
+        """Load an isochrone table quickly, with an on-disk .npy cache.
 
-        The text PARSEC files we work with are 400 MB / 1.5 M rows; running
+        Large text grids can contain millions of rows; running
         ``np.genfromtxt`` on every Step 12 open burned ~30 s and froze the
         window.  This helper:
 
@@ -1698,6 +1883,9 @@ class IsochroneModelWindow(StepWindowBase):
         self._cached_df = None
         self._cached_iso_raw = None
         self._cached_iso_file = None
+        self._iso_band_columns = {}
+        self._iso_photometric_system = "Unknown"
+        self._iso_header_key = None
         self._fitter_cache_key = None
         self.fitter = None
         self._cc_ax = None  # force full redraw of color-color plot
@@ -1766,10 +1954,19 @@ class IsochroneModelWindow(StepWindowBase):
             if bc[k] is None
         ]
         if missing_iso:
-            self.log(
-                "[CMD viewer] PARSEC 컬럼 매핑 없음 "
-                f"({', '.join(missing_iso)}) — 아이소크론 뷰어를 표시하지 않습니다."
+            available = ", ".join(self._iso_band_columns) or "none"
+            message = (
+                "Isochrone/filter mismatch.\n"
+                f"Observed selection: {bc['band_color'][0]}-"
+                f"{bc['band_color'][1]}, {bc['band_mag']}\n"
+                f"Isochrone: {self._iso_photometric_system} "
+                f"({available})\n\n"
+                "Select an isochrone file generated for the observation filters."
             )
+            self.log(f"[CMD viewer] {message.replace(chr(10), ' ')}")
+            self._show_viewer_placeholder(message)
+            if show_error:
+                self._require_iso_config(bc)
             return False
         viewer = IsochroneViewerWindow(
             df, iso_raw, self.params, self.viewer_container, embedded=True,
@@ -1921,12 +2118,12 @@ class IsochroneModelWindow(StepWindowBase):
 
         ref_age = self.cc_age_spin.value()
         ref_mh  = self.cc_mh_spin.value()
-        col_1 = SDSS_ISO_COL.get(b1)
-        col_2 = SDSS_ISO_COL.get(b2)
-        col_3 = SDSS_ISO_COL.get(b3)
+        col_1 = self._iso_band_columns.get(b1)
+        col_2 = self._iso_band_columns.get(b2)
+        col_3 = self._iso_band_columns.get(b3)
         if col_1 is None or col_2 is None or col_3 is None:
             target = target_display_name(self.params)
-            ax.set_title(f"{target} - Color-Color: no PARSEC column mapping for {b1}/{b2}/{b3}")
+            ax.set_title(f"{target} - Color-Color: no isochrone column mapping for {b1}/{b2}/{b3}")
             self.cc_canvas.draw_idle()
             return
 
@@ -1989,13 +2186,13 @@ class IsochroneModelWindow(StepWindowBase):
             return
         b1, b2, b3 = cc_bands
 
-        col_1 = SDSS_ISO_COL.get(b1)
-        col_2 = SDSS_ISO_COL.get(b2)
-        col_3 = SDSS_ISO_COL.get(b3)
+        col_1 = self._iso_band_columns.get(b1)
+        col_2 = self._iso_band_columns.get(b2)
+        col_3 = self._iso_band_columns.get(b3)
         if col_1 is None or col_2 is None or col_3 is None:
             QMessageBox.warning(self, "Missing Data",
-                                f"No PARSEC column mapping for {b1}/{b2}/{b3}.\n"
-                                "Download a PARSEC isochrone matching your filter system.")
+                                f"No isochrone column mapping for {b1}/{b2}/{b3}.\n"
+                                "Select an isochrone matching your filter system.")
             return
 
         cc_arrays, cc_system_label, _ = self._get_cc_mag_data(df, cc_bands)
@@ -2788,7 +2985,7 @@ class IsochroneModelWindow(StepWindowBase):
             self._set_iso_status("Folder mode" if Path(current_iso).is_dir() else "Single file mode")
         if self._get_iso_path():
             # The Color-Color plot is light enough to render up front.
-            # The full CMD viewer (PARSEC load + matplotlib scatter) can
+            # The full CMD viewer (isochrone load + matplotlib scatter) can
             # take a few seconds on cold cache, so we mark it pending and
             # let _on_tab_changed render it the first time the user clicks
             # the CMD Viewer tab.  Without this the Step 12 window
@@ -2805,7 +3002,7 @@ class IsochroneModelWindow(StepWindowBase):
         ready, otherwise spawn an ``IsoCacheWorker`` to build it in the
         background while the window stays responsive.
 
-        The PARSEC text file is ~400 MB / 1.5 M rows and takes ~30 s to
+        A large text grid can take tens of seconds to
         parse on cold cache; freezing the UI during that period is what
         the user reported as "step 12가 켜지는데 오래 걸림".
         """
