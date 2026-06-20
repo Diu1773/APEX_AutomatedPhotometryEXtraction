@@ -755,6 +755,14 @@ def run_validation(args: argparse.Namespace) -> dict[str, Any]:
             df, colors, mag_band,
             data_snr_min=args.data_snr_min, max_stars=args.max_stars, seed=args.seed,
         )
+        # Empirical model-color correction: subtract the measured (data - model) r-i
+        # residual line A + B*(color0) from the second color axis, putting the data on
+        # the isochrone's color system so multi-color fitting is self-consistent.
+        ri_res = getattr(args, "ri_residual", None)
+        if ri_res is not None and obs_mc.shape[1] >= 2:
+            A, B = float(ri_res[0]), float(ri_res[1])
+            obs_mc[:, 1] = obs_mc[:, 1] - (A + B * obs_mc[:, 0])
+            report["ri_residual_correction"] = {"intercept": A, "slope": B}
         mb_iso_data, band_col, mb_cache_meta = load_multiband_isochrone(
             iso_file, bands, age_bounds, mh_bounds, cache_dir=cache_dir,
         )
@@ -985,6 +993,9 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--ecolor-prior", nargs=2, type=float, default=None,
                         metavar=("MU", "SIGMA"),
                         help="Gaussian prior on E(color) (e.g. a reddening estimate)")
+    parser.add_argument("--ri-residual", nargs=2, type=float, default=None, metavar=("A", "B"),
+                        help="Empirical model color correction: subtract A + B*(first color) "
+                             "from the second color axis (data->isochrone color system).")
     parser.add_argument("--multicolor", action="store_true",
                         help="Multi-colour MCMC over g-r AND r-i (breaks the "
                              "age/[M/H]/reddening degeneracy). Implies method=mcmc.")

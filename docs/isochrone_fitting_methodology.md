@@ -155,9 +155,22 @@ isochrone" technique used throughout the cluster-CMD literature:
 **Generality:** Δ is a property of the *model + photometric system*, derived
 once and applied to any cluster — not a per-target tuning.
 
-> Implementation status: the diagnostic (model vs GSPC) is built and quantified;
-> the correction module + multi-color re-validation on M67 (expected: [M/H]→~0,
-> E(B−V)→~0.04, age→3.5–4 Gyr) is the next step.
+> **Implementation status — tested, did NOT resolve (honest negative result).**
+> A *linear* empirical r−i correction (subtracting the measured residual line
+> A + B·(g−r), A=+0.112, B=−0.361) was applied to M67 and the multi-color MCMC
+> re-run. It did **not** unblock the fit: acceptance stayed low (~0.16, not
+> converged), [M/H] still railed metal-poor (−0.40), and the distance modulus
+> actually worsened (→10.06 vs literature 9.6–9.7). So the multi-color
+> [M/H]/E recovery on this real data remains **unsolved**. Likely reasons: the
+> model–color mismatch is not purely linear (a linear correction leaves
+> structure); the 3-D likelihood is intrinsically sharper than the 2-D case
+> (low acceptance); and/or per-star i-band systematics not captured by a global
+> color term. This is genuine research-grade difficulty. **Practical path that
+> works today: single-color (g−r) fitting — which converges cleanly (acceptance
+> 0.39) — plus external [Fe/H]/E priors, which demonstrably brackets the
+> literature age.** Multi-color absolute [M/H]/E is left as a documented open
+> problem (candidate next steps: non-parametric model-color correction,
+> i-band error recalibration, or comparing isochrone families).
 
 ---
 
