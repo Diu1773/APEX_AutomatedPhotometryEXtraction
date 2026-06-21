@@ -1514,10 +1514,10 @@ class IsochroneModelWindow(StepWindowBase):
         intro = QLabel(
             "<b>Automatic Bayesian isochrone fit</b> (generative-mixture MCMC) → "
             "paper-quality CMD + corner figures.<br>"
-            "<b>Filters / colours:</b> any number works — type a comma list in "
-            "<i>colors</i> (e.g. <tt>u-g,g-r,r-i</tt>) or click <i>auto</i> to use every "
-            "band in your data (8-band ugriz+JHK is fine). A <i>chain</i> (each band "
-            "reused) is best.<br>"
+            "<b>Filters / colours:</b> the <i>colours</i> row shows a checkbox per "
+            "colour found in your data (e.g. BVR → <tt>B-V</tt>, <tt>V-R</tt>) — tick "
+            "the ones to fit, untick for a single colour. All ticked = use every "
+            "filter.<br>"
             "<b>What each colour does:</b> ONLY a blue/UV colour (<tt>u-g</tt>, "
             "<tt>U-B</tt>, Strömgren m1) constrains <b>[M/H]</b> — red colours "
             "(r-i, i-z) mainly add temperature/age. So <tt>gri</tt>/<tt>BVR</tt> alone "
@@ -1541,23 +1541,23 @@ class IsochroneModelWindow(StepWindowBase):
         self.mcmc_membership_chk = QCheckBox("Gaia PM+parallax membership filter")
         self.mcmc_membership_chk.setChecked(True)
         opt_form.addRow(self.mcmc_membership_chk)
+        # Colour selection: one checkbox per colour available in the data
+        # (auto-detected). Explicit — tick the colours to fit, untick for a single
+        # colour. Populated when the tab is opened (and via the 'detect' button).
+        self.mcmc_color_checks: dict = {}
         colors_row = QHBoxLayout()
-        self.mcmc_colors_edit = QLineEdit()
-        self.mcmc_colors_edit.setPlaceholderText("empty = all colours in data (e.g. B-V,V-R); or type e.g. u-g,g-r,r-i")
-        self.mcmc_colors_edit.setToolTip(
-            "Colours to fit, comma-separated as b1-b2. ANY number of filters works\n"
-            "(e.g. 8-band: u-g,g-r,r-i,i-z,z-Y,Y-J,J-H). A CHAIN (each band reused)\n"
-            "is best — it enables the inter-colour covariance correction. Only a\n"
-            "BLUE/UV colour (u-g, U-B) constrains [M/H]; red colours (r-i, i-z) add\n"
-            "temperature/age. More colours = more constraint but slower. Empty = use\n"
-            "the colour selected in the Filters panel above.")
-        btn_auto_colors = QPushButton("auto")
-        btn_auto_colors.setMaximumWidth(52)
-        btn_auto_colors.setToolTip("Fill with every adjacent colour detected in the data (full chain).")
-        btn_auto_colors.clicked.connect(self._mcmc_autofill_colors)
-        colors_row.addWidget(self.mcmc_colors_edit, 1)
-        colors_row.addWidget(btn_auto_colors)
-        opt_form.addRow("colors:", self._wrap(colors_row))
+        colors_row.setContentsMargins(0, 0, 0, 0)
+        self._mcmc_colors_holder = QWidget()
+        self.mcmc_colors_layout = QHBoxLayout(self._mcmc_colors_holder)
+        self.mcmc_colors_layout.setContentsMargins(0, 0, 0, 0)
+        self.mcmc_colors_layout.addWidget(QLabel("(open tab to detect)"))
+        btn_detect_colors = QPushButton("detect")
+        btn_detect_colors.setMaximumWidth(60)
+        btn_detect_colors.setToolTip("Re-scan the data for available colours and rebuild the checkboxes.")
+        btn_detect_colors.clicked.connect(self._mcmc_refresh_color_checks)
+        colors_row.addWidget(self._mcmc_colors_holder, 1)
+        colors_row.addWidget(btn_detect_colors)
+        opt_form.addRow("colours:", self._wrap(colors_row))
         self.mcmc_parallax_chk = QCheckBox("Gaia parallax distance prior (auto)")
         self.mcmc_parallax_chk.setChecked(True)
         self.mcmc_parallax_chk.setToolTip(
@@ -1647,6 +1647,15 @@ class IsochroneModelWindow(StepWindowBase):
         self._mcmc_worker = None
         self._mcmc_last_output = None
         self.mcmc_tab_index = self.tabs.addTab(tab, "Auto-fit (MCMC)")
+        # Auto-detect available colours when the user opens this tab.
+        self.tabs.currentChanged.connect(self._on_mcmc_tab_changed)
+
+    def _on_mcmc_tab_changed(self, index):
+        if index == getattr(self, "mcmc_tab_index", -1) and not self.mcmc_color_checks:
+            try:
+                self._mcmc_refresh_color_checks()
+            except Exception as exc:  # pragma: no cover - best-effort UI refresh
+                self.log(f"[MCMC] colour detect failed: {exc}")
 
     @staticmethod
     def _wrap(layout):
@@ -1661,51 +1670,51 @@ class IsochroneModelWindow(StepWindowBase):
     def _mcmc_available_bands(self, df) -> list:
         return [b for b in self._MCMC_BAND_ORDER if f"mag_std_{b}" in df.columns]
 
-    def _mcmc_autofill_colors(self):
-        """Fill the colours field with every adjacent colour found in the data."""
-        df, _iso_raw, _iso_file = self._load_cmd_and_iso_data(show_error=True)
+    def _mcmc_refresh_color_checks(self):
+        """(Re)build one checkbox per adjacent colour available in the data.
+
+        All ticked by default (use every colour). Untick to drop a colour; leave
+        one ticked for a single-colour fit. Called when the tab is opened and via
+        the 'detect' button.
+        """
+        # clear existing widgets
+        while self.mcmc_colors_layout.count():
+            it = self.mcmc_colors_layout.takeAt(0)
+            w = it.widget()
+            if w is not None:
+                w.setParent(None)
+        self.mcmc_color_checks = {}
+        df, _iso_raw, _iso_file = self._load_cmd_and_iso_data(show_error=False)
         if df is None:
+            self.mcmc_colors_layout.addWidget(QLabel("load CMD data first"))
             return
         bands = self._mcmc_available_bands(df)
         if len(bands) < 2:
-            QMessageBox.warning(self, "Colors", "Need at least 2 mag_std_* bands in the data.")
+            self.mcmc_colors_layout.addWidget(QLabel("need ≥2 bands"))
             return
-        chain = ",".join(f"{bands[i]}-{bands[i + 1]}" for i in range(len(bands) - 1))
-        self.mcmc_colors_edit.setText(chain)
-        self.log(f"[MCMC] auto colors from {len(bands)} bands: {chain}")
+        for i in range(len(bands) - 1):
+            b1, b2 = bands[i], bands[i + 1]
+            chk = QCheckBox(f"{b1}-{b2}")
+            chk.setChecked(True)
+            if b1 in ("u", "U"):
+                chk.setToolTip("Blue/UV colour — this is the one that constrains [M/H].")
+            self.mcmc_color_checks[(b1, b2)] = chk
+            self.mcmc_colors_layout.addWidget(chk)
+        self.mcmc_colors_layout.addStretch()
 
     def _mcmc_parse_colors(self, bc, df) -> list:
-        """Parse the colours field into validated (b1, b2) pairs.
+        """Return the (b1, b2) colours ticked in the checkboxes.
 
-        Empty field -> the single colour selected in the Filters panel. Otherwise
-        any comma-separated 'b1-b2' list (any number of filters). Each band must
-        have a mag_std_* column and a known extinction coefficient.
+        Falls back to the Band-Selection colour if the checkboxes are not built
+        yet or none are ticked.
         """
-        text = self.mcmc_colors_edit.text().strip()
-        if not text:
-            # Empty = use ALL adjacent colours present in the data (e.g. BVR ->
-            # B-V,V-R), so every filter is used by default; fall back to the
-            # single Band-Selection colour only if <2 bands are available.
-            bands = self._mcmc_available_bands(df)
-            if len(bands) >= 2:
-                return [(bands[i], bands[i + 1]) for i in range(len(bands) - 1)]
-            return [tuple(bc["band_color"])]
-        out = []
-        for tok in text.split(","):
-            tok = tok.strip()
-            if not tok:
-                continue
-            parts = [p.strip() for p in tok.split("-")]
-            if len(parts) != 2 or not all(parts):
-                raise ValueError(f"Bad colour '{tok}' — use the form b1-b2 (e.g. g-r).")
-            b1, b2 = parts
-            for b in (b1, b2):
-                if f"mag_std_{b}" not in df.columns:
-                    raise ValueError(f"Band '{b}' has no mag_std_{b} column in the data.")
-                if b not in EXTINCTION_R:
-                    raise ValueError(f"No extinction coefficient for band '{b}'.")
-            out.append((b1, b2))
-        return out
+        sel = [c for c, chk in self.mcmc_color_checks.items() if chk.isChecked()]
+        if sel:
+            return sel
+        bands = self._mcmc_available_bands(df)
+        if len(bands) >= 2:
+            return [(bands[i], bands[i + 1]) for i in range(len(bands) - 1)]
+        return [tuple(bc["band_color"])]
 
     def _run_mcmc_autofit(self):
         if self._mcmc_worker is not None and self._mcmc_worker.isRunning():
