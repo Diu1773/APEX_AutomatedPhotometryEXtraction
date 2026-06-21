@@ -1531,6 +1531,13 @@ class IsochroneModelWindow(StepWindowBase):
         opt_form.addRow(self.mcmc_membership_chk)
         self.mcmc_multicolor_chk = QCheckBox("Two colors (4D, needs 3+ bands)")
         opt_form.addRow(self.mcmc_multicolor_chk)
+        self.mcmc_parallax_chk = QCheckBox("Gaia parallax distance prior (auto)")
+        self.mcmc_parallax_chk.setChecked(True)
+        self.mcmc_parallax_chk.setToolTip(
+            "Derive a Gaussian (m-M)0 prior from the membership clump's median Gaia "
+            "parallax. This external distance breaks the gri degeneracy and is what "
+            "recovers the correct age + distance (see docs sec 10.6).")
+        opt_form.addRow(self.mcmc_parallax_chk)
         self.mcmc_walkers_spin = QSpinBox(); self.mcmc_walkers_spin.setRange(8, 256)
         self.mcmc_walkers_spin.setValue(32)
         opt_form.addRow("walkers:", self.mcmc_walkers_spin)
@@ -1672,6 +1679,7 @@ class IsochroneModelWindow(StepWindowBase):
             dm_bounds=tuple(bounds.distance_mod), ecolor_bounds=tuple(bounds.extinction_gr),
             mh_prior=mh_prior, ecolor_prior=ecolor_prior,
             use_membership=self.mcmc_membership_chk.isChecked(),
+            parallax_distance_prior=self.mcmc_parallax_chk.isChecked(),
             max_stars=self.mcmc_maxstars_spin.value(),
             n_walkers=self.mcmc_walkers_spin.value(),
             n_steps=self.mcmc_steps_spin.value(),

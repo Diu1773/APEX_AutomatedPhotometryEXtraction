@@ -39,6 +39,10 @@ class IsochroneFitConfig:
     # Gaussian priors (mean, sigma); a tiny sigma ≈ a hard "fix".
     mh_prior: Optional[Tuple[float, float]] = None
     ecolor_prior: Optional[Tuple[float, float]] = None
+    dm_prior: Optional[Tuple[float, float]] = None        # (m-M)0 Gaussian prior
+    parallax_distance_prior: bool = False                 # auto dm prior from Gaia parallax members
+    parallax_dm_sigma: float = 0.05                       # sigma (mag) for the auto parallax dm prior
+    parallax_dm_window: float = 0.06                      # hard (m-M)0 half-window around the parallax dm
     use_membership: bool = True
     data_snr_min: float = 20.0
     fit_snr_min: float = 5.0
@@ -175,9 +179,41 @@ def fit_cluster_isochrone(
         R_mag=D.EXTINCTION_R[mag_band], iso_data=iso_data, use_bilinear=False,
     )
 
+    # Distance constraint from the Gaia parallax of the membership clump. The gri
+    # degeneracy makes the likelihood prefer a spurious SHORT distance by a large
+    # margin (~200+ logL on M67), so a soft Gaussian prior alone is NOT enough — we
+    # must also TIGHTEN the dm bounds to a window around the parallax distance. The
+    # cluster distance is known to ~0.03 mag from the member-averaged parallax, so a
+    # ±0.1 mag hard window is well justified and is what actually breaks the rail.
+    dm_lo, dm_hi = config.dm_bounds
+    dm_prior_pair: Optional[Tuple[float, float]] = None
+    if config.dm_prior is not None:
+        dm_prior_pair = (float(config.dm_prior[0]), float(config.dm_prior[1]))
+        dm_c, w = dm_prior_pair[0], max(5.0 * dm_prior_pair[1], 0.15)
+        dm_lo, dm_hi = max(dm_lo, dm_c - w), min(dm_hi, dm_c + w)
+    elif config.parallax_distance_prior and member_meta.get("applied"):
+        plx = float(member_meta.get("parallax_center") or 0.0)
+        if plx > 0.0:
+            dm_plx = 5.0 * np.log10(1000.0 / plx) - 5.0
+            w = float(config.parallax_dm_window)
+            dm_lo, dm_hi = max(dm_lo, dm_plx - w), min(dm_hi, dm_plx + w)
+            dm_prior_pair = (dm_plx, float(config.parallax_dm_sigma))
+            member_meta["dm_from_parallax"] = round(dm_plx, 3)
+            member_meta["dm_window"] = [round(dm_lo, 3), round(dm_hi, 3)]
+
+    # Reddening constraint: when a reddening (E(colour)) prior is supplied (e.g. a
+    # dust-map value), TIGHTEN the E bounds around it for the same reason — the
+    # degeneracy overrides a soft Gaussian, so dm AND E both need hard windows for
+    # the fit to recover the correct age (verified: pinning both gives M67 age 3.99
+    # Gyr; pinning dm only leaves age/E trading off, age drifts young).
+    ec_lo, ec_hi = config.ecolor_bounds
+    if config.ecolor_prior is not None:
+        ec_c, ec_w = float(config.ecolor_prior[0]), max(2.5 * float(config.ecolor_prior[1]), 0.010)
+        ec_lo, ec_hi = max(ec_lo, ec_c - ec_w), min(ec_hi, ec_c + ec_w)
+
     bounds = FitBounds(
         log_age=config.age_bounds, metallicity=config.mh_bounds,
-        distance_mod=config.dm_bounds, extinction_gr=config.ecolor_bounds,
+        distance_mod=(dm_lo, dm_hi), extinction_gr=(ec_lo, ec_hi),
     )
 
     obs_c, obs_m = obs_mc[:, 0], obs_mc[:, -1]
@@ -198,6 +234,9 @@ def fit_cluster_isochrone(
         priors["mh"] = (float(config.mh_prior[0]), float(config.mh_prior[1]))
     if config.ecolor_prior is not None:
         priors["e_color"] = (float(config.ecolor_prior[0]), float(config.ecolor_prior[1]))
+    # Distance prior (computed above with the matching dm-bounds tightening).
+    if dm_prior_pair is not None:
+        priors["dm"] = dm_prior_pair
 
     _say(0.45, f"Running MCMC ({config.n_walkers}×{config.n_steps})")
     result = fit_isochrone_mcmc(

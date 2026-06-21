@@ -227,6 +227,7 @@ class CmdHyper:
     err_floor: float = _ERR_FLOOR
     mh_prior: Optional[Tuple[float, float]] = None
     e_color_prior: Optional[Tuple[float, float]] = None
+    dm_prior: Optional[Tuple[float, float]] = None   # Gaussian (mean, sigma), e.g. Gaia parallax
 
 
 def _compute_field_log_density(obs_c: np.ndarray, obs_m: np.ndarray) -> float:
@@ -447,6 +448,7 @@ class CmdHyperMC:
     err_floor: float = _ERR_FLOOR
     mh_prior: Optional[Tuple[float, float]] = None
     e_color_prior: Optional[Tuple[float, float]] = None
+    dm_prior: Optional[Tuple[float, float]] = None   # Gaussian (mean, sigma), e.g. Gaia parallax
 
 
 def _gaussian_mixture_density_nd(
@@ -1062,6 +1064,11 @@ def _log_prior(
         mu, sig = hyper.e_color_prior
         if sig > 0:
             lp += -0.5 * ((e_color - mu) / sig) ** 2
+    dm_prior = getattr(hyper, "dm_prior", None)
+    if dm_prior is not None:
+        mu, sig = dm_prior
+        if sig > 0:
+            lp += -0.5 * ((dm - mu) / sig) ** 2
     return lp
 
 
@@ -1215,6 +1222,7 @@ def fit_isochrone_mcmc(
 
         mh_prior = priors.get("mh") if priors else None
         e_color_prior = priors.get("e_color") if priors else None
+        dm_prior = priors.get("dm") if priors else None
         hyper_mc = CmdHyperMC(
             colors=list(colors),
             mag=mag,
@@ -1227,6 +1235,7 @@ def fit_isochrone_mcmc(
             err_floor=float(err_floor),
             mh_prior=mh_prior,
             e_color_prior=e_color_prior,
+            dm_prior=dm_prior,
         )
     else:
         obs_c = np.asarray(obs_c, dtype=float)
@@ -1246,6 +1255,7 @@ def fit_isochrone_mcmc(
 
         mh_prior = priors.get("mh") if priors else None
         e_color_prior = priors.get("e_color") if priors else None
+        dm_prior = priors.get("dm") if priors else None
         hyper = CmdHyper(
             f_bin=float(f_bin),
             f_field=float(f_field),
@@ -1254,6 +1264,7 @@ def fit_isochrone_mcmc(
             err_floor=float(err_floor),
             mh_prior=mh_prior,
             e_color_prior=e_color_prior,
+            dm_prior=dm_prior,
         )
 
     n_dim = 5 if sample_f_bin else 4
