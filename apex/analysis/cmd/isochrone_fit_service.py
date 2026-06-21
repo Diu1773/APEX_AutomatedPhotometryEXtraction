@@ -249,6 +249,11 @@ def fit_cluster_isochrone(
         priors["dm"] = dm_prior_pair
 
     _say(0.45, f"Running MCMC ({config.n_walkers}×{config.n_steps})")
+
+    def _mcmc_progress(frac, label):
+        # Map the sampler's 0..1 onto the 0.45..0.88 slice of the overall bar.
+        _say(0.45 + 0.43 * float(frac), f"{label} {int(frac * 100)}%")
+
     result = fit_isochrone_mcmc(
         obs_c, obs_m, color_err, mag_err,
         bounds=bounds,
@@ -257,7 +262,7 @@ def fit_cluster_isochrone(
         n_walkers=config.n_walkers, n_burn=config.n_burn, n_steps=config.n_steps,
         init_from_gridscan=init, priors=priors or None,
         f_bin=config.f_bin, f_field=config.f_field,
-        R_color=R_color, seed=config.seed, progress=False,
+        R_color=R_color, seed=config.seed, progress=False, progress_cb=_mcmc_progress,
         colors=colors, mag=mag_band, multiband_iso=mb,
         obs_multicolor=obs_mc, err_multicolor=err_mc,
         err_floor=config.err_floor,

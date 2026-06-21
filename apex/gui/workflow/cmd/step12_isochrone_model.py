@@ -1785,11 +1785,25 @@ class IsochroneModelWindow(StepWindowBase):
             n_burn=self.mcmc_burn_spin.value(),
         )
 
+        # Record the settings actually used, to show alongside the results.
+        self._mcmc_run_info = {
+            "colors": "+".join(f"{a}-{b}" for a, b in colors),
+            "age": (a_min, a_max),
+            "mh_prior": (self.mcmc_mh_mean.value(), self.mcmc_mh_sigma.value())
+            if self.mcmc_mh_prior_chk.isChecked() else None,
+            "ebv_prior": (self.mcmc_ebv_mean.value(), self.mcmc_ebv_sigma.value())
+            if self.mcmc_ebv_prior_chk.isChecked() else None,
+            "parallax": self.mcmc_parallax_chk.isChecked(),
+            "steps": self.mcmc_steps_spin.value(),
+        }
+
         self.btn_run_mcmc.setEnabled(False)
         self.btn_save_mcmc.setEnabled(False)
         self.mcmc_progress.setValue(0)
         self.mcmc_status.setText("Starting…")
-        self.log(f"[MCMC] auto-fit colors={colors} mag={mag_band} membership={cfg.use_membership}")
+        self.log(f"[MCMC] auto-fit colors={colors} mag={mag_band} age={a_min}-{a_max}Gyr "
+                 f"mh_prior={self._mcmc_run_info['mh_prior']} "
+                 f"ebv_prior={self._mcmc_run_info['ebv_prior']} membership={cfg.use_membership}")
         self._mcmc_worker = McmcFitWorker(df, cfg)
         self._mcmc_worker.progress.connect(self._on_mcmc_progress)
         self._mcmc_worker.finished.connect(self._on_mcmc_autofit_done)
@@ -1817,7 +1831,20 @@ class IsochroneModelWindow(StepWindowBase):
             med, lo, hi = p[1] * scale, p[0] * scale, p[2] * scale
             return f"{name or key} = {med:.3f} (+{hi - med:.3f} / −{med - lo:.3f})\n"
 
+        # Settings actually used (so the priors / age range are visible).
+        ri = getattr(self, "_mcmc_run_info", {}) or {}
         txt = ""
+        if ri:
+            mhp = ri.get("mh_prior"); ebvp = ri.get("ebv_prior"); ag = ri.get("age", (None, None))
+            dist = "Gaia π" if ri.get("parallax") else "free"
+            if dist == "Gaia π" and out.member_meta.get("dm_from_parallax") is not None:
+                dist += f" (m−M={out.member_meta['dm_from_parallax']})"
+            txt += (f"SETTINGS — colours: {ri.get('colors')} | age range: "
+                    f"{ag[0]:g}–{ag[1]:g} Gyr | steps: {ri.get('steps')}\n"
+                    f"  priors → [M/H]: {('%.3f±%.3f' % mhp) if mhp else 'off'}; "
+                    f"E(B−V): {('%.3f±%.3f' % ebvp) if ebvp else 'off'}; "
+                    f"distance: {dist}\n"
+                    "──────────────────────────────\n")
         txt += fmt("age_gyr", name="Age [Gyr]")
         txt += fmt("metallicity", name="[M/H]")
         txt += fmt("distance_mod", name="(m−M)₀")

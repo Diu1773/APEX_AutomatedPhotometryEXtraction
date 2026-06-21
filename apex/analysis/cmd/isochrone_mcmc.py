@@ -1154,6 +1154,7 @@ def fit_isochrone_mcmc(
     R_color: Optional[float] = None,
     seed: int = 1234,
     progress: bool = False,
+    progress_cb: Optional[Callable[[float, str], None]] = None,
     max_chain_samples: int = 4000,
     # --- multi-colour option ------------------------------------------------
     colors: Optional[Sequence[Tuple[str, str]]] = None,
@@ -1348,12 +1349,30 @@ def fit_isochrone_mcmc(
             moves=mcmc_moves,
         )
 
+    # Run via sampler.sample() so per-iteration progress can be reported to the
+    # GUI (the long MCMC otherwise shows no movement). total = burn + production.
+    _total = max(1, int(n_burn) + int(n_steps))
+
+    def _run_phase(initial, n_iter, base, label):
+        n_iter = int(n_iter)
+        every = max(1, n_iter // 25)
+        last = initial
+        i = 0
+        for last in sampler.sample(initial, iterations=n_iter, progress=progress):
+            i += 1
+            if progress_cb is not None and (i % every == 0 or i == n_iter):
+                try:
+                    progress_cb((base + i) / _total, label)
+                except Exception:
+                    pass
+        return last
+
     # Burn-in. If emcee rejects the initial ensemble as linearly dependent
     # (degenerate seed under very tight prior windows), re-seed every walker
     # uniformly across the bounds once and retry — so the user never sees the
     # cryptic "large condition number" error.
     try:
-        state = sampler.run_mcmc(p0, n_burn, progress=progress)
+        state = _run_phase(p0, n_burn, 0, "MCMC burn-in")
     except ValueError as exc:
         if "condition number" not in str(exc).lower():
             raise
@@ -1362,10 +1381,10 @@ def fit_isochrone_mcmc(
             eps = 1e-3 * max(hi - lo, 1e-9)
             p0[:, d] = rng.uniform(lo + eps, hi - eps, n_walkers)
         sampler.reset()
-        state = sampler.run_mcmc(p0, n_burn, progress=progress)
+        state = _run_phase(p0, n_burn, 0, "MCMC burn-in")
     sampler.reset()
     # Production.
-    sampler.run_mcmc(state, n_steps, progress=progress)
+    _run_phase(state, n_steps, n_burn, "MCMC sampling")
 
     # --- diagnostics ----------------------------------------------------------
     acc = float(np.mean(sampler.acceptance_fraction))
