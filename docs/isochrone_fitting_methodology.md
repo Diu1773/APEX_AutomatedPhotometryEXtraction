@@ -391,6 +391,27 @@ spectroscopic [M/H] prior, a Naylor–Jeffries τ² selection-aware likelihood, 
 u-band (§10.4). **Practical recipe: membership + parallax + reddening priors →
 reliable age & distance; add an [M/H] prior or u-band for metallicity.**
 
+### 10.7 Implementation + why a τ² selection term is NOT the fix
+
+Implemented (commit `ff480ad`): a Gaussian (m−M)₀ prior in the likelihood, auto-derived
+from the membership clump's median Gaia parallax, exposed as a "Gaia parallax distance
+prior" checkbox in the GUI Auto-fit (MCMC) tab. Because the gri degeneracy makes the
+likelihood prefer a spurious short distance by ~200+ logL, a *soft* Gaussian prior is
+insufficient (σ=0.08 → dm still railed to 9.25); the service therefore also **tightens the
+dm (and, given a reddening prior, the E) bounds to a hard window** around the external
+value. With both pinned, M67 reproducibly recovers **age ≈ 3.98 Gyr and (m−M)₀ ≈ 9.64**.
+
+A selection/completeness (Naylor–Jeffries τ²) term was considered for the residual ~0.2–0.4
+dex metal-poor [M/H] bias, and **empirically rejected this session**: with dm+E pinned, a
+**bright-only** subsample (SNR>80, where faint truncation cannot act) fits *more* metal-poor
+([M/H]=−0.45) than the full sample ([M/H]=−0.20), the opposite of a selection signature.
+A box=data truncation term was also a verified no-op (Z θ-constant; rail−truth gap +240 logL
+unchanged). The residual [M/H] is therefore the **fundamental gri colour floor** (even the
+best-measured bright stars' gri colours sit slightly metal-poor of PARSEC solar; possibly
+compounded by the small per-band ZP colour-system offset, §10.5 R2), not a fixable
+luminosity-function/selection bug. It is closed only by a spectroscopic [M/H] prior (GUI
+``--mh-prior``) or by adding u-band (§10.4).
+
 ---
 
 ## 9. References (representative)
