@@ -310,7 +310,18 @@ def fit_cluster_isochrone(
         if bands_app is not None:
             out.iso_color = bands_app[b1] - bands_app[b2]
             out.iso_mag = bands_app[mag_band]
-    out.obs_color, out.obs_mag = obs_c, obs_m
+    # Display ALL members (not just the SNR/max-stars fit subsample) so the full
+    # CMD — bright giants and the faint MS — is visible; the fit itself still used
+    # the subsample (obs_mc).
+    try:
+        dv1, _e1, _s1 = D.magnitude_column(work, b1)
+        dv2, _e2, _s2 = D.magnitude_column(work, b2)
+        dvm, _em, _sm = D.magnitude_column(work, mag_band)
+        dcol = dv1 - dv2
+        dfin = np.isfinite(dcol) & np.isfinite(dvm)
+        out.obs_color, out.obs_mag = dcol[dfin], dvm[dfin]
+    except Exception:
+        out.obs_color, out.obs_mag = obs_c, obs_m
     out.color_label, out.mag_label = labels[0], mag_band
     ann = {"age_gyr": summary["age_gyr"], "mh": summary["metallicity"],
            "dm": summary["distance_mod"]}

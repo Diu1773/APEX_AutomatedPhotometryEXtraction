@@ -1867,10 +1867,17 @@ class IsochroneModelWindow(StepWindowBase):
         self._mcmc_corner_fig = None
         try:
             if out.obs_color is not None and out.iso_color is not None:
+                try:
+                    _target = target_display_name(self.params)
+                except Exception:
+                    _target = "Cluster"
+                _cl = out.color_label or "color"
+                _ml = out.mag_label or "mag"
+                cmd_title = f"{_target} — {_ml} vs {_cl} CMD"
                 self._mcmc_cmd_fig = P.cmd_figure(
                     out.obs_color, out.obs_mag, out.iso_color, out.iso_mag,
-                    color_label=out.color_label or "color", mag_label=out.mag_label or "mag",
-                    title="Auto isochrone fit", annotations=out.annotations or None,
+                    color_label=_cl, mag_label=_ml,
+                    title=cmd_title, annotations=out.annotations or None,
                 )
             r = out.result
             if getattr(r, "flat_chain", None) is not None and getattr(r, "labels", None):
