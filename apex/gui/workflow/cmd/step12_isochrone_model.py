@@ -43,8 +43,8 @@ from apex.analysis.cmd.isochrone_fitter_v2 import IsochroneFitterV2, FitMode, Fi
 EXTINCTION_R: dict[str, float] = {
     # Johnson-Cousins
     "U": 4.902, "B": 4.035, "V": 3.116, "R": 2.634, "I": 1.903,
-    # SDSS
-    "g": 3.303, "r": 2.285, "i": 1.698, "z": 1.263,
+    # SDSS (u = metallicity-sensitive blue band; A_u/E(B-V), SF2011)
+    "u": 4.239, "g": 3.303, "r": 2.285, "i": 1.698, "z": 1.263,
 }
 # Backwards compat alias
 SDSS_R = EXTINCTION_R
@@ -1512,13 +1512,25 @@ class IsochroneModelWindow(StepWindowBase):
         outer.setContentsMargins(6, 6, 6, 6)
 
         intro = QLabel(
-            "Automatic Bayesian isochrone fit (generative-mixture MCMC). Produces "
-            "paper-quality CMD + corner figures. Use external priors (Gaia parallax "
-            "distance, reddening map, spectroscopic [M/H]) — the gri colors are "
-            "degenerate, so priors are how 4D fitting is made reliable (see docs §10)."
+            "<b>Automatic Bayesian isochrone fit</b> (generative-mixture MCMC) → "
+            "paper-quality CMD + corner figures.<br>"
+            "<b>Filters / colours:</b> any number works — type a comma list in "
+            "<i>colors</i> (e.g. <tt>u-g,g-r,r-i</tt>) or click <i>auto</i> to use every "
+            "band in your data (8-band ugriz+JHK is fine). A <i>chain</i> (each band "
+            "reused) is best.<br>"
+            "<b>What each colour does:</b> ONLY a blue/UV colour (<tt>u-g</tt>, "
+            "<tt>U-B</tt>, Strömgren m1) constrains <b>[M/H]</b> — red colours "
+            "(r-i, i-z) mainly add temperature/age. So <tt>gri</tt>/<tt>BVR</tt> alone "
+            "≈ an <b>age</b> meter; for metallicity you need a blue band or an [M/H] prior.<br>"
+            "<b>Priors (how 4D is made reliable):</b> distance ← Gaia parallax "
+            "(auto ✓); [M/H] ← spectroscopy; E(B−V) ← dust map. One-stop sources: "
+            "Cantat-Gaudin+2020 / Dias+2021 / WEBDA cluster catalogues. Set σ to the "
+            "real measurement precision (too loose can't break the degeneracy). "
+            "Details: docs §10."
         )
         intro.setWordWrap(True)
-        intro.setStyleSheet("QLabel { color: #455A64; font-size: 9pt; }")
+        intro.setTextFormat(Qt.RichText)
+        intro.setStyleSheet("QLabel { color: #37474F; font-size: 9pt; }")
         outer.addWidget(intro)
 
         controls = QHBoxLayout()
@@ -1529,8 +1541,23 @@ class IsochroneModelWindow(StepWindowBase):
         self.mcmc_membership_chk = QCheckBox("Gaia PM+parallax membership filter")
         self.mcmc_membership_chk.setChecked(True)
         opt_form.addRow(self.mcmc_membership_chk)
-        self.mcmc_multicolor_chk = QCheckBox("Two colors (4D, needs 3+ bands)")
-        opt_form.addRow(self.mcmc_multicolor_chk)
+        colors_row = QHBoxLayout()
+        self.mcmc_colors_edit = QLineEdit()
+        self.mcmc_colors_edit.setPlaceholderText("auto (selected colour); or e.g. u-g,g-r,r-i")
+        self.mcmc_colors_edit.setToolTip(
+            "Colours to fit, comma-separated as b1-b2. ANY number of filters works\n"
+            "(e.g. 8-band: u-g,g-r,r-i,i-z,z-Y,Y-J,J-H). A CHAIN (each band reused)\n"
+            "is best — it enables the inter-colour covariance correction. Only a\n"
+            "BLUE/UV colour (u-g, U-B) constrains [M/H]; red colours (r-i, i-z) add\n"
+            "temperature/age. More colours = more constraint but slower. Empty = use\n"
+            "the colour selected in the Filters panel above.")
+        btn_auto_colors = QPushButton("auto")
+        btn_auto_colors.setMaximumWidth(52)
+        btn_auto_colors.setToolTip("Fill with every adjacent colour detected in the data (full chain).")
+        btn_auto_colors.clicked.connect(self._mcmc_autofill_colors)
+        colors_row.addWidget(self.mcmc_colors_edit, 1)
+        colors_row.addWidget(btn_auto_colors)
+        opt_form.addRow("colors:", self._wrap(colors_row))
         self.mcmc_parallax_chk = QCheckBox("Gaia parallax distance prior (auto)")
         self.mcmc_parallax_chk.setChecked(True)
         self.mcmc_parallax_chk.setToolTip(
@@ -1626,18 +1653,53 @@ class IsochroneModelWindow(StepWindowBase):
         """Wrap a layout in a QWidget (for QFormLayout rows)."""
         w = QWidget(); w.setLayout(layout); return w
 
-    def _mcmc_pick_colors(self, bc, df):
-        """Return the list of color pairs for the fit (1 or 2 colors)."""
-        b1, b2 = bc["band_color"]
-        colors = [(b1, b2)]
-        if self.mcmc_multicolor_chk.isChecked():
-            order = ["u", "g", "r", "i", "z", "U", "B", "V", "R", "I"]
-            present = [b for b in order if f"mag_std_{b}" in df.columns]
-            if b2 in present:
-                nxt = present[present.index(b2) + 1:]
-                if nxt:
-                    colors.append((b2, nxt[0]))
-        return colors
+    # Wavelength order for auto-detecting an adjacent colour chain. Limited to the
+    # bands the bundled PARSEC grids carry (SDSS ugriz + Johnson UBVRI); more bands
+    # (y, JHK, …) need a PARSEC grid with those columns + a PARSEC_ISO_COL mapping.
+    _MCMC_BAND_ORDER = ["u", "g", "r", "i", "z", "U", "B", "V", "R", "I"]
+
+    def _mcmc_available_bands(self, df) -> list:
+        return [b for b in self._MCMC_BAND_ORDER if f"mag_std_{b}" in df.columns]
+
+    def _mcmc_autofill_colors(self):
+        """Fill the colours field with every adjacent colour found in the data."""
+        df, _iso_raw, _iso_file = self._load_cmd_and_iso_data(show_error=True)
+        if df is None:
+            return
+        bands = self._mcmc_available_bands(df)
+        if len(bands) < 2:
+            QMessageBox.warning(self, "Colors", "Need at least 2 mag_std_* bands in the data.")
+            return
+        chain = ",".join(f"{bands[i]}-{bands[i + 1]}" for i in range(len(bands) - 1))
+        self.mcmc_colors_edit.setText(chain)
+        self.log(f"[MCMC] auto colors from {len(bands)} bands: {chain}")
+
+    def _mcmc_parse_colors(self, bc, df) -> list:
+        """Parse the colours field into validated (b1, b2) pairs.
+
+        Empty field -> the single colour selected in the Filters panel. Otherwise
+        any comma-separated 'b1-b2' list (any number of filters). Each band must
+        have a mag_std_* column and a known extinction coefficient.
+        """
+        text = self.mcmc_colors_edit.text().strip()
+        if not text:
+            return [tuple(bc["band_color"])]
+        out = []
+        for tok in text.split(","):
+            tok = tok.strip()
+            if not tok:
+                continue
+            parts = [p.strip() for p in tok.split("-")]
+            if len(parts) != 2 or not all(parts):
+                raise ValueError(f"Bad colour '{tok}' — use the form b1-b2 (e.g. g-r).")
+            b1, b2 = parts
+            for b in (b1, b2):
+                if f"mag_std_{b}" not in df.columns:
+                    raise ValueError(f"Band '{b}' has no mag_std_{b} column in the data.")
+                if b not in EXTINCTION_R:
+                    raise ValueError(f"No extinction coefficient for band '{b}'.")
+            out.append((b1, b2))
+        return out
 
     def _run_mcmc_autofit(self):
         if self._mcmc_worker is not None and self._mcmc_worker.isRunning():
@@ -1655,11 +1717,18 @@ class IsochroneModelWindow(StepWindowBase):
             return
 
         mag_band = bc["band_mag"]
-        colors = self._mcmc_pick_colors(bc, df)
-        if self.mcmc_multicolor_chk.isChecked() and len(colors) < 2:
-            QMessageBox.warning(self, "Two colors",
-                                "Need a redder band than the color to add a 2nd color; "
-                                "running single-color instead.")
+        try:
+            colors = self._mcmc_parse_colors(bc, df)
+        except Exception as exc:
+            QMessageBox.warning(self, "Colors", str(exc))
+            return
+        if not colors:
+            QMessageBox.warning(self, "Colors", "No valid colours specified.")
+            return
+        has_blue = any(b1 in ("u", "U") for b1, _ in colors)
+        if not has_blue:
+            self.log("[MCMC] note: no blue/UV colour (u-g, U-B) -> [M/H] is "
+                     "degenerate; rely on the [M/H] prior (see tab help).")
         b1, b2 = colors[0]
         r_color = EXTINCTION_R.get(b1, 3.303) - EXTINCTION_R.get(b2, 2.285)
         bounds = self._get_fit_bounds()
