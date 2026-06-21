@@ -211,8 +211,18 @@ def fit_cluster_isochrone(
         ec_c, ec_w = float(config.ecolor_prior[0]), max(2.5 * float(config.ecolor_prior[1]), 0.010)
         ec_lo, ec_hi = max(ec_lo, ec_c - ec_w), min(ec_hi, ec_c + ec_w)
 
+    # [M/H] constraint: a soft Gaussian (±few logL) is overridden by a confident
+    # likelihood (same as dm/E), so when an [M/H] prior is supplied — e.g. a
+    # high-resolution spectroscopic [Fe/H] — also tighten the [M/H] bounds to
+    # ±2.5σ. The window scales with the prior's σ, so a precise spectroscopic
+    # value pins [M/H] hard while a loose 'assumed solar' stays broad.
+    mh_lo, mh_hi = config.mh_bounds
+    if config.mh_prior is not None:
+        mh_c, mh_w = float(config.mh_prior[0]), max(2.5 * float(config.mh_prior[1]), 0.05)
+        mh_lo, mh_hi = max(mh_lo, mh_c - mh_w), min(mh_hi, mh_c + mh_w)
+
     bounds = FitBounds(
-        log_age=config.age_bounds, metallicity=config.mh_bounds,
+        log_age=config.age_bounds, metallicity=(mh_lo, mh_hi),
         distance_mod=(dm_lo, dm_hi), extinction_gr=(ec_lo, ec_hi),
     )
 
