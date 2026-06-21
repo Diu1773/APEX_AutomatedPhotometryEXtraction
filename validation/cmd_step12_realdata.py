@@ -510,38 +510,15 @@ def save_plot(
     color_label: str,
     mag_label: str,
 ) -> None:
-    import matplotlib
+    # Delegates to the shared, Qt-free figure module so the runner, CLI and GUI
+    # all produce the same paper-quality CMD figure (single source of truth).
+    from apex.analysis.cmd.isochrone_plots import save_cmd_plot
 
-    matplotlib.use("Agg")
-    import matplotlib.pyplot as plt
-
-    output.parent.mkdir(parents=True, exist_ok=True)
-    fig, ax = plt.subplots(figsize=(7, 8))
-    ax.scatter(obs_color, obs_mag, s=3, alpha=0.35, c="#555555", linewidths=0, label="Observed")
-    ax.scatter(
-        iso_color,
-        iso_mag,
-        s=5,
-        alpha=0.95,
-        c="#d62728",
-        linewidths=0,
-        label="Best-fit isochrone",
-        zorder=3,
+    save_cmd_plot(
+        output, obs_color, obs_mag, iso_color, iso_mag,
+        color_label=color_label, mag_label=mag_label,
+        title="APEX Step12 real-data validation",
     )
-    xlo, xhi = np.nanpercentile(obs_color, [1, 99])
-    ylo, yhi = np.nanpercentile(obs_mag, [1, 99])
-    xpad = max(0.05, 0.08 * (xhi - xlo))
-    ypad = max(0.20, 0.08 * (yhi - ylo))
-    ax.set_xlim(xlo - xpad, xhi + xpad)
-    ax.set_ylim(yhi + ypad, ylo - ypad)
-    ax.set_xlabel(color_label)
-    ax.set_ylabel(mag_label)
-    ax.grid(True, ls=":", alpha=0.35)
-    ax.legend(loc="best")
-    ax.set_title("APEX Step12 real-data validation")
-    fig.tight_layout()
-    fig.savefig(output, dpi=160)
-    plt.close(fig)
 
 
 def save_corner_plot(
@@ -550,50 +527,17 @@ def save_corner_plot(
     labels: list[str],
     truths: list[float] | None = None,
 ) -> bool:
-    """Write a corner plot of the posterior. Returns False if corner is absent."""
-    import matplotlib
-
-    matplotlib.use("Agg")
-    import matplotlib.pyplot as plt
+    """Write a corner plot of the posterior. Returns False if ``corner`` absent."""
+    from apex.analysis.cmd.isochrone_plots import corner_figure, save_figure
 
     try:
-        import corner  # type: ignore
+        import corner  # type: ignore  # noqa: F401
+        used = True
     except Exception:
-        # Fallback: simple pairwise scatter grid so we always emit something.
-        n = flat_chain.shape[1]
-        fig, axes = plt.subplots(n, n, figsize=(2.4 * n, 2.4 * n))
-        for i in range(n):
-            for j in range(n):
-                ax = axes[i, j]
-                if i == j:
-                    ax.hist(flat_chain[:, i], bins=40, color="#3b6", alpha=0.8)
-                elif j < i:
-                    ax.scatter(flat_chain[:, j], flat_chain[:, i], s=2,
-                               alpha=0.15, c="#333", linewidths=0)
-                else:
-                    ax.axis("off")
-                if i == n - 1 and ax.axison:
-                    ax.set_xlabel(labels[j])
-                if j == 0 and ax.axison:
-                    ax.set_ylabel(labels[i])
-        output.parent.mkdir(parents=True, exist_ok=True)
-        fig.tight_layout()
-        fig.savefig(output, dpi=130)
-        plt.close(fig)
-        return False
-
-    output.parent.mkdir(parents=True, exist_ok=True)
-    fig = corner.corner(
-        flat_chain,
-        labels=labels,
-        truths=truths,
-        quantiles=[0.16, 0.5, 0.84],
-        show_titles=True,
-        title_fmt=".3f",
-    )
-    fig.savefig(output, dpi=130)
-    plt.close(fig)
-    return True
+        used = False
+    fig = corner_figure(flat_chain, labels, truths=truths)
+    save_figure(fig, output, dpi=130)
+    return used
 
 
 def run_mcmc_fit(
