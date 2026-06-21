@@ -280,16 +280,31 @@ def fit_cluster_isochrone(
     median = result.median_theta if result.median_theta is not None else [
         result.log_age_med, result.mh_med, result.dm_med, result.e_color_med]
     e_bv_med = float(median[3]) / R_color if R_color else float(median[3])
-    bands_app, _mass = mb.apparent(float(median[0]), float(median[1]),
-                                   float(median[2]), e_bv_med)
-    if bands_app is not None:
-        # Keep the track in EVOLUTIONARY (initial-mass) order as returned by
-        # the interpolator. Do NOT sort by magnitude: the isochrone folds at the
-        # turn-off (and along the giant branch), so sorting by magnitude connects
-        # points across the fold and draws horizontal zig-zags instead of the
-        # real MS→turn-off→giant curve.
-        out.iso_color = bands_app[b1] - bands_app[b2]
-        out.iso_mag = bands_app[mag_band]
+    # Overlay = the SINGLE nearest-grid isochrone (no 4-corner mass-blend, which
+    # fans into a mess of near-horizontal lines), reddened + distance-shifted —
+    # exactly what the CMD viewer draws. mass-ordered -> one clean MS→giant curve.
+    try:
+        ages_g = np.unique(np.round(iso_data[:, 2], 4))
+        mhs_g = np.unique(np.round(iso_data[:, 1], 4))
+        a0 = float(ages_g[np.argmin(np.abs(ages_g - float(median[0])))])
+        m0 = float(mhs_g[np.argmin(np.abs(mhs_g - float(median[1])))])
+        sel = (np.round(iso_data[:, 2], 4) == a0) & (np.round(iso_data[:, 1], 4) == m0)
+        sub = iso_data[sel]
+        # KEEP FILE (EEP/evolutionary) ORDER — do NOT sort. PARSEC isochrones are
+        # EEP-parametrised, so the same initial mass recurs at different phases;
+        # sorting by mass interleaves the phases and fans the line into a mess.
+        dm = float(median[2])
+
+        def _app(band):
+            return sub[:, bcol[band]] + dm + D.EXTINCTION_R[band] * e_bv_med
+        out.iso_color = _app(b1) - _app(b2)
+        out.iso_mag = _app(mag_band)
+    except Exception:
+        bands_app, _mass = mb.apparent(float(median[0]), float(median[1]),
+                                       float(median[2]), e_bv_med)
+        if bands_app is not None:
+            out.iso_color = bands_app[b1] - bands_app[b2]
+            out.iso_mag = bands_app[mag_band]
     out.obs_color, out.obs_mag = obs_c, obs_m
     out.color_label, out.mag_label = labels[0], mag_band
     ann = {"age_gyr": summary["age_gyr"], "mh": summary["metallicity"],
