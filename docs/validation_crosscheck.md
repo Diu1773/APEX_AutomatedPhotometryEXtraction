@@ -80,6 +80,25 @@ IRAF/DAOPHOT (`--reference iraf`) and photutils (`--reference photutils`) are
 also supported; sep is the default because it is an independent engine that needs
 no external installation.
 
+## Photometry-algorithm innocence: apcorr / recentering / detection
+
+Beyond the flux/color cross-checks above, the three internal steps most often
+suspected of introducing a magnitude- or color-dependent bias were tested
+**directly** (2026-06 deep review), because median external agreement alone can
+hide structured residuals:
+
+| Step | Direct test | Verdict |
+|---|---|---|
+| **Aperture correction** | code inspection: apcorr is a **single per-frame scalar** (growth curve on high-SNR references, applied to every star) | A per-frame scalar multiplies all stars equally, so it is mathematically incapable of a magnitude- or color-dependent bias and is fully absorbed by the Step-10 zeropoint. |
+| **Recentering** | re-measured aperture flux at the registration position vs the recentered position on **8 real M67 frames (5286 stars)** | median Δmag = **+0.0000** (g) / **+0.0001** (i) across all magnitude bins; centroid shifts ~0.1 px against an ~12 px aperture ⇒ negligible flux change. |
+| **Step-4 detection** | flux at the registration vs recentered position is identical; master positions are Gaia-matched and multi-frame | positions are sound; no flux bias from detection centroiding. |
+
+Combined with APEX = Gaia GSPC = Pan-STARRS agreement in colors, this establishes
+that APEX **photometry** is not the source of the cluster isochrone-fitting
+difficulty. The root cause is the gri filter-set's intrinsic age–metallicity–
+reddening–distance degeneracy plus a fitting-likelihood weakness — see
+`isochrone_fitting_methodology.md` §10.
+
 ## Reproduce
 
 ```bash
