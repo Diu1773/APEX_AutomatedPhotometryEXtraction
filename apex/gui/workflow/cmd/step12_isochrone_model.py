@@ -1543,7 +1543,7 @@ class IsochroneModelWindow(StepWindowBase):
         opt_form.addRow(self.mcmc_membership_chk)
         colors_row = QHBoxLayout()
         self.mcmc_colors_edit = QLineEdit()
-        self.mcmc_colors_edit.setPlaceholderText("auto (selected colour); or e.g. u-g,g-r,r-i")
+        self.mcmc_colors_edit.setPlaceholderText("empty = all colours in data (e.g. B-V,V-R); or type e.g. u-g,g-r,r-i")
         self.mcmc_colors_edit.setToolTip(
             "Colours to fit, comma-separated as b1-b2. ANY number of filters works\n"
             "(e.g. 8-band: u-g,g-r,r-i,i-z,z-Y,Y-J,J-H). A CHAIN (each band reused)\n"
@@ -1683,6 +1683,12 @@ class IsochroneModelWindow(StepWindowBase):
         """
         text = self.mcmc_colors_edit.text().strip()
         if not text:
+            # Empty = use ALL adjacent colours present in the data (e.g. BVR ->
+            # B-V,V-R), so every filter is used by default; fall back to the
+            # single Band-Selection colour only if <2 bands are available.
+            bands = self._mcmc_available_bands(df)
+            if len(bands) >= 2:
+                return [(bands[i], bands[i + 1]) for i in range(len(bands) - 1)]
             return [tuple(bc["band_color"])]
         out = []
         for tok in text.split(","):
