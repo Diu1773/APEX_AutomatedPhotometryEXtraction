@@ -1247,7 +1247,7 @@ class IsochroneModelWindow(StepWindowBase):
         fit_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAsNeeded)
         fit_scroll.setVerticalScrollBarPolicy(Qt.ScrollBarAsNeeded)
         fit_scroll.setWidget(fit_tab)
-        self.auto_fit_tab_index = self.tabs.addTab(fit_scroll, "Auto Fit")
+        self.auto_fit_tab_index = self.tabs.addTab(fit_scroll, "Quick Fit (grid)")
 
         # --- Tab: Auto-fit (MCMC) — Bayesian, paper-quality figures ---
         self._build_mcmc_autofit_tab()
