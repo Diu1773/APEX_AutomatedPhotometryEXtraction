@@ -1577,6 +1577,16 @@ class IsochroneModelWindow(StepWindowBase):
         self.mcmc_maxstars_spin = QSpinBox(); self.mcmc_maxstars_spin.setRange(50, 5000)
         self.mcmc_maxstars_spin.setSingleStep(50); self.mcmc_maxstars_spin.setValue(500)
         opt_form.addRow("max stars:", self.mcmc_maxstars_spin)
+        # Age search range (Gyr) — self-contained so this tab does NOT depend on
+        # the old 'Auto Fit' tab. Set it to bracket the cluster's expected age
+        # (too narrow/low rails the fit; e.g. NGC 6811 ≈ 1 Gyr).
+        age_row = QHBoxLayout(); age_row.setContentsMargins(0, 0, 0, 0)
+        self.mcmc_age_min = QDoubleSpinBox(); self.mcmc_age_min.setRange(0.001, 15.0)
+        self.mcmc_age_min.setDecimals(2); self.mcmc_age_min.setSingleStep(0.1); self.mcmc_age_min.setValue(0.20)
+        self.mcmc_age_max = QDoubleSpinBox(); self.mcmc_age_max.setRange(0.002, 15.0)
+        self.mcmc_age_max.setDecimals(2); self.mcmc_age_max.setSingleStep(0.5); self.mcmc_age_max.setValue(6.0)
+        age_row.addWidget(self.mcmc_age_min); age_row.addWidget(QLabel("–")); age_row.addWidget(self.mcmc_age_max)
+        opt_form.addRow("age range (Gyr):", self._wrap(age_row))
         controls.addWidget(opt_group)
 
         # -- priors (Gaussian; tiny sigma == fixed) --
@@ -1746,7 +1756,12 @@ class IsochroneModelWindow(StepWindowBase):
                      "degenerate; rely on the [M/H] prior (see tab help).")
         b1, b2 = colors[0]
         r_color = EXTINCTION_R.get(b1, 3.303) - EXTINCTION_R.get(b2, 2.285)
-        bounds = self._get_fit_bounds()
+        # Self-contained search range: age from this tab's Gyr controls; [M/H]/dm/E
+        # left wide here because their priors (below) tighten them. No dependency
+        # on the old 'Auto Fit' tab.
+        a_min = max(self.mcmc_age_min.value(), 1e-3)
+        a_max = max(self.mcmc_age_max.value(), a_min * 1.01)
+        age_bounds = (9.0 + float(np.log10(a_min)), 9.0 + float(np.log10(a_max)))
 
         mh_prior = None
         if self.mcmc_mh_prior_chk.isChecked():
@@ -1759,8 +1774,8 @@ class IsochroneModelWindow(StepWindowBase):
 
         cfg = IsochroneFitConfig(
             colors=colors, mag_band=mag_band, iso_file=Path(iso_file),
-            age_bounds=tuple(bounds.log_age), mh_bounds=tuple(bounds.metallicity),
-            dm_bounds=tuple(bounds.distance_mod), ecolor_bounds=tuple(bounds.extinction_gr),
+            age_bounds=age_bounds,
+            mh_bounds=(-1.0, 0.5), dm_bounds=(5.0, 18.0), ecolor_bounds=(0.0, 1.0),
             mh_prior=mh_prior, ecolor_prior=ecolor_prior,
             use_membership=self.mcmc_membership_chk.isChecked(),
             parallax_distance_prior=self.mcmc_parallax_chk.isChecked(),
