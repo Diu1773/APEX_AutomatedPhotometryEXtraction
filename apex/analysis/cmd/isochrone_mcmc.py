@@ -1284,14 +1284,28 @@ def fit_isochrone_mcmc(
         center = np.append(center, float(f_bin))
         box = box + [(0.0, 1.0)]
 
-    # Tight Gaussian ball: 2% of each parameter's prior width.
-    widths = np.array([hi - lo for lo, hi in box], dtype=float)
-    spread = 0.02 * widths
+    # Clamp the (grid-scan) seed into the bounds first: with tightened prior
+    # windows (parallax dm, reddening, [M/H]) the seed can land OUTSIDE a window,
+    # which would push every walker onto the same bound edge -> a constant column
+    # -> linearly-dependent walkers -> emcee "large condition number" error.
+    lo_arr = np.array([lo for lo, hi in box], dtype=float)
+    hi_arr = np.array([hi for lo, hi in box], dtype=float)
+    center = np.clip(center, lo_arr, hi_arr)
+
+    # Tight Gaussian ball: 2% of each parameter's prior width (with an absolute
+    # floor so no dimension is degenerate).
+    widths = hi_arr - lo_arr
+    spread = np.maximum(0.02 * widths, 1e-4)
     p0 = center[np.newaxis, :] + spread[np.newaxis, :] * rng.standard_normal((n_walkers, n_dim))
-    # Clip to (just inside) bounds so every walker starts with finite prior.
+    # Clip just inside bounds; if a dimension still collapsed onto a single value
+    # (seed at the very edge of a tight window), re-seed it uniformly so the
+    # walkers remain linearly independent.
     for d, (lo, hi) in enumerate(box):
-        eps = 1e-6 * max(hi - lo, 1e-6)
+        w = max(hi - lo, 1e-9)
+        eps = 1e-3 * w
         p0[:, d] = np.clip(p0[:, d], lo + eps, hi - eps)
+        if float(np.ptp(p0[:, d])) < 1e-9:
+            p0[:, d] = rng.uniform(lo + eps, hi - eps, n_walkers)
 
     # The CMD posterior is narrow and strongly correlated (the age-metallicity-
     # reddening-distance degeneracy is a thin diagonal valley). emcee's default
@@ -1334,8 +1348,21 @@ def fit_isochrone_mcmc(
             moves=mcmc_moves,
         )
 
-    # Burn-in.
-    state = sampler.run_mcmc(p0, n_burn, progress=progress)
+    # Burn-in. If emcee rejects the initial ensemble as linearly dependent
+    # (degenerate seed under very tight prior windows), re-seed every walker
+    # uniformly across the bounds once and retry — so the user never sees the
+    # cryptic "large condition number" error.
+    try:
+        state = sampler.run_mcmc(p0, n_burn, progress=progress)
+    except ValueError as exc:
+        if "condition number" not in str(exc).lower():
+            raise
+        p0 = np.empty((n_walkers, n_dim), dtype=float)
+        for d, (lo, hi) in enumerate(box):
+            eps = 1e-3 * max(hi - lo, 1e-9)
+            p0[:, d] = rng.uniform(lo + eps, hi - eps, n_walkers)
+        sampler.reset()
+        state = sampler.run_mcmc(p0, n_burn, progress=progress)
     sampler.reset()
     # Production.
     sampler.run_mcmc(state, n_steps, progress=progress)
