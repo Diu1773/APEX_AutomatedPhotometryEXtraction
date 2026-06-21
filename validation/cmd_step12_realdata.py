@@ -116,6 +116,72 @@ def magnitude_column(df: pd.DataFrame, band: str) -> tuple[np.ndarray, np.ndarra
     return values, err, source
 
 
+def membership_mask(
+    df: pd.DataFrame, *, nsig: float = 3.0, plx_nsig: float = 3.0,
+) -> tuple[np.ndarray, dict[str, Any]]:
+    """Boolean mask of probable cluster members from Gaia proper motion + parallax.
+
+    Auto-detects the cluster clump in (pmra, pmdec) as the densest 2-D histogram
+    peak, refines the centre by iterative robust (MAD) clipping, then keeps stars
+    within ``nsig`` robust sigma of the PM centroid AND ``plx_nsig`` of the
+    members' median parallax. Stars lacking astrometry are treated as non-members
+    (conservative: unconfirmable membership is excluded). Returns an all-True mask
+    as a graceful no-op when the astrometry columns are absent.
+    """
+    need = {"pmra", "pmdec", "parallax"}
+    if not need.issubset(df.columns):
+        return np.ones(len(df), dtype=bool), {"applied": False, "reason": "no_astrometry"}
+    pmra = pd.to_numeric(df["pmra"], errors="coerce").to_numpy(float)
+    pmdec = pd.to_numeric(df["pmdec"], errors="coerce").to_numpy(float)
+    plx = pd.to_numeric(df["parallax"], errors="coerce").to_numpy(float)
+    fin = np.isfinite(pmra) & np.isfinite(pmdec) & np.isfinite(plx)
+    if int(fin.sum()) < 20:
+        return np.ones(len(df), dtype=bool), {"applied": False, "reason": "too_few_astrometric"}
+
+    x, y, p = pmra[fin], pmdec[fin], plx[fin]
+    lo_x, hi_x = np.percentile(x, [2, 98])
+    lo_y, hi_y = np.percentile(y, [2, 98])
+    bw = 0.5
+    bx = np.arange(lo_x, hi_x + bw, bw)
+    by = np.arange(lo_y, hi_y + bw, bw)
+    if len(bx) < 2 or len(by) < 2:
+        return np.ones(len(df), dtype=bool), {"applied": False, "reason": "degenerate_pm_range"}
+    hist, xe, ye = np.histogram2d(x, y, bins=[bx, by])
+    ip, jp = np.unravel_index(int(np.argmax(hist)), hist.shape)
+    cx = 0.5 * (xe[ip] + xe[ip + 1])
+    cy = 0.5 * (ye[jp] + ye[jp + 1])
+
+    sel = np.hypot(x - cx, y - cy) < 1.5
+    sx = sy = 0.3
+    for _ in range(5):
+        if int(sel.sum()) < 10:
+            break
+        cx = float(np.median(x[sel]))
+        cy = float(np.median(y[sel]))
+        sx = max(1.4826 * float(np.median(np.abs(x[sel] - cx))), 0.2)
+        sy = max(1.4826 * float(np.median(np.abs(y[sel] - cy))), 0.2)
+        sel = (np.abs(x - cx) < nsig * sx) & (np.abs(y - cy) < nsig * sy)
+
+    pc = float(np.median(p[sel]))
+    ps = max(1.4826 * float(np.median(np.abs(p[sel] - pc))), 0.05)
+    member_fin = sel & (np.abs(p - pc) < plx_nsig * ps)
+
+    mask = np.zeros(len(df), dtype=bool)
+    mask[np.flatnonzero(fin)[member_fin]] = True
+    meta = {
+        "applied": True,
+        "pm_center": [round(cx, 3), round(cy, 3)],
+        "pm_sigma": [round(sx, 3), round(sy, 3)],
+        "parallax_center": round(pc, 3),
+        "parallax_sigma": round(ps, 3),
+        "n_astrometric": int(fin.sum()),
+        "n_members": int(mask.sum()),
+        "nsig": nsig,
+        "plx_nsig": plx_nsig,
+    }
+    return mask, meta
+
+
 def extract_multicolor_arrays(
     df: pd.DataFrame,
     colors: list[tuple[str, str]],
@@ -652,6 +718,7 @@ def run_mcmc_fit_multicolor(
         multiband_iso=mb,
         obs_multicolor=obs_mc,
         err_multicolor=err_mc,
+        err_floor=getattr(args, "err_floor", 0.02),
     )
     return mcmc, gb
 
@@ -673,6 +740,13 @@ def run_validation(args: argparse.Namespace) -> dict[str, Any]:
     result_dir = Path(args.result_dir)
     wide_csv = resolve_wide_csv(result_dir)
     df = pd.read_csv(wide_csv)
+
+    member_meta: dict[str, Any] = {"applied": False, "reason": "not_requested"}
+    if getattr(args, "membership", False):
+        mmask, member_meta = membership_mask(
+            df, nsig=args.membership_nsig, plx_nsig=args.membership_plx_nsig)
+        if member_meta.get("applied"):
+            df = df.iloc[np.flatnonzero(mmask)].reset_index(drop=True)
 
     color = parse_pair(args.color) if args.color else None
     mag_band = args.mag
@@ -727,6 +801,7 @@ def run_validation(args: argparse.Namespace) -> dict[str, Any]:
         "wide_csv": str(wide_csv),
         "iso_file": str(iso_file),
         "data": data_meta,
+        "membership": member_meta,
         "selection": {
             "color_index": color_label,
             "mag_band": mag_band,
@@ -993,6 +1068,18 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--ecolor-prior", nargs=2, type=float, default=None,
                         metavar=("MU", "SIGMA"),
                         help="Gaussian prior on E(color) (e.g. a reddening estimate)")
+    parser.add_argument("--membership", action="store_true",
+                        help="Pre-filter to probable cluster members using Gaia proper motion "
+                             "+ parallax (auto-detected clump). Strongly recommended for real "
+                             "clusters: field interlopers otherwise frustrate the generative fit.")
+    parser.add_argument("--membership-nsig", type=float, default=3.0,
+                        help="Robust-sigma radius in proper-motion space for membership (default 3).")
+    parser.add_argument("--membership-plx-nsig", type=float, default=3.0,
+                        help="Robust-sigma window in parallax for membership (default 3).")
+    parser.add_argument("--err-floor", type=float, default=0.02,
+                        help="Systematic/model-error floor (mag) added in quadrature to per-star "
+                             "errors in the likelihood. Raise (~0.04-0.05) to tolerate a real "
+                             "model-vs-data color-system offset on the second color axis.")
     parser.add_argument("--ri-residual", nargs=2, type=float, default=None, metavar=("A", "B"),
                         help="Empirical model color correction: subtract A + B*(first color) "
                              "from the second color axis (data->isochrone color system).")
