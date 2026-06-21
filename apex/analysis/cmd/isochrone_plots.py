@@ -23,6 +23,7 @@ import numpy as np
 
 __all__ = [
     "cmd_figure",
+    "segmented_isochrone_line",
     "corner_figure",
     "save_figure",
     "save_cmd_plot",
@@ -48,6 +49,53 @@ def _lazy_plt():
     import matplotlib.pyplot as plt
 
     return plt
+
+
+def segmented_isochrone_line(
+    color: np.ndarray,
+    magnitude: np.ndarray,
+    *,
+    min_jump: float = 0.5,
+    jump_factor: float = 8.0,
+    local_window: int = 8,
+):
+    """Insert NaN breaks where adjacent isochrone rows are discontinuous.
+
+    Isochrone tables can append remnant / separately-computed evolutionary blocks
+    after the visible stellar sequence; connecting those rows with a normal line
+    draws long diagonals across the CMD. Splitting the *display* line at large
+    jumps (relative to the local median step) keeps the curve interpolated within
+    each evolutionary segment without joining the endpoints across gaps. Mirrors
+    the CMD-viewer's behaviour. Pure numpy (Qt-free).
+    """
+    x = np.asarray(color, dtype=float)
+    y = np.asarray(magnitude, dtype=float)
+    if x.shape != y.shape or x.ndim != 1 or len(x) < 2:
+        return x.copy(), y.copy()
+    steps = np.hypot(np.diff(x), np.diff(y))
+    break_after = ~(np.isfinite(x[:-1]) & np.isfinite(y[:-1])
+                    & np.isfinite(x[1:]) & np.isfinite(y[1:]))
+    for index, step in enumerate(steps):
+        if break_after[index] or not np.isfinite(step) or step <= min_jump:
+            continue
+        start = max(0, index - local_window)
+        stop = min(len(steps), index + local_window + 1)
+        nearby = np.concatenate((steps[start:index], steps[index + 1:stop]))
+        nearby = nearby[np.isfinite(nearby) & (nearby > 0)]
+        local_step = float(np.median(nearby)) if len(nearby) else 0.0
+        if local_step == 0.0 or step > jump_factor * local_step:
+            break_after[index] = True
+    if not break_after.any():
+        return x.copy(), y.copy()
+    extra = int(break_after.sum())
+    line_x = np.empty(len(x) + extra, dtype=float)
+    line_y = np.empty(len(y) + extra, dtype=float)
+    j = 0
+    for i in range(len(x)):
+        line_x[j] = x[i]; line_y[j] = y[i]; j += 1
+        if i < len(break_after) and break_after[i]:
+            line_x[j] = np.nan; line_y[j] = np.nan; j += 1
+    return line_x, line_y
 
 
 def cmd_figure(
@@ -100,8 +148,10 @@ def cmd_figure(
 
     iso_color = np.asarray(iso_color, float)
     iso_mag = np.asarray(iso_mag, float)
-    fin = np.isfinite(iso_color) & np.isfinite(iso_mag)
-    ax.plot(iso_color[fin], iso_mag[fin], "-", lw=1.6, c="black",
+    # Interpolated line, segmented at large jumps so the giant tip / remnant
+    # blocks don't connect across the CMD (matches the CMD-viewer behaviour).
+    line_x, line_y = segmented_isochrone_line(iso_color, iso_mag)
+    ax.plot(line_x, line_y, "-", lw=1.6, c="black", solid_capstyle="round",
             label="Best-fit isochrone", zorder=3)
 
     xlo, xhi = np.nanpercentile(obs_color, [1, 99])
