@@ -451,59 +451,138 @@ class CmdHyperMC:
 
 def _gaussian_mixture_density_nd(
     obs: np.ndarray,        # (N_obs, D)
-    var: np.ndarray,        # (N_obs, D)
+    var: np.ndarray,        # (N_obs, D)  diagonal variances (used when cov is None)
     track: np.ndarray,      # (N_iso, D)
     track_w: np.ndarray,    # (N_iso,)
+    cov: Optional[np.ndarray] = None,   # (N_obs, D, D) full covariance (overrides var)
 ) -> np.ndarray:
-    """Σ_k w_k · N_D(obs_i | track_k, diag(var_i)), per observed star.
+    """Σ_k w_k · N_D(obs_i | track_k, Σ_i), per observed star.
 
     Generalises :func:`_gaussian_mixture_density` to D axes (D = n_colours + 1).
-    The per-star prefactor (2π)^(-D/2) · Π 1/σ_d keeps the member density on the
-    same magnitude^(-D) scale as the flat field term, exactly as in the 2-D case.
-    Built in row blocks bounded to a few MB so memory stays flat.
+    With ``cov=None`` the per-star covariance is diagonal ``diag(var_i)`` (fast
+    path). When ``cov`` is given (e.g. colours that share a band are correlated),
+    the full Mahalanobis form ``Δᵀ Σ_i⁻¹ Δ`` with prefactor ``1/√det Σ_i`` is used.
+    The per-star prefactor (2π)^(-D/2) keeps the member density on the same
+    magnitude^(-D) scale as the flat field term. Built in row blocks bounded to a
+    few MB so memory stays flat.
     """
     n_obs, d = obs.shape
     n_iso = track.shape[0]
     if n_iso == 0 or n_obs == 0:
         return np.zeros(n_obs, dtype=float)
 
-    bytes_per_row = max(1, n_iso * 4)
-    rows_per_block = max(1, int(_MAX_BLOCK_BYTES // bytes_per_row))
-
     norm = (2.0 * np.pi) ** (-0.5 * d)
     out = np.empty(n_obs, dtype=float)
-
     tr32 = np.ascontiguousarray(track, dtype=np.float32)          # (K, D)
     tw32 = np.ascontiguousarray(track_w, dtype=np.float32)        # (K,)
 
+    if cov is None:
+        # ---- diagonal fast path (one (B,K) buffer live at a time) ----
+        bytes_per_row = max(1, n_iso * 4)
+        rows_per_block = max(1, int(_MAX_BLOCK_BYTES // bytes_per_row))
+        for start in range(0, n_obs, rows_per_block):
+            stop = min(start + rows_per_block, n_obs)
+            ob = obs[start:stop].astype(np.float32)               # (B, D)
+            inv_v = (1.0 / var[start:stop]).astype(np.float32)    # (B, D)
+            acc = None
+            for dd in range(d):
+                diff = ob[:, dd:dd + 1] - tr32[np.newaxis, :, dd]
+                diff *= diff
+                diff *= inv_v[:, dd:dd + 1]
+                if acc is None:
+                    acc = diff
+                else:
+                    acc += diff
+                    del diff
+            acc *= -0.5
+            np.exp(acc, out=acc)
+            acc *= tw32
+            dens32 = acc.sum(axis=1)
+            del acc
+            sigma_prod = np.sqrt(np.prod(var[start:stop], axis=1))   # (B,)
+            out[start:stop] = dens32.astype(np.float64) * (norm / sigma_prod)
+        return out
+
+    # ---- full-covariance path ----
+    # Δᵀ Σ⁻¹ Δ = Σ_{d,e} Σ⁻¹[d,e] Δ_d Δ_e (Σ⁻¹ symmetric → diag + 2·upper).
+    # We hold D difference buffers (B,K) at once, so shrink the block by ~D.
+    bytes_per_row = max(1, n_iso * 4 * d)
+    rows_per_block = max(1, int(_MAX_BLOCK_BYTES // bytes_per_row))
     for start in range(0, n_obs, rows_per_block):
         stop = min(start + rows_per_block, n_obs)
         ob = obs[start:stop].astype(np.float32)                   # (B, D)
-        inv_v = (1.0 / var[start:stop]).astype(np.float32)        # (B, D)
+        cb = np.ascontiguousarray(cov[start:stop], dtype=np.float64)  # (B, D, D)
+        cinv = np.linalg.inv(cb)                                  # (B, D, D)
+        _sign, logdet = np.linalg.slogdet(cb)                     # (B,)
 
-        # exponent = -0.5 Σ_d (Δ_d^2 / var_d), accumulated axis-by-axis so only a
-        # single (B, K) buffer is live at a time.
+        diffs = [ob[:, dd:dd + 1] - tr32[np.newaxis, :, dd] for dd in range(d)]  # D×(B,K)
         acc = None
         for dd in range(d):
-            diff = ob[:, dd:dd + 1] - tr32[np.newaxis, :, dd]    # (B, K)
-            diff *= diff
-            diff *= inv_v[:, dd:dd + 1]
-            if acc is None:
-                acc = diff
-            else:
-                acc += diff
-                del diff
+            term = diffs[dd] * diffs[dd]
+            term *= cinv[:, dd, dd][:, None].astype(np.float32)
+            acc = term if acc is None else (acc + term)
+        for dd in range(d):
+            for ee in range(dd + 1, d):
+                cross = diffs[dd] * diffs[ee]
+                cross *= (2.0 * cinv[:, dd, ee])[:, None].astype(np.float32)
+                acc += cross
+                del cross
         acc *= -0.5
         np.exp(acc, out=acc)
         acc *= tw32
         dens32 = acc.sum(axis=1)
-        del acc
-        # Per-star prefactor (2π)^(-D/2) · Π_d 1/σ_d.
-        sigma_prod = np.sqrt(np.prod(var[start:stop], axis=1))    # (B,) f64
-        prefac = norm / sigma_prod
+        del acc, diffs
+        prefac = norm * np.exp(-0.5 * logdet)                     # = norm / √det Σ
         out[start:stop] = dens32.astype(np.float64) * prefac
 
     return out
+
+
+def _color_covariance(
+    err: np.ndarray,
+    colors: Sequence[Tuple[str, str]],
+    mag: str,
+    floor2: float,
+) -> Optional[np.ndarray]:
+    """Full per-star covariance for fit axes ``[colours…, mag]`` that share bands.
+
+    Colours that share a band (e.g. ``g-r`` and ``r-i`` share ``r``) are
+    *correlated*; the diagonal ``var = err²`` misses the cross terms, which
+    mis-weights the multi-colour density. The axis→band map ``J`` is square and
+    invertible for a colour chain + magnitude, so per-band variances are recovered
+    exactly from the per-axis variances and the full covariance is
+    ``C = J diag(var_band) Jᵀ + floor²·I``. Its diagonal equals the old ``var``
+    (so this is a pure addition of the off-diagonal correlations). Returns
+    ``None`` (→ diagonal fallback) if the axis/band system is not square-invertible.
+    """
+    err = np.asarray(err, dtype=float)
+    n_obs, d = err.shape
+    axis_bands = [list(c) for c in colors] + [[mag]]
+    if len(axis_bands) != d:
+        return None
+    band_order: List[str] = []
+    for ax in axis_bands:
+        for b in ax:
+            if b not in band_order:
+                band_order.append(b)
+    if len(band_order) != d:
+        return None
+    jac = np.zeros((d, d), dtype=float)
+    for a, (b1, b2) in enumerate(colors):
+        jac[a, band_order.index(b1)] += 1.0
+        jac[a, band_order.index(b2)] -= 1.0
+    jac[d - 1, band_order.index(mag)] += 1.0
+    m = jac ** 2
+    try:
+        if abs(np.linalg.det(m)) < 1e-9:
+            return None
+        m_inv = np.linalg.inv(m)
+    except np.linalg.LinAlgError:
+        return None
+    var_band = np.clip((err ** 2) @ m_inv.T, 0.0, None)          # (N, d)
+    cov = np.einsum("ak,nk,bk->nab", jac, var_band, jac)         # (N, d, d)
+    cov += floor2 * np.eye(d)[None, :, :]
+    return cov
 
 
 def cmd_loglike_multicolor(
@@ -553,6 +632,18 @@ def cmd_loglike_multicolor(
 
     floor2 = hyper.err_floor ** 2
     var = np.asarray(err, dtype=float) ** 2 + floor2          # (N_obs, D)
+    # Full covariance accounting for shared-band colour correlations (g-r & r-i
+    # share r). Cached on the hyper object since it depends only on (err, floor),
+    # not on theta — so it is built once per fit, not per MCMC step.
+    cov = getattr(hyper, "_cov_cache", None)
+    if cov is None:
+        cov = _color_covariance(err, hyper.colors, hyper.mag, floor2)
+        try:
+            object.__setattr__(hyper, "_cov_cache", cov if cov is not None else False)
+        except Exception:
+            pass
+    elif cov is False:
+        cov = None
 
     f_bin = hyper.f_bin if f_bin_override is None else float(f_bin_override)
     f_field = hyper.f_field
