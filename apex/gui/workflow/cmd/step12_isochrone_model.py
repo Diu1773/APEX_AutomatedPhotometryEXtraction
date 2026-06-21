@@ -1826,10 +1826,16 @@ class IsochroneModelWindow(StepWindowBase):
             w = item.widget()
             if w is not None:
                 w.setParent(None)
-        if self._mcmc_cmd_fig is not None:
-            self.mcmc_fig_layout.addWidget(FigureCanvas(self._mcmc_cmd_fig))
-        if self._mcmc_corner_fig is not None:
-            self.mcmc_fig_layout.addWidget(FigureCanvas(self._mcmc_corner_fig))
+        for fig in (self._mcmc_cmd_fig, self._mcmc_corner_fig):
+            if fig is None:
+                continue
+            cv = FigureCanvas(fig)
+            # Give each canvas its full natural pixel size so the scroll area shows
+            # the whole figure (instead of squishing/clipping it to the viewport).
+            w_in, h_in = fig.get_size_inches()
+            dpi = fig.get_dpi()
+            cv.setMinimumSize(int(w_in * dpi * 0.95), int(h_in * dpi * 0.95))
+            self.mcmc_fig_layout.addWidget(cv)
         self.btn_save_mcmc.setEnabled(self._mcmc_cmd_fig is not None)
         self.log(f"[MCMC] done: age={s.get('age_gyr',[None,'?'])[1]} [M/H]={s.get('metallicity',[None,'?'])[1]} acc={s['acceptance_fraction']:.2f}")
 

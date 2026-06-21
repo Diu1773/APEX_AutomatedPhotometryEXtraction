@@ -85,23 +85,24 @@ def cmd_figure(
     obs_color = np.asarray(obs_color, float)
     obs_mag = np.asarray(obs_mag, float)
 
-    fig, ax = plt.subplots(figsize=(6.6, 7.8))
+    # Publication style: monochrome, minimal chrome.
+    fig, ax = plt.subplots(figsize=(5.6, 6.6))
 
     if member_mask is not None and np.any(~np.asarray(member_mask, bool)):
         m = np.asarray(member_mask, bool)
-        ax.scatter(obs_color[~m], obs_mag[~m], s=4, alpha=0.18, c="#b8b8b8",
-                   linewidths=0, label="Field / non-member", zorder=1)
-        ax.scatter(obs_color[m], obs_mag[m], s=6, alpha=0.55, c="#444444",
-                   linewidths=0, label="Members", zorder=2)
+        ax.scatter(obs_color[~m], obs_mag[~m], s=5, alpha=0.20, c="0.72",
+                   linewidths=0, label="Field", zorder=1, rasterized=True)
+        ax.scatter(obs_color[m], obs_mag[m], s=7, alpha=0.65, c="0.30",
+                   linewidths=0, label="Members", zorder=2, rasterized=True)
     else:
-        ax.scatter(obs_color, obs_mag, s=5, alpha=0.40, c="#555555",
-                   linewidths=0, label="Observed", zorder=2)
+        ax.scatter(obs_color, obs_mag, s=6, alpha=0.55, c="0.45",
+                   linewidths=0, label="Observed", zorder=2, rasterized=True)
 
     iso_color = np.asarray(iso_color, float)
     iso_mag = np.asarray(iso_mag, float)
     fin = np.isfinite(iso_color) & np.isfinite(iso_mag)
-    ax.plot(iso_color[fin], iso_mag[fin], "-", lw=1.8, c="#d62728",
-            alpha=0.95, label="Best-fit isochrone", zorder=3)
+    ax.plot(iso_color[fin], iso_mag[fin], "-", lw=1.6, c="black",
+            label="Best-fit isochrone", zorder=3)
 
     xlo, xhi = np.nanpercentile(obs_color, [1, 99])
     ylo, yhi = np.nanpercentile(obs_mag, [1, 99])
@@ -111,9 +112,10 @@ def cmd_figure(
     ax.set_ylim(yhi + ypad, ylo - ypad)  # magnitudes increase downward
     ax.set_xlabel(color_label, fontsize=12)
     ax.set_ylabel(mag_label, fontsize=12)
-    ax.grid(True, ls=":", alpha=0.30)
-    ax.legend(loc="upper right", framealpha=0.9, fontsize=9)
-    ax.set_title(title, fontsize=12)
+    ax.tick_params(direction="in", top=True, right=True)
+    ax.legend(loc="upper right", frameon=False, fontsize=9, handletextpad=0.4)
+    if title:
+        ax.set_title(title, fontsize=11)
 
     if annotations:
         lines = []
@@ -125,10 +127,10 @@ def cmd_figure(
             elif val is not None and np.isfinite(val):
                 lines.append(f"{lab} = {val:.3f}")
         if lines:
-            ax.text(0.03, 0.03, "\n".join(lines), transform=ax.transAxes,
-                    fontsize=9.5, va="bottom", ha="left",
-                    bbox=dict(boxstyle="round,pad=0.4", fc="white", ec="#999999",
-                              alpha=0.9))
+            # lower-left (faint/blue corner is usually empty); plain box, no colour.
+            ax.text(0.04, 0.04, "\n".join(lines), transform=ax.transAxes,
+                    fontsize=9, va="bottom", ha="left",
+                    bbox=dict(boxstyle="round,pad=0.4", fc="white", ec="0.6", lw=0.8))
     fig.tight_layout()
     return fig
 
