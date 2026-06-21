@@ -314,8 +314,13 @@ class MultiBandIsochrone:
         self.ages = np.unique(rounded_age)
         self.metallicities = np.unique(rounded_mh)
 
-        # Cache per grid point: (mass_sorted, {band: abs_mag_sorted}).
-        self._cache: Dict[Tuple[float, float], Tuple[np.ndarray, Dict[str, np.ndarray]]] = {}
+        # Cache per grid point in EEP (file) order, NOT mass-sorted: PARSEC
+        # isochrones are EEP-parametrised so the same initial mass recurs at
+        # different phases; mass-sorting interleaves phases. Each entry is
+        # (u, mass, {band: abs_mag}) where u is the normalised cumulative
+        # arc-length along the track (0..1) used to align evolutionary phases
+        # across grid corners when interpolating (see :meth:`absolute`).
+        self._cache: Dict[Tuple[float, float], Tuple[np.ndarray, np.ndarray, Dict[str, np.ndarray]]] = {}
         for age in self.ages:
             for mh in self.metallicities:
                 sel = (rounded_age == age) & (rounded_mh == mh)
@@ -329,11 +334,18 @@ class MultiBandIsochrone:
                     finite &= np.isfinite(v)
                 if finite.sum() < _MIN_ISO_POINTS:
                     continue
-                mass = mass[finite]
-                order = np.argsort(mass)
-                mass = mass[order]
-                cols = {b: v[finite][order] for b, v in cols.items()}
-                self._cache[(float(age), float(mh))] = (mass, cols)
+                mass = mass[finite]               # file/EEP order preserved
+                cols = {b: v[finite] for b, v in cols.items()}
+                pts = np.column_stack([cols[b] for b in self.bands])
+                step = np.sqrt((np.diff(pts, axis=0) ** 2).sum(axis=1))
+                s = np.concatenate([[0.0], np.cumsum(step)])
+                if not np.isfinite(s[-1]) or s[-1] <= 0:
+                    u = np.linspace(0.0, 1.0, len(mass))
+                else:
+                    u = np.maximum.accumulate(s / s[-1])
+                    u = u + 1e-9 * np.arange(len(u))
+                    u = u / u[-1]
+                self._cache[(float(age), float(mh))] = (u, mass, cols)
 
     # -- grid lookup -----------------------------------------------------------
     def _bracket(self, arr: np.ndarray, value: float) -> Tuple[float, float, float]:
@@ -368,29 +380,33 @@ class MultiBandIsochrone:
         if len(corners) < 4:
             return self._nearest(log_age, mh)
 
-        mass_lo = max(c[0][0] for c in corners.values())
-        mass_hi = min(c[0][-1] for c in corners.values())
-        if mass_hi <= mass_lo + 1e-6:
-            return self._nearest(log_age, mh)
-
-        mass_grid = np.linspace(mass_lo, mass_hi, self.n_mass_pts)
         w00 = (1 - t_age) * (1 - t_mh)
         w10 = t_age * (1 - t_mh)
         w01 = (1 - t_age) * t_mh
         w11 = t_age * t_mh
 
-        out: Dict[str, np.ndarray] = {}
-        c00 = corners[(age_lo, mh_lo)]
+        # Blend the four corners at a COMMON normalised arc-length (EEP) coordinate
+        # u∈[0,1], NOT at fixed initial mass. Each corner's track is resampled onto
+        # u_grid via its own arc-length parametrisation, so the main sequence aligns
+        # with the main sequence and the giant branch with the giant branch — the
+        # interpolated track varies smoothly with (age,[M/H]) instead of fanning.
+        c00 = corners[(age_lo, mh_lo)]   # (u, mass, cols)
         c10 = corners[(age_hi, mh_lo)]
         c01 = corners[(age_lo, mh_hi)]
         c11 = corners[(age_hi, mh_hi)]
+        u_grid = np.linspace(0.0, 1.0, self.n_mass_pts)
+
+        out: Dict[str, np.ndarray] = {}
         for b in self.bands:
-            v00 = np.interp(mass_grid, c00[0], c00[1][b])
-            v10 = np.interp(mass_grid, c10[0], c10[1][b])
-            v01 = np.interp(mass_grid, c01[0], c01[1][b])
-            v11 = np.interp(mass_grid, c11[0], c11[1][b])
+            v00 = np.interp(u_grid, c00[0], c00[2][b])
+            v10 = np.interp(u_grid, c10[0], c10[2][b])
+            v01 = np.interp(u_grid, c01[0], c01[2][b])
+            v11 = np.interp(u_grid, c11[0], c11[2][b])
             out[b] = w00 * v00 + w10 * v10 + w01 * v01 + w11 * v11
-        return out, mass_grid
+        m00 = np.interp(u_grid, c00[0], c00[1]); m10 = np.interp(u_grid, c10[0], c10[1])
+        m01 = np.interp(u_grid, c01[0], c01[1]); m11 = np.interp(u_grid, c11[0], c11[1])
+        mass_blended = w00 * m00 + w10 * m10 + w01 * m01 + w11 * m11
+        return out, mass_blended
 
     def _nearest(
         self, log_age: float, mh: float
@@ -403,7 +419,7 @@ class MultiBandIsochrone:
         hit = self._cache.get(key)
         if hit is None:
             return None, None
-        mass, cols = hit
+        _u, mass, cols = hit
         return {b: v.copy() for b, v in cols.items()}, mass.copy()
 
     def apparent(
