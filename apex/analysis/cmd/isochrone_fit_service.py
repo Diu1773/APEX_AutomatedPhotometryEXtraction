@@ -283,10 +283,13 @@ def fit_cluster_isochrone(
     bands_app, _mass = mb.apparent(float(median[0]), float(median[1]),
                                    float(median[2]), e_bv_med)
     if bands_app is not None:
-        iso_color = bands_app[b1] - bands_app[b2]
-        iso_mag = bands_app[mag_band]
-        order = np.argsort(iso_mag)
-        out.iso_color, out.iso_mag = iso_color[order], iso_mag[order]
+        # Keep the track in EVOLUTIONARY (initial-mass) order as returned by
+        # the interpolator. Do NOT sort by magnitude: the isochrone folds at the
+        # turn-off (and along the giant branch), so sorting by magnitude connects
+        # points across the fold and draws horizontal zig-zags instead of the
+        # real MS→turn-off→giant curve.
+        out.iso_color = bands_app[b1] - bands_app[b2]
+        out.iso_mag = bands_app[mag_band]
     out.obs_color, out.obs_mag = obs_c, obs_m
     out.color_label, out.mag_label = labels[0], mag_band
     ann = {"age_gyr": summary["age_gyr"], "mh": summary["metallicity"],
