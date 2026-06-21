@@ -344,6 +344,53 @@ but not orthogonal, so good u SNR is needed; and reddening still matters (R_u is
 large). PARSEC carries SDSS u, so APEX could fit ugri directly once u-band frames
 are available — this is the recommended path to a genuinely data-driven 4-D fit.
 
+### 10.5 Fresh re-execution of the photometry suspects (this-session evidence)
+
+The Step-4 detection / aperture-correction / recentering suspects were
+**re-tested directly on real M67 data** (not cited from prior runs), each with a
+distinct reasoning mode and adversarially verified:
+
+| Suspect | Mode | Direct test run | Result |
+|---|---|---:|---|
+| apcorr | deductive | per-frame scalar (forced_photometry.py:1059–1133); numerically demonstrated ZP cancellation | Δmag_std = **1.8×10⁻¹⁵** (machine ε) |
+| recentering | inductive | re-measured aperture flux at pre- vs post-recenter position, 6 real frames, 3982 stars | Δmag **−0.0001…−0.0004** (sub-mmag), slope −0.0003 mag/mag |
+| detection | abductive | APEX vs Gaia DR3 position residual vs mag & colour | colour-propagated bias **+0.0002 mag** |
+
+All three **ruled out** (each ≥1–2 orders of magnitude below the ~0.05–0.3 mag the
+rail needs). Two small, real residual risks were newly found and bounded:
+**(R1)** crowded-field faint-star drift in *globulars* (M5/M13, intensity-weighted
+centroid dragged toward neighbours; not present in open M67); **(R2)** the
+per-frame apcorr scalar does not cancel *exactly* once Step-10's colour term uses
+a multi-frame stacked instrumental colour, leaking ≤7×10⁻³ mag — both far below the
+rail threshold.
+
+**Decisive structural proof the rail is not photometry:** a **colour-only** fit
+(magnitude axis deleted) *still* rails metal-poor, and the **inter-colour
+covariance fix (§10.2 B, committed)** did not move the rail either. A photometric
+zero-point/aperture/recenter error is an additive magnitude offset; it cannot
+create a rail that survives deleting the magnitude axis.
+
+### 10.6 What actually works (decisive prior experiment)
+
+Running M67 with the **distance pinned by Gaia parallax** (members π=1.154 mas →
+(m−M)₀=9.69) and **reddening pinned by a dust-map prior** (E(B−V)≈0.04), with
+[M/H] left free:
+
+| Quantity | Recovered | Literature |
+|---|---:|---:|
+| Age | **3.99 Gyr** | 3.5–4.0 |
+| (m−M)₀ | **9.65** | 9.6–9.7 |
+| [M/H] | −0.20 | 0.0 |
+| acceptance | 0.24 | (healthy) |
+
+→ **Age and distance are recovered correctly** once the fundamental degeneracy is
+broken by external priors. [M/H] still lands ~0.2 dex metal-poor — partly the
+residual gri degeneracy, partly a residual magnitude-axis likelihood weakness (no
+selection/completeness term). Closing that last ~0.2 dex needs either a
+spectroscopic [M/H] prior, a Naylor–Jeffries τ² selection-aware likelihood, or
+u-band (§10.4). **Practical recipe: membership + parallax + reddening priors →
+reliable age & distance; add an [M/H] prior or u-band for metallicity.**
+
 ---
 
 ## 9. References (representative)
