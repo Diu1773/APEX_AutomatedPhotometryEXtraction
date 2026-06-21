@@ -26,7 +26,7 @@ from PyQt5.QtWidgets import (
     QVBoxLayout, QHBoxLayout, QPushButton, QLabel, QGroupBox, QMessageBox,
     QTextEdit, QFormLayout, QDoubleSpinBox, QComboBox,
     QCheckBox, QLineEdit, QWidget, QFileDialog, QProgressBar,
-    QApplication, QSlider,
+    QApplication, QSlider, QSpinBox,
     QTabWidget, QSizePolicy, QScrollArea, QFrame
 )
 from PyQt5.QtCore import Qt, QThread, pyqtSignal, QTimer
@@ -326,6 +326,37 @@ class GridScanWorker(QThread):
             )
             self.finished.emit(result)
         except Exception as e:
+            self.finished.emit(e)
+
+
+class McmcFitWorker(QThread):
+    """Background worker for the automatic MCMC isochrone fit (Bayesian).
+
+    Distinct from :class:`FitWorker` (the manual-seed grid/least-squares auto-fit):
+    this runs the full generative-mixture MCMC via the shared, Qt-free service
+    :func:`apex.analysis.cmd.isochrone_fit_service.fit_cluster_isochrone` and
+    returns posterior summary + paper-quality CMD/corner figures.
+    """
+
+    progress = pyqtSignal(float, str)
+    finished = pyqtSignal(object)  # IsochroneFitOutput or Exception
+
+    def __init__(self, df, config):
+        super().__init__()
+        self._df = df
+        self._config = config
+
+    def run(self):  # type: ignore[override]
+        try:
+            from apex.analysis.cmd.isochrone_fit_service import fit_cluster_isochrone
+            # make_figures=False: figures are built on the main (GUI) thread in the
+            # finished-slot, because Matplotlib/pyplot is not thread-safe.
+            out = fit_cluster_isochrone(
+                self._df, self._config, make_figures=False,
+                progress_cb=lambda f, m: self.progress.emit(float(f), str(m)),
+            )
+            self.finished.emit(out)
+        except Exception as e:  # pragma: no cover - surfaced in the GUI
             self.finished.emit(e)
 
 
@@ -1218,6 +1249,9 @@ class IsochroneModelWindow(StepWindowBase):
         fit_scroll.setWidget(fit_tab)
         self.auto_fit_tab_index = self.tabs.addTab(fit_scroll, "Auto Fit")
 
+        # --- Tab: Auto-fit (MCMC) — Bayesian, paper-quality figures ---
+        self._build_mcmc_autofit_tab()
+
         # --- Tab 2: CMD Viewer (default tab) ---
         # Wrap in QScrollArea — the embedded viewer needs ~560px of
         # vertical room for toolbar + canvas + slider row; on a 900px
@@ -1467,6 +1501,281 @@ class IsochroneModelWindow(StepWindowBase):
         if not iso_path:
             iso_path = str(getattr(self.params.P, "iso_file_path", ""))
         return iso_path
+
+    # ===================================================================
+    # Auto-fit (MCMC) tab — Bayesian fit + paper-quality figures
+    # ===================================================================
+    def _build_mcmc_autofit_tab(self):
+        """Build the 'Auto-fit (MCMC)' tab (separate from the manual fit tab)."""
+        tab = QWidget()
+        outer = QVBoxLayout(tab)
+        outer.setContentsMargins(6, 6, 6, 6)
+
+        intro = QLabel(
+            "Automatic Bayesian isochrone fit (generative-mixture MCMC). Produces "
+            "paper-quality CMD + corner figures. Use external priors (Gaia parallax "
+            "distance, reddening map, spectroscopic [M/H]) — the gri colors are "
+            "degenerate, so priors are how 4D fitting is made reliable (see docs §10)."
+        )
+        intro.setWordWrap(True)
+        intro.setStyleSheet("QLabel { color: #455A64; font-size: 9pt; }")
+        outer.addWidget(intro)
+
+        controls = QHBoxLayout()
+
+        # -- data / sampler options --
+        opt_group = QGroupBox("Fit options")
+        opt_form = QFormLayout(opt_group)
+        self.mcmc_membership_chk = QCheckBox("Gaia PM+parallax membership filter")
+        self.mcmc_membership_chk.setChecked(True)
+        opt_form.addRow(self.mcmc_membership_chk)
+        self.mcmc_multicolor_chk = QCheckBox("Two colors (4D, needs 3+ bands)")
+        opt_form.addRow(self.mcmc_multicolor_chk)
+        self.mcmc_walkers_spin = QSpinBox(); self.mcmc_walkers_spin.setRange(8, 256)
+        self.mcmc_walkers_spin.setValue(32)
+        opt_form.addRow("walkers:", self.mcmc_walkers_spin)
+        self.mcmc_steps_spin = QSpinBox(); self.mcmc_steps_spin.setRange(200, 20000)
+        self.mcmc_steps_spin.setSingleStep(200); self.mcmc_steps_spin.setValue(2000)
+        opt_form.addRow("steps:", self.mcmc_steps_spin)
+        self.mcmc_burn_spin = QSpinBox(); self.mcmc_burn_spin.setRange(50, 5000)
+        self.mcmc_burn_spin.setSingleStep(100); self.mcmc_burn_spin.setValue(600)
+        opt_form.addRow("burn-in:", self.mcmc_burn_spin)
+        self.mcmc_maxstars_spin = QSpinBox(); self.mcmc_maxstars_spin.setRange(50, 5000)
+        self.mcmc_maxstars_spin.setSingleStep(50); self.mcmc_maxstars_spin.setValue(500)
+        opt_form.addRow("max stars:", self.mcmc_maxstars_spin)
+        controls.addWidget(opt_group)
+
+        # -- priors (Gaussian; tiny sigma == fixed) --
+        prior_group = QGroupBox("External priors (Gaussian: mean ± σ; small σ ≈ fixed)")
+        prior_form = QFormLayout(prior_group)
+
+        self.mcmc_mh_prior_chk = QCheckBox("[M/H] prior")
+        mh_row = QHBoxLayout()
+        self.mcmc_mh_mean = QDoubleSpinBox(); self.mcmc_mh_mean.setRange(-2.5, 1.0)
+        self.mcmc_mh_mean.setDecimals(3); self.mcmc_mh_mean.setSingleStep(0.05)
+        self.mcmc_mh_sigma = QDoubleSpinBox(); self.mcmc_mh_sigma.setRange(0.001, 1.0)
+        self.mcmc_mh_sigma.setDecimals(3); self.mcmc_mh_sigma.setSingleStep(0.01)
+        self.mcmc_mh_sigma.setValue(0.10)
+        mh_row.addWidget(QLabel("μ")); mh_row.addWidget(self.mcmc_mh_mean)
+        mh_row.addWidget(QLabel("σ")); mh_row.addWidget(self.mcmc_mh_sigma)
+        prior_form.addRow(self.mcmc_mh_prior_chk, self._wrap(mh_row))
+
+        self.mcmc_ebv_prior_chk = QCheckBox("E(B−V) prior")
+        ebv_row = QHBoxLayout()
+        self.mcmc_ebv_mean = QDoubleSpinBox(); self.mcmc_ebv_mean.setRange(0.0, 3.0)
+        self.mcmc_ebv_mean.setDecimals(3); self.mcmc_ebv_mean.setSingleStep(0.01)
+        self.mcmc_ebv_sigma = QDoubleSpinBox(); self.mcmc_ebv_sigma.setRange(0.001, 1.0)
+        self.mcmc_ebv_sigma.setDecimals(3); self.mcmc_ebv_sigma.setSingleStep(0.01)
+        self.mcmc_ebv_sigma.setValue(0.02)
+        ebv_row.addWidget(QLabel("μ")); ebv_row.addWidget(self.mcmc_ebv_mean)
+        ebv_row.addWidget(QLabel("σ")); ebv_row.addWidget(self.mcmc_ebv_sigma)
+        prior_form.addRow(self.mcmc_ebv_prior_chk, self._wrap(ebv_row))
+
+        hint = QLabel("Gaia parallax → (m−M)₀ is set from the membership clump when available.")
+        hint.setStyleSheet("QLabel { color: #607D8B; font-size: 8pt; }")
+        hint.setWordWrap(True)
+        prior_form.addRow(hint)
+        controls.addWidget(prior_group)
+        outer.addLayout(controls)
+
+        # -- run row --
+        run_row = QHBoxLayout()
+        self.btn_run_mcmc = QPushButton("Run MCMC Auto-Fit")
+        self.btn_run_mcmc.setStyleSheet(
+            "QPushButton { background-color: #6A1B9A; color: white; font-weight: bold; padding: 8px 16px; border-radius: 4px; }"
+            "QPushButton:hover { background-color: #4A148C; }"
+        )
+        self.btn_run_mcmc.clicked.connect(self._run_mcmc_autofit)
+        run_row.addWidget(self.btn_run_mcmc)
+        self.btn_save_mcmc = QPushButton("Save Figures")
+        self.btn_save_mcmc.setEnabled(False)
+        self.btn_save_mcmc.clicked.connect(self._save_mcmc_figures)
+        run_row.addWidget(self.btn_save_mcmc)
+        self.mcmc_progress = QProgressBar(); self.mcmc_progress.setRange(0, 100)
+        run_row.addWidget(self.mcmc_progress, stretch=1)
+        outer.addLayout(run_row)
+
+        self.mcmc_status = QLabel("")
+        self.mcmc_status.setStyleSheet("QLabel { color: #333; font-weight: bold; }")
+        outer.addWidget(self.mcmc_status)
+
+        # -- results: summary + figures in a scroll area --
+        self.mcmc_summary = QTextEdit(); self.mcmc_summary.setReadOnly(True)
+        self.mcmc_summary.setMaximumHeight(120)
+        outer.addWidget(self.mcmc_summary)
+
+        fig_scroll = QScrollArea(); fig_scroll.setWidgetResizable(True)
+        fig_holder = QWidget()
+        self.mcmc_fig_layout = QVBoxLayout(fig_holder)
+        fig_scroll.setWidget(fig_holder)
+        outer.addWidget(fig_scroll, stretch=1)
+
+        self._mcmc_worker = None
+        self._mcmc_last_output = None
+        self.mcmc_tab_index = self.tabs.addTab(tab, "Auto-fit (MCMC)")
+
+    @staticmethod
+    def _wrap(layout):
+        """Wrap a layout in a QWidget (for QFormLayout rows)."""
+        w = QWidget(); w.setLayout(layout); return w
+
+    def _mcmc_pick_colors(self, bc, df):
+        """Return the list of color pairs for the fit (1 or 2 colors)."""
+        b1, b2 = bc["band_color"]
+        colors = [(b1, b2)]
+        if self.mcmc_multicolor_chk.isChecked():
+            order = ["u", "g", "r", "i", "z", "U", "B", "V", "R", "I"]
+            present = [b for b in order if f"mag_std_{b}" in df.columns]
+            if b2 in present:
+                nxt = present[present.index(b2) + 1:]
+                if nxt:
+                    colors.append((b2, nxt[0]))
+        return colors
+
+    def _run_mcmc_autofit(self):
+        if self._mcmc_worker is not None and self._mcmc_worker.isRunning():
+            return
+        bc = self._get_band_config()
+        if not self._require_iso_config(bc):
+            return
+        df, iso_raw, iso_file = self._load_cmd_and_iso_data(show_error=True)
+        if df is None:
+            return
+        try:
+            from apex.analysis.cmd.isochrone_fit_service import IsochroneFitConfig
+        except Exception as exc:
+            QMessageBox.critical(self, "Error", f"Fit service unavailable: {exc}")
+            return
+
+        mag_band = bc["band_mag"]
+        colors = self._mcmc_pick_colors(bc, df)
+        if self.mcmc_multicolor_chk.isChecked() and len(colors) < 2:
+            QMessageBox.warning(self, "Two colors",
+                                "Need a redder band than the color to add a 2nd color; "
+                                "running single-color instead.")
+        b1, b2 = colors[0]
+        r_color = EXTINCTION_R.get(b1, 3.303) - EXTINCTION_R.get(b2, 2.285)
+        bounds = self._get_fit_bounds()
+
+        mh_prior = None
+        if self.mcmc_mh_prior_chk.isChecked():
+            mh_prior = (self.mcmc_mh_mean.value(), max(self.mcmc_mh_sigma.value(), 1e-3))
+        ecolor_prior = None
+        if self.mcmc_ebv_prior_chk.isChecked():
+            # convert E(B-V) prior into E(color)=E(B-V)*(R_b1-R_b2)
+            ecolor_prior = (self.mcmc_ebv_mean.value() * r_color,
+                            max(self.mcmc_ebv_sigma.value() * abs(r_color), 1e-3))
+
+        cfg = IsochroneFitConfig(
+            colors=colors, mag_band=mag_band, iso_file=Path(iso_file),
+            age_bounds=tuple(bounds.log_age), mh_bounds=tuple(bounds.metallicity),
+            dm_bounds=tuple(bounds.distance_mod), ecolor_bounds=tuple(bounds.extinction_gr),
+            mh_prior=mh_prior, ecolor_prior=ecolor_prior,
+            use_membership=self.mcmc_membership_chk.isChecked(),
+            max_stars=self.mcmc_maxstars_spin.value(),
+            n_walkers=self.mcmc_walkers_spin.value(),
+            n_steps=self.mcmc_steps_spin.value(),
+            n_burn=self.mcmc_burn_spin.value(),
+        )
+
+        self.btn_run_mcmc.setEnabled(False)
+        self.btn_save_mcmc.setEnabled(False)
+        self.mcmc_progress.setValue(0)
+        self.mcmc_status.setText("Starting…")
+        self.log(f"[MCMC] auto-fit colors={colors} mag={mag_band} membership={cfg.use_membership}")
+        self._mcmc_worker = McmcFitWorker(df, cfg)
+        self._mcmc_worker.progress.connect(self._on_mcmc_progress)
+        self._mcmc_worker.finished.connect(self._on_mcmc_autofit_done)
+        self._mcmc_worker.start()
+
+    def _on_mcmc_progress(self, frac, msg):
+        self.mcmc_progress.setValue(int(max(0.0, min(1.0, frac)) * 100))
+        self.mcmc_status.setText(str(msg))
+
+    def _on_mcmc_autofit_done(self, out):
+        self.btn_run_mcmc.setEnabled(True)
+        if isinstance(out, Exception):
+            self.mcmc_status.setText(f"Failed: {out}")
+            self.log(f"[MCMC] failed: {out}")
+            QMessageBox.critical(self, "MCMC fit failed", str(out))
+            return
+        self._mcmc_last_output = out
+        self.mcmc_progress.setValue(100)
+        s = out.summary
+
+        def fmt(key, scale=1.0, name=None):
+            p = s.get(key)
+            if not p:
+                return ""
+            med, lo, hi = p[1] * scale, p[0] * scale, p[2] * scale
+            return f"{name or key} = {med:.3f} (+{hi - med:.3f} / −{med - lo:.3f})\n"
+
+        txt = ""
+        txt += fmt("age_gyr", name="Age [Gyr]")
+        txt += fmt("metallicity", name="[M/H]")
+        txt += fmt("distance_mod", name="(m−M)₀")
+        if s.get("e_bv"):
+            txt += fmt("e_bv", name="E(B−V)")
+        txt += f"acceptance = {s['acceptance_fraction']:.3f}   converged = {s['convergence_ok']}\n"
+        mm = out.member_meta
+        if mm.get("applied"):
+            txt += f"members = {mm.get('n_members')} (PM {mm.get('pm_center')}, π {mm.get('parallax_center')})\n"
+        txt += f"fit stars = {out.n_stars}\n"
+        for w in out.warnings:
+            txt += f"⚠ {w}\n"
+        self.mcmc_summary.setPlainText(txt)
+        self.mcmc_status.setText("Done" + (" (not converged — see warnings)" if not s["convergence_ok"] else ""))
+
+        # Build the figures here, on the main thread (pyplot is not thread-safe).
+        from apex.analysis.cmd import isochrone_plots as P
+        import numpy as _np
+        self._mcmc_cmd_fig = None
+        self._mcmc_corner_fig = None
+        try:
+            if out.obs_color is not None and out.iso_color is not None:
+                self._mcmc_cmd_fig = P.cmd_figure(
+                    out.obs_color, out.obs_mag, out.iso_color, out.iso_mag,
+                    color_label=out.color_label or "color", mag_label=out.mag_label or "mag",
+                    title="Auto isochrone fit", annotations=out.annotations or None,
+                )
+            r = out.result
+            if getattr(r, "flat_chain", None) is not None and getattr(r, "labels", None):
+                self._mcmc_corner_fig = P.corner_figure(r.flat_chain, list(r.labels))
+        except Exception as exc:
+            self.log(f"[MCMC] figure render failed: {exc}")
+
+        while self.mcmc_fig_layout.count():
+            item = self.mcmc_fig_layout.takeAt(0)
+            w = item.widget()
+            if w is not None:
+                w.setParent(None)
+        if self._mcmc_cmd_fig is not None:
+            self.mcmc_fig_layout.addWidget(FigureCanvas(self._mcmc_cmd_fig))
+        if self._mcmc_corner_fig is not None:
+            self.mcmc_fig_layout.addWidget(FigureCanvas(self._mcmc_corner_fig))
+        self.btn_save_mcmc.setEnabled(self._mcmc_cmd_fig is not None)
+        self.log(f"[MCMC] done: age={s.get('age_gyr',[None,'?'])[1]} [M/H]={s.get('metallicity',[None,'?'])[1]} acc={s['acceptance_fraction']:.2f}")
+
+    def _save_mcmc_figures(self):
+        cmd_fig = getattr(self, "_mcmc_cmd_fig", None)
+        corner_fig = getattr(self, "_mcmc_corner_fig", None)
+        if cmd_fig is None and corner_fig is None:
+            return
+        try:
+            outdir = Path(step12_iso_dir(self.params.P.result_dir))
+        except Exception:
+            outdir = Path(self.params.P.result_dir)
+        outdir.mkdir(parents=True, exist_ok=True)
+        saved = []
+        # savefig directly (do NOT close — the figures are live in the canvases).
+        if cmd_fig is not None:
+            p = outdir / "mcmc_cmd_isochrone.png"
+            cmd_fig.savefig(p, dpi=160, bbox_inches="tight"); saved.append(p)
+        if corner_fig is not None:
+            p = outdir / "mcmc_corner.png"
+            corner_fig.savefig(p, dpi=130, bbox_inches="tight"); saved.append(p)
+        QMessageBox.information(self, "Saved", "Saved:\n" + "\n".join(str(p) for p in saved))
+        self.log(f"[MCMC] figures saved to {outdir}")
 
     def _get_band_config(self):
         """Return current band selection. Iso/R values are ``None`` for unsupported filters.

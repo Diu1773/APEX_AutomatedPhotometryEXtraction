@@ -54,14 +54,27 @@ class IsochroneFitConfig:
 
 @dataclass
 class IsochroneFitOutput:
-    """Everything the GUI needs to render and persist a fit."""
+    """Everything the GUI needs to render and persist a fit.
+
+    The plot *data* (obs/iso arrays, chain) is always populated so a caller can
+    build the figures on the main thread (Matplotlib/pyplot is not thread-safe).
+    ``cmd_figure``/``corner_figure`` are only filled when ``make_figures=True``.
+    """
 
     result: Any                             # McmcResult
     summary: Dict[str, Any]
     member_meta: Dict[str, Any]
     n_stars: int
-    cmd_figure: Any = None                  # Matplotlib Figure
-    corner_figure: Any = None               # Matplotlib Figure
+    # Plot data (always populated) so figures can be built on the main thread.
+    obs_color: Any = None                   # np.ndarray (colour 0)
+    obs_mag: Any = None                     # np.ndarray (magnitude axis)
+    iso_color: Any = None                   # np.ndarray (best-fit track, colour 0)
+    iso_mag: Any = None                     # np.ndarray (best-fit track, magnitude)
+    color_label: str = ""
+    mag_label: str = ""
+    annotations: Dict[str, Any] = field(default_factory=dict)
+    cmd_figure: Any = None                  # Matplotlib Figure (if make_figures)
+    corner_figure: Any = None               # Matplotlib Figure (if make_figures)
     warnings: List[str] = field(default_factory=list)
 
 
@@ -213,33 +226,37 @@ def fit_cluster_isochrone(
         warnings=warnings,
     )
 
+    # Always compute the best-fit track + annotations as plain arrays/dicts so the
+    # caller can render figures on the main thread (pyplot is not thread-safe).
+    median = result.median_theta if result.median_theta is not None else [
+        result.log_age_med, result.mh_med, result.dm_med, result.e_color_med]
+    e_bv_med = float(median[3]) / R_color if R_color else float(median[3])
+    bands_app, _mass = mb.apparent(float(median[0]), float(median[1]),
+                                   float(median[2]), e_bv_med)
+    if bands_app is not None:
+        iso_color = bands_app[b1] - bands_app[b2]
+        iso_mag = bands_app[mag_band]
+        order = np.argsort(iso_mag)
+        out.iso_color, out.iso_mag = iso_color[order], iso_mag[order]
+    out.obs_color, out.obs_mag = obs_c, obs_m
+    out.color_label, out.mag_label = labels[0], mag_band
+    ann = {"age_gyr": summary["age_gyr"], "mh": summary["metallicity"],
+           "dm": summary["distance_mod"]}
+    if summary.get("e_bv"):
+        ann["e_bv"] = summary["e_bv"]
+    out.annotations = ann
+
     if make_figures:
         _say(0.9, "Rendering figures")
         from apex.analysis.cmd import isochrone_plots as P
 
-        bands_app, mass = mb.apparent(*result.median_theta[:2],
-                                      float(result.median_theta[2]),
-                                      float(result.median_theta[3]) / R_color
-                                      if R_color else float(result.median_theta[3]))
-        iso_color = iso_mag = None
-        if bands_app is not None:
-            iso_color = bands_app[b1] - bands_app[b2]
-            iso_mag = bands_app[mag_band]
-            order = np.argsort(iso_mag)
-            iso_color, iso_mag = iso_color[order], iso_mag[order]
-        ann = {
-            "age_gyr": summary["age_gyr"], "mh": summary["metallicity"],
-            "dm": summary["distance_mod"],
-        }
-        if summary.get("e_bv"):
-            ann["e_bv"] = summary["e_bv"]
         out.cmd_figure = P.cmd_figure(
-            obs_c, obs_m,
-            iso_color if iso_color is not None else np.array([]),
-            iso_mag if iso_mag is not None else np.array([]),
-            color_label=labels[0], mag_label=mag_band,
+            out.obs_color, out.obs_mag,
+            out.iso_color if out.iso_color is not None else np.array([]),
+            out.iso_mag if out.iso_mag is not None else np.array([]),
+            color_label=out.color_label, mag_label=out.mag_label,
             title=f"Auto isochrone fit ({'+'.join(labels[:-1])})",
-            annotations=ann,
+            annotations=out.annotations,
         )
         if result.flat_chain is not None and result.labels is not None:
             out.corner_figure = P.corner_figure(result.flat_chain, list(result.labels))
