@@ -228,6 +228,7 @@ class CmdHyper:
     mh_prior: Optional[Tuple[float, float]] = None
     e_color_prior: Optional[Tuple[float, float]] = None
     dm_prior: Optional[Tuple[float, float]] = None   # Gaussian (mean, sigma), e.g. Gaia parallax
+    obs_weights: Optional[np.ndarray] = None   # per-star likelihood weight (turn-off emphasis)
 
 
 def _compute_field_log_density(obs_c: np.ndarray, obs_m: np.ndarray) -> float:
@@ -465,6 +466,7 @@ class CmdHyperMC:
     mh_prior: Optional[Tuple[float, float]] = None
     e_color_prior: Optional[Tuple[float, float]] = None
     dm_prior: Optional[Tuple[float, float]] = None   # Gaussian (mean, sigma), e.g. Gaia parallax
+    obs_weights: Optional[np.ndarray] = None   # per-star likelihood weight (turn-off emphasis)
 
 
 def _gaussian_mixture_density_nd(
@@ -611,6 +613,7 @@ def cmd_loglike_multicolor(
     imf_fn: ImfFn,
     hyper: CmdHyperMC,
     f_bin_override: Optional[float] = None,
+    obs_weights: Optional[np.ndarray] = None,
 ) -> float:
     """Multi-colour generative log-likelihood (mirrors :func:`cmd_loglike`).
 
@@ -693,7 +696,17 @@ def cmd_loglike_multicolor(
     l_i = (1.0 - f_field) * member + f_field * l_field
 
     l_i = np.where(np.isfinite(l_i) & (l_i > 0), l_i, 0.0)
-    loglike = float(np.sum(np.log(l_i + _TINY)))
+    logterms = np.log(l_i + _TINY)
+    if obs_weights is None:
+        obs_weights = getattr(hyper, "obs_weights", None)
+    if obs_weights is not None:
+        # Per-star weighting. Used to balance the CMD by magnitude density so the
+        # densely-populated, age-insensitive faint main sequence does not swamp the
+        # sparse but age-defining turn-off / sub-giant / giant region (a Hess-diagram
+        # style equalisation; see hyper.obs_weights / fit service).
+        loglike = float(np.sum(np.asarray(obs_weights, dtype=float) * logterms))
+    else:
+        loglike = float(np.sum(logterms))
     if not np.isfinite(loglike):
         return -np.inf
     return loglike
@@ -1178,6 +1191,7 @@ def fit_isochrone_mcmc(
     multiband_iso: Optional[MultiBandIsochrone] = None,
     obs_multicolor: Optional[np.ndarray] = None,
     err_multicolor: Optional[np.ndarray] = None,
+    obs_weights: Optional[np.ndarray] = None,
 ) -> McmcResult:
     """Sample the isochrone posterior with emcee and return credible intervals.
 
@@ -1230,6 +1244,9 @@ def fit_isochrone_mcmc(
         if obs_mc.shape[0] < _MIN_ISO_POINTS:
             raise ValueError("Too few finite stars to run multi-colour MCMC")
         err_mc = np.clip(err_mc, 1e-3, None)
+        ow_mc = None
+        if obs_weights is not None:
+            ow_mc = np.asarray(obs_weights, dtype=float)[finite]
 
         # E(colour) is on the first colour; convert to E(B-V) via that colour's
         # (R_b1 - R_b2) so all bands redden consistently.
@@ -1253,6 +1270,7 @@ def fit_isochrone_mcmc(
             mh_prior=mh_prior,
             e_color_prior=e_color_prior,
             dm_prior=dm_prior,
+            obs_weights=ow_mc,
         )
     else:
         obs_c = np.asarray(obs_c, dtype=float)

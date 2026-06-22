@@ -208,7 +208,7 @@ def fit_cluster_isochrone(
     # Gyr; pinning dm only leaves age/E trading off, age drifts young).
     ec_lo, ec_hi = config.ecolor_bounds
     if config.ecolor_prior is not None:
-        ec_c, ec_w = float(config.ecolor_prior[0]), max(2.5 * float(config.ecolor_prior[1]), 0.010)
+        ec_c, ec_w = float(config.ecolor_prior[0]), max(2.0 * float(config.ecolor_prior[1]), 0.008)
         ec_lo, ec_hi = max(ec_lo, ec_c - ec_w), min(ec_hi, ec_c + ec_w)
 
     # [M/H] constraint: a soft Gaussian (±few logL) is overridden by a confident
@@ -218,7 +218,7 @@ def fit_cluster_isochrone(
     # value pins [M/H] hard while a loose 'assumed solar' stays broad.
     mh_lo, mh_hi = config.mh_bounds
     if config.mh_prior is not None:
-        mh_c, mh_w = float(config.mh_prior[0]), max(2.5 * float(config.mh_prior[1]), 0.05)
+        mh_c, mh_w = float(config.mh_prior[0]), max(2.0 * float(config.mh_prior[1]), 0.04)
         mh_lo, mh_hi = max(mh_lo, mh_c - mh_w), min(mh_hi, mh_c + mh_w)
 
     bounds = FitBounds(
