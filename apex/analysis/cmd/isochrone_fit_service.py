@@ -347,7 +347,7 @@ def fit_cluster_isochrone(
             if len(inrange) and len(crossed):
                 to_idx = int(inrange[int(np.nanargmin(ic[inrange]))])
                 cut = int(crossed[0])
-                if cut > to_idx and cut >= _MIN_ISO_POINTS:
+                if cut > to_idx and cut >= 5:
                     out.iso_color, out.iso_mag = ic[:cut], im[:cut]
     except Exception:
         pass
