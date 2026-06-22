@@ -412,6 +412,50 @@ compounded by the small per-band ZP colour-system offset, §10.5 R2), not a fixa
 luminosity-function/selection bug. It is closed only by a spectroscopic [M/H] prior (GUI
 ``--mh-prior``) or by adding u-band (§10.4).
 
+### 10.8 EEP interpolation fix + multi-cluster age validation (2026-06-22)
+
+The single biggest *age* error was an interpolation artefact, found by running real
+clusters with clear turn-offs (M67, NGC 6811, M37) end to end rather than synthetic data.
+
+**Root cause (fixed, commit `a5ebdd1`).** `MultiBandIsochrone` blended the four
+(age, [M/H]) grid corners at a **fixed initial mass**. PARSEC isochrones are
+EEP-parametrised, so the same initial mass is a *different* evolutionary phase at
+different ages; mass-blending interleaved phases → a jagged interpolated track → a
+**bumpy age likelihood with spurious spikes at grid ages**. The fit then landed on a
+random spike (NGC 6811 gave 1.1 / 1.6 / 2.4 Gyr across runs). The fix resamples each
+corner onto a common **normalised arc-length (EEP) coordinate** before blending, so the
+main sequence aligns with the main sequence and giants with giants. Effect: the NGC 6811
+age likelihood (dm/[M/H]/E at literature) went from a spurious 1.6 Gyr spike to a clean
+**1.0 Gyr peak**, and ages became **reproducible across seeds** (the headline win).
+
+**Multi-cluster validation** (EEP + Gaia-parallax dm + reddening & [M/H] priors, hard
+bound-window tightened to 2.0σ, commit `5b32567`; mean of 2 seeds):
+
+| cluster   | filters | recovered age | literature | note |
+|-----------|---------|---------------|------------|------|
+| NGC 6811  | BVR     | 0.83 Gyr      | ~1.0       | [M/H] drifts to +0.10 within prior → slightly young |
+| M67       | gri     | 3.15 Gyr      | 3.5–4.0    | faint-MS dilution caps full-sample age; see below |
+| M37       | gri     | 0.72 Gyr      | 0.4–0.5    | strong differential reddening broadens the CMD |
+
+Seed-to-seed scatter is now ≤0.05 Gyr (was ~1 Gyr). The residual offsets are
+**astrophysical/degeneracy limits, not bugs**: the secondary parameters ([M/H], E, dm)
+drift within their priors and the age follows; M37 has real differential reddening.
+
+**Why M67 caps at ~3.1 Gyr (full sample).** The dense, age-insensitive **faint main
+sequence** dominates the star count and dilutes the age constraint, which lives in the
+sparse turn-off / sub-giant / giant region. With dm/[M/H]/E pinned at literature, an
+age scan over the **full sample peaks at 3.0 Gyr**, but over a **turn-off-only**
+subsample peaks at **4.0 Gyr** (M37 likewise sharpens). A per-star likelihood weight
+(`obs_weights`, a generic hook now in `cmd_loglike_multicolor`) that down-weights the
+faint MS was tested: it recovers M67 = 4.0 **only when dm/[M/H]/E are all pinned at the
+canonical values**; in a realistic parallax-dm fit the secondary parameters drift and
+the gain collapses to 3.15 → 3.23. It is therefore **not shipped as a feature** — the
+honest automatic broadband age for M67 is ~3.1 Gyr, ~15 % below the canonical 3.5–4.0
+because the turn-off carries too little weight in a full-CMD generative likelihood.
+Closing that gap properly needs a completeness-aware likelihood (a real magnitude-
+completeness model, not the box=data τ² already rejected in §10.7), which remains open
+work. Evidence: `validation/_scratch/age_grid.py` + `age_grid_result.json`.
+
 ---
 
 ## 9. References (representative)
