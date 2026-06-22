@@ -431,12 +431,20 @@ age likelihood (dm/[M/H]/E at literature) went from a spurious 1.6 Gyr spike to 
 **Multi-cluster validation** (EEP + Gaia-parallax dm + reddening & [M/H] priors, hard
 bound-window tightened to 2.0σ, commit `5b32567`; mean of 2 seeds):
 
-| cluster   | filters | recovered age | literature | note |
-|-----------|---------|---------------|------------|------|
-| NGC 6811  | BVR     | 0.83 Gyr      | ~1.0       | [M/H] drifts to +0.10 within prior → slightly young |
-| M67       | gri     | 3.15 Gyr      | 3.5–4.0    | faint-MS dilution caps full-sample age; see below |
-| M37       | gri     | 0.72 Gyr      | 0.4–0.5    | strong differential reddening broadens the CMD |
+| cluster   | filters | recovered age | literature | recovered [M/H] | note |
+|-----------|---------|---------------|------------|-----------------|------|
+| NGC 457   | gri     | ~0.009 Gyr    | ~0.02      | +0.18           | very young: near-vertical MS, no turn-off/giants, pre-MS unmodelled, n≈49 — weakly constrained |
+| M37       | gri     | 0.72 Gyr      | 0.4–0.5    | +0.05           | strong differential reddening broadens the CMD |
+| NGC 6811  | BVR     | 0.83 Gyr      | ~1.0       | +0.09           | [M/H] drifts to +0.10 within prior → slightly young |
+| M67       | gri     | 3.15 Gyr      | 3.5–4.0    | −0.05           | faint-MS dilution caps full-sample age; see below |
+| M5        | gri     | ~13.3 Gyr     | 11–12.5    | **−1.35** (lit −1.29) | globular: heavy field contamination, crowded photometry (task #15), E drifts → age old-edge |
+| M13       | gri     | ~13.3 Gyr     | 12–13      | **−1.58** (lit −1.53) | globular: no parallax for membership; [M/H] recovered accurately |
 
+The fix therefore generalises across the **full span — 9 Myr to 13 Gyr, [M/H] −1.6 to +0.2**.
+Precision is best for intermediate-age open clusters with a clear turn-off and giant
+branch; globulars recover [M/H] accurately but the age sits at the old edge (field
+contamination + crowded-field photometry + the E–age degeneracy), and very young
+clusters are weakly constrained (no turn-off/giants, pre-MS not modelled).
 Seed-to-seed scatter is now ≤0.05 Gyr (was ~1 Gyr). The residual offsets are
 **astrophysical/degeneracy limits, not bugs**: the secondary parameters ([M/H], E, dm)
 drift within their priors and the age follows; M37 has real differential reddening.
