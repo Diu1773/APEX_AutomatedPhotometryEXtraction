@@ -464,6 +464,48 @@ Closing that gap properly needs a completeness-aware likelihood (a real magnitud
 completeness model, not the box=data τ² already rejected in §10.7), which remains open
 work. Evidence: `validation/_scratch/age_grid.py` + `age_grid_result.json`.
 
+### 10.9 Does a blue band (u/U) break the limit? — real-data + synthetic test (2026-06-23)
+
+The natural question after §10.4: is the gri/BVR [M/H]–reddening degeneracy the *real*
+limit, or does a blue band (SDSS u / Johnson U) break it on actual data? Tested against
+real **Gaia DR3 synthetic photometry (GSPC)** — which gives ugriz + UBVRI for the *same*
+stars — and against synthetic clusters spanning every regime. All fits are **free 4-D
+(no priors)** so the result reflects the *filters*, not the priors.
+
+**Real M67 (Gaia GSPC, PM+parallax members, free 4-D):**
+- **gri only → [M/H] = −0.50** (M67 is solar, [Fe/H]=0!), E(B−V) = 0.128 (lit 0.04) — the
+  exact metal-poor RAIL of §10.2, reproduced on real data with no APEX systematics.
+- GSPC is bright-only (g 9.8–16) = turn-off-sampled **without** the deep faint MS, so here
+  gri still gets the **age** right (3.88 Gyr) while our *deep* gri caps at 3.1 — independent
+  confirmation that the age cap is **faint-MS dilution (§10.8), not the filters**.
+
+**Synthetic, free 4-D, matched to each cluster's (age,[M/H],dm,E):**
+
+| regime              | gri [M/H]      | ugri [M/H]     | truth | gri E | ugri E (truth) |
+|---------------------|----------------|----------------|-------|-------|----------------|
+| NGC 6811-like 1 Gyr | +0.10 (±0.15)  | +0.05 (±0.04)  | +0.04 | 0.062 | 0.056 (0.060)  |
+| M37-like 0.5 Gyr    | +0.07 (±0.05)  | +0.05 (±0.02)  | 0.00  | 0.281 | 0.289 (0.230)  |
+| M67-like 4 Gyr      | −0.11          | −0.05          | 0.00  | 0.042 | 0.050 (0.040)  |
+| M5-like 12 Gyr      | −1.35 (±0.04)  | −1.26 (±0.01)  | −1.30 | 0.045 | 0.031 (0.030)  |
+| M13-like 12 Gyr     | −1.50          | −1.52          | −1.50 | 0.018 | 0.013 (0.020)  |
+
+Adding u **tightens the [M/H] posterior up to ~4×** (NGC 6811 ±0.15 → ±0.04) and removes
+the gri [M/H]/E bias across young→old and solar→metal-poor. In a clean free-4-D synthetic
+it removes the gri (age, E, dm) drift **entirely** (1.13/0.185/10.28 → 1.00/0.149/10.00 for
+truth 1.00/0.150/10.00).
+
+**Conclusion — two separate limits, two separate cures:**
+1. **[M/H] / reddening rail** = the gri/BVR colour degeneracy → **cured by one blue band
+   (u/U)**, no prior needed. Confirmed on real M67 (gri rails [M/H], a u frame fixes it).
+   The GUI Auto-fit (MCMC) tab already supports u and warns when no blue colour is present.
+2. **Broadband AGE offset** (M67 3.1 vs 4) = faint-MS dilution (depth/likelihood), **not** a
+   filter issue → needs turn-off-weighted / completeness-aware fitting (GSPC's bright,
+   turn-off-sampled set already gives 3.88). **u-band does not fix this.**
+
+ML/DL is unnecessary for either: the degeneracy is information-limited (one u frame beats
+any model), and the dilution is a likelihood-design fix. Evidence:
+`validation/_scratch/uband_regimes.py`, `gspc_fit.py`, `uband_test.py`.
+
 ---
 
 ## 9. References (representative)
