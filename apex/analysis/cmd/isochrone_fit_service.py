@@ -322,6 +322,35 @@ def fit_cluster_isochrone(
         out.obs_color, out.obs_mag = dcol[dfin], dvm[dfin]
     except Exception:
         out.obs_color, out.obs_mag = obs_c, obs_m
+    # Truncate the displayed isochrone just above the brightest observed member.
+    # The post-turn-off EEP blocks (thermal-pulse AGB, post-AGB → WD) oscillate
+    # wildly in colour and, for young isochrones, dip back into the plotted
+    # magnitude range as a tangle, while representing a negligible, essentially
+    # unobserved population. Keep the EEP sequence from the faint MS up to the first
+    # point that climbs ~0.5 mag brighter than the brightest member, then stop — so
+    # the overlay is one clean MS→turn-off→(sub)giant curve bounded by the data.
+    try:
+        if out.iso_mag is not None and out.obs_mag is not None and len(out.iso_mag) > 5:
+            ic = np.asarray(out.iso_color, float)
+            im = np.asarray(out.iso_mag, float)
+            bright_limit = float(np.nanmin(out.obs_mag)) - 0.5
+            faint_limit = float(np.nanmax(out.obs_mag)) + 0.5
+            # EEP order runs faint MS -> turn-off -> RGB -> loops/AGB/post-AGB/WD.
+            # Locate the turn-off (bluest point WITHIN the plotted magnitude range, so
+            # the very blue/faint white-dwarf tail can't masquerade as it), then cut at
+            # the first post-turn-off point that climbs brighter than the brightest
+            # member: that drops the RGB tip / thermal-pulse-AGB / post-AGB tangle while
+            # protecting the MS+turn-off. For giant-less (young) clusters the crossing
+            # falls on the MS at/before the turn-off, so nothing is truncated.
+            inrange = np.where((im >= bright_limit) & (im <= faint_limit))[0]
+            crossed = np.where(im < bright_limit)[0]
+            if len(inrange) and len(crossed):
+                to_idx = int(inrange[int(np.nanargmin(ic[inrange]))])
+                cut = int(crossed[0])
+                if cut > to_idx and cut >= _MIN_ISO_POINTS:
+                    out.iso_color, out.iso_mag = ic[:cut], im[:cut]
+    except Exception:
+        pass
     out.color_label, out.mag_label = labels[0], mag_band
     ann = {"age_gyr": summary["age_gyr"], "mh": summary["metallicity"],
            "dm": summary["distance_mod"]}
