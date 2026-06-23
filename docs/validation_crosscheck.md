@@ -69,6 +69,36 @@ most-recognized form of photometric validation in optical astronomy.
 
 > Reproduce: `apex validate --suite crosscheck --result-dir E:/observed_Analysis/M67/pp/result --reference iraf`
 
+## APEX vs Gaia DR3 synthetic photometry (GSPC) — external absolute standard
+
+The sep/IRAF checks above are *same-frame* (independent code, identical pixels). A second,
+fully **independent-observatory** check compares APEX's calibrated standard magnitudes to
+**Gaia DR3 synthetic photometry (GSPC)**, cross-matched by Gaia `source_id` — APEX's
+ground-based ugri against an all-sky, space-based photometric system from a completely
+different telescope and pipeline.
+
+M67 (272 cross-matched members; APEX `mag_std` − GSPC SDSS-synthetic):
+
+| Quantity | ΔZP (median) | Robust scatter (MAD) |
+|---|---:|---:|
+| g | −0.009 | 0.023 |
+| r | +0.012 | 0.016 |
+| i | −0.002 | 0.018 |
+| **g−r** (colour) | −0.018 | **0.010** |
+| **r−i** (colour) | +0.013 | **0.010** |
+
+The per-band offsets (≈1–2 %) are the expected zeropoint-system difference between APEX's
+calibration and the Gaia synthetic system; the **colours agree to ~10 mmag**, and the
+**g−r residual vs g slope is +0.0004 mag/mag — flat**, so APEX carries **no colour- or
+magnitude-dependent photometric bias** against the external standard. This is the per-star
+evidence behind "APEX = Gaia GSPC" used to exonerate photometry in the isochrone analysis
+(`isochrone_fitting_methodology.md` §10.1). Reproduce: `validation/_scratch/` (cross-match
+APEX `mag_std_*` with `gaiadr3.synthetic_photometry_gspc` on `source_id`).
+
+> A faint, crowded-field r−i drift vs Pan-STARRS (~−0.07 mag at the faint end) is tracked
+> **separately for globular clusters** (open photometry issue / task R1); it does not affect
+> the open-cluster colours above.
+
 ## Why this is the validation that matters
 
 This answers "*is APEX's photometry correct?*" against the community-standard

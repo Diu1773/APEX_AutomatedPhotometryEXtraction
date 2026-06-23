@@ -34,6 +34,14 @@ period analysis.
 - Lomb-Scargle, PDM, BLS 및 bootstrap FAP 기반 주기 분석
 - artificial-star benchmark, IRAF cross-check, CMD validation 도구
 
+### 측광 검증
+
+APEX 측광은 독립 소프트웨어와 직접 교차검증됩니다 — SExtractor(`sep`)·IRAF/DAOPHOT와
+**~3 mmag**(robust MAD) 일치, Gaia DR3 합성측광 대비 **색의존 편향 없음**.
+- [측광 교차검증](docs/validation_crosscheck.md) — primary 측정 검증 (`apex validate --suite crosscheck`)
+- [실측 성단 재현](docs/validation_realdata.md) — 거리 ~4% (0.85–7.8 kpc)
+- [이소크론 피팅 방법론](docs/isochrone_fitting_methodology.md) — §10: gri/BVR 축퇴와 u밴드 해법
+
 ## 빠른 시작
 
 ### 소스에서 실행
@@ -252,6 +260,8 @@ validation/       synthetic and real-data validation runners
 
 ## 문서
 
+- **[사용자 매뉴얼 (User Manual)](docs/manual/README.md)** — 스크린샷과 함께 단계별로
+  따라 하는 실사용 가이드(CMD/LC 전 단계 · 도구 · 파라미터 · 문제 해결)
 - [Documentation Index](docs/README.md)
 - [Architecture](ARCHITECTURE.md)
 - [Configuration Guide](docs/configuration.md)

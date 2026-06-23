@@ -1,13 +1,21 @@
 # APEX real-data validation: open & globular cluster reproduction
 
-> **Scope note.** The Step-12 isochrone auto-fitter is still under development,
-> so this section is best read as an **end-to-end smoke test of the whole chain**
-> (detection → photometry → calibration → CMD) whose headline result is **distance
-> recovery**; the recovered ages/metallicities are degeneracy-limited and not yet
-> a primary validation. The **primary measurement validation** is the photometric
+> **Scope note.** The table below is the **older grid-scanner** end-to-end smoke
+> test (detection → photometry → calibration → CMD) whose headline result is
+> **distance recovery**. The Step-12 auto-fitter has since been upgraded to an
+> **emcee MCMC with EEP (arc-length) isochrone interpolation and Gaia PM+parallax
+> membership cleaning**; with that, the *ages are reproducible across seeds*
+> (≤0.05 Gyr, vs the grid-scanner's run-to-run jumps) and land within ~10–20 % of
+> literature — current numbers and the per-cluster table are in
+> `isochrone_fitting_methodology.md` **§10.8** (and §10.9 for the u-band degeneracy
+> test). The recovered ages/metallicities are still degeneracy-limited and not the
+> primary validation. The **primary measurement validation** is the photometric
 > cross-check against independent software (sep / IRAF / photutils) —
-> see `apex validate --suite crosscheck` and the cross-check section of the
-> validation report.
+> see `apex validate --suite crosscheck` and `validation_crosscheck.md`.
+>
+> ⚠️ The ages in the table below predate the MCMC+EEP fix (e.g. NGC 6811 reads
+> 2.5 Gyr here; the membership+EEP MCMC now gives ~0.8 Gyr). Read it for the
+> **distance** column; for ages see §10.8.
 
 
 APEX was run on six **independently observed, APEX-processed** star clusters

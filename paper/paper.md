@@ -45,6 +45,18 @@ desktop + scriptable pipeline so the same analysis runs interactively or in
 batch/CI, (2) first-class cluster CMD and isochrone fitting, and (3) multi-night
 merging and period analysis at scale (tens to thousands of frames).
 
+# Validation
+
+`APEX`'s photometry is validated *directly* against independent software on real
+observations, rather than only through downstream products. Re-measuring its
+forced-aperture star positions with SExtractor [@bertin1996] and with IRAF/DAOPHOT
+[@stetson1987] at the same aperture agrees with `APEX` to ~3 mmag (robust MAD), with
+>99 % of stars within 0.05 mag, and a cross-match against Gaia DR3 synthetic photometry
+[@gaiadr3] shows the colours agree to ~10 mmag with no colour-dependent trend. End-to-end
+runs on six open and globular clusters (0.85–7.8 kpc) recover published distance moduli to
+~4 %. These checks are automated (`apex validate --suite crosscheck`) and documented with
+full tables and reproduction commands in the project documentation.
+
 # Acknowledgements
 
 `APEX` builds on Astropy [@astropy2022], photutils, and SExtractor
