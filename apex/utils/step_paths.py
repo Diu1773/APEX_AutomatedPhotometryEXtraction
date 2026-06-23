@@ -81,3 +81,25 @@ def step7_forced_phot_dir(result_dir: PathLike) -> Path:
 
 def tool_extinction_dir(result_dir: PathLike) -> Path:
     return step_dir(result_dir, TOOL_EXTINCTION_DIRNAME)
+
+
+# ── Legacy-aware input resolution ─────────────────────────────────────────────
+# The step directories were renumbered/renamed over time. Code that READS a
+# pre-existing input workspace (e.g. the multi-night merger) must tolerate the
+# older on-disk names so old RESULT_* folders stay consumable. Writers keep
+# using the canonical helpers above — a freshly created workspace has none of
+# the legacy dirs, so first_existing_dir() returns the canonical name.
+
+def first_existing_dir(result_dir: PathLike, *dirnames: str) -> Path:
+    """Return the first of `dirnames` that exists under result_dir; if none
+    exist, return the first (canonical) one. Read-only callers only."""
+    paths = [step_dir(result_dir, d) for d in dirnames]
+    for p in paths:
+        if p.exists():
+            return p
+    return paths[0]
+
+
+def forced_phot_input_dir(result_dir: PathLike) -> Path:
+    """Forced-photometry dir for READING a (possibly legacy) input workspace."""
+    return first_existing_dir(result_dir, STEP7_FORCED_PHOT_DIRNAME, "step5_photometry")

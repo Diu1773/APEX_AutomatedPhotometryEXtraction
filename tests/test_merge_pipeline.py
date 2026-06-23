@@ -204,6 +204,53 @@ def test_compute_selection_defaults_filters_to_available():
     assert t2["V"] is None and c2["V"] == set() and k2["V"] is None
 
 
+def test_legacy_workspace_read_compat(tmp_path):
+    """Pre-renumbering RESULT_* layout (step5_photometry / step9_selection /
+    step10_lightcurve, with per-frame source_id recoverable only via
+    cache/idmatch/) must still be recognized and loadable by the merger."""
+    from apex.utils.photometry_loader import load_frame_photometry
+    from apex.analysis.merge.workspace_scan import scan_merge_input_workspace
+
+    rd = tmp_path / "RESULT_legacy"
+    (rd / "step5_photometry").mkdir(parents=True)
+    (rd / "step9_selection").mkdir(parents=True)
+    (rd / "step10_lightcurve").mkdir(parents=True)
+    (rd / "cache" / "idmatch").mkdir(parents=True)
+
+    fname = "frameA.fit"
+    # legacy forced-phot TSV: det_uid only, no source_id / ID
+    pd.DataFrame([
+        {"det_uid": 0, "FILTER": "V", "mag": 15.0},
+        {"det_uid": 1, "FILTER": "V", "mag": 16.0},
+    ]).to_csv(rd / "step5_photometry" / f"{fname}_photometry.tsv", sep="\t", index=False)
+    pd.DataFrame([{"file": fname, "filter": "V", "night_id": 1}]).to_csv(
+        rd / "step5_photometry" / "photometry_index.csv", index=False)
+    # legacy idmatch: det_idx -> source_id
+    pd.DataFrame([
+        {"det_idx": 0, "source_id": 1001, "file": fname, "filter": "V"},
+        {"det_idx": 1, "source_id": 1002, "file": fname, "filter": "V"},
+    ]).to_csv(rd / "cache" / "idmatch" / f"idmatch_{fname}.csv", index=False)
+    # selection master: source_id -> stable ID
+    pd.DataFrame([
+        {"ID": 5, "source_id": 1001},
+        {"ID": 6, "source_id": 1002},
+    ]).to_csv(rd / "step9_selection" / "master_catalog_V.tsv", sep="\t", index=False)
+    (rd / "step9_selection" / "selection_V.json").write_text(
+        '{"filter":"V","target_source_id":1001,"comparison_source_ids":[1002],"check_source_id":null}',
+        encoding="utf-8")
+    pd.DataFrame([{"ID": 5, "mjd": 1.0, "mag": 15.0}]).to_csv(
+        rd / "step10_lightcurve" / "lightcurve_ID5_raw.csv", index=False)
+
+    info = scan_merge_input_workspace(rd)
+    assert info["merge_ready"]
+    assert info["has_step7"] and info["has_step8"] and info["has_step9"]
+
+    df = load_frame_photometry(rd, fname, "V")
+    assert df is not None
+    assert sorted(df["source_id"].astype("int64").tolist()) == [1001, 1002]  # via cache/idmatch
+    assert sorted(df["ID"].astype("int64").tolist()) == [5, 6]               # via selection master
+
+
 def test_merge_worker_runs_full_chain_synchronously(merge_workspace):
     """Drive _MergeWorker.run() directly (no event loop): exercises the exact
     reconcile -> selection-defaults -> materialize chain the GUI now offloads."""

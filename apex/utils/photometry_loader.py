@@ -7,10 +7,8 @@ import pandas as pd
 
 from .common_helpers import normalize_filter_key
 from .io_utils import read_csv_int64_source_id, coerce_int64_source_id
-from .step_paths import (
-    step7_forced_phot_dir,
-)
-from .step_paths_lc import step8_selection_dir
+from .step_paths import forced_phot_input_dir
+from .step_paths_lc import selection_input_dir
 
 
 _DATE_RE = re.compile(r"(20\d{6})")
@@ -50,7 +48,7 @@ def _read_table(path: Path) -> pd.DataFrame | None:
 
 
 def _resolve_photometry_path(result_dir: Path, fname: str) -> Path | None:
-    forced_dir = step7_forced_phot_dir(result_dir)
+    forced_dir = forced_phot_input_dir(result_dir)
     for name in (f"photometry_{fname}.tsv", f"{fname}_photometry.tsv"):
         p = forced_dir / name
         if p.exists():
@@ -59,14 +57,16 @@ def _resolve_photometry_path(result_dir: Path, fname: str) -> Path | None:
 
 
 def _resolve_idmatch_path(result_dir: Path, fname: str) -> Path | None:
-    # In the new pipeline, master_id is a column in the forced phot TSV —
-    # no separate idmatch file exists. Return None so callers fall back
-    # to using master_id directly from the photometry TSV.
-    return None
+    # New pipeline embeds source_id directly in the forced-phot TSV, so no
+    # separate idmatch file is needed (callers use source_id straight from the
+    # TSV). Legacy workspaces kept a per-frame det->source_id map under
+    # cache/idmatch/; fall back to it so those frames can still be identified.
+    cand = Path(result_dir) / "cache" / "idmatch" / f"idmatch_{fname}.csv"
+    return cand if cand.exists() else None
 
 
 def _load_source_to_id_map(result_dir: Path, filt_hint: str | None = None) -> dict[int, int]:
-    step9_out = step8_selection_dir(result_dir)
+    step9_out = selection_input_dir(result_dir)
     if not step9_out.exists():
         return {}
 

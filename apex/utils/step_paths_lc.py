@@ -64,6 +64,18 @@ def step11_period_dir(result_dir: PathLike) -> Path:
     return step_dir(result_dir, LC_PERIOD_DIRNAME)
 
 
+# ── Legacy-aware input resolution (read-only; for old RESULT_* workspaces) ─────
+
+def selection_input_dir(result_dir: PathLike) -> Path:
+    """Selection/master-catalog dir for READING a (possibly legacy) workspace."""
+    return first_existing_dir(result_dir, LC_SELECTION_DIRNAME, "step9_selection")
+
+
+def lightcurve_input_dir(result_dir: PathLike) -> Path:
+    """Light-curve dir for READING a (possibly legacy) input workspace."""
+    return first_existing_dir(result_dir, LC_LC_DIRNAME, "step10_lightcurve")
+
+
 def step9_selection_dir(result_dir: PathLike) -> Path:
     """DEPRECATED — step numbers shifted; use step8_selection_dir() directly."""
     import warnings

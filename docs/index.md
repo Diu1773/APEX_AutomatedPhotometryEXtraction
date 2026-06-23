@@ -33,8 +33,9 @@ apex export --format aavso --input lc.csv --output report.txt
 ```
 
 See the [command-line interface](cli.md) and [configuration](configuration.md)
-guides to get started, and the design notes under *Design & internals* for how
-the pipeline works.
+guides to get started, the [multi-night merger](multi-night-merger.md) guide for
+combining separate single-night runs into one light curve, and the design notes
+under *Design & internals* for how the pipeline works.
 
 ## Citing APEX
 
