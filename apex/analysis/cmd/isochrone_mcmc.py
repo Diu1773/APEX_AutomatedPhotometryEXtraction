@@ -1353,6 +1353,13 @@ def fit_isochrone_mcmc(
         (emcee.moves.DESnookerMove(), 0.2),
     ]
 
+    # emcee's ensemble moves draw from the global NumPy RNG, which is NOT seeded by
+    # our local ``rng`` — so the chain (and the test/credible intervals) depended on
+    # whatever consumed the global state earlier (test-order-dependent flakiness, and
+    # non-reproducible science). Seed the global RNG from ``seed`` so a given fit is
+    # reproducible regardless of process history.
+    np.random.seed(int(seed) % (2 ** 32))
+
     if multicolor:
         sampler = emcee.EnsembleSampler(
             n_walkers,

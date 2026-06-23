@@ -1164,7 +1164,11 @@ def run_forced_photometry(
         centering_quality[off_frame] = "off_frame"
         centering_quality[detected_flag & ~centroid_outlier] = "ok"
         centering_quality[centroid_outlier] = "warn_shift"
-        centering_quality[detected_flag & ~recenter_enabled] = "matched_no_recenter"
+        # recenter_enabled is a scalar bool; ``~`` on a Python bool is a deprecated
+        # bitwise inversion (NOT logical negation). When recentring is off, every
+        # detected star is "matched but not recentred".
+        if not recenter_enabled:
+            centering_quality[detected_flag] = "matched_no_recenter"
 
         master_id  = _catalog_series(master_df, "master_id", np.arange(1, n + 1))
         source_id  = _catalog_series(master_df, "source_id", master_id)
