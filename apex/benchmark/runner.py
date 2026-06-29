@@ -163,8 +163,15 @@ def run_apex_detection(
     cache_dir.mkdir(parents=True, exist_ok=True)
     params = _BenchmarkParameters(base_params, input_path, output_dir, detection_overrides)
     p = params.P
+    # Per-filter sigma may be present-but-None (e.g. empty sigma_by_filter), in
+    # which case getattr returns None rather than the default — fall back to the
+    # base detect_sigma, then to 3.2. (A sigma is always > 0, so `or` is safe.)
     sigma_map = {
-        key: float(getattr(p, f"detect_sigma_{key}", getattr(p, "detect_sigma", 3.2)))
+        key: float(
+            getattr(p, f"detect_sigma_{key}", None)
+            or getattr(p, "detect_sigma", None)
+            or 3.2
+        )
         for key in ("g", "r", "i")
     }
     worker = DetectionWorker(

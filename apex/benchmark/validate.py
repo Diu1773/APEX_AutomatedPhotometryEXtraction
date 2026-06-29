@@ -186,6 +186,16 @@ def run_artificial_star_suite(
     parameter_file = "parameters.toml"
     if config is not None:
         parameter_file = getattr(config, "parameter_file", parameter_file)
+    # Self-contained runs (config=None, CI, or a fresh checkout) must not depend
+    # on a user's runtime parameters.toml. When the named file is absent, fall
+    # back to the repo runtime file if present, else the committed example.
+    if not Path(parameter_file).exists():
+        _runtime = _repo_root() / "parameters.toml"
+        _example = _repo_root() / "parameters.example.toml"
+        if _runtime.exists():
+            parameter_file = str(_runtime)
+        elif _example.exists():
+            parameter_file = str(_example)
     gain = _resolve_gain(config)
     synth.setdefault("gain", gain)
 
