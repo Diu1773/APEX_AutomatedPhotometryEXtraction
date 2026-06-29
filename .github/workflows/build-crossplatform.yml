@@ -9,9 +9,11 @@
 name: Build (macOS + Linux)
 
 on:
+  # Manual-only. APEX ships Windows-only, and the frozen-bundle smoke imports
+  # astroquery, which pulls astropy data that fails on hosted Linux/macOS
+  # runners (the astropy_icon.png endpoint is permanently 404). Run on demand
+  # from the Actions tab when you actually want a Linux/macOS bundle.
   workflow_dispatch:
-  push:
-    tags: ["v*"]
 
 jobs:
   build:

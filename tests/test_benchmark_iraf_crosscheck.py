@@ -1,3 +1,4 @@
+import sys
 from pathlib import Path
 
 import pandas as pd
@@ -18,6 +19,10 @@ from apex.benchmark.iraf_crosscheck import (
 )
 
 
+@pytest.mark.skipif(
+    sys.platform != "win32",
+    reason="windows_to_wsl_path maps Windows drive paths for WSL; only used on Windows",
+)
 def test_windows_to_wsl_path_converts_drive_path():
     assert windows_to_wsl_path(r"E:\data\frame.fit") == "/mnt/e/data/frame.fit"
 
