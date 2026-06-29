@@ -10,6 +10,7 @@ build/
 dist/
 *.egg-info/
 release/Setup/
+site/
 *.log
 .DS_Store
 

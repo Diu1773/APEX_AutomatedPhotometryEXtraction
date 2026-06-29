@@ -1,5 +1,21 @@
 # APEX — Automated Photometry EXtraction
 
+APEX는 FITS 관측 영상에서 **색-등급도(CMD)·광도곡선·주기 분석**까지 단계별로
+수행하는 천체 측광 데스크톱 프로그램입니다 (Windows · PyQt5).
+
+[⬇️ APEX 내려받기 (Windows)](https://github.com/Diu1773/APEX_AutomatedPhotometryEXtraction/releases/latest){ .md-button .md-button--primary }
+[📖 사용자 매뉴얼 보기](manual/index.md){ .md-button }
+
+![APEX CMD 모드 메인 화면](manual/img/00_main_cmd.png)
+
+!!! tip "처음 오셨나요?"
+    스크린샷과 함께 단계별로 따라 하는 **[한국어 사용자 매뉴얼](manual/index.md)** 을 보세요.
+    설치 → 파일 선택 → 측광 → 색-등급도/광도곡선까지 그대로 따라 하면 결과가 나옵니다.
+    설치형 `setup-APEX-<버전>.exe` 또는 무설치 `APEX-Portable-<버전>-x64.zip`을 위 **내려받기**
+    버튼(최신 릴리스)에서 받을 수 있습니다(관리자 권한 불필요).
+
+---
+
 APEX is a Python application for astronomical aperture and PSF photometry. It
 runs both as a **PyQt5 desktop app** and as a **headless command-line pipeline**,
 covering the full path from raw FITS frames to calibrated science products.

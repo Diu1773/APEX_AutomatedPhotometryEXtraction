@@ -260,7 +260,7 @@ validation/       synthetic and real-data validation runners
 
 ## 문서
 
-- **[사용자 매뉴얼 (User Manual)](docs/manual/README.md)** — 스크린샷과 함께 단계별로
+- **[사용자 매뉴얼 (User Manual)](docs/manual/index.md)** — 스크린샷과 함께 단계별로
   따라 하는 실사용 가이드(CMD/LC 전 단계 · 도구 · 파라미터 · 문제 해결)
 - [Documentation Index](docs/README.md)
 - [Architecture](ARCHITECTURE.md)

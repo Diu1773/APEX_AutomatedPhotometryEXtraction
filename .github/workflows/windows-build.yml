@@ -5,7 +5,12 @@ on:
   push:
     branches:
       - main
+    tags:
+      - "v*"
   workflow_dispatch:
+
+permissions:
+  contents: write # needed to publish a GitHub Release on tag push
 
 jobs:
   build:
@@ -34,3 +39,25 @@ jobs:
         with:
           name: APEX-Windows
           path: release/Setup/*
+
+      # On a version tag (e.g. v0.1.0) push, publish a public Release with the
+      # installer + portable zip attached. `git tag v0.1.0 && git push --tags`.
+      - name: Publish GitHub Release
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: release/Setup/*
+          draft: false
+          prerelease: false
+          body: |
+            ## APEX — Windows 다운로드
+
+            아래 **Assets** 에서 받으세요:
+
+            - `setup-APEX-*.exe` — 설치형 (관리자 권한 불필요)
+            - `APEX-Portable-*-x64.zip` — 무설치 포터블 (압축 풀고 `APEX.exe` 실행)
+
+            📖 **사용 매뉴얼:** https://diu1773.github.io/APEX_AutomatedPhotometryEXtraction/manual/
+
+            > 외부 WCS 솔버(ASTAP / astrometry.net)와 카탈로그 데이터는 포함되지
+            > 않습니다(없어도 내장 Python 솔버로 동작합니다).

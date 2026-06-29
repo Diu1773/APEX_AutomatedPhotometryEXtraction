@@ -2,6 +2,8 @@
 
 ## User and Operator Guides
 
+- **[사용자 매뉴얼 (User Manual)](manual/index.md): 스크린샷과 함께 단계별로 따라 하는
+  실사용 가이드 — CMD/LC 전 단계, 도구, 파라미터, 문제 해결**
 - [Project README](../README.md): installation, workflow, WCS overview
 - [Configuration Guide](configuration.md): `parameters.toml` ownership and
   major setting groups

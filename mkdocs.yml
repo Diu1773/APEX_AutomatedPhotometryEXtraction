@@ -1,46 +1,91 @@
 site_name: APEX — Automated Photometry EXtraction
-site_description: Desktop + headless pipeline for astronomical aperture/PSF photometry, CMD/isochrone fitting, and multi-night light-curve & period analysis.
+site_description: FITS 관측 영상에서 색-등급도·광도곡선·주기 분석까지 단계별로 수행하는 천체 측광 프로그램. 스크린샷과 함께 따라 하는 한국어 사용자 매뉴얼.
+site_author: 청람천문대 (KNUEMAO Observatory)
+site_url: https://diu1773.github.io/APEX_AutomatedPhotometryEXtraction/
 repo_url: https://github.com/Diu1773/APEX_AutomatedPhotometryEXtraction
-repo_name: APEX
+repo_name: Diu1773/APEX_AutomatedPhotometryEXtraction
+edit_uri: edit/main/docs/
 
 theme:
   name: material
+  language: ko
   palette:
-    - scheme: default
+    - media: "(prefers-color-scheme: light)"
+      scheme: default
       primary: indigo
+      accent: indigo
       toggle:
         icon: material/weather-night
-        name: Switch to dark mode
-    - scheme: slate
+        name: 다크 모드로
+    - media: "(prefers-color-scheme: dark)"
+      scheme: slate
       primary: indigo
+      accent: indigo
       toggle:
         icon: material/weather-sunny
-        name: Switch to light mode
+        name: 라이트 모드로
   features:
     - navigation.sections
     - navigation.top
+    - navigation.tracking
+    - navigation.footer
+    - toc.follow
     - content.code.copy
     - search.highlight
+    - search.suggest
+  icon:
+    repo: fontawesome/brands/github
 
 markdown_extensions:
   - admonition
+  - attr_list
+  - md_in_html
+  - tables
   - toc:
       permalink: true
-  - pymdownx.highlight
+      slugify: !!python/object/apply:pymdownx.slugs.slugify
+        kwds:
+          case: lower
+  - pymdownx.highlight:
+      anchor_linenums: true
   - pymdownx.superfences
+  - pymdownx.details
+  - pymdownx.emoji:
+      emoji_index: !!python/name:material.extensions.emoji.twemoji
+      emoji_generator: !!python/name:material.extensions.emoji.to_svg
 
 nav:
-  - Home: index.md
-  - Command-line interface: cli.md
-  - Configuration: configuration.md
-  - Validation & methodology:
-      - Photometry cross-validation: validation_crosscheck.md
-      - Cluster reproduction: validation_realdata.md
-      - Isochrone fitting methodology: isochrone_fitting_methodology.md
-  - Design & internals:
-      - PSF photometry: psf-photometry-analysis.md
-      - Cache manager: cache-manager-design.md
-      - Cache inventory: cache-inventory.md
-      - Parameter inventory: parameter-inventory.md
+  - 홈: index.md
+  - 사용자 매뉴얼:
+      - 매뉴얼 홈: manual/index.md
+      - 1. 시작하기: manual/01-getting-started.md
+      - 2. 공통 단계 (Step 1–7): manual/02-shared-steps.md
+      - 3. CMD 모드 (Step 8–12): manual/03-cmd-mode.md
+      - 4. LC 모드 (Step 1·8–11): manual/04-lc-mode.md
+      - 5. 분석 도구 (Tools): manual/05-tools.md
+      - 6. 파라미터 레퍼런스: manual/06-parameters-reference.md
+      - 7. 문제 해결 / FAQ: manual/07-troubleshooting.md
+  - 개발자 문서 (English):
+      - Command-line interface: cli.md
+      - Configuration: configuration.md
+      - Multi-night merger: multi-night-merger.md
+      - Validation & methodology:
+          - Photometry cross-validation: validation_crosscheck.md
+          - Cluster reproduction: validation_realdata.md
+          - Isochrone fitting methodology: isochrone_fitting_methodology.md
+      - Design & internals:
+          - PSF photometry: psf-photometry-analysis.md
+          - Cache manager: cache-manager-design.md
+          - Cache inventory: cache-inventory.md
+          - Parameter inventory: parameter-inventory.md
 
-# Build the site with:  pip install -e ".[docs]"  &&  mkdocs serve
+extra:
+  social:
+    - icon: fontawesome/brands/github
+      link: https://github.com/Diu1773/APEX_AutomatedPhotometryEXtraction
+  generator: false
+
+copyright: APEX는 MIT 라이선스로 배포됩니다 · 청람천문대 (KNUEMAO Observatory)
+
+# 로컬 미리보기:  pip install mkdocs-material  &&  mkdocs serve
+# 배포: main 푸시 시 .github/workflows/docs.yml 가 GitHub Pages 로 자동 배포
