@@ -59,7 +59,7 @@ gui = [
     "emcee>=3.1",
 ]
 build = ["pyinstaller>=6.5,<7"]
-test = ["pytest>=8,<9"]
+test = ["pytest>=8,<9", "emcee>=3.1"]
 docs = ["mkdocs-material>=9.5", "mkdocstrings[python]>=0.24"]
 # Everything a contributor needs in one shot.
 dev = [

@@ -48,6 +48,7 @@ jobs:
         run: |
           pyinstaller --noconfirm --clean --windowed --name APEX \
             --collect-all astropy \
+            --collect-data astropy.samp \
             --collect-all photutils \
             --collect-all astroquery \
             --collect-submodules scipy \

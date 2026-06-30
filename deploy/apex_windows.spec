@@ -82,6 +82,11 @@ for package in (
     binaries += package_binaries
     hiddenimports += _filter_hidden(package_hidden)
 
+# pyvo imports astropy.samp at import time through astroquery.simbad. Make the
+# SAMP icon data explicit so frozen smoke tests never fall back to astropy's
+# network data URLs.
+datas += _collect_data_files("astropy.samp")
+
 # astroquery imports TAP/VOTable helpers dynamically. Collect the full package
 # so installed builds can resolve Gaia/SIMBAD on clean machines.
 package_datas, package_binaries, package_hidden = _collect_all("astroquery")

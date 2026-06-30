@@ -155,8 +155,8 @@ def run_apex_detection(
     output_dir: Path,
     detection_overrides: dict[str, Any],
 ) -> tuple[pd.DataFrame, dict, float]:
-    """Run the production Step 4 worker synchronously for one FITS file."""
-    from apex.gui.workflow.step4_source_detection import DetectionWorker
+    """Run the production Step 4 detection compute for one FITS file."""
+    from apex.analysis.detection import run_detection
 
     output_dir.mkdir(parents=True, exist_ok=True)
     cache_dir = output_dir / "cache"
@@ -174,7 +174,8 @@ def run_apex_detection(
         )
         for key in ("g", "r", "i")
     }
-    worker = DetectionWorker(
+    started = time.perf_counter()
+    run_detection(
         [input_path.name],
         params,
         input_path.parent,
@@ -182,8 +183,6 @@ def run_apex_detection(
         use_cropped=False,
         filter_sigma_map=sigma_map,
     )
-    started = time.perf_counter()
-    worker.run()
     elapsed = time.perf_counter() - started
 
     step_dir = output_dir / "step4_detection"
