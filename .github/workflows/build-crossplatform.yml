@@ -51,6 +51,7 @@ jobs:
             --collect-data astropy.samp \
             --collect-all photutils \
             --collect-all astroquery \
+            --collect-all pyvo \
             --collect-submodules scipy \
             --add-data "apex/resources:apex/resources" \
             --add-data "parameters.example.toml:." \
