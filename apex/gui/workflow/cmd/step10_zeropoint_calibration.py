@@ -145,6 +145,80 @@ def _zp_filter_subset(df: pd.DataFrame, filt: str) -> pd.DataFrame:
     return df[keys == normalize_filter_name(filt)].copy()
 
 
+def solve_standard_colors(
+    inst_mags: dict[str, np.ndarray],
+    fit_params: dict[str, dict],
+    iters: int = 6,
+) -> dict[str, np.ndarray]:
+    """Solve the *standard* color indices from instrumental magnitudes alone.
+
+    The transformation model per filter f is ``std_f = inst_f + zp_f +
+    ct_f * C(color_col_f)`` where ``C`` is a **standard** color (difference of
+    two standard magnitudes). Substituting the model into each color gives a
+    small linear system across the filter chain (e.g. B,V use B-V while R uses
+    V-R); it is solved by fixed-point iteration, which contracts by a factor
+    ~max|ct| per pass (|ct| <~ 0.15 in practice, so ``iters=6`` converges to
+    <1e-5 mag). No external catalog is used at application time — the only
+    inputs are the star's own instrumental magnitudes and the already-fitted
+    constants, so faint-star catalog systematics cannot leak in, and (unlike
+    feeding the raw instrumental color through the color term) the applied
+    color sits on the same scale the coefficients were fitted on.
+
+    Parameters
+    ----------
+    inst_mags : mapping of filter name -> instrumental magnitude array.
+    fit_params : mapping of filter name -> {"zp", "ct", "color_col"} as built
+        by the ZP fit ("color_col" like ``"B_V"`` or ``"none"``).
+    iters : fixed-point iterations.
+
+    Returns
+    -------
+    dict of color-column name (e.g. ``"B_V"``) -> standard-color array.
+    Stars lacking a needed instrumental magnitude get NaN for that color.
+    """
+    pairs: dict[str, tuple[str, str]] = {}
+    for fp in fit_params.values():
+        name = str(fp.get("color_col", "none"))
+        if name != "none" and "_" in name and name not in pairs:
+            fa, fb = name.split("_", 1)
+            # Both bands must have instrumental mags AND fitted coefficients;
+            # otherwise the pair cannot be placed on the standard scale and the
+            # caller must keep its legacy instrumental color.
+            if fa in inst_mags and fb in inst_mags and fa in fit_params and fb in fit_params:
+                pairs[name] = (fa, fb)
+    if not pairs:
+        return {}
+
+    def _coef(f: str, key: str) -> float:
+        try:
+            v = float(fit_params[f][key])
+            return v if np.isfinite(v) else 0.0
+        except (KeyError, TypeError, ValueError):
+            return 0.0
+
+    # Initial guess: instrumental color + zeropoint difference (exact when all
+    # color terms are zero).
+    colors = {
+        name: (
+            np.asarray(inst_mags[fa], dtype=float)
+            - np.asarray(inst_mags[fb], dtype=float)
+            + (_coef(fa, "zp") - _coef(fb, "zp"))
+        )
+        for name, (fa, fb) in pairs.items()
+    }
+
+    def _std_mag(f: str) -> np.ndarray:
+        base = np.asarray(inst_mags[f], dtype=float) + _coef(f, "zp")
+        ccol = str(fit_params.get(f, {}).get("color_col", "none"))
+        if ccol in colors:
+            return base + _coef(f, "ct") * colors[ccol]
+        return base
+
+    for _ in range(max(1, int(iters))):
+        colors = {name: _std_mag(fa) - _std_mag(fb) for name, (fa, fb) in pairs.items()}
+    return colors
+
+
 def _first_text(df: pd.DataFrame, column: str) -> str:
     if not isinstance(df, pd.DataFrame) or df.empty or column not in df.columns:
         return ""
@@ -2017,16 +2091,28 @@ class ZeropointCalibrationWorker(QThread):
                 else:
                     m_snr_f = np.ones(len(out_cal), dtype=bool)
 
-                # Find best available instrumental color index
+                # Find the best available color index. Prefer the REFERENCE
+                # (standard) color when both bands have Gaia transformations:
+                # the fit axis then matches the definition of the color term
+                # and carries no instrumental noise correlated with delta
+                # (the faint-end B-V coupling diagnosed on NGC 6811, 2026-07).
                 key = _BAND_ALIASES.get(filt, filt)
                 color_prefs = _FILTER_COLOR_PREF.get(key, _FILTER_COLOR_PREF.get(filt, []))
                 color_x = np.full(len(out_cal), np.nan)
                 color_col_name = "none"
+                color_axis = "instrumental"
                 for (ca, cb) in color_prefs:
-                    cidx = _color_pair(ca, cb)
+                    ref_a, ref_b = ref_col_map.get(ca), ref_col_map.get(cb)
+                    if ref_a and ref_b:
+                        cidx = _arr(ref_a) - _arr(ref_b)
+                        axis = "standard"
+                    else:
+                        cidx = _color_pair(ca, cb)
+                        axis = "instrumental"
                     if np.isfinite(cidx).sum() >= min_match:
                         color_x = cidx
                         color_col_name = f"{ca}_{cb}"
+                        color_axis = axis
                         break
 
                 w_filt  = _wls_weights(f"mag_inst_err_{filt}")
@@ -2048,20 +2134,29 @@ class ZeropointCalibrationWorker(QThread):
                     clip_sigma=clip_sigma, iters=fit_iters, slope_absmax=s_max, min_n=min_match,
                 )
                 clabel = color_col_name.replace("_", "-")
-                self._log(f"{filt}_std = {filt}_inst + {zp_f:+.4f} + {ct_f:+.4f}*({clabel})_inst  N={Nf}  scatter={sc_f:.4f}")
+                axis_tag = "_std" if color_axis == "standard" else "_inst"
+                self._log(f"{filt}_std = {filt}_inst + {zp_f:+.4f} + {ct_f:+.4f}*({clabel}){axis_tag}  N={Nf}  scatter={sc_f:.4f}")
 
-                # Store delta and color columns for CSV
+                # Store delta and color columns for CSV. color_<pair> is the
+                # FIT axis (standard color when available); the raw
+                # instrumental pair is kept alongside for diagnostics.
                 out_cal[f"delta_{filt}"] = delta
                 if color_col_name != "none":
                     ccol = f"color_{color_col_name}"
                     if ccol not in out_cal.columns:
                         out_cal[ccol] = color_x
+                    ccol_inst = f"color_{color_col_name}_inst"
+                    if ccol_inst not in out_cal.columns:
+                        ca, cb = color_col_name.split("_", 1)
+                        out_cal[ccol_inst] = _color_pair(ca, cb)
 
                 coeff_rows.append({"filter": filt, "zp": zp_f, "ct": ct_f, "N": Nf,
                                    "scatter_rms": sc_f, "color_col": color_col_name,
+                                   "color_axis": color_axis,
                                    "ref_source": ref_source_map.get(filt, "")})
                 fit_params[filt] = {"zp": zp_f, "ct": ct_f, "scatter_rms": sc_f,
-                                    "color_col": color_col_name}
+                                    "color_col": color_col_name,
+                                    "color_axis": color_axis}
 
             if not fit_params:
                 raise RuntimeError("ZP fit failed for all detected filters")
@@ -2100,7 +2195,18 @@ class ZeropointCalibrationWorker(QThread):
             out_cal.to_csv(out_cal_path, index=False)
             self._log(f"Saved {out_cal_path.name} | rows={len(out_cal)}")
 
-            # Color index DataFrame for all stars (used for per-frame ZP application)
+            # Color index DataFrame for all stars (used for color-term
+            # application and per-frame ZP). The applied color is the exact
+            # STANDARD color solved from each star's own instrumental
+            # magnitudes + the fitted constants (solve_standard_colors) — not
+            # the raw instrumental color, and not a catalog color, so no
+            # external faint-end systematics can leak in.
+            inst_mags_all = {
+                f: wide_raw[f"mag_inst_{f}"].to_numpy(float)
+                for f in fit_params
+                if f"mag_inst_{f}" in wide_raw.columns
+            }
+            solved_colors = solve_standard_colors(inst_mags_all, fit_params)
             color_df = wide_raw[["ID"]].copy()
             for filt, fp in fit_params.items():
                 ccol_name = fp["color_col"]
@@ -2109,8 +2215,15 @@ class ZeropointCalibrationWorker(QThread):
                 fa, fb = ccol_name.split("_", 1)
                 ca, cb = f"mag_inst_{fa}", f"mag_inst_{fb}"
                 col_out = f"color_{ccol_name}"
-                if ca in wide_raw.columns and cb in wide_raw.columns and col_out not in color_df.columns:
+                if col_out in color_df.columns:
+                    continue
+                if ccol_name in solved_colors:
+                    color_df[col_out] = solved_colors[ccol_name]
+                    self._log(f"[ZP][{ccol_name}] applied color = standard color (joint solve from instrumental mags)")
+                elif ca in wide_raw.columns and cb in wide_raw.columns:
+                    # One band of the pair has no fit — legacy instrumental color.
                     color_df[col_out] = wide_raw[ca].to_numpy(float) - wide_raw[cb].to_numpy(float)
+                    self._log(f"[ZP][{ccol_name}] applied color = instrumental (pair not fully fitted)")
 
             # Merge calibrator columns into per-observation table
             cal_merge_cols = ["ID"]
