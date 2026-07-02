@@ -1730,6 +1730,42 @@ class ForcedPhotWindow(StepWindowBase):
         if self._run_started_ts is not None:
             elapsed_txt = f" | elapsed {_fmt_duration(time.monotonic() - float(self._run_started_ts))}"
         self.progress_label.setText(f"Done — {n_ok}/{len(rows)} frames OK{elapsed_txt}")
+        # Second-stage photometric QC: per-frame transparency offsets from the
+        # matched bright stars. Catches clouds that image-level Step 4 QC is
+        # blind to (fig6 validation). Never blocks the step on failure.
+        if n_ok > 0:
+            try:
+                from apex.analysis.photometric_qc import (
+                    run_photometric_qc,
+                    summarize_photometric_qc,
+                )
+
+                qc_df = run_photometric_qc(self.params.P.result_dir)
+                counts = summarize_photometric_qc(qc_df)
+                if not qc_df.empty:
+                    append_timestamped_log(
+                        self.log_text,
+                        "[FORCED][QC] Transparency QC: "
+                        f"PASS {counts['PASS']} / REVIEW {counts['REVIEW']} / "
+                        f"FAIL {counts['FAIL']} / SKIP {counts['SKIP']} -> phot_quality.csv",
+                    )
+                    flagged = qc_df[qc_df["phot_qc_status"].isin(("REVIEW", "FAIL"))]
+                    for _, row in flagged.head(8).iterrows():
+                        append_timestamped_log(
+                            self.log_text,
+                            f"[FORCED][QC] {row['phot_qc_status']}: {row['file']} "
+                            f"offset={row['transparency_offset_mag']:+.3f} mag "
+                            f"({row['phot_qc_reasons']})",
+                        )
+                    if len(flagged) > 8:
+                        append_timestamped_log(
+                            self.log_text,
+                            f"[FORCED][QC] ... and {len(flagged) - 8} more flagged frames.",
+                        )
+            except Exception as exc:
+                append_timestamped_log(
+                    self.log_text, f"[FORCED][QC] Photometric QC skipped: {exc}"
+                )
         self.update_navigation_buttons()
 
     def _on_error(self, error_type: str, msg: str):

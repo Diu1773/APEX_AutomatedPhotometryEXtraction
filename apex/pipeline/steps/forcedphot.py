@@ -84,6 +84,28 @@ class ForcedPhotStep(PipelineStep):
             f"{n_ok}/{len(file_list)} frames photometered; "
             f"detected={n_det} forced={n_forced}"
         )
+
+        # Second-stage photometric QC (transparency offsets from matched
+        # bright stars) — writes phot_quality.csv; never blocks the step.
+        if n_ok > 0:
+            try:
+                from apex.analysis.photometric_qc import (
+                    run_photometric_qc,
+                    summarize_photometric_qc,
+                )
+
+                qc_df = run_photometric_qc(ctx.result_dir)
+                if not qc_df.empty:
+                    counts = summarize_photometric_qc(qc_df)
+                    msg += (
+                        f"; transparency QC PASS {counts['PASS']}"
+                        f"/REVIEW {counts['REVIEW']}/FAIL {counts['FAIL']}"
+                        f"/SKIP {counts['SKIP']}"
+                    )
+            except Exception as exc:  # noqa: BLE001 - QC must not fail the step
+                if ctx.logger is not None:
+                    ctx.logger.warning("photometric QC skipped: %s", exc)
+
         return StepResult(
             index=self.index, key=self.key, status=StepStatus.OK,
             message=msg, outputs=[str(out_dir)],
