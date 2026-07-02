@@ -31,6 +31,7 @@ FIGURES = [
     ("fig3_parameter_sweep", "Parameter & observing-condition sensitivity"),
     ("fig4_crosscheck_sep", "Independent cross-check against sep (synthetic truth)"),
     ("fig5_crosscheck_iraf", "External cross-check against IRAF/DAOPHOT (real NGC 457 data)"),
+    ("fig6_qc_validation", "Frame-QC decisions vs injected frame defects"),
 ]
 
 
