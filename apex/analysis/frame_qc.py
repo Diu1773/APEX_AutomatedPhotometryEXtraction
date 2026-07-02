@@ -147,9 +147,15 @@ def evaluate_frame_qc(
     if frame_df is None or frame_df.empty:
         return pd.DataFrame() if frame_df is None else frame_df.copy()
 
-    thr = thresholds or FrameQCThresholds(
-        elong_fail=max(1.0, _get_float(params, "fwhm_elong_max", FrameQCThresholds.elong_fail)),
-    )
+    if thresholds is None:
+        # Keep the review threshold strictly below the fail threshold even when
+        # the configured fwhm_elong_max is tighter than the default review cut
+        # (otherwise the REVIEW branch becomes unreachable). Mirrors the clamp
+        # in step4's _auto_qc_thresholds.
+        elong_fail = max(1.0, _get_float(params, "fwhm_elong_max", FrameQCThresholds.elong_fail))
+        elong_review = min(FrameQCThresholds.elong_review, max(1.0, elong_fail - 0.08))
+        thresholds = FrameQCThresholds(elong_fail=elong_fail, elong_review=elong_review)
+    thr = thresholds
     out = frame_df.copy()
 
     fwhm = _num(out, "fwhm_med").to_numpy(float)

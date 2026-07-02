@@ -87,6 +87,26 @@ def test_evaluate_frame_qc_missing_candidate_columns_do_not_force_review():
     assert set(out["qc_status"]) == {PASS}
 
 
+def test_evaluate_frame_qc_tight_config_elongation_keeps_review_below_fail():
+    class _Params:
+        fwhm_elong_max = 1.15  # tighter than the default review cut (1.22)
+
+    df = _base_frames()
+    df.loc[3, "elong_med"] = 1.10  # between (fail - 0.08) and fail
+
+    out = evaluate_frame_qc(df, params=_Params())
+
+    # Without the clamp the review threshold (1.22) would sit ABOVE the fail
+    # threshold (1.15) and 1.10 could never be flagged for review.
+    assert out.loc[3, "qc_status"] == REVIEW
+    assert "elongation_warning" in out.loc[3, "qc_reasons"]
+
+    df.loc[3, "elong_med"] = 1.18  # above the configured fail cut
+    out = evaluate_frame_qc(df, params=_Params())
+    assert out.loc[3, "qc_status"] == FAIL
+    assert "high_elongation" in out.loc[3, "qc_reasons"]
+
+
 def test_evaluate_frame_qc_uses_custom_z_thresholds():
     df = _base_frames()
     df.loc[6, "fwhm_med"] = 7.0
