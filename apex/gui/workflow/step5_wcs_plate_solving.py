@@ -63,7 +63,7 @@ from apex.utils.gaia_catalog_service import (
     GaiaCatalogService,
     gaia_runtime_available,
 )
-from apex.utils.qc_utils import filter_files_by_qc
+from apex.utils.qc_utils import filter_files_by_qc, should_use_frame_quality_qc
 from apex.utils.cache_utils import (
     norm_path_key,
     build_file_signature,
@@ -342,7 +342,12 @@ class WcsPlateSolvingWindow(StepWindowBase):
         warning dialog has already been shown).
         """
         src = list(self.file_list if file_list is None else file_list)
-        require_qc = bool(getattr(self.params.P, "wcs_require_qc_pass", True))
+        require_qc = should_use_frame_quality_qc(
+            Path(self.params.P.result_dir),
+            self.params.P,
+            "wcs_require_qc_pass",
+            default=True,
+        )
         filtered, qc_info = filter_files_by_qc(
             Path(self.params.P.result_dir), src, require_qc=require_qc,
         )
@@ -465,7 +470,7 @@ class WcsPlateSolvingWindow(StepWindowBase):
             QCheckBox, QDialogButtonBox, QGroupBox,
         )
 
-        d = QDialog(self)
+        d = FittedDialog(self)
         configure_parameter_dialog(d, "Internal Parameters", 560, 780)
         root = QVBoxLayout(d)
         p = self._internal_params
@@ -1253,7 +1258,7 @@ class WcsPlateSolvingWindow(StepWindowBase):
         self.file_list = list(files)
 
     def open_parameters_dialog(self):
-        dialog = QDialog(self)
+        dialog = FittedDialog(self)
         configure_parameter_dialog(dialog, "WCS Parameters", 560, 720)
 
         layout = QVBoxLayout(dialog)
@@ -1472,7 +1477,7 @@ class WcsPlateSolvingWindow(StepWindowBase):
         dialog.exec_()
 
     def open_astrometrynet_parameters_dialog(self):
-        dialog = QDialog(self)
+        dialog = FittedDialog(self)
         configure_parameter_dialog(dialog, "Astrometry.net Parameters", 540, 620)
 
         layout = QVBoxLayout(dialog)

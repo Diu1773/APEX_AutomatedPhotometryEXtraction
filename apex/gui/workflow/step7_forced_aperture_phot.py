@@ -64,7 +64,7 @@ from apex.utils.step_paths import (
     step7_forced_phot_dir,
     crop_is_active,
 )
-from apex.utils.qc_utils import filter_files_by_qc
+from apex.utils.qc_utils import filter_files_by_qc, should_use_frame_quality_qc
 from apex.utils.photometry_utils import (
     phot_vectorized,
     refine_local_centroid,
@@ -1313,7 +1313,12 @@ class ForcedPhotWindow(StepWindowBase):
             return
 
         qc_info = None
-        use_qc = bool(getattr(P, "phot_use_qc_pass_only", False))
+        use_qc = should_use_frame_quality_qc(
+            result_dir,
+            P,
+            "phot_use_qc_pass_only",
+            default=False,
+        )
         file_list, qc_info = filter_files_by_qc(result_dir, file_list, require_qc=use_qc)
         if use_qc and not file_list:
             QMessageBox.warning(self, "No Frames", "No frames remain after Step 4 QC filtering.")
@@ -1627,7 +1632,12 @@ class ForcedPhotWindow(StepWindowBase):
             return False, f"file list unavailable: {exc}"
         if not files:
             return False, "no current frames"
-        use_qc = bool(getattr(self.params.P, "phot_use_qc_pass_only", False))
+        use_qc = should_use_frame_quality_qc(
+            Path(self.params.P.result_dir),
+            self.params.P,
+            "phot_use_qc_pass_only",
+            default=False,
+        )
         files, _ = filter_files_by_qc(
             Path(self.params.P.result_dir),
             files,

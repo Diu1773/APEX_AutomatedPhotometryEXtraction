@@ -14,6 +14,7 @@ from PyQt5.QtWidgets import (
 )
 from PyQt5.QtCore import Qt, QThread, pyqtSignal, QTimer
 from PyQt5.QtGui import QColor
+from apex.gui.layout_rules import FittedDialog, tame_canvas
 from apex.gui.widgets.fits_viewer import FITSViewerWidget, OverlayMarker
 from pathlib import Path
 from typing import Optional
@@ -69,6 +70,14 @@ from apex.utils.filter_parameters import (
 from apex.utils.noise_params import resolve_effective_noise_params
 from apex.utils.qc_utils import is_passed_value
 from apex.utils.source_quality import compute_source_quality
+from apex.analysis.frame_qc import (
+    FAIL,
+    PASS,
+    REVIEW,
+    FrameQCThresholds,
+    evaluate_frame_qc,
+    summarize_frame_qc,
+)
 
 _DETECT_MODE_PRESETS = {
     "normal": {
@@ -214,12 +223,14 @@ class QCInspectionPanel(QWidget):
         self.params = parent_window.params
         self.file_manager = parent_window.file_manager
         self.file_list = []
+        self.use_cropped = False
         self.frame_df = pd.DataFrame()
         self.exclude_reasons = {}
         self.pending_candidates = {}
         self._header_cache = {}
         self._scatter_map = {}
         self._pending_state = None
+        self._auto_qc_applied = False
         self.current_filter = None
         self._selected_fname = None
         self._build_ui()
@@ -247,6 +258,26 @@ class QCInspectionPanel(QWidget):
         xmode_row.addWidget(self.xmode_combo)
         control_layout.addLayout(xmode_row)
 
+        auto_group = QGroupBox("Auto QC")
+        auto_layout = QVBoxLayout(auto_group)
+        self.auto_qc_label = QLabel("Auto QC not evaluated.")
+        self.auto_qc_label.setWordWrap(True)
+        self.auto_qc_label.setStyleSheet(
+            "QLabel { background-color: #F5F5F5; padding: 6px; border-radius: 4px; }"
+        )
+        auto_layout.addWidget(self.auto_qc_label)
+        auto_btn_row = QHBoxLayout()
+        self.btn_apply_auto_qc = QPushButton("Apply Auto QC")
+        self.btn_apply_auto_qc.setToolTip("Exclude FAIL frames, keep REVIEW frames included, then save frame_quality.csv.")
+        self.btn_apply_auto_qc.clicked.connect(lambda: self.apply_auto_qc(auto_save=True))
+        auto_btn_row.addWidget(self.btn_apply_auto_qc)
+        self.btn_clear_auto_qc = QPushButton("Clear Auto")
+        self.btn_clear_auto_qc.setToolTip("Clear exclusions created by Auto QC for the current filter/view.")
+        self.btn_clear_auto_qc.clicked.connect(self.clear_auto_qc_exclusions)
+        auto_btn_row.addWidget(self.btn_clear_auto_qc)
+        auto_layout.addLayout(auto_btn_row)
+        control_layout.addWidget(auto_group)
+
         z_group = QGroupBox("Auto QC (robust z)")
         z_layout = QFormLayout(z_group)
         self.sky_z_spin = QDoubleSpinBox()
@@ -266,6 +297,8 @@ class QCInspectionPanel(QWidget):
         self.nsrc_z_spin.setSingleStep(0.5)
         self.nsrc_z_spin.setValue(4.0)
         z_layout.addRow("Nsrc z (low):", self.nsrc_z_spin)
+        for spin in (self.sky_z_spin, self.fwhm_z_spin, self.nsrc_z_spin):
+            spin.valueChanged.connect(self._on_auto_qc_threshold_changed)
 
         control_layout.addWidget(z_group)
 
@@ -359,7 +392,7 @@ class QCInspectionPanel(QWidget):
         self.ax_fwhm = self.fig.add_subplot(2, 1, 2)
         self.canvas.mpl_connect("pick_event", self._on_pick)
         self.canvas.mpl_connect("key_press_event", self._on_keypress)
-        plot_layout.addWidget(self.canvas)
+        plot_layout.addWidget(tame_canvas(self.canvas), 1)
         layout.addWidget(plot_box, stretch=1)
 
     def _safe_float(self, value, default=np.nan):
@@ -461,8 +494,10 @@ class QCInspectionPanel(QWidget):
     def load_frames(self, detection_results: dict, file_list: list, use_cropped: bool) -> None:
         self.exclude_reasons = {}
         self.pending_candidates = {}
+        self._auto_qc_applied = False
         rows = []
         self.file_list = list(file_list)
+        self.use_cropped = bool(use_cropped)
         for idx, fname in enumerate(self.file_list):
             meta = detection_results.get(fname)
             if meta is None:
@@ -493,14 +528,23 @@ class QCInspectionPanel(QWidget):
                 "n_sources": int(meta.get("n_sources", 0) or 0),
                 "elong_med": self._safe_float(meta.get("median_elongation"), np.nan),
                 "round_med": self._safe_float(meta.get("median_roundness"), np.nan),
+                "sat_star_count": int(meta.get("sat_star_count", 0) or 0),
+                "n_anchor_candidates": self._safe_float(meta.get("n_anchor_candidates"), np.nan),
+                "n_apcorr_candidates": self._safe_float(meta.get("n_apcorr_candidates"), np.nan),
+                "n_epsf_candidates": self._safe_float(meta.get("n_epsf_candidates"), np.nan),
+                "n_psf_seed_candidates": self._safe_float(meta.get("n_psf_seed_candidates"), np.nan),
+                "quality_score_median": self._safe_float(meta.get("quality_score_median"), np.nan),
             })
 
-        self.frame_df = pd.DataFrame(rows)
+        self.frame_df = self._evaluate_auto_qc(pd.DataFrame(rows))
         self._refresh_filter_list()
         self._apply_exclusions_from_file()
         self._apply_pending_state()
         self.update_plots()
         self.update_summary()
+        self.update_auto_qc_summary()
+        if hasattr(self.parent_window, "refresh_auto_qc_summary"):
+            self.parent_window.refresh_auto_qc_summary()
 
 
     def _refresh_filter_list(self):
@@ -577,11 +621,17 @@ class QCInspectionPanel(QWidget):
         r = row.iloc[0]
         elong_val = r.get("elong_med", np.nan)
         elong_str = f"{float(elong_val):.3f}" if np.isfinite(float(elong_val)) else "N/A"
+        qc_status = str(r.get("qc_status", "") or "")
+        qc_reasons = str(r.get("qc_reasons", "") or "").strip()
+        qc_line = f"\nQC={qc_status}"
+        if qc_reasons:
+            qc_line += f" ({qc_reasons})"
         self.selected_label.setText(
             f"{fname}\n"
             f"filter={r.get('filter','')}, airmass={r.get('airmass', np.nan):.3f}\n"
             f"sky={r.get('sky_med', np.nan):.2f}, fwhm={r.get('fwhm_med', np.nan):.2f}, "
             f"elong={elong_str}, n_sources={int(r.get('n_sources', 0))}"
+            f"{qc_line}"
         )
         self.selected_label.repaint()
         self._selected_fname = fname
@@ -614,6 +664,151 @@ class QCInspectionPanel(QWidget):
         if self.current_filter:
             return self.frame_df[self.frame_df["filter"] == self.current_filter].copy()
         return self.frame_df.copy()
+
+    def _auto_qc_thresholds(self) -> FrameQCThresholds:
+        base = FrameQCThresholds()
+        sky_review = float(self.sky_z_spin.value()) if hasattr(self, "sky_z_spin") else base.sky_z_review
+        fwhm_review = float(self.fwhm_z_spin.value()) if hasattr(self, "fwhm_z_spin") else base.fwhm_z_review
+        nsrc_review = float(self.nsrc_z_spin.value()) if hasattr(self, "nsrc_z_spin") else base.nsrc_z_review
+        elong_fail = max(1.0, self._safe_float(getattr(self.params.P, "fwhm_elong_max", base.elong_fail), base.elong_fail))
+        elong_review = min(base.elong_review, max(1.0, elong_fail - 0.08))
+        return FrameQCThresholds(
+            fwhm_z_review=fwhm_review,
+            fwhm_z_fail=fwhm_review + 1.5,
+            fwhm_model_ratio_review=base.fwhm_model_ratio_review,
+            fwhm_model_ratio_fail=base.fwhm_model_ratio_fail,
+            sky_z_review=sky_review,
+            sky_z_fail=sky_review + 1.5,
+            sky_noise_ratio_review=base.sky_noise_ratio_review,
+            sky_noise_ratio_fail=base.sky_noise_ratio_fail,
+            nsrc_z_review=nsrc_review,
+            nsrc_z_fail=nsrc_review + 1.5,
+            elong_review=elong_review,
+            elong_fail=elong_fail,
+            quality_score_review=base.quality_score_review,
+            quality_score_fail=base.quality_score_fail,
+            sat_rate_review=base.sat_rate_review,
+            sat_rate_fail=base.sat_rate_fail,
+            min_anchor_review=base.min_anchor_review,
+            min_psf_seed_review=base.min_psf_seed_review,
+            min_epsf_review=base.min_epsf_review,
+        )
+
+    def _evaluate_auto_qc(self, df: pd.DataFrame) -> pd.DataFrame:
+        return evaluate_frame_qc(df, self.params.P, self._auto_qc_thresholds())
+
+    def _auto_detail_reasons(self, row: pd.Series) -> set:
+        reason_str = str(row.get("qc_reasons", "") or "").strip()
+        if not reason_str:
+            return set()
+        return {r.strip() for r in reason_str.split(",") if r.strip()}
+
+    def _auto_reason_set(self, row: pd.Series) -> set:
+        reasons = {"auto_qc_fail"}
+        reasons.update(f"auto:{r}" for r in self._auto_detail_reasons(row))
+        return reasons
+
+    def _strip_auto_reasons(self, current: set, row: pd.Series) -> set:
+        remove = {r for r in current if r == "auto_qc_fail" or str(r).startswith("auto:")}
+        if "auto_qc_fail" in current:
+            # Backward compatibility for frame_quality.csv files written before
+            # auto reasons were namespaced.
+            remove.update(self._auto_detail_reasons(row))
+        return set(current) - remove
+
+    def _on_auto_qc_threshold_changed(self, *args) -> None:
+        if self.frame_df.empty:
+            return
+        self.frame_df = self._evaluate_auto_qc(self.frame_df)
+        for _, row in self.frame_df.iterrows():
+            fname = str(row.get("file", "") or "")
+            if not fname:
+                continue
+            self.exclude_reasons[fname] = self._strip_auto_reasons(
+                set(self.exclude_reasons.get(fname, set())),
+                row,
+            )
+        self._auto_qc_applied = False
+        self.pending_candidates = {}
+        self.cand_table.setRowCount(0)
+        self.warning_label.setText("Auto QC thresholds updated. Click Apply Auto QC to persist FAIL exclusions.")
+        self._refresh_qc_views(force_draw=False)
+        self.update_auto_qc_summary()
+        if hasattr(self.parent_window, "refresh_auto_qc_summary"):
+            self.parent_window.refresh_auto_qc_summary()
+
+    def auto_qc_counts(self) -> dict:
+        return summarize_frame_qc(self.frame_df)
+
+    def update_auto_qc_summary(self) -> None:
+        counts = self.auto_qc_counts()
+        n_total = int(sum(counts.values()))
+        if n_total <= 0:
+            text = "Auto QC not evaluated."
+        else:
+            text = (
+                f"Auto QC: PASS {counts.get(PASS, 0)} | "
+                f"REVIEW {counts.get(REVIEW, 0)} | FAIL {counts.get(FAIL, 0)}"
+            )
+            if self._auto_qc_applied:
+                text += "\nFAIL frames are excluded in frame_quality.csv."
+            else:
+                text += "\nApply Auto QC to exclude FAIL frames; REVIEW frames stay included."
+        if hasattr(self, "auto_qc_label"):
+            self.auto_qc_label.setText(text)
+
+    def apply_auto_qc(self, auto_save: bool = False) -> int:
+        df = self._subset_df()
+        if df.empty or "qc_status" not in df.columns:
+            self.warning_label.setText("Auto QC has no frame data.")
+            return 0
+        n_fail = 0
+        for _, row in df.iterrows():
+            fname = str(row.get("file", "") or "")
+            if not fname:
+                continue
+            status = str(row.get("qc_status", "") or "").upper()
+            current = set(self.exclude_reasons.get(fname, set()))
+            manual = self._strip_auto_reasons(current, row)
+            if status == FAIL:
+                self.exclude_reasons[fname] = manual | self._auto_reason_set(row)
+                n_fail += 1
+            elif "auto_qc_fail" in current:
+                self.exclude_reasons[fname] = manual
+        self._auto_qc_applied = True
+        if auto_save:
+            self.apply_to_pipeline()
+            self._refresh_qc_views(force_draw=True)
+        else:
+            self._refresh_qc_views(force_draw=True)
+        self.warning_label.setText(
+            f"Auto QC applied: excluded {n_fail} FAIL frame(s); REVIEW frames kept included."
+        )
+        self.update_auto_qc_summary()
+        if hasattr(self.parent_window, "refresh_auto_qc_summary"):
+            self.parent_window.refresh_auto_qc_summary()
+        return n_fail
+
+    def clear_auto_qc_exclusions(self) -> None:
+        df = self._subset_df()
+        if df.empty:
+            return
+        n_cleared = 0
+        for _, row in df.iterrows():
+            fname = str(row.get("file", "") or "")
+            if not fname:
+                continue
+            current = set(self.exclude_reasons.get(fname, set()))
+            new_reasons = self._strip_auto_reasons(current, row)
+            if new_reasons != current:
+                self.exclude_reasons[fname] = new_reasons
+                n_cleared += 1
+        self._auto_qc_applied = False
+        self.warning_label.setText(f"Cleared Auto QC exclusions for {n_cleared} frame(s).")
+        self._refresh_qc_views(force_draw=True)
+        self.update_auto_qc_summary()
+        if hasattr(self.parent_window, "refresh_auto_qc_summary"):
+            self.parent_window.refresh_auto_qc_summary()
 
     def find_outliers(self):
         self.pending_candidates = {}
@@ -771,6 +966,8 @@ class QCInspectionPanel(QWidget):
                 reasons.update([r.strip() for r in reason_str.split(",") if r.strip()])
             if not reasons:
                 reasons.add("manual")
+            if "auto_qc_fail" in reasons or any(str(r).startswith("auto:") for r in reasons):
+                self._auto_qc_applied = True
             self.exclude_reasons[fname] = reasons
 
     def _apply_pending_state(self):
@@ -852,16 +1049,324 @@ class QCInspectionPanel(QWidget):
         df.to_csv(out_path, index=False)
         return out_path
 
+    def _qc_plot_x(self, df: pd.DataFrame) -> tuple[np.ndarray, str]:
+        airmass = pd.to_numeric(df.get("airmass", pd.Series(np.nan, index=df.index)), errors="coerce").to_numpy(float)
+        time_vals = pd.to_numeric(df.get("time_val", pd.Series(np.nan, index=df.index)), errors="coerce").to_numpy(float)
+        if int(np.isfinite(airmass).sum()) >= 3:
+            return airmass, "Airmass"
+        if int(np.isfinite(time_vals).sum()) >= 3:
+            return time_vals, "Time"
+        return pd.to_numeric(df.get("time_index", pd.Series(np.arange(len(df)), index=df.index)), errors="coerce").to_numpy(float), "Index"
+
+    def _draw_qc_overview(self, fig: Figure, df: pd.DataFrame) -> None:
+        fig.clear()
+        ax_sky = fig.add_subplot(2, 2, 1)
+        ax_fwhm = fig.add_subplot(2, 2, 2)
+        ax_nsrc = fig.add_subplot(2, 2, 3)
+        ax_elong = fig.add_subplot(2, 2, 4)
+
+        x_vals, x_label = self._qc_plot_x(df)
+        files = df["file"].astype(str).tolist()
+        excluded = np.array([len(self.exclude_reasons.get(f, set())) > 0 for f in files])
+        status = df.get("qc_status", pd.Series([""] * len(df))).fillna("").astype(str).str.upper().to_numpy()
+        masks = [
+            ((status == PASS) & ~excluded, "#212121", "o", "PASS"),
+            ((status == REVIEW) & ~excluded, "#F9A825", "^", "REVIEW"),
+            ((status == FAIL) & ~excluded, "#D32F2F", "s", "FAIL"),
+            (excluded, "#9E9E9E", "x", "excluded"),
+        ]
+
+        def _scatter(ax, x, y):
+            handles = []
+            for mask, color, marker, label in masks:
+                finite = mask & np.isfinite(x) & np.isfinite(y)
+                if not np.any(finite):
+                    continue
+                handles.append(
+                    ax.scatter(x[finite], y[finite], s=22, c=color, marker=marker, alpha=0.9, label=label)
+                )
+            return handles
+
+        sky_x = pd.to_numeric(df.get("sky_e", pd.Series(np.nan, index=df.index)), errors="coerce").to_numpy(float)
+        sky_y = pd.to_numeric(df.get("sky_sigma_e", pd.Series(np.nan, index=df.index)), errors="coerce").to_numpy(float)
+        sky_x_label = "sky_e"
+        sky_y_label = "sky_sigma_e"
+        if int(np.isfinite(sky_x).sum()) < 3 or int(np.isfinite(sky_y).sum()) < 3:
+            sky_x = pd.to_numeric(df.get("sky_med", pd.Series(np.nan, index=df.index)), errors="coerce").to_numpy(float)
+            sky_y = pd.to_numeric(df.get("sky_sigma", pd.Series(np.nan, index=df.index)), errors="coerce").to_numpy(float)
+            sky_x_label = "sky_med"
+            sky_y_label = "sky_sigma"
+        _scatter(ax_sky, sky_x, sky_y)
+        expected = pd.to_numeric(df.get("sky_sigma_expected_e", pd.Series(np.nan, index=df.index)), errors="coerce").to_numpy(float)
+        model_ok = sky_x_label == "sky_e" and np.isfinite(sky_x) & np.isfinite(expected) & (expected > 0)
+        if np.any(model_ok):
+            order = np.argsort(sky_x[model_ok])
+            ax_sky.plot(sky_x[model_ok][order], expected[model_ok][order], color="#1565C0", lw=1.2, label="sqrt(sky + RN^2)")
+        ax_sky.set_title("Sky Noise")
+        ax_sky.set_xlabel(sky_x_label)
+        ax_sky.set_ylabel(sky_y_label)
+
+        fwhm_y = pd.to_numeric(df.get("fwhm_med", pd.Series(np.nan, index=df.index)), errors="coerce").to_numpy(float)
+        _scatter(ax_fwhm, x_vals, fwhm_y)
+        fwhm_model = pd.to_numeric(df.get("fwhm_model_px", pd.Series(np.nan, index=df.index)), errors="coerce").to_numpy(float)
+        ok = np.isfinite(x_vals) & np.isfinite(fwhm_model) & (fwhm_model > 0)
+        if np.any(ok):
+            order = np.argsort(x_vals[ok])
+            label = "FWHM0 * X^(3/5)" if x_label == "Airmass" else "robust FWHM model"
+            ax_fwhm.plot(x_vals[ok][order], fwhm_model[ok][order], color="#1565C0", lw=1.2, label=label)
+        fwhm_cut = pd.to_numeric(df.get("fwhm_high_cut_px", pd.Series(np.nan, index=df.index)), errors="coerce").to_numpy(float)
+        ok = np.isfinite(x_vals) & np.isfinite(fwhm_cut)
+        if np.any(ok):
+            order = np.argsort(x_vals[ok])
+            ax_fwhm.plot(x_vals[ok][order], fwhm_cut[ok][order], color="#E53935", lw=1.0, ls="--", label="review cut")
+        ax_fwhm.set_title("Seeing / FWHM")
+        ax_fwhm.set_xlabel(x_label)
+        ax_fwhm.set_ylabel("fwhm_px")
+
+        nsrc_y = pd.to_numeric(df.get("n_sources", pd.Series(np.nan, index=df.index)), errors="coerce").to_numpy(float)
+        _scatter(ax_nsrc, x_vals, nsrc_y)
+        nsrc_trend = pd.to_numeric(df.get("n_sources_trend", pd.Series(np.nan, index=df.index)), errors="coerce").to_numpy(float)
+        ok = np.isfinite(x_vals) & np.isfinite(nsrc_trend)
+        if np.any(ok):
+            order = np.argsort(x_vals[ok])
+            ax_nsrc.plot(x_vals[ok][order], nsrc_trend[ok][order], color="#1565C0", lw=1.2, label="robust median")
+        nsrc_low = pd.to_numeric(df.get("n_sources_low_cut", pd.Series(np.nan, index=df.index)), errors="coerce").to_numpy(float)
+        ok = np.isfinite(x_vals) & np.isfinite(nsrc_low)
+        if np.any(ok):
+            order = np.argsort(x_vals[ok])
+            ax_nsrc.plot(x_vals[ok][order], nsrc_low[ok][order], color="#E53935", lw=1.0, ls="--", label="review cut")
+        ax_nsrc.set_title("Detected Sources")
+        ax_nsrc.set_xlabel(x_label)
+        ax_nsrc.set_ylabel("n_sources")
+
+        elong_y = pd.to_numeric(df.get("elong_med", pd.Series(np.nan, index=df.index)), errors="coerce").to_numpy(float)
+        _scatter(ax_elong, x_vals, elong_y)
+        elong_cut = self._safe_float(getattr(self.params.P, "fwhm_elong_max", 1.3), 1.3)
+        if np.isfinite(elong_cut) and elong_cut > 0:
+            ax_elong.axhline(elong_cut, color="#E53935", lw=1.0, ls="--", label=f"elong cut={elong_cut:.2f}")
+        ax_elong.set_title("Shape")
+        ax_elong.set_xlabel(x_label)
+        ax_elong.set_ylabel("median elongation")
+
+        counts = summarize_frame_qc(df)
+        fig.suptitle(
+            f"Step 4 Auto QC | PASS={counts.get(PASS, 0)} REVIEW={counts.get(REVIEW, 0)} FAIL={counts.get(FAIL, 0)}",
+            fontsize=12,
+        )
+        for ax in (ax_sky, ax_fwhm, ax_nsrc, ax_elong):
+            ax.grid(True, alpha=0.2)
+            if ax.get_legend_handles_labels()[0]:
+                ax.legend(loc="best", fontsize=7, frameon=False)
+        fig.tight_layout(rect=(0, 0, 1, 0.96))
+
+    def _write_qc_summary_csv(self, df: pd.DataFrame, out_dir: Path) -> Path:
+        rows = []
+        df_work = df.copy()
+        df_work["filter"] = df_work.get("filter", "").fillna("").astype(str)
+        groups = [("ALL", df_work)]
+        groups.extend((str(filt) or "(none)", grp) for filt, grp in df_work.groupby("filter", sort=True))
+        for label, grp in groups:
+            if grp.empty:
+                continue
+            passed = grp.get("passed", pd.Series([True] * len(grp), index=grp.index)).astype(bool)
+            counts = summarize_frame_qc(grp)
+            rows.append({
+                "filter": label,
+                "n_frames": int(len(grp)),
+                "n_passed_pipeline": int(passed.sum()),
+                "n_excluded_pipeline": int((~passed).sum()),
+                "qc_pass": counts.get(PASS, 0),
+                "qc_review": counts.get(REVIEW, 0),
+                "qc_fail": counts.get(FAIL, 0),
+                "median_fwhm_px": float(pd.to_numeric(grp.get("fwhm_med"), errors="coerce").median()),
+                "median_sky": float(pd.to_numeric(grp.get("sky_med"), errors="coerce").median()),
+                "median_n_sources": float(pd.to_numeric(grp.get("n_sources"), errors="coerce").median()),
+                "median_elongation": float(pd.to_numeric(grp.get("elong_med"), errors="coerce").median()),
+            })
+        out_path = out_dir / "frame_quality_summary.csv"
+        pd.DataFrame(rows).to_csv(out_path, index=False)
+        return out_path
+
+    def _detect_source_table_path(self, fname: str) -> Optional[Path]:
+        cache_dir = Path(getattr(self.params.P, "cache_dir", ""))
+        candidates = [
+            cache_dir / f"detect_{fname}.csv",
+            step4_dir(self.params.P.result_dir) / f"detect_{fname}.csv",
+        ]
+        for path in candidates:
+            if path.exists():
+                return path
+        return None
+
+    def _load_detect_sources_for_overlay(self, fname: str, max_sources: int = 2500) -> pd.DataFrame:
+        path = self._detect_source_table_path(fname)
+        if path is None:
+            return pd.DataFrame()
+        try:
+            df = pd.read_csv(path)
+        except Exception:
+            return pd.DataFrame()
+        if df.empty or "x" not in df.columns or "y" not in df.columns:
+            return pd.DataFrame()
+        df = df.copy()
+        df["x"] = pd.to_numeric(df["x"], errors="coerce")
+        df["y"] = pd.to_numeric(df["y"], errors="coerce")
+        df = df[df["x"].notna() & df["y"].notna()]
+        if len(df) > max_sources:
+            if "quality_score" in df.columns:
+                df["_sort_quality"] = pd.to_numeric(df["quality_score"], errors="coerce").fillna(-np.inf)
+                df = df.sort_values("_sort_quality", ascending=False).head(max_sources)
+                df = df.drop(columns=["_sort_quality"])
+            else:
+                df = df.head(max_sources)
+        return df
+
+    def _select_overlay_example_rows(self, df: pd.DataFrame) -> list[tuple[str, pd.Series]]:
+        if df.empty or "file" not in df.columns:
+            return []
+        work = df.copy()
+        work["qc_score"] = pd.to_numeric(work.get("qc_score", pd.Series(np.nan, index=work.index)), errors="coerce")
+        work["qc_status"] = work.get("qc_status", pd.Series("", index=work.index)).fillna("").astype(str).str.upper()
+        work["passed"] = work.get("passed", pd.Series([True] * len(work), index=work.index)).astype(bool)
+
+        examples: list[tuple[str, pd.Series]] = []
+        pass_df = work[(work["qc_status"] == PASS) & work["passed"]]
+        if not pass_df.empty:
+            examples.append(("Best PASS", pass_df.sort_values("qc_score", ascending=False).iloc[0]))
+
+        fail_df = work[work["qc_status"] == FAIL]
+        if fail_df.empty:
+            fail_df = work[work["qc_status"] == REVIEW]
+        if fail_df.empty:
+            fail_df = work[~work["passed"]]
+        if not fail_df.empty:
+            worst = fail_df.sort_values("qc_score", ascending=True).iloc[0]
+            if not examples or str(worst.get("file")) != str(examples[0][1].get("file")):
+                examples.append(("Worst QC", worst))
+
+        if not examples and not work.empty:
+            examples.append(("Example", work.sort_values("qc_score", ascending=False).iloc[0]))
+        return examples[:2]
+
+    def _read_overlay_image(self, fname: str) -> Optional[np.ndarray]:
+        path = self._resolve_fits_path(fname, self.use_cropped)
+        if path is None or not path.exists():
+            return None
+        try:
+            with fits.open(path, memmap=True) as hdul:
+                data = np.asarray(hdul[0].data, dtype=float)
+        except Exception:
+            return None
+        if data.ndim > 2:
+            data = np.squeeze(data)
+        if data.ndim != 2:
+            return None
+        return data
+
+    def _draw_detection_overlay_examples(self, fig: Figure, examples: list[tuple[str, pd.Series]]) -> bool:
+        fig.clear()
+        drawable: list[tuple[str, pd.Series, np.ndarray, pd.DataFrame]] = []
+        for label, row in examples:
+            fname = str(row.get("file", "") or "")
+            if not fname:
+                continue
+            image = self._read_overlay_image(fname)
+            sources = self._load_detect_sources_for_overlay(fname)
+            if image is None or image.size == 0 or sources.empty:
+                continue
+            drawable.append((label, row, image, sources))
+        if not drawable:
+            return False
+
+        axes = fig.subplots(1, len(drawable), squeeze=False)[0]
+        for ax, (label, row, image, sources) in zip(axes, drawable):
+            h, w = image.shape
+            stride = max(1, int(np.ceil(max(h, w) / 1800.0)))
+            disp = image[::stride, ::stride]
+            finite = disp[np.isfinite(disp)]
+            if finite.size:
+                vmin, vmax = np.nanpercentile(finite, [1.0, 99.5])
+                if not np.isfinite(vmin) or not np.isfinite(vmax) or vmax <= vmin:
+                    vmin, vmax = np.nanmedian(finite), np.nanmax(finite)
+            else:
+                vmin, vmax = 0.0, 1.0
+            ax.imshow(disp, origin="lower", cmap="gray", vmin=vmin, vmax=vmax)
+            ax.scatter(
+                sources["x"].to_numpy(float) / stride,
+                sources["y"].to_numpy(float) / stride,
+                s=5,
+                facecolors="none",
+                edgecolors="#00E5FF",
+                linewidths=0.35,
+                alpha=0.75,
+            )
+            fname = str(row.get("file", "") or "")
+            status = str(row.get("qc_status", "") or "")
+            reasons = str(row.get("qc_reasons", "") or "").strip()
+            score = self._safe_float(row.get("qc_score"), np.nan)
+            title = f"{label}: {status} score={score:.1f}\n{fname}"
+            ax.set_title(title, fontsize=9)
+            ax.set_xlim(0, w / stride)
+            ax.set_ylim(0, h / stride)
+            ax.set_xlabel("x / downsample")
+            ax.set_ylabel("y / downsample")
+            if reasons:
+                ax.text(
+                    0.01,
+                    0.01,
+                    reasons,
+                    transform=ax.transAxes,
+                    fontsize=7,
+                    color="white",
+                    va="bottom",
+                    ha="left",
+                    bbox={"facecolor": "black", "alpha": 0.55, "edgecolor": "none", "pad": 3},
+                )
+        fig.suptitle("Step 4 Detection Overlay Examples", fontsize=12)
+        fig.tight_layout(rect=(0, 0, 1, 0.95))
+        return True
+
+    def _write_detection_overlay_examples(self, df: pd.DataFrame, out_dir: Path) -> Optional[Path]:
+        examples = self._select_overlay_example_rows(df)
+        if not examples:
+            return None
+        fig = Figure(figsize=(11.0, 5.8), dpi=120)
+        if not self._draw_detection_overlay_examples(fig, examples):
+            return None
+        out_path = out_dir / "step4_detection_overlay_examples.png"
+        fig.savefig(out_path, dpi=160, bbox_inches="tight")
+        return out_path
+
+    def export_qc_products(self) -> list[Path]:
+        df = self._build_quality_df()
+        if df.empty:
+            return []
+        out_dir = step4_dir(self.params.P.result_dir)
+        out_dir.mkdir(parents=True, exist_ok=True)
+        saved = [self._write_qc_summary_csv(df, out_dir)]
+        fig = Figure(figsize=(10.5, 7.2), dpi=120)
+        self._draw_qc_overview(fig, df)
+        fig_path = out_dir / "step4_qc_overview.png"
+        fig.savefig(fig_path, dpi=160, bbox_inches="tight")
+        saved.append(fig_path)
+        overlay_path = self._write_detection_overlay_examples(df, out_dir)
+        if overlay_path is not None:
+            saved.append(overlay_path)
+        return saved
+
     def save_frame_quality(self):
         if self.write_frame_quality_csv() is None:
             return
+        saved = self.export_qc_products()
         self._apply_pipeline_flags()
-        self.warning_label.setText("QC saved and applied.")
+        self.warning_label.setText(f"QC saved and applied. Exported {len(saved)} QC product(s).")
         self.update_summary()
 
     def apply_to_pipeline(self):
+        saved = []
         if self.write_frame_quality_csv() is not None:
-            self.warning_label.setText("QC saved and applied.")
+            saved = self.export_qc_products()
+            self.warning_label.setText(f"QC saved and applied. Exported {len(saved)} QC product(s).")
             self.update_summary()
         self._apply_pipeline_flags()
 
@@ -891,8 +1396,8 @@ class QCInspectionPanel(QWidget):
         if self.frame_df.empty:
             self.plot_status.setText("No data loaded.")
             self.fig.clear()
-            self.ax_sky = self.fig.add_subplot(2, 1, 1)
-            self.ax_fwhm = self.fig.add_subplot(2, 1, 2)
+            self.ax_sky = self.fig.add_subplot(2, 2, 1)
+            self.ax_fwhm = self.fig.add_subplot(2, 2, 2)
             if force_draw:
                 self.canvas.draw()
             else:
@@ -931,8 +1436,10 @@ class QCInspectionPanel(QWidget):
         included = ~(excluded | pending)
 
         self.fig.clear()
-        self.ax_sky = self.fig.add_subplot(2, 1, 1)
-        self.ax_fwhm = self.fig.add_subplot(2, 1, 2)
+        self.ax_sky = self.fig.add_subplot(2, 2, 1)
+        self.ax_fwhm = self.fig.add_subplot(2, 2, 2)
+        self.ax_nsrc = self.fig.add_subplot(2, 2, 3)
+        self.ax_elong = self.fig.add_subplot(2, 2, 4)
         self._scatter_map = {}
 
         def _scatter(ax, x, y, mask, color, marker, label, size=28, alpha=0.8, edge=None):
@@ -949,81 +1456,175 @@ class QCInspectionPanel(QWidget):
             self._scatter_map[sc] = files
             return sc
 
-        finite_x = np.isfinite(x_vals)
-        finite_sky = np.isfinite(df["sky_med"].to_numpy(float))
-        finite_fwhm = np.isfinite(df["fwhm_med"].to_numpy(float))
-        hidden_sky = int(np.sum(pending & ~(finite_x & finite_sky)))
-        hidden_fwhm = int(np.sum(pending & ~(finite_x & finite_fwhm)))
+        status = df.get("qc_status", pd.Series([""] * len(df))).fillna("").astype(str).str.upper().to_numpy()
+        pass_like = included & ~np.isin(status, [REVIEW, FAIL])
+        review_like = included & (status == REVIEW)
+        fail_like = included & (status == FAIL)
+        plot_masks = [
+            (pass_like, "#212121", "o", "PASS/included", 22, 0.9, None),
+            (review_like, "#F9A825", "^", "REVIEW", 44, 0.95, "#5D4037"),
+            (fail_like, "#D32F2F", "s", "FAIL", 48, 0.95, "#212121"),
+            (pending, "#E53935", "o", "outlier", 58, 0.9, "#212121"),
+            (excluded, "#9E9E9E", "x", "excluded", 40, 0.9, None),
+        ]
 
-        sky_handles = []
-        sc = _scatter(self.ax_sky, x_vals, df["sky_med"].to_numpy(float), included,
-                      "#000000", "o", "included", size=22, alpha=0.9)
-        if sc:
-            sky_handles.append(sc)
-        sc = _scatter(self.ax_sky, x_vals, df["sky_med"].to_numpy(float), pending,
-                      "#E53935", "o", "outlier", size=58, alpha=0.9, edge="#212121")
-        if sc:
-            sky_handles.append(sc)
-        sc = _scatter(self.ax_sky, x_vals, df["sky_med"].to_numpy(float), excluded,
-                      "#9E9E9E", "x", "excluded", size=40, alpha=0.9)
-        if sc:
-            sky_handles.append(sc)
-        self.ax_sky.set_ylabel("sky_med")
-        self.ax_sky.set_xlabel(x_label)
+        def _scatter_all(ax, x, y):
+            handles = []
+            for mask, color, marker, label, size, alpha, edge in plot_masks:
+                sc = _scatter(ax, x, y, mask, color, marker, label, size=size, alpha=alpha, edge=edge)
+                if sc:
+                    handles.append(sc)
+            return handles
+
+        sky_x = df.get("sky_e", pd.Series(np.nan, index=df.index)).to_numpy(float)
+        sky_y = df.get("sky_sigma_e", pd.Series(np.nan, index=df.index)).to_numpy(float)
+        sky_x_label = "sky_e"
+        sky_y_label = "sky_sigma_e"
+        if int(np.isfinite(sky_x).sum()) < 3 or int(np.isfinite(sky_y).sum()) < 3:
+            sky_x = df["sky_med"].to_numpy(float)
+            sky_y = df["sky_sigma"].to_numpy(float)
+            sky_x_label = "sky_med"
+            sky_y_label = "sky_sigma"
+        sky_handles = _scatter_all(self.ax_sky, sky_x, sky_y)
+        expected = df.get("sky_sigma_expected_e", pd.Series(np.nan, index=df.index)).to_numpy(float)
+        model_ok = np.isfinite(sky_x) & np.isfinite(expected) & (expected > 0)
+        if sky_x_label == "sky_e" and int(model_ok.sum()) >= 3:
+            order = np.argsort(sky_x[model_ok])
+            self.ax_sky.plot(
+                sky_x[model_ok][order],
+                expected[model_ok][order],
+                color="#1565C0",
+                linestyle="-",
+                linewidth=1.4,
+                alpha=0.9,
+                label="sqrt(sky + RN^2)",
+            )
+        self.ax_sky.set_title("Sky Noise")
+        self.ax_sky.set_xlabel(sky_x_label)
+        self.ax_sky.set_ylabel(sky_y_label)
         self.ax_sky.grid(True, alpha=0.2)
-        if sky_handles:
-            self.ax_sky.legend(handles=sky_handles, loc="best", fontsize=8, frameon=False)
 
-        fwhm_handles = []
-        sc = _scatter(self.ax_fwhm, x_vals, df["fwhm_med"].to_numpy(float), included,
-                      "#000000", "o", "included", size=22, alpha=0.9)
-        if sc:
-            fwhm_handles.append(sc)
-        sc = _scatter(self.ax_fwhm, x_vals, df["fwhm_med"].to_numpy(float), pending,
-                      "#E53935", "o", "outlier", size=58, alpha=0.9, edge="#212121")
-        if sc:
-            fwhm_handles.append(sc)
-        sc = _scatter(self.ax_fwhm, x_vals, df["fwhm_med"].to_numpy(float), excluded,
-                      "#9E9E9E", "x", "excluded", size=40, alpha=0.9)
-        if sc:
-            fwhm_handles.append(sc)
-        self.ax_fwhm.set_ylabel("fwhm_med")
+        fwhm_y = df["fwhm_med"].to_numpy(float)
+        fwhm_handles = _scatter_all(self.ax_fwhm, x_vals, fwhm_y)
+        fwhm_model = df.get("fwhm_model_px", pd.Series(np.nan, index=df.index)).to_numpy(float)
+        model_ok = np.isfinite(x_vals) & np.isfinite(fwhm_model) & (fwhm_model > 0)
+        if int(model_ok.sum()) >= 3:
+            order = np.argsort(x_vals[model_ok])
+            label = "FWHM0 * X^(3/5)" if x_label == "Airmass" else "robust FWHM model"
+            self.ax_fwhm.plot(
+                x_vals[model_ok][order],
+                fwhm_model[model_ok][order],
+                color="#1565C0",
+                linestyle="-",
+                linewidth=1.4,
+                alpha=0.9,
+                label=label,
+            )
+        fwhm_cut = df.get("fwhm_high_cut_px", pd.Series(np.nan, index=df.index)).to_numpy(float)
+        cut_ok = np.isfinite(x_vals) & np.isfinite(fwhm_cut)
+        if int(cut_ok.sum()) >= 3:
+            order = np.argsort(x_vals[cut_ok])
+            self.ax_fwhm.plot(
+                x_vals[cut_ok][order],
+                fwhm_cut[cut_ok][order],
+                color="#E53935",
+                linestyle="--",
+                linewidth=1.1,
+                alpha=0.75,
+                label="FWHM review cut",
+            )
+        self.ax_fwhm.set_title("Seeing / FWHM")
+        self.ax_fwhm.set_ylabel("fwhm_px")
         self.ax_fwhm.set_xlabel(x_label)
         self.ax_fwhm.grid(True, alpha=0.2)
-        fwhm_vals = df["fwhm_med"].to_numpy(float)
-        fwhm_med = np.nanmedian(fwhm_vals)
-        fwhm_mad = np.nanmedian(np.abs(fwhm_vals - fwhm_med))
-        if np.isfinite(fwhm_med) and np.isfinite(fwhm_mad) and fwhm_mad > 0:
-            fwhm_cut = fwhm_med + (self.fwhm_z_spin.value() * fwhm_mad / 0.6745)
-            self.ax_fwhm.axhline(fwhm_cut, color="#E53935", linestyle="--", linewidth=1.2, alpha=0.8)
-        if fwhm_handles:
-            self.ax_fwhm.legend(handles=fwhm_handles, loc="best", fontsize=8, frameon=False)
+
+        nsrc_y = df["n_sources"].to_numpy(float)
+        nsrc_handles = _scatter_all(self.ax_nsrc, x_vals, nsrc_y)
+        nsrc_trend = df.get("n_sources_trend", pd.Series(np.nan, index=df.index)).to_numpy(float)
+        nsrc_low = df.get("n_sources_low_cut", pd.Series(np.nan, index=df.index)).to_numpy(float)
+        trend_ok = np.isfinite(x_vals) & np.isfinite(nsrc_trend)
+        if int(trend_ok.sum()) >= 3:
+            order = np.argsort(x_vals[trend_ok])
+            self.ax_nsrc.plot(
+                x_vals[trend_ok][order],
+                nsrc_trend[trend_ok][order],
+                color="#1565C0",
+                linewidth=1.2,
+                alpha=0.85,
+                label="robust median",
+            )
+        low_ok = np.isfinite(x_vals) & np.isfinite(nsrc_low)
+        if int(low_ok.sum()) >= 3:
+            order = np.argsort(x_vals[low_ok])
+            self.ax_nsrc.plot(
+                x_vals[low_ok][order],
+                nsrc_low[low_ok][order],
+                color="#E53935",
+                linestyle="--",
+                linewidth=1.1,
+                alpha=0.75,
+                label="low-count review cut",
+            )
+        self.ax_nsrc.set_title("Detected Sources")
+        self.ax_nsrc.set_ylabel("n_sources")
+        self.ax_nsrc.set_xlabel(x_label)
+        self.ax_nsrc.grid(True, alpha=0.2)
+
+        elong_y = df["elong_med"].to_numpy(float)
+        elong_handles = _scatter_all(self.ax_elong, x_vals, elong_y)
+        elong_cut = float(getattr(self.params.P, "fwhm_elong_max", 1.3))
+        if np.isfinite(elong_cut) and elong_cut > 0:
+            self.ax_elong.axhline(
+                elong_cut,
+                color="#E53935",
+                linestyle="--",
+                linewidth=1.1,
+                alpha=0.75,
+                label=f"elong cut={elong_cut:.2f}",
+            )
+        self.ax_elong.set_title("Shape")
+        self.ax_elong.set_ylabel("median elongation")
+        self.ax_elong.set_xlabel(x_label)
+        self.ax_elong.grid(True, alpha=0.2)
+
+        for ax, handles in (
+            (self.ax_sky, sky_handles),
+            (self.ax_fwhm, fwhm_handles),
+            (self.ax_nsrc, nsrc_handles),
+            (self.ax_elong, elong_handles),
+        ):
+            if ax.get_legend_handles_labels()[0]:
+                ax.legend(loc="best", fontsize=7, frameon=False)
 
         sel = getattr(self, "_selected_fname", None)
         if sel:
             row = df[df["file"] == sel]
             if not row.empty:
                 r = row.iloc[0]
-                x_sel = float(x_vals[df["file"].tolist().index(sel)])
-                self.ax_sky.scatter(
-                    [x_sel], [r["sky_med"]], s=220, facecolors="none",
-                    edgecolors="red", linewidths=2.0, zorder=20
-                )
-                self.ax_fwhm.scatter(
-                    [x_sel], [r["fwhm_med"]], s=220, facecolors="none",
-                    edgecolors="red", linewidths=2.0, zorder=20
-                )
+                sel_idx = df["file"].tolist().index(sel)
+                x_sel = float(x_vals[sel_idx])
+                highlights = [
+                    (self.ax_sky, float(sky_x[sel_idx]), float(sky_y[sel_idx])),
+                    (self.ax_fwhm, x_sel, self._safe_float(r.get("fwhm_med"), np.nan)),
+                    (self.ax_nsrc, x_sel, self._safe_float(r.get("n_sources"), np.nan)),
+                    (self.ax_elong, x_sel, self._safe_float(r.get("elong_med"), np.nan)),
+                ]
+                for ax, hx, hy in highlights:
+                    if np.isfinite(hx) and np.isfinite(hy):
+                        ax.scatter(
+                            [hx], [hy], s=180, facecolors="none",
+                            edgecolors="red", linewidths=1.8, zorder=20
+                        )
 
         n_total = len(df)
         n_exc = int(excluded.sum())
         rate = (n_exc / n_total * 100.0) if n_total else 0.0
         filter_label = self.current_filter or "all"
-        hidden_note = ""
-        if hidden_sky or hidden_fwhm:
-            hidden_note = f" | hidden(outlier) sky={hidden_sky} fwhm={hidden_fwhm}"
+        counts = summarize_frame_qc(df)
         self.plot_status.setText(
             f"Filter={filter_label} | frames={n_total} | excluded={n_exc} ({rate:.1f}%) | "
-            f"outlier=red dot, selected=red circle, excluded=gray x{hidden_note}"
+            f"PASS={counts.get(PASS, 0)} REVIEW={counts.get(REVIEW, 0)} FAIL={counts.get(FAIL, 0)} | "
+            f"selected=red circle, excluded=gray x"
         )
         self.fig.tight_layout()
         if force_draw:
@@ -1068,7 +1669,14 @@ class QCInspectionPanel(QWidget):
         if df.empty:
             self.summary_text.setText("No data.")
             return
-        reasons_count = {"sky_outlier": 0, "fwhm_outlier": 0, "low_nsrc": 0, "high_elong": 0, "manual": 0}
+        reasons_count = {
+            "sky_outlier": 0,
+            "fwhm_outlier": 0,
+            "low_nsrc": 0,
+            "high_elong": 0,
+            "auto_qc_fail": 0,
+            "manual": 0,
+        }
         excluded_files = []
         for fname in df["file"].tolist():
             r = self.exclude_reasons.get(fname, set())
@@ -1080,6 +1688,7 @@ class QCInspectionPanel(QWidget):
         n_total = len(df)
         n_exc = len(excluded_files)
         rate = (n_exc / n_total * 100.0) if n_total else 0.0
+        qc_counts = summarize_frame_qc(df)
 
         sky_top = df.sort_values("sky_med", ascending=False).head(10)
         fwhm_top = df.sort_values("fwhm_med", ascending=False).head(10)
@@ -1087,10 +1696,12 @@ class QCInspectionPanel(QWidget):
 
         lines = [
             f"Excluded: {n_exc}/{n_total} ({rate:.1f}%)",
+            f"Auto QC: PASS={qc_counts.get(PASS, 0)} REVIEW={qc_counts.get(REVIEW, 0)} FAIL={qc_counts.get(FAIL, 0)}",
             f"Reasons: sky={reasons_count['sky_outlier']} "
             f"fwhm={reasons_count['fwhm_outlier']} "
             f"nsrc={reasons_count['low_nsrc']} "
             f"elong={reasons_count['high_elong']} "
+            f"auto={reasons_count['auto_qc_fail']} "
             f"manual={reasons_count['manual']}",
             "",
             "Top sky_med:",
@@ -1619,14 +2230,35 @@ class SourceDetectionWindow(StepWindowBase):
         self.summary_label.setWordWrap(True)
         results_layout.addWidget(self.summary_label)
 
+        auto_qc_group = QGroupBox("Auto QC")
+        auto_qc_layout = QVBoxLayout(auto_qc_group)
+        self.detect_auto_qc_label = QLabel("Run detection to evaluate frame QC.")
+        self.detect_auto_qc_label.setWordWrap(True)
+        self.detect_auto_qc_label.setStyleSheet(
+            "QLabel { font-family: monospace; padding: 8px; background-color: #F5F5F5; }"
+        )
+        auto_qc_layout.addWidget(self.detect_auto_qc_label)
+        auto_qc_buttons = QHBoxLayout()
+        self.btn_detect_apply_auto_qc = QPushButton("Apply Auto QC")
+        self.btn_detect_apply_auto_qc.clicked.connect(self.apply_auto_qc_from_detection)
+        auto_qc_buttons.addWidget(self.btn_detect_apply_auto_qc)
+        self.btn_detect_open_qc = QPushButton("Open Review")
+        self.btn_detect_open_qc.clicked.connect(self.open_qc_review)
+        auto_qc_buttons.addWidget(self.btn_detect_open_qc)
+        self.btn_detect_save_qc = QPushButton("Save QC")
+        self.btn_detect_save_qc.clicked.connect(self.save_qc_from_detection)
+        auto_qc_buttons.addWidget(self.btn_detect_save_qc)
+        auto_qc_layout.addLayout(auto_qc_buttons)
+        results_layout.addWidget(auto_qc_group)
+
         # Results table - updated columns
         self.results_table = QTableWidget()
-        self.results_table.setColumnCount(6)
-        self.results_table.setHorizontalHeaderLabels(['File', 'N', 'FWHM', 'Bkg', 'Filt', 'Sig'])
+        self.results_table.setColumnCount(7)
+        self.results_table.setHorizontalHeaderLabels(['File', 'N', 'FWHM', 'Bkg', 'Filt', 'Sig', 'QC'])
         results_header = self.results_table.horizontalHeader()
         results_header.setStretchLastSection(False)
         results_header.setSectionResizeMode(0, QHeaderView.Stretch)
-        for col, width in ((1, 42), (2, 92), (3, 52), (4, 42), (5, 42)):
+        for col, width in ((1, 42), (2, 92), (3, 52), (4, 42), (5, 42), (6, 58)):
             results_header.setSectionResizeMode(col, QHeaderView.Fixed)
             self.results_table.setColumnWidth(col, width)
         self.results_table.setWordWrap(False)
@@ -1662,6 +2294,7 @@ class SourceDetectionWindow(StepWindowBase):
         main_splitter.addWidget(results_group)
         main_splitter.setStretchFactor(0, 2)
         main_splitter.setStretchFactor(1, 1)
+        main_splitter.setChildrenCollapsible(False)
 
         self.detect_layout.addWidget(main_splitter)
 
@@ -1701,6 +2334,85 @@ class SourceDetectionWindow(StepWindowBase):
     def _refresh_qc_panel(self):
         if hasattr(self, "qc_panel") and self.qc_panel is not None:
             self.qc_panel.load_frames(self.detection_results, self.file_list, self.use_cropped)
+
+    def _qc_status_for_file(self, filename: str) -> tuple[str, str]:
+        panel = getattr(self, "qc_panel", None)
+        if panel is None or getattr(panel, "frame_df", pd.DataFrame()).empty:
+            return "", ""
+        row = panel.frame_df[panel.frame_df["file"] == filename]
+        if row.empty:
+            return "", ""
+        r = row.iloc[0]
+        return str(r.get("qc_status", "") or ""), str(r.get("qc_reasons", "") or "")
+
+    def _update_result_row_qc(self, row: int, filename: str, result: dict | None = None) -> None:
+        if row < 0 or not hasattr(self, "results_table"):
+            return
+        result = result or self.detection_results.get(filename, {})
+        qc_status, qc_reasons = self._qc_status_for_file(filename)
+        qc_item = self.results_table.item(row, 6)
+        if qc_item is None:
+            qc_item = QTableWidgetItem(qc_status)
+            self.results_table.setItem(row, 6, qc_item)
+        else:
+            qc_item.setText(qc_status)
+        qc_item.setToolTip(qc_reasons)
+        try:
+            has_sources = int(result.get("n_sources", 0) or 0) > 0
+        except (TypeError, ValueError):
+            has_sources = False
+        status_upper = qc_status.upper()
+        warning = status_upper == REVIEW
+        ok = has_sources and status_upper != FAIL
+        set_table_row_background(self.results_table, row, status_row_background(ok, warning=warning))
+
+    def refresh_results_qc_column(self) -> None:
+        if not hasattr(self, "results_table"):
+            return
+        for row in range(self.results_table.rowCount()):
+            item = self.results_table.item(row, 0)
+            if item is None:
+                continue
+            filename = item.text()
+            self._update_result_row_qc(row, filename)
+
+    def refresh_auto_qc_summary(self) -> None:
+        panel = getattr(self, "qc_panel", None)
+        label = getattr(self, "detect_auto_qc_label", None)
+        if panel is None or label is None or getattr(panel, "frame_df", pd.DataFrame()).empty:
+            if label is not None:
+                label.setText("Run detection to evaluate frame QC.")
+            return
+        counts = panel.auto_qc_counts()
+        n_total = int(sum(counts.values()))
+        n_excluded = 0
+        if hasattr(panel, "exclude_reasons"):
+            n_excluded = sum(1 for r in panel.exclude_reasons.values() if r)
+        applied = "yes" if getattr(panel, "_auto_qc_applied", False) else "no"
+        label.setText(
+            f"Frames: {n_total}\n"
+            f"PASS={counts.get(PASS, 0)}  REVIEW={counts.get(REVIEW, 0)}  FAIL={counts.get(FAIL, 0)}\n"
+            f"Excluded now: {n_excluded} | Auto applied: {applied}"
+        )
+        self.refresh_results_qc_column()
+
+    def apply_auto_qc_from_detection(self) -> None:
+        panel = getattr(self, "qc_panel", None)
+        if panel is None:
+            return
+        panel.apply_auto_qc(auto_save=True)
+        self.refresh_auto_qc_summary()
+
+    def open_qc_review(self) -> None:
+        if hasattr(self, "tabs"):
+            self.tabs.setCurrentIndex(1)
+
+    def save_qc_from_detection(self) -> None:
+        panel = getattr(self, "qc_panel", None)
+        if panel is None:
+            return
+        panel.save_frame_quality()
+        self.refresh_auto_qc_summary()
 
     def show_frame_in_detection_tab(self, filename: str) -> None:
         idx = self.file_combo.findText(filename)
@@ -1898,7 +2610,7 @@ class SourceDetectionWindow(StepWindowBase):
             self._update_stretch_plot()
             return
 
-        self.stretch_plot_dialog = QDialog(self)
+        self.stretch_plot_dialog = FittedDialog(self)
         self.stretch_plot_dialog.setWindowTitle("2D Plot - Stretch Control")
         self.stretch_plot_dialog.resize(500, 250)
 
@@ -1919,7 +2631,7 @@ class SourceDetectionWindow(StepWindowBase):
         self.stretch_plot_canvas.mpl_connect('motion_notify_event', self._on_stretch_plot_motion)
         self.stretch_plot_canvas.mpl_connect('button_release_event', self._on_stretch_plot_release)
 
-        layout.addWidget(self.stretch_plot_canvas)
+        layout.addWidget(tame_canvas(self.stretch_plot_canvas, min_h=140), 1)
 
         hint_label = QLabel("Click and drag < > markers to adjust min/max | Changes apply in real-time")
         hint_label.setStyleSheet("QLabel { color: #666; font-size: 10px; }")
@@ -2326,11 +3038,7 @@ class SourceDetectionWindow(StepWindowBase):
         self.results_table.setItem(row, 4, QTableWidgetItem(result['filter']))
         # Sigma used
         self.results_table.setItem(row, 5, QTableWidgetItem(f"{result.get('sigma_used', 3.2):.1f}"))
-        try:
-            has_sources = int(result.get("n_sources", 0) or 0) > 0
-        except (TypeError, ValueError):
-            has_sources = False
-        set_table_row_background(self.results_table, row, status_row_background(has_sources))
+        self._update_result_row_qc(row, filename, result)
 
         self.log(
             f"{filename}: {result['n_sources']} sources, "
@@ -2400,10 +3108,10 @@ class SourceDetectionWindow(StepWindowBase):
         if self.detection_results:
             self.update_navigation_buttons()
             self._refresh_qc_panel()
-            # Auto-switch to QC tab after detection completes
             if not (summary and summary.get('stopped')):
-                if hasattr(self, "tabs"):
-                    self.tabs.setCurrentIndex(1)
+                n_fail = self.qc_panel.apply_auto_qc(auto_save=True) if hasattr(self, "qc_panel") else 0
+                self.log(f"Auto QC applied: {n_fail} FAIL frame(s) excluded; REVIEW frames kept.")
+            self.refresh_auto_qc_summary()
 
         if not summary or not summary.get('stopped'):
             elapsed_txt = ""
@@ -2443,11 +3151,7 @@ class SourceDetectionWindow(StepWindowBase):
             self.results_table.setItem(row, 3, QTableWidgetItem(f"{float(result.get('bkg_median', 0.0)):.1f}"))
             self.results_table.setItem(row, 4, QTableWidgetItem(result.get('filter', '')))
             self.results_table.setItem(row, 5, QTableWidgetItem(f"{float(result.get('sigma_used', 3.2)):.1f}"))
-            try:
-                has_sources = int(result.get("n_sources", 0) or 0) > 0
-            except (TypeError, ValueError):
-                has_sources = False
-            set_table_row_background(self.results_table, row, status_row_background(has_sources))
+            self._update_result_row_qc(row, filename, result)
 
     def update_summary_from_results(self, title: str = "Detection Loaded"):
         """Update summary label from detection_results"""
@@ -2520,7 +3224,7 @@ class SourceDetectionWindow(StepWindowBase):
     def open_parameters_dialog(self):
         """Open detection parameters dialog"""
         self.sync_filter_sigma_map()
-        dialog = QDialog(self)
+        dialog = FittedDialog(self)
         configure_parameter_dialog(dialog, "Detection Parameters", 540, 680)
 
         outer_layout = QVBoxLayout(dialog)

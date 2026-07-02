@@ -23,7 +23,7 @@ from apex.utils.step_paths import (
     step6_refbuild_dir,
 )
 from apex.utils.common_helpers import normalize_filter_key
-from apex.utils.qc_utils import filter_files_by_qc
+from apex.utils.qc_utils import filter_files_by_qc, should_use_frame_quality_qc
 
 
 def _selection_path(result_dir: Path) -> Path:
@@ -72,7 +72,12 @@ class RefBuildStep(PipelineStep):
 
         # Mirror RefBuildWindow.run_ref_build: optionally drop frames that fail
         # the Step 4 frame QC before building the master catalog.
-        use_qc = bool(getattr(P, "wcs_require_qc_pass", True))
+        use_qc = should_use_frame_quality_qc(
+            Path(ctx.result_dir),
+            P,
+            "wcs_require_qc_pass",
+            default=True,
+        )
         file_list, qc_info = filter_files_by_qc(
             Path(ctx.result_dir), file_list, require_qc=use_qc
         )

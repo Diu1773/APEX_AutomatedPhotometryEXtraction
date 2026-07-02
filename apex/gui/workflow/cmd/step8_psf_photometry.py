@@ -62,6 +62,7 @@ from matplotlib.figure import Figure
 import matplotlib.colors as mcolors
 from matplotlib.patches import Rectangle, Patch
 
+from apex.gui.layout_rules import FittedDialog, prevent_collapse, tame_canvas
 from apex.gui.workflow.step_window_base import StepWindowBase
 from apex.gui.workflow.log_panel import WorkflowLogWindow, WorkerStatusPanel, append_timestamped_log, show_raised
 from apex.gui.workflow.ui_helpers import (
@@ -81,7 +82,8 @@ from apex.utils.step_paths import step7_forced_phot_dir
 from apex.utils.astro_utils import normalize_filter_name
 from apex.utils.constants import get_parallel_workers
 from apex.utils.noise_params import resolve_effective_noise_params
-from apex.utils.qc_utils import filter_files_by_qc
+from apex.utils.qc_utils import filter_files_by_qc, should_use_frame_quality_qc
+from apex.utils.psf_core import estimate_psf_core_cut, psf_core_keep_mask
 
 
 # ── Scalar helpers ────────────────────────────────────────────────────────────
@@ -182,6 +184,16 @@ _PSF_SIGNATURE_PARAMS = (
     "psf_new_sources_cap_per_iter",
     "psf_new_sources_cap_frac",
     "psf_fit_init_max_sources",
+    "psf_core_cut_enable",
+    "psf_core_cut_center_mode",
+    "psf_core_cut_x_px",
+    "psf_core_cut_y_px",
+    "psf_core_cut_radius_px",
+    "psf_core_cut_radius_fwhm_mult",
+    "psf_core_cut_auto_cell_fwhm_mult",
+    "psf_core_cut_auto_min_density_ratio",
+    "psf_core_cut_auto_min_sources",
+    "psf_core_cut_max_exclude_frac",
     "psf_substar_iters",
     "psf_substar_neighbor_r_fwhm_mult",
     "psf_substar_max_sources",
@@ -210,6 +222,10 @@ _PSF_MODE_PRESETS = {
         "psf_new_sources_cap_per_iter": 70,
         "psf_new_sources_cap_frac": 0.02,
         "psf_fit_init_max_sources": 0,
+        "psf_core_cut_enable": False,
+        "psf_core_cut_radius_px": 0.0,
+        "psf_core_cut_radius_fwhm_mult": 25.0,
+        "psf_core_cut_auto_min_density_ratio": 1.5,
         "psf_substar_neighbor_r_fwhm_mult": 8.0,
         "psf_substar_max_sources": 1500,
         "psf_conv_new_frac": 0.02,
@@ -223,17 +239,21 @@ _PSF_MODE_PRESETS = {
         "psf_n_stars_max": 30,
         "psf_isolation_fwhm_mult": 2.0,
         "psf_fit_shape_fwhm_mult": 1.2,
-        "psf_max_iter": 3,
+        "psf_max_iter": 2,
         "psf_redetect_sigma": 4.5,
         "psf_duplicate_radius_fwhm_mult": 0.4,
         "psf_new_sources_cap_per_iter": 50,
         "psf_new_sources_cap_frac": 0.015,
         "psf_fit_init_max_sources": 3000,
+        "psf_core_cut_enable": True,
+        "psf_core_cut_radius_px": 0.0,
+        "psf_core_cut_radius_fwhm_mult": 25.0,
+        "psf_core_cut_auto_min_density_ratio": 1.5,
         "psf_substar_neighbor_r_fwhm_mult": 5.0,
         "psf_substar_max_sources": 1000,
         "psf_conv_new_frac": 0.02,
         "psf_flux_conv_threshold": 0.01,
-        "psf_use_grouper": True,
+        "psf_use_grouper": False,
         "psf_redetect_sharp_lo": 0.2,
         "psf_redetect_sharp_hi": 0.9,
         "psf_redetect_round_abs_max": 0.6,
@@ -248,6 +268,10 @@ _PSF_MODE_PRESETS = {
         "psf_new_sources_cap_per_iter": 100,
         "psf_new_sources_cap_frac": 0.05,
         "psf_fit_init_max_sources": 0,
+        "psf_core_cut_enable": False,
+        "psf_core_cut_radius_px": 0.0,
+        "psf_core_cut_radius_fwhm_mult": 25.0,
+        "psf_core_cut_auto_min_density_ratio": 1.5,
         "psf_substar_neighbor_r_fwhm_mult": 8.0,
         "psf_substar_max_sources": 1500,
         "psf_conv_new_frac": 0.03,
@@ -1124,6 +1148,18 @@ class Step6PSFWorker(QThread):
             conv_new_frac = _to_float(getattr(P, "psf_conv_new_frac", 0.02), 0.02)
             flux_conv_threshold = _to_float(getattr(P, "psf_flux_conv_threshold", 0.01), 0.01)
             fit_init_max_sources = _to_int(getattr(P, "psf_fit_init_max_sources", 0), 0)
+            core_cut_enable = bool(getattr(P, "psf_core_cut_enable", False))
+            core_cut_center_mode = str(getattr(P, "psf_core_cut_center_mode", "auto")).strip().lower() or "auto"
+            if core_cut_center_mode not in ("auto", "image", "manual"):
+                core_cut_center_mode = "auto"
+            core_cut_x_px = _to_float(getattr(P, "psf_core_cut_x_px", np.nan), np.nan)
+            core_cut_y_px = _to_float(getattr(P, "psf_core_cut_y_px", np.nan), np.nan)
+            core_cut_radius_px = _to_float(getattr(P, "psf_core_cut_radius_px", 0.0), 0.0)
+            core_cut_radius_fwhm_mult = _to_float(getattr(P, "psf_core_cut_radius_fwhm_mult", 25.0), 25.0)
+            core_cut_auto_cell_fwhm_mult = _to_float(getattr(P, "psf_core_cut_auto_cell_fwhm_mult", 8.0), 8.0)
+            core_cut_auto_min_density_ratio = _to_float(getattr(P, "psf_core_cut_auto_min_density_ratio", 1.5), 1.5)
+            core_cut_auto_min_sources = _to_int(getattr(P, "psf_core_cut_auto_min_sources", 50), 50)
+            core_cut_max_exclude_frac = _to_float(getattr(P, "psf_core_cut_max_exclude_frac", 0.70), 0.70)
             use_error_image = bool(getattr(P, "psf_use_error_image", True))
             use_grouper = bool(getattr(P, "psf_use_grouper", True))
             grouper_max_size = _to_int(getattr(P, "psf_grouper_max_size", 25), 25)
@@ -1154,6 +1190,12 @@ class Step6PSFWorker(QThread):
             new_sources_cap_per_iter = max(0, new_sources_cap_per_iter)
             new_sources_cap_frac = min(max(0.0, new_sources_cap_frac), 1.0)
             conv_new_frac = min(max(0.0, conv_new_frac), 1.0)
+            core_cut_radius_px = max(0.0, core_cut_radius_px) if np.isfinite(core_cut_radius_px) else 0.0
+            core_cut_radius_fwhm_mult = max(1.0, core_cut_radius_fwhm_mult)
+            core_cut_auto_cell_fwhm_mult = max(2.0, core_cut_auto_cell_fwhm_mult)
+            core_cut_auto_min_density_ratio = max(1.0, core_cut_auto_min_density_ratio)
+            core_cut_auto_min_sources = max(5, core_cut_auto_min_sources)
+            core_cut_max_exclude_frac = min(max(0.05, core_cut_max_exclude_frac), 0.95)
             duplicate_radius_mult = max(0.0, duplicate_radius_mult)
             if np.isfinite(duplicate_radius_px_cfg):
                 duplicate_radius_px_cfg = max(0.0, float(duplicate_radius_px_cfg))
@@ -1191,6 +1233,13 @@ class Step6PSFWorker(QThread):
             if not use_grouper:
                 self._log("PSF fit mode: iterative 'new' (grouper off; photutils 2.3 requires grouper for mode='all')")
             self._log(
+                "PSF core cut | "
+                f"{'on' if core_cut_enable else 'off'} | center={core_cut_center_mode} | "
+                f"radius_px={core_cut_radius_px:.1f} "
+                f"fallback={core_cut_radius_fwhm_mult:.1f}xFWHM | "
+                f"density_ratio>={core_cut_auto_min_density_ratio:.2f}"
+            )
+            self._log(
                 f"PSF scales | epsf_cutout={epsf_size_fwhm_mult:.2f}xFWHM | "
                 f"fit_window={fit_shape_fwhm_mult:.2f}xFWHM | "
                 "subtract_window≈2xEPSF"
@@ -1198,7 +1247,12 @@ class Step6PSFWorker(QThread):
 
             frames = list(self.file_list)
 
-            use_qc = bool(getattr(self.params.P, "phot_use_qc_pass_only", False))
+            use_qc = should_use_frame_quality_qc(
+                self.result_dir,
+                self.params.P,
+                "phot_use_qc_pass_only",
+                default=False,
+            )
             frames, qc_info = filter_files_by_qc(self.result_dir, frames, require_qc=use_qc)
             if use_qc:
                 if qc_info.get("applied"):
@@ -1307,6 +1361,38 @@ class Step6PSFWorker(QThread):
 
                 epsf_cache_key = this_filter if use_shared_filter_epsf else f"{this_filter}:{fname}"
                 h, w = img.shape
+                det_xy_all_for_core = det_df[["x", "y"]].to_numpy(float)
+                core_cut = estimate_psf_core_cut(
+                    det_xy_all_for_core,
+                    img.shape,
+                    fwhm_safe,
+                    enabled=core_cut_enable,
+                    center_mode=core_cut_center_mode,
+                    manual_center=(core_cut_x_px, core_cut_y_px),
+                    radius_px=core_cut_radius_px,
+                    radius_fwhm_mult=core_cut_radius_fwhm_mult,
+                    auto_cell_fwhm_mult=core_cut_auto_cell_fwhm_mult,
+                    auto_min_density_ratio=core_cut_auto_min_density_ratio,
+                    auto_min_sources=core_cut_auto_min_sources,
+                    max_exclude_frac=core_cut_max_exclude_frac,
+                )
+                n_core_excluded_init = 0
+                n_core_excluded_redetect = 0
+                n_core_excluded_result = 0
+
+                def _core_keep(xy_like) -> np.ndarray:
+                    return psf_core_keep_mask(np.asarray(xy_like, dtype=float), core_cut)
+
+                if core_cut.enabled:
+                    self._log(
+                        f"  [CORE] enabled | center=({core_cut.center_x:.1f},{core_cut.center_y:.1f}) "
+                        f"r={core_cut.radius_px:.1f}px | method={core_cut.method} | "
+                        f"exclude={core_cut.n_excluded}/{core_cut.n_total}"
+                    )
+                elif core_cut_enable:
+                    self._log(
+                        f"  [CORE] auto cut off for {fname}: {core_cut.reason or 'not_applicable'}"
+                    )
 
                 try:
                     self.worker_status.emit(wid, fname, "Background", 20)
@@ -1375,6 +1461,15 @@ class Step6PSFWorker(QThread):
                             (xy_all[:, 1] >= epsf_half) & (xy_all[:, 1] <= h - 1 - epsf_half)
                         )
                         in_range = in_range & not_edge
+                        if core_cut.enabled:
+                            epsf_core_keep = _core_keep(xy_all)
+                            n_epsf_core_drop = int(np.sum(in_range & ~epsf_core_keep))
+                            if n_epsf_core_drop > 0:
+                                self._log(
+                                    f"[EPSF] core cut removed {n_epsf_core_drop} candidates "
+                                    f"(r<{core_cut.radius_px:.1f}px)"
+                                )
+                            in_range = in_range & epsf_core_keep
 
                         if "epsf_candidate" in det_df.columns:
                             epsf_candidate = det_df["epsf_candidate"].to_numpy(bool)[finite_xy]
@@ -1907,6 +2002,23 @@ class Step6PSFWorker(QThread):
                         except Exception as exc:
                             self._log(f"  [WARN] Step7 flux/forced seed load failed: {exc}")
 
+                    if core_cut.enabled and len(xy_det):
+                        _keep_core_init = _core_keep(xy_det)
+                        n_core_excluded_init = int(np.sum(~_keep_core_init))
+                        if n_core_excluded_init > 0:
+                            xy_det = xy_det[_keep_core_init]
+                            det_uids = det_uids[_keep_core_init]
+                            self._log(
+                                f"  [CORE] initial PSF seeds excluded: {n_core_excluded_init} "
+                                f"(r<{core_cut.radius_px:.1f}px)"
+                            )
+                        if len(xy_det) == 0:
+                            return {
+                                "file": fname,
+                                "status": "no_valid_init",
+                                "reason": f"all detections inside PSF core cut r<{core_cut.radius_px:.1f}px",
+                            }
+
                     default_flux = max(1.0, float(bkg_std) * 10.0)
                     init_flux_list = []
                     for _uid, (x0, y0) in zip(det_uids, xy_det):
@@ -1964,7 +2076,7 @@ class Step6PSFWorker(QThread):
                     else:
                         redetect_sigma_eff = float(redetect_sigma)
 
-                    redetect_finder = DAOStarFinder(
+                    dao_redetect_finder = DAOStarFinder(
                         fwhm=fwhm_safe,
                         threshold=redetect_sigma_eff * bkg_std,
                         peakmax=sat_adu,
@@ -1973,6 +2085,26 @@ class Step6PSFWorker(QThread):
                         roundlo=-redetect_round_abs_max,
                         roundhi=redetect_round_abs_max,
                     )
+                    if core_cut.enabled:
+                        def redetect_finder(data):
+                            nonlocal n_core_excluded_redetect
+                            tbl = dao_redetect_finder(data)
+                            if tbl is None or len(tbl) == 0:
+                                return tbl
+                            try:
+                                xy_new = np.column_stack([
+                                    np.asarray(tbl["xcentroid"], dtype=float),
+                                    np.asarray(tbl["ycentroid"], dtype=float),
+                                ])
+                                keep_core = _core_keep(xy_new)
+                                n_drop_core = int(np.sum(~keep_core))
+                                if n_drop_core > 0:
+                                    n_core_excluded_redetect += n_drop_core
+                                return tbl[keep_core]
+                            except Exception:
+                                return tbl
+                    else:
+                        redetect_finder = dao_redetect_finder
                     if redetect_sigma_eff != redetect_sigma:
                         self._log(
                             f"  [REDETECT] filter={this_filter} sigma override: {redetect_sigma:.2f} -> {redetect_sigma_eff:.2f}"
@@ -2158,10 +2290,17 @@ class Step6PSFWorker(QThread):
 
                         # Outer loop: ALLSTAR fit → residual → re-detect → add → repeat
                         # max_iter controls number of find+fit cycles (DAOPHOT style)
-                        _INNER_ITERS    = 3  # inner ALLSTAR convergence per cycle
-                        _group_radius   = fwhm_safe * 1.5  # DAOPHOT standard
-                        _max_grp_size   = min(8, max(1, _to_int(
+                        _INNER_ITERS = 3  # inner ALLSTAR convergence per cycle
+                        _max_grp_size = min(8, max(1, _to_int(
                             getattr(P, "psf_grouper_max_size", 4), 4)))
+                        # Respect the shared grouper switch for the ALLSTAR engine too.
+                        # With the core excluded, single-star neighbour subtraction is
+                        # usually the practical fast path.
+                        if use_grouper and _max_grp_size > 1:
+                            _group_radius = fwhm_safe * 1.5  # DAOPHOT standard
+                        else:
+                            _group_radius = 0.0
+                            _max_grp_size = 1
 
                         _cur_xy  = np.column_stack([
                             np.asarray(init_params["x_0"], dtype=float),
@@ -2354,6 +2493,21 @@ class Step6PSFWorker(QThread):
                                     f"  [PSF] refine pass skipped | seed={len(refine_init)} "
                                     f"> {refine_pass_max_sources}"
                                 )
+
+                    if core_cut.enabled and phot_result is not None and len(phot_result) > 0:
+                        try:
+                            _x_core = np.asarray(phot_result["x_fit"], dtype=float)
+                            _y_core = np.asarray(phot_result["y_fit"], dtype=float)
+                            _keep_core_result = _core_keep(np.column_stack([_x_core, _y_core]))
+                            n_core_excluded_result = int(np.sum(~_keep_core_result))
+                            if n_core_excluded_result > 0:
+                                phot_result = phot_result[_keep_core_result]
+                                self._log(
+                                    f"  [CORE] fitted result rows excluded: {n_core_excluded_result} "
+                                    f"(r<{core_cut.radius_px:.1f}px)"
+                                )
+                        except Exception as _core_e:
+                            self._log(f"  [CORE] result filter skipped: {_core_e}")
 
                     raw_iter_counts: dict[int, int] = {}
                     n_new_raw_total = 0
@@ -2895,6 +3049,10 @@ class Step6PSFWorker(QThread):
                                 iter_found = int(iter_val) if np.isfinite(iter_val) and iter_val > 0 else 1
                             else:
                                 iter_found = 1
+                            r_core_px = (
+                                float(np.hypot(xk - core_cut.center_x, yk - core_cut.center_y))
+                                if core_cut.enabled else np.nan
+                            )
                             phot_rows.append({
                                 "det_uid": det_uid,
                                 "seed_uid": int(cand_uid) if np.isfinite(cand_uid) else -1,
@@ -2915,6 +3073,12 @@ class Step6PSFWorker(QThread):
                                 "qfit": round(float(chi2[k]), 4) if np.isfinite(chi2[k]) else np.nan,
                                 "iter_found": iter_found,
                                 "flags_psf": int(flags_col[k]),
+                                "psf_core_r_px": round(r_core_px, 3) if np.isfinite(r_core_px) else np.nan,
+                                "psf_core_cut_px": (
+                                    round(float(core_cut.radius_px), 3)
+                                    if core_cut.enabled and np.isfinite(core_cut.radius_px)
+                                    else np.nan
+                                ),
                                 "exptime": round(exptime, 4),
                             })
                         if _uid_collision > 0:
@@ -2972,6 +3136,17 @@ class Step6PSFWorker(QThread):
                         "rawxy_iter2_path": f"rawxy_iter2_{fname}.npy",
                         "seedxy_path": seed_xy_path.name,
                         "iters": iter_records,
+                        "core_cut": {
+                            "enabled": bool(core_cut.enabled),
+                            "center_x": float(core_cut.center_x) if np.isfinite(core_cut.center_x) else None,
+                            "center_y": float(core_cut.center_y) if np.isfinite(core_cut.center_y) else None,
+                            "radius_px": float(core_cut.radius_px) if np.isfinite(core_cut.radius_px) else None,
+                            "method": core_cut.method,
+                            "reason": core_cut.reason,
+                            "n_excluded_init": int(n_core_excluded_init),
+                            "n_excluded_redetect": int(n_core_excluded_redetect),
+                            "n_excluded_result": int(n_core_excluded_result),
+                        },
                     }
                     self.worker_status.emit(wid, fname, "Save", 95)
                     # Keep final products and metadata for UI reload/QA.
@@ -3009,6 +3184,13 @@ class Step6PSFWorker(QThread):
                         "n_goodmag": n_good,
                         "n_fail": n_rows - n_good,
                         "n_new_iter": int(n_new_total),
+                        "core_cut_enabled": bool(core_cut.enabled),
+                        "core_cut_x_px": round(float(core_cut.center_x), 3) if np.isfinite(core_cut.center_x) else np.nan,
+                        "core_cut_y_px": round(float(core_cut.center_y), 3) if np.isfinite(core_cut.center_y) else np.nan,
+                        "core_cut_radius_px": round(float(core_cut.radius_px), 3) if np.isfinite(core_cut.radius_px) else np.nan,
+                        "n_core_excluded_init": int(n_core_excluded_init),
+                        "n_core_excluded_redetect": int(n_core_excluded_redetect),
+                        "n_core_excluded_result": int(n_core_excluded_result),
                     }
                     idx_row.update(noise_info)
                     self.worker_status.emit(wid, fname, "Done", 100)
@@ -3305,7 +3487,7 @@ class PSFPhotometryWindow(StepWindowBase):
         self.epsf_canvas = FigureCanvas(self.epsf_fig)
         self.epsf_toolbar = NavigationToolbar(self.epsf_canvas, self)
         epsf_layout.addWidget(self.epsf_toolbar)
-        epsf_layout.addWidget(self.epsf_canvas)
+        epsf_layout.addWidget(tame_canvas(self.epsf_canvas), 1)
         self.main_tabs.addTab(epsf_tab, "PSF Model")
 
         # Tab 1: Cutout viewer – Raw | Star-subtracted per star, per iter
@@ -3348,7 +3530,7 @@ class PSFPhotometryWindow(StepWindowBase):
         self.res_canvas = FigureCanvas(self.res_fig)
         self.res_toolbar = NavigationToolbar(self.res_canvas, self)
         res_layout.addWidget(self.res_toolbar)
-        res_layout.addWidget(self.res_canvas)
+        res_layout.addWidget(tame_canvas(self.res_canvas), 1)
         self.main_tabs.addTab(res_tab, "Residuals")
 
         # Tab 2: Photometry Table
@@ -3378,6 +3560,7 @@ class PSFPhotometryWindow(StepWindowBase):
         qc_outer.addLayout(qc_top_bar)
 
         qc_splitter = QSplitter(Qt.Vertical)
+        prevent_collapse(qc_splitter)
         qc_outer.addWidget(qc_splitter, 1)
 
         # Top: PSF statistics summary text
@@ -3443,7 +3626,7 @@ class PSFPhotometryWindow(StepWindowBase):
         self.cmp_canvas = FigureCanvas(self.cmp_fig)
         self.cmp_toolbar = NavigationToolbar(self.cmp_canvas, self)
         cmp_layout.addWidget(self.cmp_toolbar)
-        cmp_layout.addWidget(self.cmp_canvas)
+        cmp_layout.addWidget(tame_canvas(self.cmp_canvas), 1)
         qc_splitter.addWidget(cmp_widget)
 
         self.main_tabs.addTab(qc_tab, "QC")
@@ -3582,7 +3765,12 @@ class PSFPhotometryWindow(StepWindowBase):
             return None
 
     def _psf_frames_after_qc(self) -> tuple[list[str], dict]:
-        use_qc = bool(getattr(self.params.P, "phot_use_qc_pass_only", False))
+        use_qc = should_use_frame_quality_qc(
+            Path(self.params.P.result_dir),
+            self.params.P,
+            "phot_use_qc_pass_only",
+            default=False,
+        )
         frames, qc_info = filter_files_by_qc(
             Path(self.params.P.result_dir),
             list(self.file_list),
@@ -3591,7 +3779,12 @@ class PSFPhotometryWindow(StepWindowBase):
         return list(frames), dict(qc_info or {})
 
     def _log_step4_qc_selection(self, qc_info: dict):
-        if not bool(getattr(self.params.P, "phot_use_qc_pass_only", False)):
+        if not should_use_frame_quality_qc(
+            Path(self.params.P.result_dir),
+            self.params.P,
+            "phot_use_qc_pass_only",
+            default=False,
+        ):
             return
         if qc_info.get("applied"):
             self.log(f"Step4 QC: {qc_info.get('kept', 0)}/{qc_info.get('total', 0)} frame(s) kept.")
@@ -4993,7 +5186,7 @@ class PSFPhotometryWindow(StepWindowBase):
     # ── Parameters dialog ─────────────────────────────────────────────────────
 
     def open_parameters_dialog(self):
-        dialog = QDialog(self)
+        dialog = FittedDialog(self)
         configure_parameter_dialog(dialog, "Step 8 PSF Parameters", 620, 720)
         layout = QVBoxLayout(dialog)
 
@@ -5023,6 +5216,7 @@ class PSFPhotometryWindow(StepWindowBase):
         mode_form = _add_group("Mode", expanded=True)
         epsf_form = _add_group("ePSF Model", expanded=True)
         fit_form = _add_group("PSF Fit")
+        core_form = _add_group("Crowded Core Cut")
         redetect_form = _add_group("Residual Re-detection")
         output_form = _add_group("Output")
 
@@ -5153,6 +5347,65 @@ class PSFPhotometryWindow(StepWindowBase):
         self.p_fit_init_max.setToolTip("0이면 초기 피팅 소스 무제한")
         fit_form.addRow("Initial fit source cap (0=off):", self.p_fit_init_max)
 
+        self.p_core_enable = QCheckBox("Exclude crowded core during PSF fit")
+        self.p_core_enable.setChecked(bool(getattr(self.params.P, "psf_core_cut_enable", False)))
+        self.p_core_enable.setToolTip(
+            "Uses Step 4 detection coordinates only. Core sources are not fitted in Step 8."
+        )
+        core_form.addRow("", self.p_core_enable)
+
+        self.p_core_center_mode = QComboBox()
+        self.p_core_center_mode.addItem("Auto density peak", "auto")
+        self.p_core_center_mode.addItem("Image center", "image")
+        self.p_core_center_mode.addItem("Manual x/y", "manual")
+        _core_mode = str(getattr(self.params.P, "psf_core_cut_center_mode", "auto")).strip().lower()
+        _core_mode_i = self.p_core_center_mode.findData(_core_mode)
+        self.p_core_center_mode.setCurrentIndex(_core_mode_i if _core_mode_i >= 0 else 0)
+        core_form.addRow("Center:", self.p_core_center_mode)
+
+        self.p_core_x = QDoubleSpinBox()
+        self.p_core_x.setRange(0.0, 200000.0)
+        self.p_core_x.setDecimals(1)
+        self.p_core_x.setSingleStep(10.0)
+        _cx = _to_float(getattr(self.params.P, "psf_core_cut_x_px", 0.0), 0.0)
+        self.p_core_x.setValue(0.0 if not np.isfinite(_cx) else float(_cx))
+        core_form.addRow("Manual center x (px):", self.p_core_x)
+
+        self.p_core_y = QDoubleSpinBox()
+        self.p_core_y.setRange(0.0, 200000.0)
+        self.p_core_y.setDecimals(1)
+        self.p_core_y.setSingleStep(10.0)
+        _cy = _to_float(getattr(self.params.P, "psf_core_cut_y_px", 0.0), 0.0)
+        self.p_core_y.setValue(0.0 if not np.isfinite(_cy) else float(_cy))
+        core_form.addRow("Manual center y (px):", self.p_core_y)
+
+        self.p_core_radius_px = QDoubleSpinBox()
+        self.p_core_radius_px.setRange(0.0, 200000.0)
+        self.p_core_radius_px.setDecimals(1)
+        self.p_core_radius_px.setSingleStep(10.0)
+        self.p_core_radius_px.setSpecialValueText("auto")
+        self.p_core_radius_px.setValue(_to_float(getattr(self.params.P, "psf_core_cut_radius_px", 0.0), 0.0))
+        self.p_core_radius_px.setToolTip("0 = estimate radius from the detection-density profile")
+        core_form.addRow("Cut radius (px):", self.p_core_radius_px)
+
+        self.p_core_radius_mult = QDoubleSpinBox()
+        self.p_core_radius_mult.setRange(1.0, 200.0)
+        self.p_core_radius_mult.setDecimals(1)
+        self.p_core_radius_mult.setSingleStep(1.0)
+        self.p_core_radius_mult.setValue(_to_float(getattr(self.params.P, "psf_core_cut_radius_fwhm_mult", 25.0), 25.0))
+        self.p_core_radius_mult.setToolTip("Fallback radius when auto profile cannot find a boundary")
+        core_form.addRow("Fallback radius (xFWHM):", self.p_core_radius_mult)
+
+        self.p_core_density_ratio = QDoubleSpinBox()
+        self.p_core_density_ratio.setRange(1.0, 20.0)
+        self.p_core_density_ratio.setDecimals(2)
+        self.p_core_density_ratio.setSingleStep(0.1)
+        self.p_core_density_ratio.setValue(
+            _to_float(getattr(self.params.P, "psf_core_cut_auto_min_density_ratio", 1.5), 1.5)
+        )
+        self.p_core_density_ratio.setToolTip("Auto center/cut is disabled when the density peak is below this contrast")
+        core_form.addRow("Min density contrast:", self.p_core_density_ratio)
+
         self.p_substar_nei_mult = QDoubleSpinBox()
         self.p_substar_nei_mult.setRange(2.0, 30.0)
         self.p_substar_nei_mult.setSingleStep(0.5)
@@ -5255,6 +5508,8 @@ class PSFPhotometryWindow(StepWindowBase):
             self.p_n_stars, self.p_isolation, self.p_fit_mult, self.p_max_iter,
             self.p_redetect, self.p_dup_mult, self.p_dup_px,
             self.p_cap_per_iter, self.p_cap_frac, self.p_fit_init_max,
+            self.p_core_enable, self.p_core_center_mode, self.p_core_x, self.p_core_y,
+            self.p_core_radius_px, self.p_core_radius_mult, self.p_core_density_ratio,
             self.p_substar_nei_mult, self.p_substar_max_src,
             self.p_conv_new, self.p_conv_flux, self.p_use_grouper,
             self.p_sharp_lo, self.p_sharp_hi, self.p_round_max,
@@ -5272,6 +5527,13 @@ class PSFPhotometryWindow(StepWindowBase):
             self.p_cap_per_iter.setValue(p["psf_new_sources_cap_per_iter"])
             self.p_cap_frac.setValue(p["psf_new_sources_cap_frac"])
             self.p_fit_init_max.setValue(p["psf_fit_init_max_sources"])
+            self.p_core_enable.setChecked(bool(p["psf_core_cut_enable"]))
+            self.p_core_center_mode.setCurrentIndex(max(0, self.p_core_center_mode.findData("auto")))
+            self.p_core_x.setValue(0.0)
+            self.p_core_y.setValue(0.0)
+            self.p_core_radius_px.setValue(p["psf_core_cut_radius_px"])
+            self.p_core_radius_mult.setValue(p["psf_core_cut_radius_fwhm_mult"])
+            self.p_core_density_ratio.setValue(p["psf_core_cut_auto_min_density_ratio"])
             self.p_substar_nei_mult.setValue(p["psf_substar_neighbor_r_fwhm_mult"])
             self.p_substar_max_src.setValue(p["psf_substar_max_sources"])
             self.p_conv_new.setValue(p["psf_conv_new_frac"])
@@ -5295,7 +5557,7 @@ class PSFPhotometryWindow(StepWindowBase):
 
         # Engine-specific parameter overrides applied on top of field preset
         _engine_overrides = {
-            "allstar":    {"p_fit_mult": 2.0, "p_grouper_max_size": 4},
+            "allstar":    {"p_fit_mult": 1.2, "p_grouper_max_size": 4},
             "photutils":  {"p_grouper_max_size": 25},
         }
 
@@ -5350,13 +5612,13 @@ class PSFPhotometryWindow(StepWindowBase):
                 (mode_combo, "crowded"),
                 (self.p_fit_engine, "allstar"),
                 (self.p_build_mode, "epsf"),
-                (self.p_workers, 6),
+                (self.p_workers, 2),
                 (self.p_oversampling, 2),
                 (self.p_epsf_mult, 4.0),
                 (self.p_n_stars, 30),
                 (self.p_isolation, 2.0),
-                (self.p_fit_mult, 2.0),
-                (self.p_max_iter, 3),
+                (self.p_fit_mult, 1.2),
+                (self.p_max_iter, 2),
                 (self.p_redetect, 4.5),
                 (self.p_redetect_g, 4.0),
                 (self.p_redetect_r, 4.0),
@@ -5366,11 +5628,18 @@ class PSFPhotometryWindow(StepWindowBase):
                 (self.p_cap_per_iter, 50),
                 (self.p_cap_frac, 0.01),
                 (self.p_fit_init_max, 3000),
+                (self.p_core_enable, True),
+                (self.p_core_center_mode, "auto"),
+                (self.p_core_x, 0.0),
+                (self.p_core_y, 0.0),
+                (self.p_core_radius_px, 0.0),
+                (self.p_core_radius_mult, 25.0),
+                (self.p_core_density_ratio, 1.5),
                 (self.p_substar_nei_mult, 5.0),
                 (self.p_substar_max_src, 1000),
                 (self.p_conv_new, 0.02),
                 (self.p_conv_flux, 0.01),
-                (self.p_use_grouper, True),
+                (self.p_use_grouper, False),
                 (self.p_grouper_max_size, 4),
                 (self.p_use_error_img, False),
                 (self.p_shared_filter_epsf, False),
@@ -5413,6 +5682,13 @@ class PSFPhotometryWindow(StepWindowBase):
         self.params.P.psf_new_sources_cap_per_iter = self.p_cap_per_iter.value()
         self.params.P.psf_new_sources_cap_frac = self.p_cap_frac.value()
         self.params.P.psf_fit_init_max_sources = self.p_fit_init_max.value()
+        self.params.P.psf_core_cut_enable = self.p_core_enable.isChecked()
+        self.params.P.psf_core_cut_center_mode = self.p_core_center_mode.currentData()
+        self.params.P.psf_core_cut_x_px = self.p_core_x.value()
+        self.params.P.psf_core_cut_y_px = self.p_core_y.value()
+        self.params.P.psf_core_cut_radius_px = self.p_core_radius_px.value()
+        self.params.P.psf_core_cut_radius_fwhm_mult = self.p_core_radius_mult.value()
+        self.params.P.psf_core_cut_auto_min_density_ratio = self.p_core_density_ratio.value()
         self.params.P.psf_substar_neighbor_r_fwhm_mult = self.p_substar_nei_mult.value()
         self.params.P.psf_substar_max_sources = self.p_substar_max_src.value()
         self.params.P.psf_conv_new_frac = self.p_conv_new.value()
@@ -5508,6 +5784,13 @@ class PSFPhotometryWindow(StepWindowBase):
             "psf_new_sources_cap_per_iter": getattr(self.params.P, "psf_new_sources_cap_per_iter", 70),
             "psf_new_sources_cap_frac": getattr(self.params.P, "psf_new_sources_cap_frac", 0.02),
             "psf_fit_init_max_sources": getattr(self.params.P, "psf_fit_init_max_sources", 0),
+            "psf_core_cut_enable": getattr(self.params.P, "psf_core_cut_enable", False),
+            "psf_core_cut_center_mode": getattr(self.params.P, "psf_core_cut_center_mode", "auto"),
+            "psf_core_cut_x_px": getattr(self.params.P, "psf_core_cut_x_px", 0.0),
+            "psf_core_cut_y_px": getattr(self.params.P, "psf_core_cut_y_px", 0.0),
+            "psf_core_cut_radius_px": getattr(self.params.P, "psf_core_cut_radius_px", 0.0),
+            "psf_core_cut_radius_fwhm_mult": getattr(self.params.P, "psf_core_cut_radius_fwhm_mult", 25.0),
+            "psf_core_cut_auto_min_density_ratio": getattr(self.params.P, "psf_core_cut_auto_min_density_ratio", 1.5),
             "psf_substar_neighbor_r_fwhm_mult": getattr(self.params.P, "psf_substar_neighbor_r_fwhm_mult", 8.0),
             "psf_substar_max_sources": getattr(self.params.P, "psf_substar_max_sources", 1500),
             "psf_conv_new_frac": getattr(self.params.P, "psf_conv_new_frac", 0.02),

@@ -55,7 +55,7 @@ from apex.utils.step_paths import (
 )
 from apex.utils.common_helpers import normalize_filter_key, safe_float as _safe_float
 from apex.utils.io_utils import coerce_int64_source_id
-from apex.utils.qc_utils import filter_files_by_qc
+from apex.utils.qc_utils import filter_files_by_qc, should_use_frame_quality_qc
 from apex.utils.cache_utils import (
     norm_path_key,
     build_file_signature,
@@ -1427,7 +1427,7 @@ class RefBuildWindow(StepWindowBase):
         plot_layout.addLayout(plot_controls)
         self.plot_canvas = FigureCanvas(Figure(figsize=(8, 4)))
         self.plot_canvas.setMinimumHeight(260)
-        plot_layout.addWidget(self.plot_canvas)
+        plot_layout.addWidget(self.plot_canvas, 1)
         self.tabs.addTab(plot_tab, "Plot")
 
         self.content_layout.addWidget(self.tabs)
@@ -1601,7 +1601,12 @@ class RefBuildWindow(StepWindowBase):
             return False, f"file list unavailable: {exc}", None
         if not files:
             return False, "no current frames", None
-        use_qc = bool(getattr(self.params.P, "wcs_require_qc_pass", True))
+        use_qc = should_use_frame_quality_qc(
+            Path(self.params.P.result_dir),
+            self.params.P,
+            "wcs_require_qc_pass",
+            default=True,
+        )
         files, _ = filter_files_by_qc(
             Path(self.params.P.result_dir),
             files,
@@ -1636,7 +1641,12 @@ class RefBuildWindow(StepWindowBase):
             QMessageBox.warning(self, "Warning", "No frames found")
             return
 
-        use_qc = bool(getattr(self.params.P, "wcs_require_qc_pass", True))
+        use_qc = should_use_frame_quality_qc(
+            Path(self.params.P.result_dir),
+            self.params.P,
+            "wcs_require_qc_pass",
+            default=True,
+        )
         files, qc_info = filter_files_by_qc(Path(self.params.P.result_dir), files, require_qc=use_qc)
         if use_qc:
             if qc_info.get("applied"):

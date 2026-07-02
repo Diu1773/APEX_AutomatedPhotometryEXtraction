@@ -26,6 +26,40 @@ def resolve_frame_quality_path(result_dir: Path) -> Optional[Path]:
     return None
 
 
+def frame_quality_has_auto_qc(result_dir: Path) -> bool:
+    """Return True when frame_quality.csv contains Step 4 Auto-QC exclusions."""
+
+    qpath = resolve_frame_quality_path(result_dir)
+    if not qpath:
+        return False
+    try:
+        dfq = pd.read_csv(qpath)
+    except Exception:
+        return False
+    if dfq.empty or "exclude_reason" not in dfq.columns:
+        return False
+    reasons = dfq["exclude_reason"].fillna("").astype(str)
+    auto_reason = reasons.str.contains(r"(?:^|,)auto_qc_fail(?:$|,)", regex=True)
+    auto_reason |= reasons.str.contains(r"(?:^|,)auto:", regex=True)
+    if "passed" in dfq.columns:
+        passed = dfq["passed"].map(lambda v: is_passed_value(v, default=True))
+        return bool((auto_reason & ~passed).any())
+    return bool(auto_reason.any())
+
+
+def should_use_frame_quality_qc(
+    result_dir: Path,
+    params: object,
+    attr_name: str,
+    *,
+    default: bool = False,
+) -> bool:
+    """Honor a step QC flag, but keep Step 4 Auto-QC active if it was applied."""
+
+    enabled = bool(getattr(params, attr_name, default))
+    return enabled or frame_quality_has_auto_qc(result_dir)
+
+
 _TRUE_VALUES = {"true", "1", "1.0", "yes", "y", "on"}
 _FALSE_VALUES = {"false", "0", "0.0", "no", "n", "off"}
 

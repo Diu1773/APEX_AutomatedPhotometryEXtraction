@@ -50,6 +50,7 @@ from PyQt5.QtWidgets import (
 from PyQt5.QtCore import Qt, QSignalBlocker
 from PyQt5.QtGui import QColor, QFont
 
+from apex.gui.layout_rules import FittedDialog
 from apex.gui.workflow.step_window_base import StepWindowBase
 from apex.analysis.light_curve.global_ensemble import solve_global_ensemble
 from apex.analysis.light_curve.detrend_output_service import (
@@ -84,7 +85,11 @@ from apex.utils.io_utils import (
     load_headers_table as _load_headers_table_util,
 )
 from apex.utils.photometry_loader import load_frame_photometry
-from apex.utils.qc_utils import load_frame_excludes, filter_frame_df_by_qc
+from apex.utils.qc_utils import (
+    filter_frame_df_by_qc,
+    load_frame_excludes,
+    should_use_frame_quality_qc,
+)
 from apex.utils.astro_utils import (
     compute_airmass_from_header,
     compute_bjd_tdb_array,
@@ -871,6 +876,7 @@ class DetrendNightMergeWindow(StepWindowBase):
 
         main_splitter.addWidget(right_widget)
         main_splitter.setSizes([320, 680])
+        main_splitter.setChildrenCollapsible(False)
 
     def log(self, msg: str):
         if self._busy_log_buffer is not None:
@@ -944,7 +950,7 @@ class DetrendNightMergeWindow(StepWindowBase):
         QApplication.processEvents()
 
     def _show_mode_help_dialog(self):
-        dialog = QDialog(self)
+        dialog = FittedDialog(self)
         dialog.setWindowTitle("Step 10 보정 모드 도움말")
         dialog.resize(780, 680)
 
@@ -1712,7 +1718,12 @@ Step 10은 여러 밤의 관측을 합칠 때 기준선을 맞추는 단계입�
                 continue
 
             # Apply step4 QC pass filter (frame_quality.csv) if the parameter is enabled
-            use_qc = bool(getattr(self.params.P, "phot_use_qc_pass_only", False))
+            use_qc = should_use_frame_quality_qc(
+                result_dir,
+                self.params.P,
+                "phot_use_qc_pass_only",
+                default=False,
+            )
             if use_qc:
                 idx, qc_info = filter_frame_df_by_qc(result_dir, idx, file_col="file", require_qc=True)
                 if qc_info.get("applied"):

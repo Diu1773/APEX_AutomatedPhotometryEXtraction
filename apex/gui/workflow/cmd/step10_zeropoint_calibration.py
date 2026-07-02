@@ -59,7 +59,7 @@ from apex.utils.step_paths import (
 )
 from apex.utils.step_paths_cmd import step8_psf_dir, step9_selection_dir, step10_zp_dir
 from apex.utils.io_utils import parse_int64_series, read_ecsv_int64_source_id
-from apex.utils.qc_utils import filter_frame_df_by_qc
+from apex.utils.qc_utils import filter_frame_df_by_qc, should_use_frame_quality_qc
 
 
 from apex.utils.gaia_transforms import (
@@ -636,7 +636,12 @@ class ZeropointCalibrationWorker(QThread):
             else:
                 idx["filter"] = "unknown"
 
-            use_qc = bool(getattr(P, "phot_use_qc_pass_only", False))
+            use_qc = should_use_frame_quality_qc(
+                result_dir,
+                P,
+                "phot_use_qc_pass_only",
+                default=False,
+            )
             idx, qc_info = filter_frame_df_by_qc(result_dir, idx, file_col="file", require_qc=use_qc)
             if use_qc:
                 if qc_info.get("applied"):
