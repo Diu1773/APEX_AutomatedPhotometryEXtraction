@@ -114,6 +114,300 @@ def _safe_float(x, default=np.nan):
         return default
 
 
+def _numeric_series(df: pd.DataFrame, column: str) -> pd.Series:
+    if not isinstance(df, pd.DataFrame) or column not in df.columns:
+        return pd.Series(dtype=float)
+    return pd.to_numeric(df[column], errors="coerce")
+
+
+def _finite_values(df: pd.DataFrame, column: str) -> np.ndarray:
+    values = _numeric_series(df, column).to_numpy(dtype=float)
+    return values[np.isfinite(values)]
+
+
+def _median_value(df: pd.DataFrame, column: str) -> float:
+    values = _finite_values(df, column)
+    return float(np.median(values)) if values.size else np.nan
+
+
+def _mean_value(df: pd.DataFrame, column: str) -> float:
+    values = _finite_values(df, column)
+    return float(np.mean(values)) if values.size else np.nan
+
+
+def _std_value(df: pd.DataFrame, column: str) -> float:
+    values = _finite_values(df, column)
+    return float(np.std(values)) if values.size else np.nan
+
+
+def _first_value(df: pd.DataFrame, column: str, default=np.nan):
+    if not isinstance(df, pd.DataFrame) or df.empty or column not in df.columns:
+        return default
+    values = df[column].dropna()
+    return values.iloc[0] if len(values) else default
+
+
+def _as_bool(value, default: bool = False) -> bool:
+    if value is None:
+        return bool(default)
+    try:
+        if pd.isna(value):
+            return bool(default)
+    except Exception:
+        pass
+    if isinstance(value, (bool, np.bool_)):
+        return bool(value)
+    if isinstance(value, (int, float, np.integer, np.floating)):
+        return bool(value)
+    text = str(value).strip().lower()
+    if text in {"1", "true", "yes", "y", "on"}:
+        return True
+    if text in {"0", "false", "no", "n", "off", ""}:
+        return False
+    return bool(default)
+
+
+def _filter_key_series(df: pd.DataFrame, column: str) -> pd.Series:
+    if not isinstance(df, pd.DataFrame) or column not in df.columns:
+        return pd.Series(dtype=str)
+    return df[column].map(lambda v: normalize_filter_name(v) if pd.notna(v) else "")
+
+
+def _string_filter_values(df: pd.DataFrame, column: str) -> set[str]:
+    out: set[str] = set()
+    for val in _filter_key_series(df, column):
+        val = val.strip()
+        if val:
+            out.add(val)
+    return out
+
+
+def _filter_subset(df: pd.DataFrame, column: str, filt: str | None) -> pd.DataFrame:
+    if not isinstance(df, pd.DataFrame) or df.empty:
+        return pd.DataFrame(columns=getattr(df, "columns", []))
+    if filt is None:
+        return df
+    if column not in df.columns:
+        return df.iloc[0:0].copy()
+    filt_key = normalize_filter_name(filt)
+    keys = _filter_key_series(df, column)
+    return df[keys == filt_key].copy()
+
+
+def _build_psf_qc_summary(
+    idx: pd.DataFrame,
+    phot_df: pd.DataFrame,
+    meta_df: pd.DataFrame | None = None,
+    cmp_df: pd.DataFrame | None = None,
+) -> pd.DataFrame:
+    """Build the compact Step 8 QC table exported beside PSF products."""
+    idx = idx.copy() if isinstance(idx, pd.DataFrame) else pd.DataFrame()
+    phot_df = phot_df.copy() if isinstance(phot_df, pd.DataFrame) else pd.DataFrame()
+    meta_df = meta_df.copy() if isinstance(meta_df, pd.DataFrame) else pd.DataFrame()
+    cmp_df = cmp_df.copy() if isinstance(cmp_df, pd.DataFrame) else pd.DataFrame()
+
+    filters = _string_filter_values(idx, "filter") | _string_filter_values(phot_df, "FILTER")
+    filters |= _string_filter_values(meta_df, "filter") | _string_filter_values(cmp_df, "FILTER")
+    groups: list[tuple[str, str | None]] = [("ALL", None)]
+    groups.extend((filt, filt) for filt in sorted(filters))
+
+    if not cmp_df.empty and {"mag_ap", "mag_psf"} <= set(cmp_df.columns):
+        cmp_df["mag_ap"] = pd.to_numeric(cmp_df["mag_ap"], errors="coerce")
+        cmp_df["mag_psf"] = pd.to_numeric(cmp_df["mag_psf"], errors="coerce")
+        cmp_df = cmp_df[np.isfinite(cmp_df["mag_ap"]) & np.isfinite(cmp_df["mag_psf"])].copy()
+        cmp_df["delta_ap_minus_psf"] = cmp_df["mag_ap"] - cmp_df["mag_psf"]
+    else:
+        cmp_df = pd.DataFrame()
+
+    rows = []
+    for label, filt in groups:
+        frame_sub = _filter_subset(idx, "filter", filt)
+        phot_sub = _filter_subset(phot_df, "FILTER", filt)
+        meta_sub = _filter_subset(meta_df, "filter", filt)
+        cmp_sub = _filter_subset(cmp_df, "FILTER", filt) if not cmp_df.empty else pd.DataFrame()
+
+        if "flags_psf" in phot_sub.columns:
+            flags = _numeric_series(phot_sub, "flags_psf")
+            clean_mask = np.isfinite(flags.to_numpy(dtype=float)) & (flags.to_numpy(dtype=float) == 0)
+            good = phot_sub.loc[clean_mask].copy()
+        else:
+            good = phot_sub.copy()
+
+        qfit = _finite_values(good, "qfit")
+        qfit_gt5_fraction = float(np.mean(qfit > 5.0)) if qfit.size else np.nan
+
+        if not meta_sub.empty and {"iter", "residual_std"} <= set(meta_sub.columns):
+            meta_sub["iter"] = pd.to_numeric(meta_sub["iter"], errors="coerce")
+            i1 = meta_sub[meta_sub["iter"] == 1]
+            i2 = meta_sub[meta_sub["iter"] == 2]
+            residual_i1 = _mean_value(i1, "residual_std")
+            residual_i2 = _mean_value(i2, "residual_std")
+        else:
+            residual_i1 = np.nan
+            residual_i2 = np.nan
+
+        rows.append({
+            "filter": label,
+            "n_frames": int(len(frame_sub)),
+            "n_psf_rows": int(len(phot_sub)),
+            "n_clean": int(len(good)),
+            "clean_fraction": float(len(good) / len(phot_sub)) if len(phot_sub) else np.nan,
+            "median_n_psf_per_frame": _median_value(frame_sub, "n"),
+            "median_n_goodmag_per_frame": _median_value(frame_sub, "n_goodmag"),
+            "median_n_fail_per_frame": _median_value(frame_sub, "n_fail"),
+            "median_n_new_iter_per_frame": _median_value(frame_sub, "n_new_iter"),
+            "median_mag_psf": _median_value(good, "mag_psf"),
+            "median_mag_psf_err": _median_value(good, "mag_psf_err"),
+            "median_snr_psf": _median_value(good, "snr_psf"),
+            "median_qfit": _median_value(good, "qfit"),
+            "qfit_gt5_fraction": qfit_gt5_fraction,
+            "n_ap_psf_matches": int(len(cmp_sub)),
+            "median_ap_minus_psf": _median_value(cmp_sub, "delta_ap_minus_psf"),
+            "std_ap_minus_psf": _std_value(cmp_sub, "delta_ap_minus_psf"),
+            "residual_std_iter1_mean": residual_i1,
+            "residual_std_iter2_mean": residual_i2,
+        })
+
+    return pd.DataFrame(rows)
+
+
+def _build_psf_frame_qc_table(idx: pd.DataFrame, meta_df: pd.DataFrame | None = None) -> pd.DataFrame:
+    """Build one Step 8 QC row per frame from photometry_index and residual metadata."""
+    idx = idx.copy() if isinstance(idx, pd.DataFrame) else pd.DataFrame()
+    meta_df = meta_df.copy() if isinstance(meta_df, pd.DataFrame) else pd.DataFrame()
+    if idx.empty and meta_df.empty:
+        return pd.DataFrame()
+
+    files = set()
+    if "file" in idx.columns:
+        files |= {str(v) for v in idx["file"].dropna().astype(str)}
+    if "file" in meta_df.columns:
+        files |= {str(v) for v in meta_df["file"].dropna().astype(str)}
+
+    rows = []
+    for fname in sorted(files):
+        frame_sub = idx[idx["file"].astype(str) == fname].copy() if "file" in idx.columns else pd.DataFrame()
+        meta_sub = meta_df[meta_df["file"].astype(str) == fname].copy() if "file" in meta_df.columns else pd.DataFrame()
+
+        filt = _first_value(frame_sub, "filter", _first_value(meta_sub, "filter", ""))
+        filt = normalize_filter_name(filt)
+
+        if "iter" in meta_sub.columns:
+            meta_sub["iter"] = pd.to_numeric(meta_sub["iter"], errors="coerce")
+            i1 = meta_sub[meta_sub["iter"] == 1]
+            i2 = meta_sub[meta_sub["iter"] == 2]
+            finite_iter = meta_sub[np.isfinite(meta_sub["iter"].to_numpy(dtype=float))]
+            if not finite_iter.empty:
+                final_iter = int(np.nanmax(finite_iter["iter"].to_numpy(dtype=float)))
+                ifinal = meta_sub[meta_sub["iter"] == final_iter]
+            else:
+                final_iter = np.nan
+                ifinal = pd.DataFrame()
+        else:
+            i1 = pd.DataFrame()
+            i2 = pd.DataFrame()
+            ifinal = pd.DataFrame()
+            final_iter = np.nan
+
+        r1 = _mean_value(i1, "residual_std")
+        r2 = _mean_value(i2, "residual_std")
+        rfinal = _mean_value(ifinal, "residual_std")
+        if np.isfinite(r1) and np.isfinite(rfinal):
+            residual_delta = float(rfinal - r1)
+            residual_frac = float((rfinal - r1) / r1) if r1 != 0 else np.nan
+        else:
+            residual_delta = np.nan
+            residual_frac = np.nan
+
+        core_enabled = _as_bool(
+            _first_value(meta_sub, "core_cut_enabled", _first_value(frame_sub, "core_cut_enabled", False))
+        )
+
+        rows.append({
+            "file": fname,
+            "filter": filt,
+            "n_psf": _first_value(frame_sub, "n", np.nan),
+            "n_goodmag": _first_value(frame_sub, "n_goodmag", np.nan),
+            "n_fail": _first_value(frame_sub, "n_fail", np.nan),
+            "n_new_iter": _first_value(frame_sub, "n_new_iter", np.nan),
+            "core_cut_enabled": core_enabled,
+            "core_cut_method": _first_value(meta_sub, "core_cut_method", ""),
+            "core_cut_reason": _first_value(meta_sub, "core_cut_reason", ""),
+            "core_cut_x_px": _first_value(meta_sub, "core_cut_x_px", _first_value(frame_sub, "core_cut_x_px", np.nan)),
+            "core_cut_y_px": _first_value(meta_sub, "core_cut_y_px", _first_value(frame_sub, "core_cut_y_px", np.nan)),
+            "core_cut_radius_px": _first_value(
+                meta_sub, "core_cut_radius_px", _first_value(frame_sub, "core_cut_radius_px", np.nan)
+            ),
+            "n_core_excluded_init": _first_value(
+                meta_sub, "n_core_excluded_init", _first_value(frame_sub, "n_core_excluded_init", np.nan)
+            ),
+            "n_core_excluded_redetect": _first_value(
+                meta_sub, "n_core_excluded_redetect", _first_value(frame_sub, "n_core_excluded_redetect", np.nan)
+            ),
+            "n_core_excluded_result": _first_value(
+                meta_sub, "n_core_excluded_result", _first_value(frame_sub, "n_core_excluded_result", np.nan)
+            ),
+            "final_iter": final_iter,
+            "residual_std_iter1": r1,
+            "residual_std_iter2": r2,
+            "residual_std_final": rfinal,
+            "residual_std_final_minus_iter1": residual_delta,
+            "residual_std_frac_change": residual_frac,
+            "n_fit_iter1": _first_value(i1, "n_fit", np.nan),
+            "n_fit_iter2": _first_value(i2, "n_fit", np.nan),
+            "n_new_raw_iter2": _first_value(i2, "n_new_raw", np.nan),
+            "n_new_kept_iter2": _first_value(i2, "n_new_kept", np.nan),
+        })
+
+    return pd.DataFrame(rows)
+
+
+def _draw_psf_frame_qc_overview(fig: Figure, frame_qc: pd.DataFrame) -> bool:
+    if not isinstance(frame_qc, pd.DataFrame) or frame_qc.empty:
+        return False
+    fig.clear()
+    ax_res = fig.add_subplot(211)
+    ax_core = fig.add_subplot(212)
+
+    work = frame_qc.copy().reset_index(drop=True)
+    x = np.arange(len(work), dtype=float)
+    labels = work["file"].astype(str).tolist() if "file" in work.columns else [str(i) for i in range(len(work))]
+
+    r1 = _numeric_series(work, "residual_std_iter1").to_numpy(dtype=float)
+    rf = _numeric_series(work, "residual_std_final").to_numpy(dtype=float)
+    ok1 = np.isfinite(r1)
+    okf = np.isfinite(rf)
+    if np.any(ok1):
+        ax_res.plot(x[ok1], r1[ok1], "o-", ms=3.0, lw=0.9, color="#4C78A8", label="iter1")
+    if np.any(okf):
+        ax_res.plot(x[okf], rf[okf], "o-", ms=3.0, lw=0.9, color="#F58518", label="final")
+    ax_res.set_ylabel("residual std (ADU)")
+    ax_res.set_title("Step 8 PSF Residual QC")
+    ax_res.grid(True, alpha=0.2)
+    if ax_res.get_legend_handles_labels()[0]:
+        ax_res.legend(loc="best", fontsize=8, frameon=False)
+
+    excluded = _numeric_series(work, "n_core_excluded_result").fillna(0.0).to_numpy(dtype=float)
+    enabled = work.get("core_cut_enabled", pd.Series([False] * len(work))).map(_as_bool).to_numpy(dtype=bool)
+    colors = np.where(enabled, "#D62728", "#BDBDBD")
+    ax_core.bar(x, excluded, color=colors, width=0.8)
+    ax_core.set_ylabel("core-excluded PSF rows")
+    ax_core.set_xlabel("frame")
+    ax_core.grid(True, axis="y", alpha=0.2)
+    ax_core.set_xlim(-0.6, max(0.6, len(work) - 0.4))
+
+    if len(labels) <= 24:
+        ax_core.set_xticks(x)
+        ax_core.set_xticklabels(labels, rotation=60, ha="right", fontsize=7)
+    else:
+        ax_core.set_xticks([])
+
+    n_enabled = int(np.sum(enabled))
+    fig.suptitle(f"Step 8 Frame QC | frames={len(work)} core_cut_enabled={n_enabled}", fontsize=11)
+    fig.tight_layout(rect=(0, 0, 1, 0.95))
+    return True
+
+
 def _odd_int(value: float, min_value: int = 3, max_value: int | None = None) -> int:
     """Convert to odd integer within optional bounds."""
     try:
@@ -4742,6 +5036,7 @@ class PSFPhotometryWindow(StepWindowBase):
             return
         psf_dir = step8_psf_dir(self.params.P.result_dir)
         idx_path = psf_dir / "photometry_index.csv"
+        export_inputs = None
         if not idx_path.exists():
             self.qc_text.setPlainText("photometry_index.csv not found.\nRun Step 8 first.")
             self._cmp_merged_df = None
@@ -4758,11 +5053,28 @@ class PSFPhotometryWindow(StepWindowBase):
             for mf in sorted(psf_dir.glob("residual_meta_*.json")):
                 try:
                     m = json.loads(mf.read_text(encoding="utf-8"))
+                    core = m.get("core_cut", {}) if isinstance(m.get("core_cut", {}), dict) else {}
+                    base_meta = {
+                        "file": m.get("file", mf.name.replace("residual_meta_", "", 1).replace(".json", "")),
+                        "filter": m.get("filter", "?"),
+                        "core_cut_enabled": bool(core.get("enabled", False)),
+                        "core_cut_x_px": core.get("center_x", np.nan),
+                        "core_cut_y_px": core.get("center_y", np.nan),
+                        "core_cut_radius_px": core.get("radius_px", np.nan),
+                        "core_cut_method": core.get("method", ""),
+                        "core_cut_reason": core.get("reason", ""),
+                        "n_core_excluded_init": core.get("n_excluded_init", np.nan),
+                        "n_core_excluded_redetect": core.get("n_excluded_redetect", np.nan),
+                        "n_core_excluded_result": core.get("n_excluded_result", np.nan),
+                    }
                     for it in m.get("iters", []):
                         meta_rows.append({
-                            "filter": m.get("filter", "?"),
+                            **base_meta,
                             "iter": it.get("iter"),
                             "residual_std": it.get("residual_std", np.nan),
+                            "n_fit": it.get("n_fit", np.nan),
+                            "n_new_raw": it.get("n_new_raw", np.nan),
+                            "n_new_kept": it.get("n_new_kept", np.nan),
                         })
                 except Exception:
                     pass
@@ -4867,11 +5179,67 @@ class PSFPhotometryWindow(StepWindowBase):
                 lines.append("")
 
             self.qc_text.setPlainText("\n".join(lines))
+            export_inputs = (idx, all_df, meta_df)
         except Exception as e:
             self.qc_text.setPlainText(f"QC 생성 오류: {e}")
 
         self._cmp_merged_df = None
         self._plot_mag_comparison()
+        if export_inputs is not None:
+            self._export_psf_qc_products(*export_inputs)
+
+    def _export_psf_qc_products(
+        self,
+        idx: pd.DataFrame,
+        all_df: pd.DataFrame,
+        meta_df: pd.DataFrame,
+    ) -> list[Path]:
+        """Export reproducible Step 8 QC products for papers and run audits."""
+        psf_dir = step8_psf_dir(self.params.P.result_dir)
+        psf_dir.mkdir(parents=True, exist_ok=True)
+
+        saved: list[Path] = []
+        summary = _build_psf_qc_summary(
+            idx,
+            all_df,
+            meta_df,
+            getattr(self, "_cmp_merged_df", None),
+        )
+        if not summary.empty:
+            summary_path = psf_dir / "psf_qc_summary.csv"
+            summary.to_csv(summary_path, index=False)
+            saved.append(summary_path)
+
+        frame_qc = _build_psf_frame_qc_table(idx, meta_df)
+        if not frame_qc.empty:
+            frame_qc_path = psf_dir / "psf_frame_qc.csv"
+            frame_qc.to_csv(frame_qc_path, index=False)
+            saved.append(frame_qc_path)
+
+            frame_fig = Figure(figsize=(10.5, 6.8), dpi=120)
+            if _draw_psf_frame_qc_overview(frame_fig, frame_qc):
+                frame_fig_path = psf_dir / "step8_residual_core_qc.png"
+                frame_fig.savefig(frame_fig_path, dpi=160, bbox_inches="tight")
+                saved.append(frame_fig_path)
+
+        report = self.qc_text.toPlainText() if hasattr(self, "qc_text") else ""
+        if report.strip():
+            report_path = psf_dir / "psf_qc_report.txt"
+            report_path.write_text(report, encoding="utf-8")
+            saved.append(report_path)
+
+        if hasattr(self, "cmp_fig"):
+            fig_path = psf_dir / "step8_ap_vs_psf_comparison.png"
+            self.cmp_fig.savefig(fig_path, dpi=160, bbox_inches="tight")
+            saved.append(fig_path)
+
+        if saved:
+            try:
+                names = ", ".join(path.name for path in saved)
+                self.log(f"Step8 QC products exported: {names}")
+            except Exception:
+                pass
+        return saved
 
     # ── Aperture vs PSF magnitude comparison ──────────────────────────────────
 

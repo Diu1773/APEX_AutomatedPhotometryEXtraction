@@ -101,6 +101,972 @@ _ZP_SIGNATURE_PARAMS = (
 )
 
 
+def _zp_numeric(df: pd.DataFrame, column: str) -> pd.Series:
+    if not isinstance(df, pd.DataFrame) or column not in df.columns:
+        return pd.Series(dtype=float)
+    return pd.to_numeric(df[column], errors="coerce")
+
+
+def _zp_finite(df: pd.DataFrame, column: str) -> np.ndarray:
+    values = _zp_numeric(df, column).to_numpy(dtype=float)
+    return values[np.isfinite(values)]
+
+
+def _zp_median(df: pd.DataFrame, column: str) -> float:
+    values = _zp_finite(df, column)
+    return float(np.median(values)) if values.size else np.nan
+
+
+def _zp_mad_sigma(values) -> float:
+    arr = np.asarray(values, dtype=float)
+    arr = arr[np.isfinite(arr)]
+    if arr.size == 0:
+        return np.nan
+    med = float(np.median(arr))
+    return float(MAD_TO_SIGMA * np.median(np.abs(arr - med)))
+
+
+def _zp_filter_values(*dfs: pd.DataFrame) -> list[str]:
+    out: set[str] = set()
+    for df in dfs:
+        if not isinstance(df, pd.DataFrame) or "filter" not in df.columns:
+            continue
+        for val in df["filter"].dropna():
+            filt = normalize_filter_name(val)
+            if filt:
+                out.add(filt)
+    return sorted(out)
+
+
+def _zp_filter_subset(df: pd.DataFrame, filt: str) -> pd.DataFrame:
+    if not isinstance(df, pd.DataFrame) or df.empty or "filter" not in df.columns:
+        return pd.DataFrame(columns=getattr(df, "columns", []))
+    keys = df["filter"].map(normalize_filter_name)
+    return df[keys == normalize_filter_name(filt)].copy()
+
+
+def _first_text(df: pd.DataFrame, column: str) -> str:
+    if not isinstance(df, pd.DataFrame) or df.empty or column not in df.columns:
+        return ""
+    vals = df[column].dropna().astype(str)
+    return vals.iloc[0] if len(vals) else ""
+
+
+def build_zp_qc_summary(
+    coeff_df: pd.DataFrame,
+    frame_df: pd.DataFrame | None = None,
+    cut_df: pd.DataFrame | None = None,
+    reject_df: pd.DataFrame | None = None,
+) -> pd.DataFrame:
+    """Build a compact per-filter Step 10 calibration QC table."""
+    coeff_df = coeff_df.copy() if isinstance(coeff_df, pd.DataFrame) else pd.DataFrame()
+    frame_df = frame_df.copy() if isinstance(frame_df, pd.DataFrame) else pd.DataFrame()
+    cut_df = cut_df.copy() if isinstance(cut_df, pd.DataFrame) else pd.DataFrame()
+    reject_df = reject_df.copy() if isinstance(reject_df, pd.DataFrame) else pd.DataFrame()
+
+    filters = _zp_filter_values(coeff_df, frame_df, cut_df, reject_df)
+    rows = []
+    for filt in filters:
+        coeff = _zp_filter_subset(coeff_df, filt)
+        frame = _zp_filter_subset(frame_df, filt)
+        cuts = _zp_filter_subset(cut_df, filt)
+        rejects = _zp_filter_subset(reject_df, filt)
+
+        zp_vals = _zp_finite(frame, "zp_frame")
+        rows.append({
+            "filter": filt,
+            "global_zp": _zp_median(coeff, "zp"),
+            "color_term": _zp_median(coeff, "ct"),
+            "fit_scatter_rms": _zp_median(coeff, "scatter_rms"),
+            "n_fit_calibrators": int(_zp_median(coeff, "N")) if np.isfinite(_zp_median(coeff, "N")) else 0,
+            "color_col": _first_text(coeff, "color_col"),
+            "ref_source": _first_text(coeff, "ref_source"),
+            "n_frame_zp": int(len(frame)),
+            "frame_zp_median": float(np.median(zp_vals)) if zp_vals.size else np.nan,
+            "frame_zp_sigma_mad": _zp_mad_sigma(zp_vals),
+            "median_frame_zp_scatter": _zp_median(frame, "zp_scatter"),
+            "median_n_ref_per_frame": _zp_median(frame, "n_ref"),
+            "median_outlier_fraction": _zp_median(frame, "outlier_fraction"),
+            "median_snr_ref": _zp_median(frame, "snr_med"),
+            "n_rejected_frames": int(len(rejects)),
+            "n_total_measurements": int(_zp_median(cuts, "n_total")) if np.isfinite(_zp_median(cuts, "n_total")) else 0,
+            "n_kept_measurements": int(_zp_median(cuts, "n_kept")) if np.isfinite(_zp_median(cuts, "n_kept")) else 0,
+        })
+
+    summary = pd.DataFrame(rows)
+    if not summary.empty:
+        total = pd.to_numeric(summary["n_total_measurements"], errors="coerce").replace(0, np.nan)
+        kept = pd.to_numeric(summary["n_kept_measurements"], errors="coerce")
+        summary["kept_measurement_fraction"] = kept / total
+    return summary
+
+
+def draw_zp_qc_overview(
+    fig: Figure,
+    coeff_df: pd.DataFrame,
+    frame_df: pd.DataFrame,
+    summary_df: pd.DataFrame,
+) -> bool:
+    """Draw the static Step 10 paper/audit QC overview."""
+    if not isinstance(summary_df, pd.DataFrame) or summary_df.empty:
+        return False
+    fig.clear()
+    axes = fig.subplots(2, 2, squeeze=False)
+    ax_frame, ax_scatter = axes[0]
+    ax_nref, ax_kept = axes[1]
+
+    frame_df = frame_df.copy() if isinstance(frame_df, pd.DataFrame) else pd.DataFrame()
+    coeff_df = coeff_df.copy() if isinstance(coeff_df, pd.DataFrame) else pd.DataFrame()
+    filters = summary_df["filter"].astype(str).tolist()
+    cmap = mpl.colormaps.get_cmap("tab10")
+    color_map = {filt: cmap(i % 10) for i, filt in enumerate(filters)}
+
+    has_frame = False
+    if not frame_df.empty and {"filter", "zp_frame"} <= set(frame_df.columns):
+        for filt in filters:
+            sub = _zp_filter_subset(frame_df, filt).reset_index(drop=True)
+            vals = _zp_numeric(sub, "zp_frame").to_numpy(dtype=float)
+            ok = np.isfinite(vals)
+            if not np.any(ok):
+                continue
+            has_frame = True
+            x = np.arange(len(sub), dtype=float)
+            ax_frame.plot(x[ok], vals[ok], "o-", ms=3.0, lw=0.9, color=color_map[filt], label=filt)
+            med = float(np.median(vals[ok]))
+            sig = _zp_mad_sigma(vals[ok])
+            ax_frame.axhline(med, color=color_map[filt], lw=0.8, ls="--", alpha=0.7)
+            if np.isfinite(sig) and sig > 0:
+                ax_frame.fill_between(
+                    [np.nanmin(x[ok]), np.nanmax(x[ok])],
+                    med - sig,
+                    med + sig,
+                    color=color_map[filt],
+                    alpha=0.08,
+                )
+    ax_frame.set_title("Per-Frame Zeropoint")
+    ax_frame.set_xlabel("frame index")
+    ax_frame.set_ylabel("ZP (mag)")
+    ax_frame.grid(True, alpha=0.25)
+    if has_frame:
+        ax_frame.legend(fontsize=8, frameon=False)
+    else:
+        ax_frame.text(0.5, 0.5, "No frame ZP data", ha="center", va="center", transform=ax_frame.transAxes)
+
+    x = np.arange(len(filters), dtype=float)
+    fit_scatter = pd.to_numeric(summary_df.get("fit_scatter_rms"), errors="coerce").to_numpy(dtype=float)
+    frame_sigma = pd.to_numeric(summary_df.get("frame_zp_sigma_mad"), errors="coerce").to_numpy(dtype=float)
+    width = 0.36
+    ax_scatter.bar(x - width / 2, fit_scatter, width=width, color="#4C78A8", label="fit residual")
+    ax_scatter.bar(x + width / 2, frame_sigma, width=width, color="#F58518", label="frame ZP sigma")
+    ax_scatter.set_xticks(x)
+    ax_scatter.set_xticklabels(filters)
+    ax_scatter.set_ylabel("mag")
+    ax_scatter.set_title("Calibration Scatter")
+    ax_scatter.grid(True, axis="y", alpha=0.25)
+    ax_scatter.legend(fontsize=8, frameon=False)
+
+    n_fit = pd.to_numeric(summary_df.get("n_fit_calibrators"), errors="coerce").fillna(0).to_numpy(dtype=float)
+    n_frame = pd.to_numeric(summary_df.get("n_frame_zp"), errors="coerce").fillna(0).to_numpy(dtype=float)
+    n_rej = pd.to_numeric(summary_df.get("n_rejected_frames"), errors="coerce").fillna(0).to_numpy(dtype=float)
+    ax_nref.bar(x - width / 2, n_fit, width=width, color="#54A24B", label="fit stars")
+    ax_nref.bar(x + width / 2, n_frame, width=width, color="#B279A2", label="frame ZPs")
+    if np.any(n_rej > 0):
+        ax_nref.scatter(x + width / 2, n_frame + n_rej, marker="x", color="#D62728", label="rejected frames")
+    ax_nref.set_xticks(x)
+    ax_nref.set_xticklabels(filters)
+    ax_nref.set_ylabel("count")
+    ax_nref.set_title("Calibration Sample Size")
+    ax_nref.grid(True, axis="y", alpha=0.25)
+    ax_nref.legend(fontsize=8, frameon=False)
+
+    kept = pd.to_numeric(summary_df.get("kept_measurement_fraction"), errors="coerce").to_numpy(dtype=float)
+    med_nref = pd.to_numeric(summary_df.get("median_n_ref_per_frame"), errors="coerce").to_numpy(dtype=float)
+    ax_kept.bar(x, kept * 100.0, color="#E45756", alpha=0.75, label="kept measurements")
+    ax_kept.set_ylim(0, 105)
+    ax_kept.set_xticks(x)
+    ax_kept.set_xticklabels(filters)
+    ax_kept.set_ylabel("kept (%)")
+    ax_kept.set_title("Frame-ZP Reference Cuts")
+    ax_kept.grid(True, axis="y", alpha=0.25)
+    ax2 = ax_kept.twinx()
+    ax2.plot(x, med_nref, "o-", color="#2F4B7C", lw=1.2, ms=4.0, label="median n_ref/frame")
+    ax2.set_ylabel("median n_ref/frame")
+    ax2.grid(False)
+
+    handles1, labels1 = ax_kept.get_legend_handles_labels()
+    handles2, labels2 = ax2.get_legend_handles_labels()
+    ax_kept.legend(handles1 + handles2, labels1 + labels2, fontsize=8, frameon=False, loc="best")
+
+    fig.suptitle("Step 10 Zeropoint Calibration QC", fontsize=12)
+    fig.tight_layout(rect=(0, 0, 1, 0.95))
+    return True
+
+
+def export_zp_qc_products(output_dir: Path, log_func=None) -> list[Path]:
+    """Export Step 10 QC summary and overview figure from existing calibration outputs."""
+    output_dir = Path(output_dir)
+    coeff_path = output_dir / "zp_fit_coefficients.csv"
+    if not coeff_path.exists() or coeff_path.stat().st_size == 0:
+        return []
+    try:
+        coeff_df = pd.read_csv(coeff_path)
+    except Exception:
+        return []
+
+    def _read_optional(name: str) -> pd.DataFrame:
+        path = output_dir / name
+        if not path.exists() or path.stat().st_size == 0:
+            return pd.DataFrame()
+        try:
+            return pd.read_csv(path)
+        except Exception:
+            return pd.DataFrame()
+
+    frame_df = _read_optional("frame_zeropoint.csv")
+    cut_df = _read_optional("frame_zeropoint_cut_summary.csv")
+    reject_df = _read_optional("frame_zeropoint_rejects.csv")
+
+    summary = build_zp_qc_summary(coeff_df, frame_df, cut_df, reject_df)
+    if summary.empty:
+        return []
+
+    saved: list[Path] = []
+    output_dir.mkdir(parents=True, exist_ok=True)
+    summary_path = output_dir / "zp_qc_summary.csv"
+    summary.to_csv(summary_path, index=False)
+    saved.append(summary_path)
+
+    fig = Figure(figsize=(11.0, 7.6), dpi=120)
+    if draw_zp_qc_overview(fig, coeff_df, frame_df, summary):
+        fig_path = output_dir / "step10_zp_qc_overview.png"
+        fig.savefig(fig_path, dpi=160, bbox_inches="tight")
+        saved.append(fig_path)
+
+    if saved and log_func is not None:
+        try:
+            log_func("Step10 QC products exported: " + ", ".join(path.name for path in saved))
+        except Exception:
+            pass
+    return saved
+
+
+def _cmd_mag_col(system: str, band: str) -> str:
+    return f"mag_{system}_{band}"
+
+
+def _cmd_err_col(system: str, band: str) -> str:
+    return f"mag_{system}_err_{band}"
+
+
+def select_cmd_qc_axes(df: pd.DataFrame, system: str = "std") -> dict | None:
+    """Choose the calibrated CMD axes with the most finite stars."""
+    if not isinstance(df, pd.DataFrame) or df.empty:
+        return None
+    bands = _filter_bands_from_columns(df.columns, f"mag_{system}_")
+    pairs = _build_color_pairs(bands, adjacent_only=True)
+    best = None
+    for a, b in pairs:
+        ca = _cmd_mag_col(system, a)
+        cb = _cmd_mag_col(system, b)
+        cy = _cmd_mag_col(system, b)
+        if ca not in df.columns or cb not in df.columns or cy not in df.columns:
+            continue
+        ma = pd.to_numeric(df[ca], errors="coerce").to_numpy(dtype=float)
+        mb = pd.to_numeric(df[cb], errors="coerce").to_numpy(dtype=float)
+        y = pd.to_numeric(df[cy], errors="coerce").to_numpy(dtype=float)
+        mask = np.isfinite(ma) & np.isfinite(mb) & np.isfinite(y)
+        n = int(np.sum(mask))
+        if best is None or n > int(best["n"]):
+            best = {
+                "system": system,
+                "color_a": a,
+                "color_b": b,
+                "y_band": b,
+                "n": n,
+            }
+    return best
+
+
+def build_cmd_qc_summary(df: pd.DataFrame, system: str = "std") -> pd.DataFrame:
+    """Summarize final wide CMD finite counts and magnitude-error behavior."""
+    if not isinstance(df, pd.DataFrame) or df.empty:
+        return pd.DataFrame()
+    bands = _filter_bands_from_columns(df.columns, f"mag_{system}_")
+    axes = select_cmd_qc_axes(df, system=system)
+    rows = []
+    for band in bands:
+        mag_col = _cmd_mag_col(system, band)
+        err_col = _cmd_err_col(system, band)
+        mag = pd.to_numeric(df.get(mag_col, pd.Series(dtype=float)), errors="coerce").to_numpy(dtype=float)
+        err = pd.to_numeric(df.get(err_col, pd.Series(dtype=float)), errors="coerce").to_numpy(dtype=float)
+        snr = pd.to_numeric(df.get(f"snr_{band}", pd.Series(dtype=float)), errors="coerce").to_numpy(dtype=float)
+        finite_mag = mag[np.isfinite(mag)]
+        finite_err = err[np.isfinite(err) & (err >= 0)]
+        finite_snr = snr[np.isfinite(snr)]
+        rows.append({
+            "filter": band,
+            "system": system,
+            "n_sources_total": int(len(df)),
+            "n_finite_mag": int(finite_mag.size),
+            "finite_mag_fraction": float(finite_mag.size / max(len(df), 1)),
+            "mag_p05": float(np.nanpercentile(finite_mag, 5)) if finite_mag.size else np.nan,
+            "mag_p50": float(np.nanpercentile(finite_mag, 50)) if finite_mag.size else np.nan,
+            "mag_p95": float(np.nanpercentile(finite_mag, 95)) if finite_mag.size else np.nan,
+            "median_mag_err": float(np.nanmedian(finite_err)) if finite_err.size else np.nan,
+            "p90_mag_err": float(np.nanpercentile(finite_err, 90)) if finite_err.size else np.nan,
+            "median_snr": float(np.nanmedian(finite_snr)) if finite_snr.size else np.nan,
+            "cmd_color_a": axes.get("color_a", "") if axes else "",
+            "cmd_color_b": axes.get("color_b", "") if axes else "",
+            "cmd_y_band": axes.get("y_band", "") if axes else "",
+            "cmd_n_points": int(axes.get("n", 0)) if axes else 0,
+        })
+    return pd.DataFrame(rows)
+
+
+def _cmd_error_curve(df: pd.DataFrame, system: str, band: str, max_bins: int = 12) -> pd.DataFrame:
+    mag_col = _cmd_mag_col(system, band)
+    err_col = _cmd_err_col(system, band)
+    if mag_col not in df.columns or err_col not in df.columns:
+        return pd.DataFrame()
+    mag = pd.to_numeric(df[mag_col], errors="coerce").to_numpy(dtype=float)
+    err = pd.to_numeric(df[err_col], errors="coerce").to_numpy(dtype=float)
+    mask = np.isfinite(mag) & np.isfinite(err) & (err >= 0)
+    mag = mag[mask]
+    err = err[mask]
+    if len(mag) < 6:
+        return pd.DataFrame()
+    order = np.argsort(mag)
+    mag = mag[order]
+    err = err[order]
+    n_bins = max(3, min(int(max_bins), max(3, len(mag) // 8)))
+    chunks = np.array_split(np.arange(len(mag)), n_bins)
+    rows = []
+    for chunk in chunks:
+        if len(chunk) == 0:
+            continue
+        rows.append({
+            "filter": band,
+            "mag": float(np.nanmedian(mag[chunk])),
+            "mag_err": float(np.nanmedian(err[chunk])),
+            "n": int(len(chunk)),
+        })
+    return pd.DataFrame(rows)
+
+
+def draw_cmd_qc_overview(fig: Figure, df: pd.DataFrame, summary_df: pd.DataFrame, system: str = "std") -> bool:
+    """Draw a final CMD plus photometric-error overview."""
+    axes = select_cmd_qc_axes(df, system=system)
+    if axes is None or int(axes.get("n", 0)) <= 0:
+        return False
+
+    a = axes["color_a"]
+    b = axes["color_b"]
+    y_band = axes["y_band"]
+    ca = _cmd_mag_col(system, a)
+    cb = _cmd_mag_col(system, b)
+    cy = _cmd_mag_col(system, y_band)
+    ma = pd.to_numeric(df[ca], errors="coerce").to_numpy(dtype=float)
+    mb = pd.to_numeric(df[cb], errors="coerce").to_numpy(dtype=float)
+    y = pd.to_numeric(df[cy], errors="coerce").to_numpy(dtype=float)
+    color = ma - mb
+    mask = np.isfinite(color) & np.isfinite(y)
+    if not np.any(mask):
+        return False
+
+    fig.clear()
+    gs = fig.add_gridspec(2, 2, width_ratios=[1.35, 1.0], hspace=0.32, wspace=0.28)
+    ax_cmd = fig.add_subplot(gs[:, 0])
+    ax_err = fig.add_subplot(gs[0, 1])
+    ax_count = fig.add_subplot(gs[1, 1])
+
+    sc = ax_cmd.scatter(
+        color[mask],
+        y[mask],
+        s=5,
+        c=y[mask],
+        cmap="viridis_r",
+        alpha=0.65,
+        linewidths=0,
+        rasterized=True,
+    )
+    ax_cmd.set_xlabel(f"{a} - {b}")
+    ax_cmd.set_ylabel(f"{y_band} ({system})")
+    ax_cmd.set_title(f"Final CMD | N={int(np.sum(mask))}")
+    ax_cmd.invert_yaxis()
+    ax_cmd.grid(True, alpha=0.18)
+    fig.colorbar(sc, ax=ax_cmd, label=f"{y_band} mag", fraction=0.046, pad=0.04)
+
+    bands = summary_df["filter"].astype(str).tolist() if isinstance(summary_df, pd.DataFrame) and not summary_df.empty else []
+    cmap = mpl.colormaps.get_cmap("tab10")
+    for i, band in enumerate(bands[:6]):
+        curve = _cmd_error_curve(df, system, band)
+        if curve.empty:
+            continue
+        ax_err.plot(
+            curve["mag"].to_numpy(float),
+            curve["mag_err"].to_numpy(float),
+            "o-",
+            ms=3.0,
+            lw=1.0,
+            color=cmap(i % 10),
+            label=band,
+        )
+    ax_err.set_xlabel("magnitude")
+    ax_err.set_ylabel("median mag err")
+    ax_err.set_title("Photometric Error Curve")
+    ax_err.grid(True, alpha=0.25)
+    if ax_err.get_lines():
+        ax_err.legend(fontsize=8, frameon=False)
+
+    if isinstance(summary_df, pd.DataFrame) and not summary_df.empty:
+        x = np.arange(len(summary_df), dtype=float)
+        counts = pd.to_numeric(summary_df["n_finite_mag"], errors="coerce").fillna(0).to_numpy(dtype=float)
+        frac = pd.to_numeric(summary_df["finite_mag_fraction"], errors="coerce").fillna(0).to_numpy(dtype=float)
+        ax_count.bar(x, counts, color="#4C78A8", alpha=0.78)
+        ax_count.set_xticks(x)
+        ax_count.set_xticklabels(summary_df["filter"].astype(str).tolist())
+        ax_count.set_ylabel("finite mag count")
+        ax_count.set_title("Final Catalog Coverage")
+        ax_count.grid(True, axis="y", alpha=0.25)
+        ax2 = ax_count.twinx()
+        ax2.plot(x, frac * 100.0, "o-", color="#E45756", lw=1.2, ms=4.0)
+        ax2.set_ylabel("finite (%)")
+        ax2.set_ylim(0, 105)
+
+    fig.suptitle("Step 10 Final CMD QC", fontsize=12)
+    fig.subplots_adjust(left=0.07, right=0.93, bottom=0.08, top=0.92, wspace=0.32, hspace=0.34)
+    return True
+
+
+def export_cmd_qc_products(output_dir: Path, log_func=None) -> list[Path]:
+    """Export final calibrated CMD QC products from Step 10 wide output."""
+    output_dir = Path(output_dir)
+    cmd_path = output_dir / "median_by_ID_filter_wide_cmd.csv"
+    if not cmd_path.exists() or cmd_path.stat().st_size == 0:
+        return []
+    try:
+        df = pd.read_csv(cmd_path)
+    except Exception:
+        return []
+
+    summary = build_cmd_qc_summary(df, system="std")
+    if summary.empty:
+        return []
+
+    saved: list[Path] = []
+    summary_path = output_dir / "cmd_qc_summary.csv"
+    summary.to_csv(summary_path, index=False)
+    saved.append(summary_path)
+
+    fig = Figure(figsize=(11.2, 7.2), dpi=120)
+    if draw_cmd_qc_overview(fig, df, summary, system="std"):
+        fig_path = output_dir / "step10_cmd_qc_overview.png"
+        fig.savefig(fig_path, dpi=160, bbox_inches="tight")
+        saved.append(fig_path)
+
+    if saved and log_func is not None:
+        try:
+            log_func("Step10 CMD QC products exported: " + ", ".join(path.name for path in saved))
+        except Exception:
+            pass
+    return saved
+
+
+def _gaia_observed_color(df: pd.DataFrame) -> np.ndarray:
+    if "gaia_BP_RP" in df.columns:
+        return pd.to_numeric(df["gaia_BP_RP"], errors="coerce").to_numpy(dtype=float)
+    if {"gaia_BP", "gaia_RP"} <= set(df.columns):
+        bp = pd.to_numeric(df["gaia_BP"], errors="coerce").to_numpy(dtype=float)
+        rp = pd.to_numeric(df["gaia_RP"], errors="coerce").to_numpy(dtype=float)
+        return bp - rp
+    return np.full(len(df), np.nan, dtype=float)
+
+
+def _poly_eval_array(x, coeffs) -> np.ndarray:
+    x = np.asarray(x, dtype=float)
+    y = np.zeros_like(x, dtype=float)
+    xp = np.ones_like(x, dtype=float)
+    for c in coeffs:
+        y += float(c) * xp
+        xp *= x
+    return y
+
+
+def _gaia_reference_mag_for_band(df: pd.DataFrame, band: str) -> np.ndarray:
+    """Transform Gaia observed G/BP/RP into the requested native filter."""
+    if "gaia_G" not in df.columns:
+        return np.full(len(df), np.nan, dtype=float)
+    key = _BAND_ALIASES.get(band, band)
+    if key not in _GAIA_TO_BAND:
+        return np.full(len(df), np.nan, dtype=float)
+    coeffs, lo, hi, _, _ = _GAIA_TO_BAND[key]
+    g = pd.to_numeric(df["gaia_G"], errors="coerce").to_numpy(dtype=float)
+    color = _gaia_observed_color(df)
+    out = np.full(len(df), np.nan, dtype=float)
+    ok = np.isfinite(g) & np.isfinite(color) & (color >= float(lo)) & (color <= float(hi))
+    if np.any(ok):
+        out[ok] = g[ok] - _poly_eval_array(color[ok], coeffs)
+    return out
+
+
+def _synthetic_gaia_cmd_arrays(df: pd.DataFrame) -> dict | None:
+    need = {"gaia_G", "gaia_G_syn", "gaia_BP_RP_syn"}
+    if not need <= set(df.columns):
+        return None
+    gaia_mag = pd.to_numeric(df["gaia_G"], errors="coerce").to_numpy(dtype=float)
+    gaia_color = _gaia_observed_color(df)
+    apex_mag = pd.to_numeric(df["gaia_G_syn"], errors="coerce").to_numpy(dtype=float)
+    apex_color = pd.to_numeric(df["gaia_BP_RP_syn"], errors="coerce").to_numpy(dtype=float)
+    matched = np.isfinite(gaia_mag) & np.isfinite(gaia_color) & np.isfinite(apex_mag) & np.isfinite(apex_color)
+    if not np.any(matched):
+        return None
+    snr_bands: list[str] = []
+    if {"mag_std_g", "mag_std_i"} <= set(df.columns):
+        snr_bands = ["g", "i"]
+    elif {"mag_std_V", "mag_std_I"} <= set(df.columns):
+        snr_bands = ["V", "I"]
+    return {
+        "comparison": "apex_synthetic_gaia_minus_gaia_observed",
+        "mode": "synthetic_gaia",
+        "color_label": "BP - RP",
+        "apex_color_label": "BP - RP synthetic",
+        "mag_label": "G",
+        "apex_mag_label": "G synthetic",
+        "gaia_color": gaia_color,
+        "gaia_mag": gaia_mag,
+        "apex_color": apex_color,
+        "apex_mag": apex_mag,
+        "matched": matched,
+        "snr_bands": snr_bands,
+    }
+
+
+def _native_gaia_transformed_cmd_arrays(df: pd.DataFrame) -> dict | None:
+    axes = select_cmd_qc_axes(df, system="std")
+    if axes is None:
+        return None
+    a = str(axes["color_a"])
+    b = str(axes["color_b"])
+    y_band = str(axes["y_band"])
+    required = [_cmd_mag_col("std", a), _cmd_mag_col("std", b), _cmd_mag_col("std", y_band)]
+    if not all(col in df.columns for col in required):
+        return None
+
+    apex_a = pd.to_numeric(df[_cmd_mag_col("std", a)], errors="coerce").to_numpy(dtype=float)
+    apex_b = pd.to_numeric(df[_cmd_mag_col("std", b)], errors="coerce").to_numpy(dtype=float)
+    apex_y = pd.to_numeric(df[_cmd_mag_col("std", y_band)], errors="coerce").to_numpy(dtype=float)
+
+    gaia_a = _gaia_reference_mag_for_band(df, a)
+    gaia_b = _gaia_reference_mag_for_band(df, b)
+    gaia_y = _gaia_reference_mag_for_band(df, y_band)
+
+    apex_color = apex_a - apex_b
+    gaia_color = gaia_a - gaia_b
+    matched = np.isfinite(gaia_color) & np.isfinite(gaia_y) & np.isfinite(apex_color) & np.isfinite(apex_y)
+    if not np.any(matched):
+        return None
+    return {
+        "comparison": "apex_standard_minus_gaia_transformed_standard",
+        "mode": "native_standard",
+        "color_label": f"{a} - {b}",
+        "apex_color_label": f"{a} - {b}",
+        "mag_label": y_band,
+        "apex_mag_label": f"{y_band} std",
+        "gaia_color": gaia_color,
+        "gaia_mag": gaia_y,
+        "apex_color": apex_color,
+        "apex_mag": apex_y,
+        "matched": matched,
+        "snr_bands": list(dict.fromkeys([a, b, y_band])),
+    }
+
+
+def build_gaia_cmd_comparison(df: pd.DataFrame) -> pd.DataFrame:
+    """Compare final APEX CMD with Gaia on the same matched-star CMD axes."""
+    if not isinstance(df, pd.DataFrame) or df.empty:
+        return pd.DataFrame()
+    arrs = _synthetic_gaia_cmd_arrays(df)
+    if arrs is None:
+        arrs = _native_gaia_transformed_cmd_arrays(df)
+    if arrs is None:
+        return pd.DataFrame()
+
+    gaia_mag = arrs["gaia_mag"]
+    gaia_color = arrs["gaia_color"]
+    apex_mag = arrs["apex_mag"]
+    apex_color = arrs["apex_color"]
+    matched = arrs["matched"]
+    gaia_mask = np.isfinite(gaia_mag) & np.isfinite(gaia_color)
+    apex_mask = np.isfinite(apex_mag) & np.isfinite(apex_color)
+
+    d_mag = apex_mag[matched] - gaia_mag[matched]
+    d_color = apex_color[matched] - gaia_color[matched]
+    rows = [{
+        "comparison": arrs["comparison"],
+        "mode": arrs["mode"],
+        "cmd_color": arrs["color_label"],
+        "cmd_y": arrs["mag_label"],
+        "n_total_sources": int(len(df)),
+        "n_gaia_cmd": int(np.sum(gaia_mask)),
+        "n_apex_cmd": int(np.sum(apex_mask)),
+        "n_apex_synthetic_gaia_cmd": int(np.sum(apex_mask)) if arrs["mode"] == "synthetic_gaia" else 0,
+        "n_matched_cmd": int(np.sum(matched)),
+        "matched_fraction_of_gaia": float(np.sum(matched) / max(np.sum(gaia_mask), 1)),
+        "median_delta_mag": float(np.nanmedian(d_mag)),
+        "sigma_mad_delta_mag": _zp_mad_sigma(d_mag),
+        "p90_abs_delta_mag": float(np.nanpercentile(np.abs(d_mag), 90)),
+        "median_delta_color": float(np.nanmedian(d_color)),
+        "sigma_mad_delta_color": _zp_mad_sigma(d_color),
+        "p90_abs_delta_color": float(np.nanpercentile(np.abs(d_color), 90)),
+        "median_delta_G": float(np.nanmedian(d_mag)) if arrs["mode"] == "synthetic_gaia" else np.nan,
+        "sigma_mad_delta_G": _zp_mad_sigma(d_mag) if arrs["mode"] == "synthetic_gaia" else np.nan,
+        "p90_abs_delta_G": float(np.nanpercentile(np.abs(d_mag), 90)) if arrs["mode"] == "synthetic_gaia" else np.nan,
+        "median_delta_BP_RP": float(np.nanmedian(d_color)) if arrs["mode"] == "synthetic_gaia" else np.nan,
+        "sigma_mad_delta_BP_RP": _zp_mad_sigma(d_color) if arrs["mode"] == "synthetic_gaia" else np.nan,
+        "p90_abs_delta_BP_RP": float(np.nanpercentile(np.abs(d_color), 90)) if arrs["mode"] == "synthetic_gaia" else np.nan,
+        "median_gaia_mag": float(np.nanmedian(gaia_mag[matched])),
+        "median_apex_mag": float(np.nanmedian(apex_mag[matched])),
+        "median_gaia_G": float(np.nanmedian(gaia_mag[matched])) if arrs["mode"] == "synthetic_gaia" else np.nan,
+        "median_apex_G_syn": float(np.nanmedian(apex_mag[matched])) if arrs["mode"] == "synthetic_gaia" else np.nan,
+        "basis": "same matched IDs with finite Gaia-derived and APEX calibrated CMD magnitudes",
+    }]
+    return pd.DataFrame(rows)
+
+
+def _robust_line_fit(x, y) -> tuple[float, float, float, int]:
+    x = np.asarray(x, dtype=float)
+    y = np.asarray(y, dtype=float)
+    ok = np.isfinite(x) & np.isfinite(y)
+    x = x[ok]
+    y = y[ok]
+    if len(x) < 5:
+        return np.nan, np.nan, np.nan, int(len(x))
+    for _ in range(5):
+        slope, intercept = np.polyfit(x, y, 1)
+        resid = y - (slope * x + intercept)
+        med = float(np.nanmedian(resid))
+        sig = _zp_mad_sigma(resid)
+        if not np.isfinite(sig) or sig <= 0:
+            break
+        keep = np.abs(resid - med) <= 3.0 * sig
+        if int(np.sum(keep)) == len(x):
+            break
+        x = x[keep]
+        y = y[keep]
+        if len(x) < 5:
+            break
+    if len(x) < 5:
+        return np.nan, np.nan, np.nan, int(len(x))
+    slope, intercept = np.polyfit(x, y, 1)
+    resid = y - (slope * x + intercept)
+    return float(slope), float(intercept), _zp_mad_sigma(resid), int(len(x))
+
+
+def _snr_cut_mask(df: pd.DataFrame, bands: list[str], threshold: float) -> tuple[np.ndarray, list[str]]:
+    mask = np.ones(len(df), dtype=bool)
+    used: list[str] = []
+    if threshold <= 0:
+        return mask, used
+    for band in bands:
+        col = f"snr_{band}"
+        if col not in df.columns:
+            continue
+        vals = pd.to_numeric(df[col], errors="coerce").to_numpy(dtype=float)
+        mask &= np.isfinite(vals) & (vals >= float(threshold))
+        used.append(col)
+    return mask, used
+
+
+def build_gaia_cmd_snr_sweep(
+    df: pd.DataFrame,
+    snr_cuts: tuple[float, ...] = (5, 10, 20, 50, 100),
+) -> pd.DataFrame:
+    """Measure Gaia/APEX CMD residual sensitivity to the adopted SNR cut."""
+    if not isinstance(df, pd.DataFrame) or df.empty:
+        return pd.DataFrame()
+    arrs = _synthetic_gaia_cmd_arrays(df)
+    if arrs is None:
+        arrs = _native_gaia_transformed_cmd_arrays(df)
+    if arrs is None:
+        return pd.DataFrame()
+
+    gaia_mag = arrs["gaia_mag"]
+    gaia_color = arrs["gaia_color"]
+    apex_mag = arrs["apex_mag"]
+    apex_color = arrs["apex_color"]
+    base = np.asarray(arrs["matched"], dtype=bool)
+    d_mag = apex_mag - gaia_mag
+    d_color = apex_color - gaia_color
+    snr_bands = list(arrs.get("snr_bands", []))
+
+    rows = []
+    for cut in snr_cuts:
+        snr_mask, used_cols = _snr_cut_mask(df, snr_bands, float(cut))
+        use = base & snr_mask
+        n = int(np.sum(use))
+        if n > 0:
+            slope_mag, _, scatter_mag_fit, nfit_mag = _robust_line_fit(gaia_mag[use], d_mag[use])
+            slope_color, _, scatter_color_fit, nfit_color = _robust_line_fit(gaia_color[use], d_color[use])
+            dm = d_mag[use]
+            dc = d_color[use]
+            row = {
+                "snr_cut": float(cut),
+                "snr_columns": ",".join(used_cols),
+                "comparison": arrs["comparison"],
+                "mode": arrs["mode"],
+                "cmd_color": arrs["color_label"],
+                "cmd_y": arrs["mag_label"],
+                "n_matched": int(np.sum(base)),
+                "n_used": n,
+                "used_fraction": float(n / max(int(np.sum(base)), 1)),
+                "median_delta_mag": float(np.nanmedian(dm)),
+                "sigma_mad_delta_mag": _zp_mad_sigma(dm),
+                "p90_abs_delta_mag": float(np.nanpercentile(np.abs(dm), 90)),
+                "median_delta_color": float(np.nanmedian(dc)),
+                "sigma_mad_delta_color": _zp_mad_sigma(dc),
+                "p90_abs_delta_color": float(np.nanpercentile(np.abs(dc), 90)),
+                "slope_delta_mag_vs_mag": slope_mag,
+                "fit_scatter_delta_mag": scatter_mag_fit,
+                "nfit_delta_mag": nfit_mag,
+                "slope_delta_color_vs_color": slope_color,
+                "fit_scatter_delta_color": scatter_color_fit,
+                "nfit_delta_color": nfit_color,
+            }
+        else:
+            row = {
+                "snr_cut": float(cut),
+                "snr_columns": ",".join(used_cols),
+                "comparison": arrs["comparison"],
+                "mode": arrs["mode"],
+                "cmd_color": arrs["color_label"],
+                "cmd_y": arrs["mag_label"],
+                "n_matched": int(np.sum(base)),
+                "n_used": 0,
+                "used_fraction": 0.0,
+                "median_delta_mag": np.nan,
+                "sigma_mad_delta_mag": np.nan,
+                "p90_abs_delta_mag": np.nan,
+                "median_delta_color": np.nan,
+                "sigma_mad_delta_color": np.nan,
+                "p90_abs_delta_color": np.nan,
+                "slope_delta_mag_vs_mag": np.nan,
+                "fit_scatter_delta_mag": np.nan,
+                "nfit_delta_mag": 0,
+                "slope_delta_color_vs_color": np.nan,
+                "fit_scatter_delta_color": np.nan,
+                "nfit_delta_color": 0,
+            }
+        rows.append(row)
+    return pd.DataFrame(rows)
+
+
+def draw_gaia_cmd_snr_sweep(fig: Figure, sweep_df: pd.DataFrame) -> bool:
+    if not isinstance(sweep_df, pd.DataFrame) or sweep_df.empty:
+        return False
+    fig.clear()
+    axes = fig.subplots(2, 2, squeeze=False)
+    ax_n, ax_med = axes[0]
+    ax_scatter, ax_slope = axes[1]
+
+    x = pd.to_numeric(sweep_df["snr_cut"], errors="coerce").to_numpy(dtype=float)
+    order = np.argsort(x)
+    x = x[order]
+    work = sweep_df.iloc[order].reset_index(drop=True)
+
+    n_used = pd.to_numeric(work["n_used"], errors="coerce").to_numpy(dtype=float)
+    used_frac = pd.to_numeric(work["used_fraction"], errors="coerce").to_numpy(dtype=float)
+    med_mag = pd.to_numeric(work["median_delta_mag"], errors="coerce").to_numpy(dtype=float)
+    med_color = pd.to_numeric(work["median_delta_color"], errors="coerce").to_numpy(dtype=float)
+    sig_mag = pd.to_numeric(work["sigma_mad_delta_mag"], errors="coerce").to_numpy(dtype=float)
+    sig_color = pd.to_numeric(work["sigma_mad_delta_color"], errors="coerce").to_numpy(dtype=float)
+    slope_mag = pd.to_numeric(work["slope_delta_mag_vs_mag"], errors="coerce").to_numpy(dtype=float)
+    slope_color = pd.to_numeric(work["slope_delta_color_vs_color"], errors="coerce").to_numpy(dtype=float)
+
+    ax_n.plot(x, n_used, "o-", color="#4C78A8", label="N used")
+    ax_n.set_xlabel("SNR cut")
+    ax_n.set_ylabel("matched stars")
+    ax_n.grid(True, alpha=0.25)
+    ax_n2 = ax_n.twinx()
+    ax_n2.plot(x, used_frac * 100.0, "s--", color="#E45756", label="used %")
+    ax_n2.set_ylabel("used (%)")
+    ax_n2.set_ylim(0, 105)
+    h1, l1 = ax_n.get_legend_handles_labels()
+    h2, l2 = ax_n2.get_legend_handles_labels()
+    ax_n.legend(h1 + h2, l1 + l2, fontsize=8, frameon=False)
+    ax_n.set_title("Sample Retention")
+
+    ax_med.axhline(0.0, color="#222222", lw=0.8, ls="--", alpha=0.6)
+    ax_med.plot(x, med_mag, "o-", color="#54A24B", label="median dMag")
+    ax_med.plot(x, med_color, "o-", color="#B279A2", label="median dColor")
+    ax_med.set_xlabel("SNR cut")
+    ax_med.set_ylabel("median APEX - Gaia")
+    ax_med.set_title("Median Residual")
+    ax_med.grid(True, alpha=0.25)
+    ax_med.legend(fontsize=8, frameon=False)
+
+    ax_scatter.plot(x, sig_mag, "o-", color="#54A24B", label="dMag MAD sigma")
+    ax_scatter.plot(x, sig_color, "o-", color="#B279A2", label="dColor MAD sigma")
+    ax_scatter.set_xlabel("SNR cut")
+    ax_scatter.set_ylabel("robust scatter")
+    ax_scatter.set_title("Residual Scatter")
+    ax_scatter.grid(True, alpha=0.25)
+    ax_scatter.legend(fontsize=8, frameon=False)
+
+    ax_slope.axhline(0.0, color="#222222", lw=0.8, ls="--", alpha=0.6)
+    ax_slope.plot(x, slope_mag, "o-", color="#54A24B", label="dMag vs mag slope")
+    ax_slope.plot(x, slope_color, "o-", color="#B279A2", label="dColor vs color slope")
+    ax_slope.set_xlabel("SNR cut")
+    ax_slope.set_ylabel("slope")
+    ax_slope.set_title("Residual Trend")
+    ax_slope.grid(True, alpha=0.25)
+    ax_slope.legend(fontsize=8, frameon=False)
+
+    first = work.iloc[0]
+    fig.suptitle(
+        f"Gaia/APEX CMD SNR-Cut Sensitivity | {first.get('mode', '')} | "
+        f"{first.get('cmd_color', '')} vs {first.get('cmd_y', '')}",
+        fontsize=12,
+    )
+    fig.subplots_adjust(left=0.08, right=0.95, bottom=0.08, top=0.90, wspace=0.46, hspace=0.34)
+    return True
+
+
+def draw_gaia_cmd_comparison(fig: Figure, df: pd.DataFrame, summary_df: pd.DataFrame | None = None) -> bool:
+    """Draw Gaia reference CMD beside APEX calibrated CMD on matched-star axes."""
+    if not isinstance(df, pd.DataFrame) or df.empty:
+        return False
+    arrs = _synthetic_gaia_cmd_arrays(df)
+    if arrs is None:
+        arrs = _native_gaia_transformed_cmd_arrays(df)
+    if arrs is None:
+        return False
+
+    gaia_mag = arrs["gaia_mag"]
+    gaia_color = arrs["gaia_color"]
+    apex_mag = arrs["apex_mag"]
+    apex_color = arrs["apex_color"]
+    matched = arrs["matched"]
+    d_mag = apex_mag[matched] - gaia_mag[matched]
+    d_color = apex_color[matched] - gaia_color[matched]
+
+    fig.clear()
+    axes = fig.subplots(2, 2, squeeze=False)
+    ax_gaia, ax_apex = axes[0]
+    ax_dmag, ax_dc = axes[1]
+
+    all_color = np.concatenate([gaia_color[matched], apex_color[matched]])
+    all_mag = np.concatenate([gaia_mag[matched], apex_mag[matched]])
+    c_lo, c_hi = np.nanpercentile(all_color, [1, 99])
+    m_lo, m_hi = np.nanpercentile(all_mag, [1, 99])
+    c_pad = max(0.05, 0.08 * (c_hi - c_lo))
+    m_pad = max(0.05, 0.08 * (m_hi - m_lo))
+
+    common_scatter = {
+        "s": 5,
+        "alpha": 0.55,
+        "linewidths": 0,
+        "rasterized": True,
+    }
+    ax_gaia.scatter(gaia_color[matched], gaia_mag[matched], color="#4C78A8", **common_scatter)
+    gaia_title = "Gaia Observed CMD" if arrs["mode"] == "synthetic_gaia" else "Gaia-Transformed CMD"
+    ax_gaia.set_title(gaia_title)
+    ax_gaia.set_xlabel(arrs["color_label"])
+    ax_gaia.set_ylabel(arrs["mag_label"])
+    ax_gaia.set_xlim(c_lo - c_pad, c_hi + c_pad)
+    ax_gaia.set_ylim(m_hi + m_pad, m_lo - m_pad)
+    ax_gaia.grid(True, alpha=0.2)
+
+    ax_apex.scatter(apex_color[matched], apex_mag[matched], color="#F58518", **common_scatter)
+    apex_title = "APEX Calibrated CMD in Gaia Space" if arrs["mode"] == "synthetic_gaia" else "APEX Calibrated CMD"
+    ax_apex.set_title(apex_title)
+    ax_apex.set_xlabel(arrs["apex_color_label"])
+    ax_apex.set_ylabel(arrs["apex_mag_label"])
+    ax_apex.set_xlim(c_lo - c_pad, c_hi + c_pad)
+    ax_apex.set_ylim(m_hi + m_pad, m_lo - m_pad)
+    ax_apex.grid(True, alpha=0.2)
+
+    ax_dmag.scatter(gaia_mag[matched], d_mag, color="#54A24B", **common_scatter)
+    dmag_med = float(np.nanmedian(d_mag))
+    dmag_sig = _zp_mad_sigma(d_mag)
+    ax_dmag.axhline(dmag_med, color="#222222", lw=1.0, ls="--", label=f"median {dmag_med:+.3f}")
+    if np.isfinite(dmag_sig) and dmag_sig > 0:
+        ax_dmag.axhspan(dmag_med - dmag_sig, dmag_med + dmag_sig, color="#54A24B", alpha=0.12)
+    ax_dmag.set_xlabel(f"Gaia reference {arrs['mag_label']}")
+    ax_dmag.set_ylabel(f"APEX - Gaia ({arrs['mag_label']})")
+    ax_dmag.set_title("Magnitude Residual")
+    ax_dmag.grid(True, alpha=0.2)
+    ax_dmag.legend(fontsize=8, frameon=False)
+
+    ax_dc.scatter(gaia_color[matched], d_color, color="#B279A2", **common_scatter)
+    dc_med = float(np.nanmedian(d_color))
+    dc_sig = _zp_mad_sigma(d_color)
+    ax_dc.axhline(dc_med, color="#222222", lw=1.0, ls="--", label=f"median {dc_med:+.3f}")
+    if np.isfinite(dc_sig) and dc_sig > 0:
+        ax_dc.axhspan(dc_med - dc_sig, dc_med + dc_sig, color="#B279A2", alpha=0.12)
+    ax_dc.set_xlabel(f"Gaia reference {arrs['color_label']}")
+    ax_dc.set_ylabel(f"APEX - Gaia ({arrs['color_label']})")
+    ax_dc.set_title("Color Residual")
+    ax_dc.grid(True, alpha=0.2)
+    ax_dc.legend(fontsize=8, frameon=False)
+
+    n = int(np.sum(matched))
+    title_extra = ""
+    if isinstance(summary_df, pd.DataFrame) and not summary_df.empty:
+        row = summary_df.iloc[0]
+        title_extra = (
+            f" | median dMag={float(row.get('median_delta_mag', np.nan)):+.3f}, "
+            f"median dColor={float(row.get('median_delta_color', np.nan)):+.3f}"
+        )
+    fig.suptitle(f"Gaia vs APEX CMD Comparison | {arrs['mode']} | matched N={n}{title_extra}", fontsize=12)
+    fig.subplots_adjust(left=0.08, right=0.97, bottom=0.08, top=0.91, wspace=0.28, hspace=0.34)
+    return True
+
+
+def export_gaia_cmd_comparison_products(output_dir: Path, log_func=None) -> list[Path]:
+    """Export Gaia-observed vs APEX-synthetic CMD comparison products."""
+    output_dir = Path(output_dir)
+    cmd_path = output_dir / "median_by_ID_filter_wide_cmd.csv"
+    if not cmd_path.exists() or cmd_path.stat().st_size == 0:
+        return []
+    try:
+        df = pd.read_csv(cmd_path)
+    except Exception:
+        return []
+
+    summary = build_gaia_cmd_comparison(df)
+    if summary.empty:
+        return []
+
+    saved: list[Path] = []
+    summary_path = output_dir / "gaia_cmd_comparison_summary.csv"
+    summary.to_csv(summary_path, index=False)
+    saved.append(summary_path)
+
+    fig = Figure(figsize=(11.2, 8.0), dpi=120)
+    if draw_gaia_cmd_comparison(fig, df, summary):
+        fig_path = output_dir / "step10_gaia_cmd_comparison.png"
+        fig.savefig(fig_path, dpi=160, bbox_inches="tight")
+        saved.append(fig_path)
+
+    sweep = build_gaia_cmd_snr_sweep(df)
+    if not sweep.empty:
+        sweep_path = output_dir / "gaia_cmd_snr_sweep.csv"
+        sweep.to_csv(sweep_path, index=False)
+        saved.append(sweep_path)
+        sweep_fig = Figure(figsize=(10.8, 7.6), dpi=120)
+        if draw_gaia_cmd_snr_sweep(sweep_fig, sweep):
+            sweep_fig_path = output_dir / "step10_gaia_cmd_snr_sweep.png"
+            sweep_fig.savefig(sweep_fig_path, dpi=160, bbox_inches="tight")
+            saved.append(sweep_fig_path)
+
+    if saved and log_func is not None:
+        try:
+            log_func("Step10 Gaia CMD comparison exported: " + ", ".join(path.name for path in saved))
+        except Exception:
+            pass
+    return saved
+
+
 class ZeropointCalibrationWorker(QThread):
     progress = pyqtSignal(int, int, str)
     log = pyqtSignal(str)
@@ -1434,6 +2400,9 @@ class ZeropointCalibrationWorker(QThread):
             out_cmd_path = output_dir / "median_by_ID_filter_wide_cmd.csv"
             df_out.to_csv(out_cmd_path, index=False, na_rep="NaN")
             self._log(f"Saved {out_cmd_path.name} | rows={len(df_out)}")
+            export_zp_qc_products(output_dir, self._log)
+            export_cmd_qc_products(output_dir, self._log)
+            export_gaia_cmd_comparison_products(output_dir, self._log)
 
             summary = {
                 "ok": True,
@@ -3895,6 +4864,12 @@ class ZeropointCalibrationWindow(StepWindowBase):
             return False
         try:
             self.fit_tab.reload(self.params.P.result_dir)
+        except Exception:
+            pass
+        try:
+            export_zp_qc_products(step10_zp_dir(self.params.P.result_dir), self.log)
+            export_cmd_qc_products(step10_zp_dir(self.params.P.result_dir), self.log)
+            export_gaia_cmd_comparison_products(step10_zp_dir(self.params.P.result_dir), self.log)
         except Exception:
             pass
         parts = [f"{summary.get('n_sources', 0)} sources"]
