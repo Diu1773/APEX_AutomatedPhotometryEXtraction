@@ -41,6 +41,14 @@ class FrameQCThresholds:
     quality_score_fail: float = 45.0
     sat_rate_review: float = 0.08
     sat_rate_fail: float = 0.30
+    # Depth cost (mag) of a frame vs its filter-group night median, from the
+    # point-source limiting-flux scaling F_lim ~ sigma_sky_e * FWHM (SNR-limited
+    # detection with n_pix ~ FWHM^2). Calibrated against the fig3 parameter
+    # sweeps (validation/paper): sky x20 predicts +1.63 mag vs +1.37 measured,
+    # seeing x2.5 predicts +1.00 mag vs +1.30 measured — good to ~0.3 mag, so
+    # the gates below are deliberately generous.
+    depth_cost_review: float = 0.5
+    depth_cost_fail: float = 1.5
     min_anchor_review: int = 3
     min_psf_seed_review: int = 10
     min_epsf_review: int = 3
@@ -182,6 +190,7 @@ def evaluate_frame_qc(
     sky_high_cut = np.full(n, np.nan, dtype=float)
     nsrc_trend = np.full(n, np.nan, dtype=float)
     nsrc_low_cut = np.full(n, np.nan, dtype=float)
+    depth_ref = np.full(n, np.nan, dtype=float)  # group-median sigma_sky_e * FWHM
 
     for _, idx in _filter_groups(out):
         loc = out.index.get_indexer(idx)
@@ -200,6 +209,11 @@ def evaluate_frame_qc(
         sky_high_cut[loc] = sky_high
         nsrc_trend[loc] = n_med
         nsrc_low_cut[loc] = n_low
+        sig_e_loc = sky_sigma[loc] * gain[loc]
+        med_sig_e = _finite_median(np.where(sig_e_loc > 0, sig_e_loc, np.nan))
+        med_fwhm = _finite_median(np.where(fwhm[loc] > 0, fwhm[loc], np.nan))
+        if np.isfinite(med_sig_e) and med_sig_e > 0 and np.isfinite(med_fwhm) and med_fwhm > 0:
+            depth_ref[loc] = med_sig_e * med_fwhm
 
     with np.errstate(divide="ignore", invalid="ignore"):
         fwhm_model_ratio = fwhm / fwhm_model
@@ -208,6 +222,9 @@ def evaluate_frame_qc(
         sky_sigma_expected_e = np.sqrt(np.clip(sky_e, 0.0, None) + np.square(rdnoise))
         sky_noise_ratio = sky_sigma_e / sky_sigma_expected_e
         sat_rate = sat / np.maximum(nsrc, 1.0)
+        # Estimated depth loss vs the night median: m_lim = C - 2.5 log10(sigma_sky_e * FWHM)
+        depth_cost = 2.5 * np.log10((sky_sigma_e * fwhm) / depth_ref)
+    depth_cost[~np.isfinite(depth_cost)] = np.nan
 
     fwhm_px_min = _get_float(params, "fwhm_px_min", 0.0)
     fwhm_px_max = _get_float(params, "fwhm_px_max", 0.0)
@@ -257,6 +274,14 @@ def evaluate_frame_qc(
         ):
             review.append("fwhm_warning")
             score -= 15.0
+
+        if np.isfinite(depth_cost[i]):
+            if depth_cost[i] > thr.depth_cost_fail:
+                fail.append("depth_loss")
+                score -= 30.0
+            elif depth_cost[i] > thr.depth_cost_review:
+                review.append("depth_warning")
+                score -= 12.0
 
         low_nsrc_ratio_fail = (
             np.isfinite(nsrc[i])
@@ -345,6 +370,7 @@ def evaluate_frame_qc(
     out["n_sources_trend"] = nsrc_trend
     out["n_sources_low_cut"] = nsrc_low_cut
     out["sat_star_rate"] = sat_rate
+    out["depth_cost_mag"] = depth_cost
     out["qc_status"] = statuses
     out["qc_score"] = scores
     out["qc_reasons"] = reasons

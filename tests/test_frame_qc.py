@@ -57,9 +57,13 @@ def test_evaluate_frame_qc_fails_missing_fwhm_and_high_elongation():
 
 
 def test_evaluate_frame_qc_keeps_sky_outlier_as_review_when_sources_survive():
+    # A moderate sky-noise outlier (ratio 2.8x the CCD expectation, depth cost
+    # ~1.1 mag — inside the review band) must stay REVIEW when the source count
+    # is healthy. A catastrophic outlier (e.g. 8.75x sky sigma = 2.35 mag depth
+    # loss) now legitimately FAILs via the physical depth_loss gate — covered
+    # in the depth-cost test below.
     df = _base_frames()
-    df.loc[4, "sky_med"] = 9000.0
-    df.loc[4, "sky_sigma"] = 280.0
+    df.loc[4, "sky_sigma"] = 90.0
 
     out = evaluate_frame_qc(df)
 
@@ -105,6 +109,39 @@ def test_evaluate_frame_qc_tight_config_elongation_keeps_review_below_fail():
     out = evaluate_frame_qc(df, params=_Params())
     assert out.loc[3, "qc_status"] == FAIL
     assert "high_elongation" in out.loc[3, "qc_reasons"]
+
+
+def _depth_only_thresholds(**overrides):
+    """Thresholds with every non-depth statistical gate effectively disabled."""
+    kwargs = dict(
+        fwhm_z_review=99.0, fwhm_z_fail=100.0,
+        fwhm_model_ratio_review=99.0, fwhm_model_ratio_fail=100.0,
+        sky_z_review=99.0, sky_z_fail=100.0,
+        sky_noise_ratio_review=99.0, sky_noise_ratio_fail=100.0,
+        nsrc_z_review=99.0, nsrc_z_fail=100.0,
+    )
+    kwargs.update(overrides)
+    return FrameQCThresholds(**kwargs)
+
+
+def test_evaluate_frame_qc_depth_cost_column_and_gates():
+    df = _base_frames()
+    # Frame 5: 2x seeing AND 2.2x sky noise -> depth cost = 2.5*log10(4.4) ~ 1.61 mag
+    df.loc[5, "fwhm_med"] = 10.0
+    df.loc[5, "sky_sigma"] = 70.4
+    # Frame 8: 1.7x seeing only -> 2.5*log10(1.7) ~ 0.58 mag (review band)
+    df.loc[8, "fwhm_med"] = 8.5
+
+    out = evaluate_frame_qc(df, thresholds=_depth_only_thresholds())
+
+    assert abs(out.loc[5, "depth_cost_mag"] - 2.5 * np.log10(2.0 * 2.2)) < 0.05
+    assert out.loc[5, "qc_status"] == FAIL
+    assert "depth_loss" in out.loc[5, "qc_reasons"]
+    assert out.loc[8, "qc_status"] == REVIEW
+    assert "depth_warning" in out.loc[8, "qc_reasons"]
+    # Nominal frames sit at ~0 depth cost and stay PASS.
+    assert abs(out.loc[0, "depth_cost_mag"]) < 0.05
+    assert out.loc[0, "qc_status"] == PASS
 
 
 def test_evaluate_frame_qc_uses_custom_z_thresholds():
