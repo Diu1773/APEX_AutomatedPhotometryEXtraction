@@ -1,0 +1,4 @@
+# Regenerable heavy outputs (see README.md)
+data/
+_sweep_ref.fits
+_canonical.log
