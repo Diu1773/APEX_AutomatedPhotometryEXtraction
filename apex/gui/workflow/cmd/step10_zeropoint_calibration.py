@@ -59,6 +59,7 @@ from apex.utils.step_paths import (
 )
 from apex.utils.step_paths_cmd import step8_psf_dir, step9_selection_dir, step10_zp_dir
 from apex.utils.io_utils import parse_int64_series, read_ecsv_int64_source_id
+from apex.utils.gaia_quality import gaia_quality_mask
 from apex.utils.qc_utils import filter_frame_df_by_qc, should_use_frame_quality_qc
 
 
@@ -1934,7 +1935,8 @@ class ZeropointCalibrationWorker(QThread):
                 merge_cols.append(col_ym)
             for col in ("ra_deg", "dec_deg",
                         "gaia_G", "gaia_BP", "gaia_RP", "gmag", "bpmag", "rpmag", "phot_g_mean_mag", "phot_bp_mean_mag", "phot_rp_mean_mag",
-                        "parallax", "parallax_error", "pmra", "pmdec", "pmra_error", "pmdec_error"):
+                        "parallax", "parallax_error", "pmra", "pmdec", "pmra_error", "pmdec_error",
+                        "ruwe", "phot_bp_rp_excess_factor"):
                 if col in master.columns and col not in merge_cols:
                     merge_cols.append(col)
 
@@ -2071,6 +2073,18 @@ class ZeropointCalibrationWorker(QThread):
             coeff_rows: list[dict] = []
             fit_params: dict[str, dict] = {}
 
+            # Gaia calibrator quality: RUWE <= 1.4 + Riello+2021 |C*| <= 3sigma
+            # (BP/RP contamination in crowded fields biases the transformed
+            # reference mags of faint stars). Permissive when the columns are
+            # absent (older master catalogs behave as before).
+            m_gaia_qual = gaia_quality_mask(out_cal)
+            n_qual_cut = int(len(out_cal) - int(m_gaia_qual.sum()))
+            if n_qual_cut:
+                self._log(
+                    f"[ZP] Gaia quality cut (RUWE<=1.4, |C*|<=3sig): removed "
+                    f"{n_qual_cut}/{len(out_cal)} calibrator candidates"
+                )
+
             for filt in data_filters:
                 if filt not in ref_col_map:
                     continue
@@ -2123,7 +2137,7 @@ class ZeropointCalibrationWorker(QThread):
                     self._log(f"[ZP][{filt}] No instrumental color index available — fitting ZP only (CT=0)")
                     color_x = np.zeros(len(out_cal))
 
-                m_fit   = np.isfinite(delta) & np.isfinite(color_x) & np.isfinite(inst_arr) & m_snr_f
+                m_fit   = np.isfinite(delta) & np.isfinite(color_x) & np.isfinite(inst_arr) & m_snr_f & m_gaia_qual
 
                 if m_fit.sum() < min_match:
                     self._log(f"[ZP][{filt}] Only {m_fit.sum()} calibrators (need {min_match}) — skipping fit")

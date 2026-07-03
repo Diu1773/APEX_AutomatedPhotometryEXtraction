@@ -79,6 +79,9 @@ _GAIA_REF_EXTRA_COLS = (
     "parallax_error",
     "ruwe",
     "visibility_periods_used",
+    # BP/RP flux-excess: needed for the Riello+2021 C* contamination cut in
+    # Step-10 calibrator selection (crowded-field faint BP/RP is unreliable).
+    "phot_bp_rp_excess_factor",
 )
 _REF_SIGNATURE_FILE = "ref_build_signature.json"
 _REF_SIGNATURE_VERSION = 2
