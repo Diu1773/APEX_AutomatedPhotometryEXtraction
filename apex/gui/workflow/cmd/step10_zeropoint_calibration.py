@@ -146,6 +146,47 @@ def _zp_filter_subset(df: pd.DataFrame, filt: str) -> pd.DataFrame:
     return df[keys == normalize_filter_name(filt)].copy()
 
 
+# Minimum sigma-clipped calibrators before the quadratic color term is
+# attempted; below this the linear fit is kept (a poorly constrained curvature
+# does more harm than the ±0.02-0.03 mag it corrects on rich fields).
+_QUAD_MIN_CALIBRATORS = 60
+
+
+def robust_weighted_polyfit(
+    x, y, w=None, degree: int = 2, clip_sigma: float = 3.0, iters: int = 5, min_n: int = 10
+):
+    """Sigma-clipping weighted polynomial fit.
+
+    Returns (coeffs highest-power-first, n_inlier, mad_scatter) or
+    (None, 0, nan) when the fit is not possible. Mirrors the clipping scheme
+    of ``_robust_linfit`` so the quadratic refinement rejects the same kind of
+    outliers the linear fit does.
+    """
+    x = np.asarray(x, dtype=float)
+    y = np.asarray(y, dtype=float)
+    m = np.isfinite(x) & np.isfinite(y)
+    if w is not None:
+        w = np.asarray(w, dtype=float)
+        m &= np.isfinite(w) & (w > 0)
+    if int(m.sum()) < max(min_n, degree + 2):
+        return None, 0, float("nan")
+    coeffs = None
+    scatter = float("nan")
+    for _ in range(max(1, int(iters))):
+        try:
+            coeffs = np.polyfit(x[m], y[m], degree, w=np.sqrt(w[m]) if w is not None else None)
+        except (np.linalg.LinAlgError, ValueError):
+            return None, 0, float("nan")
+        r = y - np.polyval(coeffs, x)
+        med = float(np.nanmedian(r[m]))
+        scatter = float(MAD_TO_SIGMA * np.nanmedian(np.abs(r[m] - med)))
+        m_new = m & (np.abs(r - med) <= clip_sigma * max(scatter, 1e-6))
+        if int(m_new.sum()) < max(min_n, degree + 2) or m_new.sum() == m.sum():
+            break
+        m = m_new
+    return coeffs, int(m.sum()), scatter
+
+
 def solve_standard_colors(
     inst_mags: dict[str, np.ndarray],
     fit_params: dict[str, dict],
@@ -212,7 +253,9 @@ def solve_standard_colors(
         base = np.asarray(inst_mags[f], dtype=float) + _coef(f, "zp")
         ccol = str(fit_params.get(f, {}).get("color_col", "none"))
         if ccol in colors:
-            return base + _coef(f, "ct") * colors[ccol]
+            c = colors[ccol]
+            # Optional quadratic color term (ct2 defaults to 0 for legacy fits).
+            return base + _coef(f, "ct") * c + _coef(f, "ct2") * c * c
         return base
 
     for _ in range(max(1, int(iters))):
@@ -808,6 +851,76 @@ def build_gaia_cmd_comparison(df: pd.DataFrame) -> pd.DataFrame:
     return pd.DataFrame(rows)
 
 
+def build_gaia_cmd_drift_table(df: pd.DataFrame, bin_width: float = 0.5) -> pd.DataFrame:
+    """Binned-median Delta(mag)/Delta(color) vs Gaia reference magnitude.
+
+    This automates the bright->faint drift diagnostic that exposed the
+    NGC 6811 B-band faint bias: a magnitude-dependent median offset between
+    the APEX calibrated CMD and the Gaia-transformed reference is invisible
+    in the global medians but jumps out of this table. The final row is a
+    ``DRIFT`` summary: median over the faint quintile minus median over the
+    bright quintile (by matched-star magnitude), per axis.
+    """
+    if not isinstance(df, pd.DataFrame) or df.empty:
+        return pd.DataFrame()
+    arrs = _synthetic_gaia_cmd_arrays(df)
+    if arrs is None:
+        arrs = _native_gaia_transformed_cmd_arrays(df)
+    if arrs is None:
+        return pd.DataFrame()
+
+    matched = arrs["matched"]
+    gaia_mag = np.asarray(arrs["gaia_mag"], dtype=float)[matched]
+    d_mag = np.asarray(arrs["apex_mag"], dtype=float)[matched] - gaia_mag
+    d_color = (
+        np.asarray(arrs["apex_color"], dtype=float)[matched]
+        - np.asarray(arrs["gaia_color"], dtype=float)[matched]
+    )
+    ok = np.isfinite(gaia_mag) & np.isfinite(d_mag) & np.isfinite(d_color)
+    if int(ok.sum()) < 30:
+        return pd.DataFrame()
+    gaia_mag, d_mag, d_color = gaia_mag[ok], d_mag[ok], d_color[ok]
+
+    rows: list[dict] = []
+    lo = np.floor(np.nanmin(gaia_mag) / bin_width) * bin_width
+    hi = np.ceil(np.nanmax(gaia_mag) / bin_width) * bin_width
+    edges = np.arange(lo, hi + 0.5 * bin_width, bin_width)
+    for b_lo, b_hi in zip(edges[:-1], edges[1:]):
+        k = (gaia_mag >= b_lo) & (gaia_mag < b_hi)
+        if int(k.sum()) < 15:
+            continue
+        rows.append({
+            "kind": "bin",
+            "mag_lo": float(b_lo),
+            "mag_hi": float(b_hi),
+            "n": int(k.sum()),
+            "median_delta_mag": float(np.nanmedian(d_mag[k])),
+            "sigma_mad_delta_mag": _zp_mad_sigma(d_mag[k]),
+            "median_delta_color": float(np.nanmedian(d_color[k])),
+            "sigma_mad_delta_color": _zp_mad_sigma(d_color[k]),
+        })
+
+    # DRIFT summary: faint quintile minus bright quintile.
+    q20, q80 = np.nanpercentile(gaia_mag, [20.0, 80.0])
+    bright, faint = gaia_mag <= q20, gaia_mag >= q80
+    if int(bright.sum()) >= 15 and int(faint.sum()) >= 15:
+        rows.append({
+            "kind": "DRIFT",
+            "mag_lo": float(q20),   # bright quintile upper edge
+            "mag_hi": float(q80),   # faint quintile lower edge
+            "n": int(bright.sum() + faint.sum()),
+            "median_delta_mag": float(np.nanmedian(d_mag[faint]) - np.nanmedian(d_mag[bright])),
+            "sigma_mad_delta_mag": np.nan,
+            "median_delta_color": float(np.nanmedian(d_color[faint]) - np.nanmedian(d_color[bright])),
+            "sigma_mad_delta_color": np.nan,
+        })
+    out = pd.DataFrame(rows)
+    if not out.empty:
+        out.insert(0, "cmd_y", arrs["mag_label"])
+        out.insert(0, "cmd_color", arrs["color_label"])
+    return out
+
+
 def _robust_line_fit(x, y) -> tuple[float, float, float, int]:
     x = np.asarray(x, dtype=float)
     y = np.asarray(y, dtype=float)
@@ -1133,6 +1246,24 @@ def export_gaia_cmd_comparison_products(output_dir: Path, log_func=None) -> list
             sweep_fig_path = output_dir / "step10_gaia_cmd_snr_sweep.png"
             sweep_fig.savefig(sweep_fig_path, dpi=160, bbox_inches="tight")
             saved.append(sweep_fig_path)
+
+    drift = build_gaia_cmd_drift_table(df)
+    if not drift.empty:
+        drift_path = output_dir / "gaia_cmd_drift_by_mag.csv"
+        drift.to_csv(drift_path, index=False)
+        saved.append(drift_path)
+        if log_func is not None:
+            summary_row = drift[drift["kind"] == "DRIFT"]
+            if len(summary_row):
+                dm = float(summary_row["median_delta_mag"].iloc[0])
+                dc = float(summary_row["median_delta_color"].iloc[0])
+                try:
+                    log_func(
+                        f"[Gaia QC] bright->faint drift: dMag={dm:+.4f}, dColor={dc:+.4f} mag "
+                        "(|drift|>~0.02 = magnitude-dependent calibration systematic)"
+                    )
+                except Exception:
+                    pass
 
     if saved and log_func is not None:
         try:
@@ -2147,9 +2278,38 @@ class ZeropointCalibrationWorker(QThread):
                     color_x[m_fit], delta[m_fit], w=w_filt[m_fit],
                     clip_sigma=clip_sigma, iters=fit_iters, slope_absmax=s_max, min_n=min_match,
                 )
+
+                # Quadratic color-term refinement: the linear term leaves a
+                # ±0.02-0.03 mag curvature vs color on rich fields (measured on
+                # NGC 6811 B). Adopt the quadratic only when well constrained
+                # (enough calibrators, sane coefficients, scatter not worse).
+                ct2_f = 0.0
+                if color_col_name != "none" and int(m_fit.sum()) >= _QUAD_MIN_CALIBRATORS:
+                    q_coeffs, Nq, sq = robust_weighted_polyfit(
+                        color_x[m_fit], delta[m_fit], w=w_filt[m_fit], degree=2,
+                        clip_sigma=clip_sigma, iters=fit_iters, min_n=min_match,
+                    )
+                    # |ct2| <= 0.25: broadband transformation curvatures are
+                    # ~0.05 (NGC 6811 B: -0.07); larger values are unphysical
+                    # AND would threaten the fixed-point contraction in
+                    # solve_standard_colors (derivative ~ ct + 2*ct2*C).
+                    if (
+                        q_coeffs is not None
+                        and np.all(np.isfinite(q_coeffs))
+                        and abs(float(q_coeffs[0])) <= 0.25
+                        and abs(float(q_coeffs[1])) <= s_max
+                        and np.isfinite(sq)
+                        and (not np.isfinite(sc_f) or sq <= sc_f + 1e-6)
+                    ):
+                        ct2_f = float(q_coeffs[0])
+                        ct_f = float(q_coeffs[1])
+                        zp_f = float(q_coeffs[2])
+                        Nf, sc_f = int(Nq), float(sq)
+
                 clabel = color_col_name.replace("_", "-")
                 axis_tag = "_std" if color_axis == "standard" else "_inst"
-                self._log(f"{filt}_std = {filt}_inst + {zp_f:+.4f} + {ct_f:+.4f}*({clabel}){axis_tag}  N={Nf}  scatter={sc_f:.4f}")
+                quad_str = f" {ct2_f:+.4f}*({clabel})^2" if ct2_f else ""
+                self._log(f"{filt}_std = {filt}_inst + {zp_f:+.4f} + {ct_f:+.4f}*({clabel}){axis_tag}{quad_str}  N={Nf}  scatter={sc_f:.4f}")
 
                 # Store delta and color columns for CSV. color_<pair> is the
                 # FIT axis (standard color when available); the raw
@@ -2164,11 +2324,11 @@ class ZeropointCalibrationWorker(QThread):
                         ca, cb = color_col_name.split("_", 1)
                         out_cal[ccol_inst] = _color_pair(ca, cb)
 
-                coeff_rows.append({"filter": filt, "zp": zp_f, "ct": ct_f, "N": Nf,
+                coeff_rows.append({"filter": filt, "zp": zp_f, "ct": ct_f, "ct2": ct2_f, "N": Nf,
                                    "scatter_rms": sc_f, "color_col": color_col_name,
                                    "color_axis": color_axis,
                                    "ref_source": ref_source_map.get(filt, "")})
-                fit_params[filt] = {"zp": zp_f, "ct": ct_f, "scatter_rms": sc_f,
+                fit_params[filt] = {"zp": zp_f, "ct": ct_f, "ct2": ct2_f, "scatter_rms": sc_f,
                                     "color_col": color_col_name,
                                     "color_axis": color_axis}
 
@@ -2265,7 +2425,10 @@ class ZeropointCalibrationWorker(QThread):
                 if ccol_name != "none":
                     ccol = f"color_{ccol_name}"
                     if ccol in obs.columns:
-                        obs.loc[m_f, "color_term"] = fp["ct"] * obs.loc[m_f, ccol].to_numpy(float)
+                        _cvals = obs.loc[m_f, ccol].to_numpy(float)
+                        obs.loc[m_f, "color_term"] = (
+                            fp["ct"] * _cvals + float(fp.get("ct2", 0.0)) * _cvals * _cvals
+                        )
                     else:
                         obs.loc[m_f, "color_term"] = 0.0
                 else:
@@ -2374,7 +2537,10 @@ class ZeropointCalibrationWorker(QThread):
                 if ccol_name != "none":
                     ccol = f"color_{ccol_name}"
                     if ccol in obs.columns:
-                        obs.loc[m_f, "color_term"] = fp["ct"] * obs.loc[m_f, ccol].to_numpy(float)
+                        _cvals = obs.loc[m_f, ccol].to_numpy(float)
+                        obs.loc[m_f, "color_term"] = (
+                            fp["ct"] * _cvals + float(fp.get("ct2", 0.0)) * _cvals * _cvals
+                        )
                     else:
                         obs.loc[m_f, "color_term"] = 0.0
                 else:
@@ -4234,21 +4400,25 @@ class ZPFitPlotWidget(QWidget):
             # Sigma-clip outlier mask re-computed from saved fit line
             inlier = np.ones(len(x_plot), dtype=bool)
             zp_val = ct_val = None
+            ct2_val = 0.0
             fit_label = f"{filt} (N={mask.sum()})"
             if self._coeff_df is not None:
                 row = self._coeff_df[self._coeff_df["filter"] == filt]
                 if len(row):
                     zp_val = float(row["zp"].iloc[0])
                     ct_val = float(row["ct"].iloc[0])
+                    if "ct2" in row.columns and np.isfinite(row["ct2"].iloc[0]):
+                        ct2_val = float(row["ct2"].iloc[0])
                     N_val = int(row["N"].iloc[0]) if "N" in row.columns else mask.sum()
                     sc_val = float(row["scatter_rms"].iloc[0]) if "scatter_rms" in row.columns else np.nan
-                    resid = y_plot - (zp_val + ct_val * x_plot)
+                    resid = y_plot - (zp_val + ct_val * x_plot + ct2_val * x_plot**2)
                     med_r = np.nanmedian(resid)
                     mad_r = np.nanmedian(np.abs(resid - med_r)) + 1e-12
                     sig_r = MAD_TO_SIGMA * mad_r
                     inlier = np.abs(resid - med_r) <= 3.0 * sig_r
                     sc_str = f"σ={sc_val:.4f}" if np.isfinite(sc_val) else ""
-                    fit_label = f"{filt}: ZP={zp_val:.3f} CT={ct_val:+.3f} {sc_str} (N={N_val})"
+                    ct2_str = f" CT2={ct2_val:+.3f}" if ct2_val else ""
+                    fit_label = f"{filt}: ZP={zp_val:.3f} CT={ct_val:+.3f}{ct2_str} {sc_str} (N={N_val})"
 
             # Outliers first (behind inliers)
             if (~inlier).any():
@@ -4286,7 +4456,7 @@ class ZPFitPlotWidget(QWidget):
 
             if zp_val is not None and ct_val is not None:
                 x_fit = np.linspace(np.nanmin(x_plot) - 0.05, np.nanmax(x_plot) + 0.05, 200)
-                y_fit = zp_val + ct_val * x_fit
+                y_fit = zp_val + ct_val * x_fit + ct2_val * x_fit**2
                 ax.plot(x_fit, y_fit, "-", color=fc, linewidth=2.0, zorder=4)
 
             color_labels.add(color_col)

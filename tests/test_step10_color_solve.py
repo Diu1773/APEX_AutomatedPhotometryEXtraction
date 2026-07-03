@@ -12,7 +12,10 @@ import pytest
 
 pytest.importorskip("PyQt5")
 
-from apex.gui.workflow.cmd.step10_zeropoint_calibration import solve_standard_colors
+from apex.gui.workflow.cmd.step10_zeropoint_calibration import (
+    robust_weighted_polyfit,
+    solve_standard_colors,
+)
 
 
 RNG = np.random.default_rng(20260703)
@@ -94,6 +97,34 @@ def test_missing_band_yields_nan_only_for_affected_pair():
     assert np.isnan(colors["V_R"][:10]).all()
     assert np.isfinite(colors["V_R"][10:]).all()
     assert np.isfinite(colors["B_V"]).all()  # B-V unaffected by missing R
+
+
+def test_solve_recovers_with_quadratic_color_term():
+    b, v, _ = _make_truth()
+    bv_true = b - v
+    fit = {
+        "B": {"zp": -3.90, "ct": +0.12, "ct2": -0.06, "color_col": "B_V"},
+        "V": {"zp": -3.40, "ct": +0.06, "ct2": +0.02, "color_col": "B_V"},
+    }
+    inst = {
+        f: (std - fit[f]["zp"] - fit[f]["ct"] * bv_true - fit[f]["ct2"] * bv_true**2)
+        for f, std in (("B", b), ("V", v))
+    }
+    colors = solve_standard_colors(inst, fit, iters=10)
+    assert np.allclose(colors["B_V"], bv_true, atol=1e-5)
+
+
+def test_robust_weighted_polyfit_recovers_quadratic_with_outliers():
+    x = np.linspace(0.2, 1.8, 400)
+    true = np.array([-0.05, 0.12, -3.9])  # ct2, ct, zp
+    y = np.polyval(true, x) + RNG.normal(0.0, 0.01, x.size)
+    y[::40] += 0.5  # 10 gross outliers
+    w = np.full(x.size, 1.0 / 0.01**2)
+    coeffs, n, scatter = robust_weighted_polyfit(x, y, w, degree=2)
+    assert coeffs is not None
+    assert np.allclose(coeffs, true, atol=0.02)
+    assert n < x.size  # outliers were clipped
+    assert scatter < 0.02
 
 
 def test_unfitted_band_pair_excluded():
