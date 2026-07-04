@@ -204,6 +204,83 @@ def _fit_sinusoid(
     return float(C), float(np.hypot(a, b)), float(np.arctan2(b, a)), float(C)
 
 
+def resolve_multinight_period(
+    time: np.ndarray,
+    mag: np.ndarray,
+    night_id: np.ndarray,
+    min_period: float,
+    max_period: float,
+    mag_err: Optional[np.ndarray] = None,
+    n_top: int = 8,
+) -> dict:
+    """Resolve the 1-day sampling alias in multi-night data.
+
+    On single-site multi-night light curves the nightly ~1-day gaps put strong
+    peaks at ±1 cycle-day in the spectral window, so the *tallest* Lomb-Scargle
+    peak of the merged data is frequently an alias of the true frequency rather
+    than the frequency itself (e.g. an HADS star measured at P=0.086 d showing
+    a tallest peak at 0.0824 d, the +1 c/d alias). A single night, having no
+    1-day gap, is alias-free — only coarse, because of its short baseline.
+
+    This resolves the alias the standard way: take the coarse but unambiguous
+    frequency from the best single night as a *reference*, then select, among
+    the top peaks of the full merged periodogram, the one nearest that
+    reference — which gives the true frequency at the full multi-night
+    precision. (For data with no clean reference night, spectral-window
+    deconvolution — Roberts, Lehár & Dreher 1987, CLEAN — is the alternative;
+    it is not implemented here.)
+
+    Returns a dict with ``period`` (resolved), ``freq_cd``, ``naive_period``
+    (the tallest-peak answer), ``reference_freq_cd``, ``reference_night``,
+    ``was_aliased`` (resolved differs from naive), and ``n_nights``.
+    """
+    t, y, dy = filter_valid(time, mag, mag_err)
+    nid = np.asarray(night_id)
+    if len(t) != len(night_id):
+        # filter_valid dropped rows; re-align night_id to the finite mask
+        mask = np.isfinite(time) & np.isfinite(mag)
+        if mag_err is not None:
+            mask &= np.isfinite(mag_err)
+        nid = np.asarray(night_id)[mask]
+    nights = [n for n in np.unique(nid) if np.sum(nid == n) >= 10]
+    fmin, fmax = 1.0 / max_period, 1.0 / min_period
+
+    def _peaks(tt, yy, spp, k):
+        if len(tt) < 8:
+            return np.array([])
+        f, p = LombScargle(tt, yy).autopower(minimum_frequency=fmin,
+                                             maximum_frequency=fmax, samples_per_peak=spp)
+        pk, _ = find_peaks(p, height=0.2 * float(np.max(p)))
+        if len(pk) == 0:
+            pk = [int(np.argmax(p))]
+        pk = sorted(pk, key=lambda i: p[i], reverse=True)[:k]
+        return f[pk]
+
+    full_top = _peaks(t, y, 30, n_top)
+    naive_f = float(full_top[0]) if len(full_top) else float("nan")
+
+    if len(nights) < 2 or len(full_top) == 0:
+        # nothing to resolve against
+        return {"period": 1.0 / naive_f if naive_f == naive_f else float("nan"),
+                "freq_cd": naive_f, "naive_period": 1.0 / naive_f if naive_f == naive_f else float("nan"),
+                "reference_freq_cd": float("nan"), "reference_night": None,
+                "was_aliased": False, "n_nights": len(nights)}
+
+    # reference = the night with the longest baseline (most alias-free & resolving)
+    best_night = max(nights, key=lambda n: float(np.ptp(t[nid == n])))
+    ref_f = _peaks(t[nid == best_night], y[nid == best_night], 15, 1)
+    f_ref = float(ref_f[0]) if len(ref_f) else naive_f
+
+    resolved_f = float(full_top[int(np.argmin(np.abs(full_top - f_ref)))])
+    return {
+        "period": 1.0 / resolved_f, "freq_cd": resolved_f,
+        "naive_period": 1.0 / naive_f, "reference_freq_cd": f_ref,
+        "reference_night": str(best_night),
+        "was_aliased": abs(resolved_f - naive_f) > 1e-3,
+        "n_nights": len(nights),
+    }
+
+
 def prewhiten_frequencies(
     time: np.ndarray,
     mag: np.ndarray,
