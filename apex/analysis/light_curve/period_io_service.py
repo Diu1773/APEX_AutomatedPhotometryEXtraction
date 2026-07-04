@@ -87,12 +87,20 @@ def load_period_lightcurve_csv(lc_file: Path, flt: str, target_id: int) -> dict:
     if mag_raw_col is None:
         raise ValueError(f"No magnitude column found. Available columns: {list(df_target.columns)}")
 
+    # Per-night grouping label (for multi-night 1-day-alias resolution). Prefer
+    # an explicit night_id, fall back to the observation date; None if neither
+    # exists (single-night data or an older light-curve schema).
+    night_col = next((c for c in ("night_id", "night", "date") if c in df_target.columns), None)
+    night_id = df_target[night_col].astype(str).to_numpy() if night_col else None
+
     corr_mode_key, corr_mode_label = detect_corr_mode_from_df(df_target, lc_file.name)
     payload = {
         "time": df_target[time_col].to_numpy(float),
         "mag_raw": df_target[mag_raw_col].to_numpy(float),
         "mag_corr": df_target[mag_corr_col].to_numpy(float) if mag_corr_col else None,
         "mag_err": df_target[mag_err_col].to_numpy(float) if mag_err_col else None,
+        "night_id": night_id,
+        "col_night": night_col,
         "filter": flt,
         "target_id": int(target_id),
         "source_file": str(lc_file),

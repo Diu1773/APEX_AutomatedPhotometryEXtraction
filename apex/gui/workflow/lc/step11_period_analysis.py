@@ -38,8 +38,12 @@ from PyQt5.QtWidgets import (
 )
 from PyQt5.QtCore import Qt, QThread, pyqtSignal
 
+from apex.gui.layout_rules import tame_canvas
 from apex.gui.workflow.step_window_base import StepWindowBase
-from apex.analysis.light_curve.period_analysis_service import run_period_analysis
+from apex.analysis.light_curve.period_analysis_service import (
+    run_period_analysis,
+    resolve_multinight_period,
+)
 from apex.analysis.light_curve.period_io_service import (
     detect_corr_mode_from_df,
     load_period_lightcurve_csv,
@@ -175,6 +179,7 @@ class PeriodAnalysisWorker(QThread):
         samples_per_peak: int = 10,
         methods: Optional[List[str]] = None,
         pdm_n_bins: int = 10,
+        night_id: Optional[np.ndarray] = None,
     ):
         super().__init__()
         self.time = time
@@ -186,6 +191,7 @@ class PeriodAnalysisWorker(QThread):
         self.samples_per_peak = samples_per_peak
         self.methods = methods or ["ls"]
         self.pdm_n_bins = pdm_n_bins
+        self.night_id = night_id
 
     def run(self):
         try:
@@ -201,6 +207,22 @@ class PeriodAnalysisWorker(QThread):
                 pdm_n_bins=self.pdm_n_bins,
                 progress_cb=self.progress.emit,
             )
+            # Multi-night 1-day-alias resolution: when the data spans >=2 nights
+            # the tallest LS peak is often a +/-1 c/d alias; resolve it against
+            # the best single night (period_analysis_service.resolve_multinight_period).
+            if self.night_id is not None:
+                try:
+                    n_nights = len(set(str(n) for n in self.night_id))
+                except TypeError:
+                    n_nights = 1
+                if n_nights >= 2:
+                    self.progress.emit("Resolving multi-night 1-day alias...")
+                    mag = self.mag_corr if (self.mag_corr is not None
+                                            and np.any(np.isfinite(self.mag_corr))) else self.mag_raw
+                    results["multinight"] = resolve_multinight_period(
+                        self.time, mag, self.night_id,
+                        self.min_period, self.max_period, self.mag_err,
+                    )
             self.finished.emit(results)
         except Exception as e:
             import traceback
@@ -214,6 +236,7 @@ class PeriodAnalysisWindow(StepWindowBase):
         self.file_manager = file_manager
         self.worker = None
         self.results = {}
+        self.multinight = None
         self.lc_data = None
         self.current_filter = None
         self._ui_ready = False
@@ -367,7 +390,7 @@ class PeriodAnalysisWindow(StepWindowBase):
         periodogram_layout.addLayout(alias_row)
 
         self.periodogram_canvas = FigureCanvas(Figure(figsize=(10, 5)))
-        periodogram_layout.addWidget(self.periodogram_canvas)
+        periodogram_layout.addWidget(tame_canvas(self.periodogram_canvas), 1)
 
         self.tabs.addTab(periodogram_tab, "Periodogram")
 
@@ -393,7 +416,7 @@ class PeriodAnalysisWindow(StepWindowBase):
         phase_layout.addLayout(phase_control)
 
         self.phase_canvas = FigureCanvas(Figure(figsize=(10, 6)))
-        phase_layout.addWidget(self.phase_canvas)
+        phase_layout.addWidget(tame_canvas(self.phase_canvas), 1)
 
         self.tabs.addTab(phase_tab, "Phase Plot")
 
@@ -614,6 +637,7 @@ class PeriodAnalysisWindow(StepWindowBase):
             samples_per_peak=samples,
             methods=methods,
             pdm_n_bins=self.pdm_bins_spin.value(),
+            night_id=self.lc_data.get("night_id"),
         )
         self.worker.progress.connect(self._on_progress)
         self.worker.finished.connect(self._on_finished)
@@ -633,7 +657,22 @@ class PeriodAnalysisWindow(StepWindowBase):
     def _on_finished(self, results: dict):
         self.btn_run.setEnabled(True)
         self.progress_label.setText("Done")
+        # Separate the multi-night resolution from the per-method period results
+        # so the plot/table/phase consumers only ever see period-result dicts.
+        self.multinight = results.pop("multinight", None)
         self.results = results
+
+        if self.multinight and self.multinight.get("n_nights", 0) >= 2:
+            m = self.multinight
+            if m.get("was_aliased"):
+                self.log(
+                    f"[MULTI-NIGHT] tallest peak {m['naive_period']:.6f} d was a "
+                    f"1-day alias — resolved to {m['period']:.6f} d using the best "
+                    f"single night ({m['reference_night']}) as reference."
+                )
+            else:
+                self.log(f"[MULTI-NIGHT] resolved period {m['period']:.6f} d "
+                         f"(ref night {m['reference_night']}; no alias correction needed).")
 
         self._update_periodogram_plot()
         self._update_results_table()
@@ -889,6 +928,13 @@ class PeriodAnalysisWindow(StepWindowBase):
 
         periods = []
         seen = set()
+        # The multi-night-resolved period is the trustworthy answer on gapped
+        # data, so offer it first (and as the default fold period).
+        m = getattr(self, "multinight", None)
+        if m and np.isfinite(m.get("period", np.nan)) and m.get("n_nights", 0) >= 2:
+            rp = float(m["period"])
+            periods.append((f"Multi-night resolved: {rp:.6f} d", rp))
+            seen.add(round(rp, 8))
         for key, data in self.results.items():
             if "error" in data:
                 continue
