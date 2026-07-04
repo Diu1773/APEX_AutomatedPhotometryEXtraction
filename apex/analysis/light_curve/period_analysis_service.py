@@ -157,6 +157,166 @@ def compute_ls(
     }
 
 
+def _amplitude_spectrum(
+    t: np.ndarray, y0: np.ndarray, w: Optional[np.ndarray], freqs: np.ndarray
+) -> np.ndarray:
+    """Least-squares amplitude spectrum A(f) of mean-subtracted ``y0``.
+
+    At each trial frequency f, fit ``y0 ~ a*sin(2*pi*f*t) + b*cos(2*pi*f*t)``
+    (optionally weighted by ``w = 1/sigma^2``) and return the amplitude
+    ``sqrt(a^2 + b^2)``. This is the Fourier amplitude used by Period04-style
+    analyses (Lenz & Breger 2005) rather than the LS power, so a Breger et al.
+    (1993) amplitude signal-to-noise can be formed directly. Vectorised over
+    the frequency grid.
+    """
+    ph = 2.0 * np.pi * np.outer(freqs, t)          # (F, N)
+    s, c = np.sin(ph), np.cos(ph)
+    ww = np.ones_like(t) if w is None else np.asarray(w, float)
+    Sww = (s * ww) ; Cww = (c * ww)
+    ss = np.einsum("fn,fn->f", Sww, s)
+    cc = np.einsum("fn,fn->f", Cww, c)
+    sc = np.einsum("fn,fn->f", Sww, c)
+    sy = Sww @ y0
+    cy = Cww @ y0
+    det = ss * cc - sc * sc
+    det = np.where(np.abs(det) < 1e-30, np.nan, det)
+    a = (sy * cc - cy * sc) / det
+    b = (cy * ss - sy * sc) / det
+    return np.sqrt(a * a + b * b)
+
+
+def _fit_sinusoid(
+    t: np.ndarray, y: np.ndarray, w: Optional[np.ndarray], freq: float
+) -> tuple[float, float, float, float]:
+    """Weighted LSQ fit ``y ~ C + a*sin + b*cos`` at fixed ``freq``.
+
+    Returns ``(offset_C, amplitude, phase, model_free_const)`` where amplitude
+    ``= hypot(a,b)`` and phase ``= atan2(b, a)``.
+    """
+    ph = 2.0 * np.pi * freq * t
+    M = np.column_stack([np.ones_like(t), np.sin(ph), np.cos(ph)])
+    if w is not None:
+        rw = np.sqrt(np.asarray(w, float))
+        coef, *_ = np.linalg.lstsq(M * rw[:, None], y * rw, rcond=None)
+    else:
+        coef, *_ = np.linalg.lstsq(M, y, rcond=None)
+    C, a, b = coef
+    return float(C), float(np.hypot(a, b)), float(np.arctan2(b, a)), float(C)
+
+
+def prewhiten_frequencies(
+    time: np.ndarray,
+    mag: np.ndarray,
+    mag_err: Optional[np.ndarray],
+    min_period: float,
+    max_period: float,
+    sn_stop: float = 4.0,
+    max_freqs: int = 12,
+    samples_per_peak: int = 20,
+    noise_window_cd: float = 3.0,
+) -> dict:
+    """Iterative pre-whitening frequency analysis (Period04 / Breger scheme).
+
+    Standard multi-frequency method for (multi-mode) pulsators such as δ Scuti
+    stars: locate the highest-amplitude frequency, fit and subtract its
+    sinusoid, then repeat on the residuals until no peak exceeds an amplitude
+    signal-to-noise of ``sn_stop`` (Breger et al. 1993 use S/N = 4.0). This is
+    what single-tallest-peak Lomb-Scargle (:func:`compute_ls`) cannot do: it
+    resolves the fundamental *and* the first overtone of a double-mode HADS
+    star, and the fundamental *and* its harmonics of a single-mode HADS star.
+
+    Note (aliasing): pre-whitening does NOT deconvolve the spectral window, so
+    on gapped ground-based multi-night data the tallest peak in a given
+    iteration can still be a ±n cycle-day alias of the true frequency; the
+    returned frequencies therefore carry an ``alias_flag`` marking any that
+    have a comparable-amplitude companion one cycle-day away. Full spectral-
+    window deconvolution (Roberts, Lehár & Dreher 1987, CLEAN) is out of scope
+    here and left to the caller / future work.
+
+    References
+    ----------
+    Lenz & Breger 2005 (Period04), CoAst 146, 53.
+    Breger et al. 1993, A&A 271, 482 (S/N >= 4 significance).
+    Roberts, Lehár & Dreher 1987, AJ 93, 968 (CLEAN, aliasing).
+
+    Returns
+    -------
+    dict with ``frequencies`` (list of per-frequency dicts: ``freq_cd``,
+    ``period``, ``amplitude``, ``phase``, ``snr``, ``alias_flag``),
+    ``n_significant``, ``residual_rms``, and the input span/N for context.
+    """
+    t, y, dy = filter_valid(time, mag, mag_err)
+    if len(t) < 12:
+        return {"error": "Not enough data points (< 12)", "frequencies": [],
+                "n_significant": 0}
+    w = None
+    if dy is not None and np.any(dy > 0):
+        with np.errstate(divide="ignore"):
+            w = np.where(dy > 0, 1.0 / dy ** 2, 0.0)
+
+    fmin, fmax = 1.0 / max_period, 1.0 / min_period
+    span = float(t.max() - t.min())
+    df = 1.0 / (samples_per_peak * max(span, 1e-6))
+    freqs = np.arange(fmin, fmax, df)
+    if len(freqs) < 8:
+        freqs = np.linspace(fmin, fmax, 256)
+
+    resid = y - np.average(y, weights=w) if w is not None else y - np.mean(y)
+    found: list[dict] = []
+    for _ in range(int(max_freqs)):
+        amp_spec = _amplitude_spectrum(t, resid, w, freqs)
+        if not np.isfinite(amp_spec).any():
+            break
+        k = int(np.nanargmax(amp_spec))
+        f_peak = float(freqs[k])
+        # local refinement around the coarse peak
+        fine = np.linspace(f_peak - 2 * df, f_peak + 2 * df, 21)
+        fa = _amplitude_spectrum(t, resid, w, fine)
+        f_ref = float(fine[int(np.nanargmax(fa))])
+
+        _, amp, phase, _ = _fit_sinusoid(t, resid, w, f_ref)
+
+        # Subtract this sinusoid, THEN measure the noise on the whitened
+        # residual spectrum (Breger et al. 1993): the peak's own window
+        # side-lobes must be removed first, otherwise a strong mode inflates
+        # its own noise estimate and is wrongly rejected.
+        ph = 2.0 * np.pi * f_ref * t
+        M = np.column_stack([np.sin(ph), np.cos(ph)])
+        if w is not None:
+            rw = np.sqrt(w)
+            ab, *_ = np.linalg.lstsq(M * rw[:, None], resid * rw, rcond=None)
+        else:
+            ab, *_ = np.linalg.lstsq(M, resid, rcond=None)
+        resid_new = resid - M @ ab
+
+        amp_res = _amplitude_spectrum(t, resid_new, w, freqs)
+        win = np.abs(freqs - f_ref) <= noise_window_cd
+        noise = float(np.nanmean(amp_res[win])) if np.any(win) else float(np.nanmean(amp_res))
+        snr = amp / noise if noise > 0 else np.inf
+        if snr < sn_stop:
+            break  # not significant -> stop, keep the pre-subtraction residual
+
+        found.append({"freq_cd": f_ref, "period": 1.0 / f_ref,
+                      "amplitude": amp, "phase": phase, "snr": snr})
+        resid = resid_new
+
+    # flag ±1 c/d aliases among the extracted set (comparable amplitude at ~1 c/d)
+    for i, fi in enumerate(found):
+        alias = False
+        for j, fj in enumerate(found):
+            if i == j:
+                continue
+            if abs(abs(fi["freq_cd"] - fj["freq_cd"]) - 1.0) < 0.05 and \
+               fj["amplitude"] > 0.5 * fi["amplitude"]:
+                alias = True
+        fi["alias_flag"] = bool(alias)
+
+    rms = float(np.sqrt(np.mean(resid ** 2))) if len(resid) else np.nan
+    return {"frequencies": found, "n_significant": len(found),
+            "residual_rms": rms, "n_points": len(t), "span_days": span,
+            "sn_stop": float(sn_stop)}
+
+
 def compute_pdm(
     time: np.ndarray,
     mag: np.ndarray,
