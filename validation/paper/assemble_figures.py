@@ -32,6 +32,7 @@ FIGURES = [
     ("fig4_crosscheck_sep", "Independent cross-check against sep (synthetic truth)"),
     ("fig5_crosscheck_iraf", "External cross-check against IRAF/DAOPHOT (real NGC 457 data)"),
     ("fig6_qc_validation", "Frame-QC decisions vs injected frame defects"),
+    ("fig7_reference_crosscheck", "Cross-catalog reference validation (PS1) — a Gaia BP faint bias"),
 ]
 
 
