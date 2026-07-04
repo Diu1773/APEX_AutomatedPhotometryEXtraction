@@ -16,6 +16,7 @@ site/
 
 # User/runtime state
 parameters.toml
+parameters_*.toml
 apex/.state/
 
 # Local science data / external catalogs

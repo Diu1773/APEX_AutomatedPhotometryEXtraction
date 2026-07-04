@@ -22,12 +22,18 @@ STEPS: list[tuple[str, str]] = [
     ("2", "fig2_error_model.py"),
     ("3", "fig3_parameter_sweep.py"),      # slow: ~19 benchmark runs (~10 min)
     ("4", "fig4_crosscheck_sep.py"),
-    ("5", "fig5_crosscheck_iraf.py"),
+    ("5", "fig5_crosscheck_iraf.py"),      # needs E:\observed_Analysis (NGC 457)
     ("6", "fig6_qc_validation.py"),
+    ("7", "fig7_reference_crosscheck.py"), # needs E:\observed_Analysis (NGC 6811) + network (PS1)
+    ("8", "fig8_cmd_reproduction.py"),     # needs E:\observed_Analysis (NGC 6811) + fig7's PS1 cache
+    ("9", "fig9_crowded_field.py"),        # needs E:\observed_Analysis (M5 + NGC 6811)
     ("assemble", "assemble_figures.py"),
 ]
 
 SLOW = {"3"}
+# Steps that additionally require the external data volume (E:\observed_Analysis)
+# and so cannot run in a from-scratch checkout without it.
+NEEDS_DATA_VOLUME = {"5", "7", "8", "9"}
 
 
 def main() -> int:

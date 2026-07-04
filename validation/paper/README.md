@@ -13,6 +13,9 @@ APEX code paths (real Step-4 detector, real `phot_vectorized`).
 | 4 | `fig4_crosscheck_sep.py` | APEX ≡ independent `sep` C engine (synthetic truth) | self-generated frame |
 | 5 | `fig5_crosscheck_iraf.py` | APEX ≡ IRAF/DAOPHOT on real NGC 457 g-band data | `benchmark/runs/ngc457_iraf_crosscheck_g0016_v1/` (committed) |
 | 6 | `fig6_qc_validation.py` | Frame-QC decisions vs injected frame defects | self-generated synthetic night |
+| 7 | `fig7_reference_crosscheck.py` | Faint drift is a Gaia BP artifact, not an APEX error | NGC 6811 reduction + PS1 (VizieR, cached) |
+| 8 | `fig8_cmd_reproduction.py` | APEX/Gaia/PS1 CMDs agree (19 mmag ridgeline RMS) | NGC 6811 reduction + PS1 cache |
+| 9 | `fig9_crowded_field.py` | No crowding-dependent bias in a real globular core (M5) | M5 reduction (re-run Steps 7/8/10) + NGC 6811 |
 
 Shared infrastructure:
 
@@ -35,7 +38,9 @@ Always use the deploy venv interpreter (all deps installed):
 ```
 
 Approximate runtimes: fig1/4/5 seconds; fig2 ~1 min; fig6 ~3-5 min;
-fig3 ~10 min (19 full benchmark runs); canonical data ~1 min.
+fig3 ~10 min (19 full benchmark runs); fig7/8 ~1 min (PS1 query cached after
+first run); fig9 seconds (consumes an already-reduced M5 tree); canonical
+data ~1 min.
 
 ## Rules / gotchas
 
@@ -49,5 +54,12 @@ fig3 ~10 min (19 full benchmark runs); canonical data ~1 min.
 - Fig 5 consumes the committed IRAF cross-check
   (`benchmark/runs/ngc457_iraf_crosscheck_g0016_v1/phot_fixed_coords/fixed_comparison.csv`);
   regenerating that requires PyRAF in WSL (`apex/benchmark/iraf_crosscheck.py`).
+- Figs 5, 7, 8, 9 need the external data volume (`E:\observed_Analysis`),
+  not just this repo — they are not reproducible from a bare checkout.
+- Fig 9 (M5) requires Steps 7/8/10 to have been re-run against the current
+  code with `parameters_M5.toml` (gitignored, uncommitted — see
+  `scripts/run_step7_headless.py` / `run_step8_headless.py` /
+  `run_step10_headless.py --params parameters_M5.toml`); it does not
+  regenerate that reduction itself, only reads it.
 - Captions live in `captions/figN_*.md` — paper-style "Figure N." text plus
   the exact numbers from the run that produced the committed figure.

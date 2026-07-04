@@ -34,6 +34,7 @@ FIGURES = [
     ("fig6_qc_validation", "Frame-QC decisions vs injected frame defects"),
     ("fig7_reference_crosscheck", "Cross-catalog reference validation (PS1) — a Gaia BP faint bias"),
     ("fig8_cmd_reproduction", "CMD reproduction across three independent photometric systems"),
+    ("fig9_crowded_field", "Crowded-field validation on a real globular cluster (M5)"),
 ]
 
 

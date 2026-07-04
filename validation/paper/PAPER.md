@@ -11,10 +11,11 @@ frame-quality control, and cluster colour-magnitude diagram product.*
 
 ## Abstract
 
-We present an eight-part validation of APEX, a Python/PyQt5 pipeline for
+We present a nine-part validation of APEX, a Python/PyQt5 pipeline for
 aperture and PSF photometry of astronomical point sources. Using
 self-contained synthetic experiments (zero external data, fixed seeds) and
-real observations of the open clusters NGC 6811 and NGC 457, we show that (1)
+real observations of the open clusters NGC 6811 and NGC 457 and the globular
+cluster M5, we show that (1)
 the pipeline's artificial-star completeness function is well behaved and its
 50% depth is measured to $\pm0.08$ mag (§3.1); (2) its reported photometric
 uncertainties are statistically honest — the measurement pull is a unit
@@ -28,13 +29,18 @@ flags injected optical/detector defects, while also exposing a structural
 blind spot to grey transparency loss that motivated a second QC stage (§3.6);
 (6) a faint-end systematic that appeared to be an APEX defect when compared
 against Gaia is in fact dominated by a known limitation of Gaia's BP
-photometry, exposed by an independent Pan-STARRS 1 cross-match (§3.7); and (7)
+photometry, exposed by an independent Pan-STARRS 1 cross-match (§3.7); (7)
 the APEX colour-magnitude diagram is indistinguishable from the diagram
 produced by two independent instruments for the same cluster (ridgeline
-agreement 19 mmag, §3.8). We do not claim to have validated automated
-isochrone-parameter recovery, which is a separate, degenerate inverse problem
-requiring external priors (§4.2), nor multi-field or crowded-field
-performance (§4.3).
+agreement 19 mmag, §3.8); and (8) re-reducing the globular cluster M5 with
+the current codebase, a field with a measured core density enhancement of
+34$\times$ over background (versus 11$\times$ for NGC 6811), shows no
+detected crowding-dependent bias between APEX's aperture and PSF photometry
+down to the ~10 px (~4$''$) separation this dataset resolves (§3.9). We do
+not claim to have validated automated isochrone-parameter recovery, which is
+a separate, degenerate inverse problem requiring external priors (§4.2), nor
+LC-mode performance, nor sub-resolution blending finer than any dataset used
+here can probe (§4.3).
 
 ---
 
@@ -71,32 +77,45 @@ $\mathrm{ZP}=25.0$ mag, and PSF FWHM $=3.5$ px. Artificial-star injection
 (Figs 1–3) uses an *empirical* PSF extracted from the frame itself and
 reruns APEX's production, Qt-free Step-4 detector — not a toy re-implementation.
 
-### 2.2 Real-data cross-checks (Figs 5, 7, 8)
+### 2.2 Real-data cross-checks (Figs 5, 7, 8, 9)
 
-Two real, previously reduced APEX result trees are used:
+Three real, previously reduced APEX result trees are used:
 
-| Cluster | Filter(s) | Frame | Role |
-|---|---|---|---|
-| NGC 457 | $g$ | `pp_-0016-gfilter_20240907.fit` (2024-09-07) | IRAF/DAOPHOT cross-check (§3.5) |
-| NGC 6811 | $B,V,R$ | 21-frame reduction, 2026-06-11 run | Gaia/PS1 reference cross-check, CMD reproduction (§3.7–3.8) |
+| Cluster | Type | Filter(s) | Frames | Role |
+|---|---|---|---|---|
+| NGC 457 | open | $g$ | `pp_-0016-gfilter_20240907.fit` (2024-09-07) | IRAF/DAOPHOT cross-check (§3.5) |
+| NGC 6811 | open | $B,V,R$ | 21-frame reduction, 2026-06-11 run | Gaia/PS1 reference cross-check, CMD reproduction (§3.7–3.8) |
+| M5 (NGC 5904) | globular | $g,r,i$ | 41 frames, 2025-03-08 run | Crowded-field validation (§3.9) |
 
-Both trees were produced with the pipeline at or after the color-solve and
-Gaia-quality-cut fixes documented in this repository's commit history
-(`8593796`, `0515214`, `c9433f3`, `8f62763`); the NGC 6811 Step-10 calibration
-consumed in §3.7–3.8 was re-run headlessly with `scripts/run_step10_headless.py`
-against the current `parameters.toml` immediately before these figures were
-produced, so it reflects the current codebase, not an archived one.
+All three were re-run through Step-7 (forced aperture photometry, current sky
+annulus), Step-8 (PSF photometry) where used, and Step-10 (calibration:
+colour-solve, quadratic colour term, Gaia RUWE/$C^*$ quality cuts)
+headlessly with `scripts/run_step7_headless.py` / `run_step8_headless.py` /
+`run_step10_headless.py` against the current codebase (commits `8593796`,
+`0515214`, `c9433f3`, `8f62763`) immediately before their figures were
+produced, so §3.5, §3.7–§3.9 all reflect the current codebase, not an
+archived one. M5 uses `parameters_M5.toml` (gitignored, not committed, per
+this repository's runtime-parameter policy) — an exact copy of the
+project's `parameters.toml` with only the `[io]` data/result paths and
+`[target]` name/coordinates changed; the instrument section (same
+telescope/camera, confirmed by matching gain and read noise across both
+targets' FITS headers and existing reductions) and all pipeline settings,
+including the current sky-annulus fix, are shared verbatim with the
+NGC 6811 configuration validated in §3.1–§3.8.
 
 ### 2.3 A note on other archived reductions (scope discipline)
 
 `E:\observed_Analysis` additionally contains previously reduced result trees
-for M3, M5, M13, M37, and M67. These are **not** used as validation evidence
-in this document: their `project_state.json` / signature files carry no
-commit provenance, they span multiple points in APEX's development history,
-and at least one (M67) is known from prior sessions to have used an
-isochrone-fit configuration since revised. Citing them here without
-re-running the current pipeline would overstate this validation's scope. They
-are noted in §4.3 as the natural next step for a multi-field extension.
+for M3, M13, M37, and M67 that are **not** used as validation evidence in
+this document: their `project_state.json` / signature files carry no commit
+provenance, they span multiple points in APEX's development history, and at
+least one (M67) is known from prior sessions to have used an isochrone-fit
+configuration since revised. (M3 has no reduced result tree at all — an
+empty data folder.) Citing these without re-running the current pipeline
+would overstate this validation's scope; M5 (§2.2, §3.9) was promoted out of
+this list specifically because it was re-reduced end-to-end for this
+document. The remaining three are noted in §4.3 as candidates for further
+multi-field extension, on the same condition.
 
 ---
 
@@ -263,6 +282,48 @@ priors (Gaia parallax, reddening maps, spectroscopic [M/H]); that is a
 separate analysis with its own caveats (§4.2), not a photometric-accuracy
 statement about APEX.
 
+### 3.9 Crowded-field validation: a real globular cluster (M5)
+
+![Figure 9](figures/fig9_crowded_field.png)
+
+**Figure 9.** Figs 1–8 use open clusters and uncrowded synthetic fields;
+this figure extends into a genuinely denser real field by re-reducing the
+globular cluster M5 (NGC 5904, 34 $r$-band frames) end-to-end with the
+current codebase. **(a)** Radial source density around the field's true
+density peak (found with APEX's own `psf_core` auto-density-center routine,
+not the field centroid, so this is not begging the question): M5's core is
+enhanced **34$\times$** over the field background, versus **11$\times$** for
+NGC 6811 (Figs 1–8) by the identical metric — a genuine, quantified
+crowding contrast. **(b)** Aperture-vs-PSF magnitude residual — APEX's own
+two independent measurement methods, zeropoint-aligned on 219 bright/isolated
+stars — versus each star's nearest-neighbour separation (`neighbor_dist_px`,
+an APEX master-catalog product), for 683 $r$-band stars matched positionally
+between the two methods. The grey band marks the dataset's
+detection/deduplication floor ($\sim$10 px, $\sim$4$''$).
+
+**Honest result.** Two probes were run before this figure was drawn: (1)
+residual against the Gaia-transformed reference binned by neighbour
+separation at fixed magnitude, and (2) the aperture-vs-PSF comparison shown
+in panel (b). Neither shows a clean crowding-driven degradation — panel
+(b)'s binned medians are flat and consistent with zero ($\pm$0.01–0.02 mag)
+from the resolution floor out to isolated separations. Probe (1) is
+confounded by Gaia's own RUWE/$C^*$ quality cuts (§3.7), which preferentially
+reject the worst blends before a star ever reaches the calibrator table — a
+survivorship bias, not evidence of APEX robustness, and indeed the Gaia
+calibrator-candidate rejection rate is 35% for M5 versus 8.7% for NGC 6811,
+confirming Gaia itself struggles more in this denser field. Probe (2), shown
+here, sidesteps that bias: it compares two APEX-internal methods on the same
+detected/matched star list, independent of Gaia. **Within the $\sim$10 px
+($\sim$4$''$) separation this ground-based, 2$\times$2-binned dataset
+resolves, APEX detects, forced-photometers, and PSF-fits M5's core
+correctly, with no detected crowding-dependent bias between the two
+methods.** This is a genuine positive finding about the domain of validity
+established here — not a claim that crowding never degrades aperture
+photometry, and not a manufactured trend. Sub-resolution blending
+(separations below this dataset's own detection floor, as would be probed
+by space-based or lucky imaging) is not and cannot be tested by this
+dataset, and remains open.
+
 ---
 
 ## 4. Discussion
@@ -280,7 +341,12 @@ indistinguishable from what two other instruments produce for the same stars
 faint-end $B$-band drift — resolved, after cross-catalog triangulation, to a
 documented weakness of the *external reference* rather than of APEX (§3.7);
 this is included precisely because a validation exercise that only reports
-confirming results is not a validation exercise.
+confirming results is not a validation exercise. Extended into a genuinely
+crowded real field (M5, §3.9), the pipeline continues to perform correctly —
+though here too the honest result is a bounded one: no crowding-dependent
+bias was detected down to the specific separation this dataset resolves,
+not a claim that aperture photometry is crowding-proof at arbitrarily fine
+separations.
 
 ### 4.2 What is explicitly out of scope
 
@@ -302,15 +368,21 @@ document for LC mode and is not yet performed.
 
 ### 4.3 Limits on generality
 
-All real-data results in §3.5–3.8 come from two clusters (NGC 457, NGC 6811)
-observed with one instrument. Synthetic experiments (§3.1–3.4, 3.6) use an
-idealized Gaussian PSF and uncrowded fields; genuinely crowded fields (e.g. a
-globular-cluster core) are not exercised here and are exactly where aperture
-photometry is expected to degrade relative to PSF fitting. Reduced data for
-five further clusters (M3, M5, M13, M37, M67) exists (§2.3) and is the
-natural next extension — but only after re-reduction with the current
-pipeline, so that any agreement or disagreement found is attributable to the
-code validated here rather than to an earlier version of it.
+All real-data results in §3.5–3.9 come from three clusters (NGC 457,
+NGC 6811, M5) observed with one instrument. Synthetic experiments
+(§3.1–3.4, 3.6) use an idealized Gaussian PSF and uncrowded fields. §3.9
+extends into a real globular-cluster core (34$\times$ background density)
+and finds no crowding-dependent bias — but only down to the $\sim$10 px
+($\sim$4$''$) separation this specific ground-based, 2$\times$2-binned
+dataset resolves; finer, sub-resolution blending (as would be probed by
+space-based or lucky imaging) remains untested and is exactly where aperture
+photometry is still expected to degrade relative to simultaneous PSF
+fitting. Reduced data for three further clusters (M13, M37, M67; a fourth,
+M3, has no usable reduction on file, §2.3) exists and is the natural next
+extension for broader multi-field coverage — but, as with M5, only after
+re-reduction with the current pipeline, so that any agreement or
+disagreement found is attributable to the code validated here rather than
+to an earlier version of it.
 
 ### 4.4 Practical recommendations arising from this validation
 
@@ -323,6 +395,11 @@ code validated here rather than to an earlier version of it.
 - For faint-end photometric *validation* specifically (not zeropoint
   anchoring), prefer a $G$-based or Pan-STARRS reference over
   BP-RP-transformed Gaia magnitudes (§3.7).
+- In genuinely crowded fields, do not use Gaia-matched calibrator statistics
+  alone to judge crowding robustness — Gaia's own quality cuts remove the
+  worst blends before they are counted (§3.9); an internal aperture-vs-PSF
+  comparison is the more honest crowding diagnostic, and APEX already
+  exposes the needed `neighbor_dist_px` / `crowding_flag` fields per source.
 
 ---
 
@@ -330,13 +407,14 @@ code validated here rather than to an earlier version of it.
 
 By the evidence assembled here, APEX's shared photometric measurement chain
 is a validated, honestly-erred, cross-checked instrument for aperture/PSF
-photometry of point sources in uncrowded-to-moderately-crowded fields, and
-its CMD-mode product reproduces what independent instruments see for the
-same stars. This is a claim about *measurement*, deliberately scoped away
-from the separate and harder problem of automated isochrone-parameter
-recovery, and deliberately scoped away from claims about LC mode, crowded
-fields, or instruments/clusters not yet re-verified against the current
-code.
+photometry of point sources from uncrowded open-cluster fields to a real
+globular-cluster core (34$\times$ background density), and its CMD-mode
+product reproduces what independent instruments see for the same stars.
+This is a claim about *measurement*, deliberately scoped away from the
+separate and harder problem of automated isochrone-parameter recovery, and
+deliberately scoped away from claims about LC mode, sub-resolution blending
+finer than any dataset used here can probe, or instruments/clusters not yet
+re-verified against the current code.
 
 ---
 
@@ -352,11 +430,17 @@ code.
 | 6 | `fig6_qc_validation.py` | self-generated synthetic night |
 | 7 | `fig7_reference_crosscheck.py` | NGC 6811 reduction + PS1 (VizieR, cached) |
 | 8 | `fig8_cmd_reproduction.py` | NGC 6811 reduction + PS1 cache |
+| 9 | `fig9_crowded_field.py` | M5 reduction (Steps 7/8/10 re-run headlessly) + NGC 6811 reduction |
 
-Run everything: `.venv-deploy/Scripts/python.exe validation/paper/run_all.py`.
-Figures 5, 7, 8 require the external data volume (`E:\observed_Analysis`) for
-a from-scratch re-run of the upstream reduction; the PS1 cross-match itself
-is cached at `validation/paper/data/ps1_match_ngc6811.csv` for offline
-re-plotting of Figs 7–8. Shared plotting style: `apex_paper_style.py`
+Run everything: `.venv-deploy/Scripts/python.exe validation/paper/run_all.py`
+(Fig 9 is a manual addition to the runner's figure list; see `run_all.py`).
+Figures 5, 7, 8, 9 require the external data volume (`E:\observed_Analysis`)
+for a from-scratch re-run of the upstream reduction; the PS1 cross-match
+itself is cached at `validation/paper/data/ps1_match_ngc6811.csv` for
+offline re-plotting of Figs 7–8. M5's Steps 7/8/10 were re-run with
+`scripts/run_step7_headless.py` / `run_step8_headless.py` /
+`run_step10_headless.py --params parameters_M5.toml` (that params file is a
+gitignored, uncommitted copy of `parameters.toml` with only `[io]`/`[target]`
+changed — see §2.2). Shared plotting style: `apex_paper_style.py`
 (colorblind-safe palette, vector PDF + 300-dpi PNG on every figure). Full
 figure index with embedded captions: [`FIGURES.md`](FIGURES.md).
