@@ -77,10 +77,9 @@ def drift_table(label, apex_mag, refmag, snr, sel_extra=None):
 
 print("\n=== A. APEX instrumental vs PS1 (measurement test) ===")
 for band in ("B", "V"):
-    am = -(df[f"mag_inst_{band}"].to_numpy(float))  # sign so brighter=larger irrelevant; fit absorbs
-    drift_table(f"APEX {band} vs PS1(g,g-r) [all]", df[f"mag_inst_{band}"], df[f"ref_{band}"], df[f"snr_{band}"])
-    drift_table(f"APEX {band} vs PS1(g,g-r) [iso]", df[f"mag_inst_{band}"], df[f"ref_{band}"], df[f"snr_{band}"], pd.Series(iso))
+    drift_table(f"APEX {band} vs PS1(g,g-r) [all]", df[f"mag_inst_{band}"] - df["g"], df[f"ref_{band}"], df[f"snr_{band}"])
+    drift_table(f"APEX {band} vs PS1(g,g-r) [iso]", df[f"mag_inst_{band}"] - df["g"], df[f"ref_{band}"], df[f"snr_{band}"], pd.Series(iso))
 
 print("\n=== B. Gaia-transformed refs vs PS1 (reference-vs-reference) ===")
 for band in ("B", "V"):
-    drift_table(f"Gaia ref_{band} vs PS1(g,g-r)", df[f"ref_{band}"], df[f"ref_{band}"], None)
+    drift_table(f"Gaia ref_{band} vs PS1(g,g-r)", df[f"ref_{band}"] - df["g"], df[f"ref_{band}"], None)
