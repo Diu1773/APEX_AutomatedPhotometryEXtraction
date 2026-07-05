@@ -39,6 +39,7 @@ from PyQt5.QtWidgets import (
 from PyQt5.QtCore import Qt, QThread, pyqtSignal
 
 from apex.gui.layout_rules import tame_canvas
+from apex.gui.theme import style_button, Tokens
 from apex.gui.workflow.step_window_base import StepWindowBase
 from apex.analysis.light_curve.period_analysis_service import (
     run_period_analysis,
@@ -277,14 +278,29 @@ class PeriodAnalysisWindow(StepWindowBase):
         self.target_hint.setText("")
 
     def setup_step_ui(self):
+        t = Tokens
+        self.content_layout.setContentsMargins(t.MARGIN, t.MARGIN, t.MARGIN, t.MARGIN)
+        self.content_layout.setSpacing(t.S3)
+
         info = QLabel(
             "Period analysis: Lomb-Scargle, PDM, BLS.\n"
-            "Multiple methods reduce aliasing; consensus = true period.\n"
+            "Multiple methods reduce aliasing; consensus = true period. "
+            "Multi-night data is automatically alias-resolved.\n"
             "For detailed analysis (refine, bootstrap, O-C, transit fit) → Tools menu."
         )
-        info.setStyleSheet("QLabel { background-color: #E3F2FD; padding: 10px; border-radius: 5px; }")
+        info.setStyleSheet(
+            f"QLabel {{ background: {t.ACCENT_SOFT}; color: {t.TEXT_SUB}; "
+            f"padding: {t.S3}px; border-radius: {t.RADIUS_SM}px; }}"
+        )
         info.setWordWrap(True)
         self.content_layout.addWidget(info)
+
+        # Prominent result callout — the trustworthy period, surfaced out of the
+        # log so the user's eye lands on the answer, not the scroll-back.
+        self.result_callout = QLabel("")
+        self.result_callout.setWordWrap(True)
+        self.result_callout.setVisible(False)
+        self.content_layout.addWidget(self.result_callout)
 
         # Data selection
         data_group = QGroupBox("Data Selection")
@@ -297,13 +313,13 @@ class PeriodAnalysisWindow(StepWindowBase):
         self.target_id_spin.valueChanged.connect(self._on_target_id_changed)
         target_row.addWidget(self.target_id_spin)
         self.target_hint = QLabel("")
-        self.target_hint.setStyleSheet("QLabel { color: #388E3C; font-size: 8pt; }")
+        self.target_hint.setStyleSheet(f"QLabel {{ color: {Tokens.OK}; }}")
         target_row.addWidget(self.target_hint)
         target_row.addStretch()
         data_layout.addRow("Target ID:", target_row)
 
         self.source_label = QLabel("—")
-        self.source_label.setStyleSheet("QLabel { font-family: monospace; font-size: 9pt; }")
+        self.source_label.setStyleSheet(f"QLabel {{ color: {Tokens.TEXT_SUB}; }}")
         data_layout.addRow("Data source:", self.source_label)
 
         self.filter_combo = QComboBox()
@@ -359,17 +375,17 @@ class PeriodAnalysisWindow(StepWindowBase):
 
         self.content_layout.addWidget(param_group)
 
-        # Run button
+        # Run bar — single primary action, left-aligned per the app convention.
         run_layout = QHBoxLayout()
+        run_layout.setSpacing(Tokens.GAP)
         self.btn_run = QPushButton("Compute Periodogram")
-        self.btn_run.setStyleSheet(
-            "QPushButton { background-color: #4CAF50; color: white; font-weight: bold; padding: 10px 20px; }"
-        )
+        style_button(self.btn_run, "primary", height=Tokens.H_ACTION)
         self.btn_run.clicked.connect(self._run_analysis)
         self.btn_run.setEnabled(False)
         run_layout.addWidget(self.btn_run)
 
         self.progress_label = QLabel("")
+        self.progress_label.setStyleSheet(f"QLabel {{ color: {Tokens.TEXT_SUB}; }}")
         run_layout.addWidget(self.progress_label)
         run_layout.addStretch()
         self.content_layout.addLayout(run_layout)
@@ -443,6 +459,7 @@ class PeriodAnalysisWindow(StepWindowBase):
         self.spin_bootstrap_n.setToolTip("Monte-Carlo 반복 수 (많을수록 정확, 느림)")
         bsfap_row.addWidget(self.spin_bootstrap_n)
         self.btn_bootstrap = QPushButton("Bootstrap FAP 계산")
+        style_button(self.btn_bootstrap, height=Tokens.H_BUTTON)
         self.btn_bootstrap.setToolTip("분석 완료 후 LS 피크에 대한 Bootstrap FAP를 계산합니다")
         self.btn_bootstrap.setEnabled(False)
         self.btn_bootstrap.clicked.connect(self._run_bootstrap_fap)
@@ -460,7 +477,9 @@ class PeriodAnalysisWindow(StepWindowBase):
         self.log_text = QTextEdit()
         self.log_text.setReadOnly(True)
         self.log_text.setMaximumHeight(100)
-        self.log_text.setStyleSheet("QTextEdit { font-family: monospace; font-size: 9pt; }")
+        self.log_text.setStyleSheet(
+            f"QTextEdit {{ background: {Tokens.SURFACE_ALT}; color: {Tokens.TEXT_SUB}; }}"
+        )
         self.content_layout.addWidget(self.log_text)
 
         self._scan_available_data()
@@ -520,11 +539,9 @@ class PeriodAnalysisWindow(StepWindowBase):
             self._load_light_curve(silent=True)
 
     def _set_data_status(self, text: str, ok: bool = False):
-        color = "#1B5E20" if ok else "#B71C1C"
+        color = Tokens.OK if ok else Tokens.ERROR
         self.data_status.setText(text)
-        self.data_status.setStyleSheet(
-            f"color: {color}; font-family: monospace; font-size: 8pt;"
-        )
+        self.data_status.setStyleSheet(f"QLabel {{ color: {color}; }}")
 
     def _clear_analysis_results(self):
         self.results = {}
@@ -662,18 +679,7 @@ class PeriodAnalysisWindow(StepWindowBase):
         self.multinight = results.pop("multinight", None)
         self.results = results
 
-        if self.multinight and self.multinight.get("n_nights", 0) >= 2:
-            m = self.multinight
-            if m.get("was_aliased"):
-                self.log(
-                    f"[MULTI-NIGHT] tallest peak {m['naive_period']:.6f} d was a "
-                    f"1-day alias — resolved to {m['period']:.6f} d using the best "
-                    f"single night ({m['reference_night']}) as reference."
-                )
-            else:
-                self.log(f"[MULTI-NIGHT] resolved period {m['period']:.6f} d "
-                         f"(ref night {m['reference_night']}; no alias correction needed).")
-
+        self._show_result_callout()
         self._update_periodogram_plot()
         self._update_results_table()
         self._populate_phase_periods()
@@ -685,6 +691,48 @@ class PeriodAnalysisWindow(StepWindowBase):
         # Enable Bootstrap FAP if LS result is available
         has_ls = any("ls" in k for k in results if "error" not in results.get(k, {}))
         self.btn_bootstrap.setEnabled(has_ls)
+
+    def _show_result_callout(self):
+        """Surface the trustworthy period in a prominent callout (and log the
+        multi-night alias-resolution detail)."""
+        t = Tokens
+        m = self.multinight
+        if m and m.get("n_nights", 0) >= 2 and np.isfinite(m.get("period", np.nan)):
+            if m.get("was_aliased"):
+                self.log(
+                    f"[MULTI-NIGHT] tallest peak {m['naive_period']:.6f} d was a "
+                    f"1-day alias — resolved to {m['period']:.6f} d using the best "
+                    f"single night ({m['reference_night']}) as reference."
+                )
+                text = (f"Resolved period  {m['period']:.6f} d   "
+                        f"(1-day alias {m['naive_period']:.6f} d corrected · "
+                        f"{m['n_nights']} nights)")
+                bg, fg = t.ACCENT_SOFT, t.ACCENT
+            else:
+                self.log(f"[MULTI-NIGHT] resolved period {m['period']:.6f} d "
+                         f"(ref night {m['reference_night']}; no alias correction needed).")
+                text = (f"Period  {m['period']:.6f} d   "
+                        f"({m['n_nights']} nights, no alias correction needed)")
+                bg, fg = t.SURFACE_ALT, t.TEXT
+        else:
+            # single-night: show the strongest LS/PDM period
+            best = None
+            for key, data in self.results.items():
+                bp = data.get("best_period", np.nan) if isinstance(data, dict) else np.nan
+                if np.isfinite(bp):
+                    best = bp
+                    break
+            if best is None:
+                self.result_callout.setVisible(False)
+                return
+            text = f"Best period  {best:.6f} d   (single night)"
+            bg, fg = t.SURFACE_ALT, t.TEXT
+        self.result_callout.setText(text)
+        self.result_callout.setStyleSheet(
+            f"QLabel {{ background: {bg}; color: {fg}; font-weight: 600; "
+            f"padding: {t.S2}px {t.S3}px; border-radius: {t.RADIUS_SM}px; }}"
+        )
+        self.result_callout.setVisible(True)
 
     def _run_bootstrap_fap(self):
         """Run Bootstrap FAP for the best LS result in a background thread."""
