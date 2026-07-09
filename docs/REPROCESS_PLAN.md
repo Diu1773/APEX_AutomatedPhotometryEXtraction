@@ -24,7 +24,11 @@ fitting (CMD step 12) is left for the user to do interactively.
    target end-to-end and confirm results match the existing analysis (they should,
    since APEX Step 0 ≡ AIPPI to sub-DN — a mismatch means a bug). Only batch after
    the single-target chain is green.
-4. **Bias/dark** come from `E:\bias` (+ each target folder); scan picks them up.
+4. **Bias/dark sources.** Bias: `E:\bias`. **Dark library: `E:\darks`** — organised
+   by exposure+cooler as `dark-<exp>+<temp>` (e.g. dark-120s+5, dark-30s-5). Include
+   BOTH in the Step 0 scan roots (plus the target's own dark/ if present); the
+   scanner groups darks by (exp, temp bucket) and matches each light. Flats must
+   come from the target's own folder (filter-specific).
 
 ## FOUNDATION (already working — do not rebuild)
 - Step 0 (detector calibration): headless via `_ScanWorker` + `_CalibrationWorker._run()`
@@ -42,9 +46,9 @@ Each GUI step's real work lives in a QThread worker; drive it headless with a
    `apex/gui/workflow/cmd/step9_master_id_editor.py`); no interactive editing.
 2. **CMD 11 headless runner** — CMD plot/product from
    `apex/gui/workflow/cmd/step11_cmd_plot.py` (worker → CMD table + figure).
-3. **LC 8-11 headless runners** — target selection, lightcurve builder, detrend/
-   merge, period analysis (`apex/gui/workflow/lc/step8_target_selection.py`,
-   `step9_lightcurve_builder.py`, `step10_detrend_merge.py`, `step11_period_analysis.py`).
+3. ~~LC 8-11 headless runners~~ **OUT OF SCOPE this run** — LC targets are
+   preprocessed (Step 0) only; the user runs the LC pipeline interactively later.
+   (So the build reduces to: CMD 9, CMD 11, reorg, config, orchestrator.)
 4. **Per-target Step 0 → photometry reorganisation.** Step 0 writes
    `calibrated/<night>/pp_*.fit` mixing targets (e.g. 20260611 has NGC6811 + NGC3231).
    Photometry is per-target: split calibrated frames into per-object folders
@@ -58,16 +62,19 @@ Each GUI step's real work lives in a QThread worker; drive it headless with a
    observed_Analysis delete, rail #2) → log. Resumable (skip targets already done).
    Disk guard: stop if E: free < 20 GB.
 
-## TARGETS
-- **CMD clusters (RAW in observe_raw_Analysis):** NGC6811(20260611), M13(20260515),
-  M67(20260208), M3. (M5 raw is NOT present → Fig 9 M5 cannot be redone; note it.)
-- **LC variable stars:** AE UMa, YZ Boo (multi-night).
-- **observe_DSY:** mostly nebulae/galaxies (M27, M51, M81, M57, …) — NOT star
-  clusters → Step 0 + photometry catalog only, NO CMD/isochrone. Only run CMD on
-  the actual clusters among them (e.g. NGC457, M16 region). Preprocess the rest to
-  catalogs if time/disk allow; else skip (paper doesn't need them).
-- Complete calib set required (light + dark + flat; bias from E:\bias). Skip
-  incomplete targets with a logged reason.
+## TARGETS (final selection: 3 globular + 3 open clusters, full CMD chain)
+- **Globular (CMD → user does isochrone):** M13 (raw 20260515), M3 (raw), M5
+  (`observe_DSY\M5\M5_20250308`, has light/flat/dark).
+- **Open (CMD → user does isochrone):** NGC6811 (raw 20260611), M67 (raw 20260208),
+  + one more open with a complete set (prefer `observe_DSY`: M35 / M37 / NGC2420 /
+  NGC457 — pick the first with light+flat and a dark match from E:\darks).
+- **LC variable stars — PREPROCESS ONLY (Step 0), no LC pipeline this run:** AE UMa,
+  YZ Boo (multi-night, large). The LC steps 8-11 have no headless runner yet and
+  are OUT OF SCOPE tonight — just produce APEX Step-0 calibrated frames + masters
+  so the user can run LC interactively later. (So NO LC runners need building.)
+- Each target needs light + flat (own folder) + dark (own or from E:\darks) + bias
+  (E:\bias). Skip any target lacking flats, with a logged reason.
+- DSY nebulae/galaxies are OUT OF SCOPE (not clusters).
 
 ## VERIFY / COMPARE
 After a target's chain, compare the new APEX-raw→science products to the existing
@@ -77,6 +84,16 @@ After a target's chain, compare the new APEX-raw→science products to the exist
 ## BATCH ORDER (fast → slow, verify early)
 NGC6811 (proof, config exists) → M13 → M67 → M3 → AE UMa (LC) → YZ Boo (LC) → DSY.
 
+## FINAL DELIVERABLE (after the batch)
+Produce validation documents under `E:\APEX_validation\reprocess\`:
+1. `PROGRESS.md` — per-target status (steps done, disk after, result-vs-existing, issues).
+2. `REPROCESS_VALIDATION.md` — summary table: for each of the 6 clusters, the
+   APEX-raw→science result vs the existing observed_Analysis (from D: backup) —
+   photometry MAD, CMD ridge agreement, provenance (Step 0 vs old pp Δ). This is
+   the artefact proving the figures now rest on APEX raw→science.
+3. Regenerate the science figures (Fig 8/9 etc.) from the new APEX products where
+   applicable; note any that changed.
+
 ## PROGRESS LOG
 Append per-target status to `E:\APEX_validation\reprocess\PROGRESS.md`
-(target, steps done, disk after, result vs existing, issues).
+(target, steps done, disk after, result vs existing, issues) as you go.
