@@ -46,6 +46,7 @@ from PyQt5.QtWidgets import (
 from PyQt5.QtGui import QKeySequence, QColor
 from PyQt5.QtCore import Qt, pyqtSignal
 
+from apex.gui.layout_rules import FittedDialog, tame_canvas
 from apex.gui.workflow.step_window_base import StepWindowBase
 from apex.utils.step_paths_lc import (
     step2_cropped_dir,
@@ -2808,7 +2809,7 @@ class TargetComparisonSelectionWindow(StepWindowBase):
             self._color_dialog.activateWindow()
             return
 
-        dlg = QDialog(self)
+        dlg = FittedDialog(self)
         dlg.setWindowTitle("Overlay Colors")
         dlg.setWindowFlags(dlg.windowFlags() | Qt.WindowStaysOnTopHint)
         self._color_dialog = dlg
@@ -3890,7 +3891,7 @@ class TargetComparisonSelectionWindow(StepWindowBase):
             self._update_stretch_plot()
             return
 
-        self.stretch_plot_dialog = QDialog(self)
+        self.stretch_plot_dialog = FittedDialog(self)
         self.stretch_plot_dialog.setWindowTitle("2D Plot - Stretch Control")
         self.stretch_plot_dialog.resize(500, 250)
 
@@ -3911,7 +3912,7 @@ class TargetComparisonSelectionWindow(StepWindowBase):
         self.stretch_plot_canvas.mpl_connect('motion_notify_event', self._on_stretch_plot_motion)
         self.stretch_plot_canvas.mpl_connect('button_release_event', self._on_stretch_plot_release)
 
-        layout.addWidget(self.stretch_plot_canvas)
+        layout.addWidget(tame_canvas(self.stretch_plot_canvas, min_h=140), 1)
 
         hint_label = QLabel("Click and drag < > markers to adjust min/max | Changes apply in real-time")
         hint_label.setStyleSheet("QLabel { color: #666; font-size: 10px; }")

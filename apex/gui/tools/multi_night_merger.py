@@ -44,6 +44,7 @@ from apex.analysis.merge.workspace_scan import (
     workspace_scan_signature,
 )
 from apex.core.project_state import ProjectState
+from apex.gui.layout_rules import AutoFitMixin
 from apex.utils.io_utils import (
     coerce_int64_source_id,
 )
@@ -205,7 +206,7 @@ class _MergedFileManagerProxy:
         return Path(p) if p else None
 
 
-class MultiNightMergerWindow(QMainWindow):
+class MultiNightMergerWindow(AutoFitMixin, QMainWindow):
     """Merger workflow for previously processed result folders."""
 
     STEP_TITLES = [
@@ -272,6 +273,7 @@ class MultiNightMergerWindow(QMainWindow):
         self.setWindowTitle("Multi-Night Merger Workflow")
         self.resize(1200, 820)
         self._setup_ui()
+        # AutoFitMixin fits to content and clamps to the monitor on first show.
 
     # ───────────────────────── UI ─────────────────────────
 

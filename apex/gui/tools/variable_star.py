@@ -189,6 +189,8 @@ from PyQt5.QtWidgets import (
 from PyQt5.QtCore import Qt, QThread, pyqtSignal
 from PyQt5.QtGui import QColor
 
+from apex.gui.layout_rules import FittedDialog, prevent_collapse, tame_canvas
+
 rcParams["axes.unicode_minus"] = False
 
 _FILTER_COLORS = [
@@ -1214,6 +1216,7 @@ class VariableStarToolWindow(ToolWindowBase):
         right_layout.setContentsMargins(4, 4, 4, 4)
         splitter.addWidget(right)
         splitter.setSizes([300, 900])
+        prevent_collapse(splitter)
 
         self.tabs = QTabWidget()
         right_layout.addWidget(self.tabs)
@@ -1223,7 +1226,7 @@ class VariableStarToolWindow(ToolWindowBase):
         pg_layout = QVBoxLayout(pg_tab)
         self.pg_canvas = FigureCanvas(Figure(figsize=(8, 4)))
         pg_layout.addWidget(NavigationToolbar(self.pg_canvas, pg_tab))
-        pg_layout.addWidget(self.pg_canvas)
+        pg_layout.addWidget(tame_canvas(self.pg_canvas), 1)
         self.tabs.addTab(pg_tab, "Periodogram")
 
         # Refine tab
@@ -1239,14 +1242,15 @@ class VariableStarToolWindow(ToolWindowBase):
         ref_left_l = QVBoxLayout(ref_left); ref_left_l.setContentsMargins(0, 0, 0, 0)
         self.ref_canvas = FigureCanvas(Figure(figsize=(5, 4)))
         ref_left_l.addWidget(NavigationToolbar(self.ref_canvas, ref_left))
-        ref_left_l.addWidget(self.ref_canvas)
+        ref_left_l.addWidget(tame_canvas(self.ref_canvas, min_w=300), 1)
         ref_splitter.addWidget(ref_left)
         ref_right = QWidget()
         ref_right_l = QVBoxLayout(ref_right); ref_right_l.setContentsMargins(0, 0, 0, 0)
         self.boot_canvas = FigureCanvas(Figure(figsize=(5, 4)))
         ref_right_l.addWidget(NavigationToolbar(self.boot_canvas, ref_right))
-        ref_right_l.addWidget(self.boot_canvas)
+        ref_right_l.addWidget(tame_canvas(self.boot_canvas, min_w=300), 1)
         ref_splitter.addWidget(ref_right)
+        prevent_collapse(ref_splitter)
         ref_layout.addWidget(ref_splitter, 1)
         self.tabs.addTab(ref_tab, "Refine")
 
@@ -1259,7 +1263,7 @@ class VariableStarToolWindow(ToolWindowBase):
         ph_layout = QVBoxLayout(ph_tab)
         self.ph_canvas = FigureCanvas(Figure(figsize=(8, 5)))
         ph_layout.addWidget(NavigationToolbar(self.ph_canvas, ph_tab))
-        ph_layout.addWidget(self.ph_canvas)
+        ph_layout.addWidget(tame_canvas(self.ph_canvas), 1)
         self.tabs.addTab(ph_tab, "Phase Plot")
 
         # O-C tab
@@ -1441,7 +1445,7 @@ class VariableStarToolWindow(ToolWindowBase):
         rl.setContentsMargins(0, 0, 0, 0)
         self.oc_canvas = FigureCanvas(Figure(figsize=(6, 4)))
         rl.addWidget(NavigationToolbar(self.oc_canvas, right))
-        rl.addWidget(self.oc_canvas, 1)
+        rl.addWidget(tame_canvas(self.oc_canvas), 1)
         fit_row = QHBoxLayout()
         fit_row.addWidget(QLabel("Fit:"))
         self.oc_fit_combo = QComboBox()
@@ -1461,6 +1465,7 @@ class VariableStarToolWindow(ToolWindowBase):
         rl.addWidget(self.oc_fit_label)
         splitter.addWidget(right)
         splitter.setSizes([330, 670])
+        prevent_collapse(splitter)
         layout.addWidget(splitter, 1)
 
         return tab
@@ -1522,7 +1527,7 @@ class VariableStarToolWindow(ToolWindowBase):
 
         self.fourier_canvas = FigureCanvas(Figure(figsize=(8, 4)))
         layout.addWidget(NavigationToolbar(self.fourier_canvas, tab))
-        layout.addWidget(self.fourier_canvas, 1)
+        layout.addWidget(tame_canvas(self.fourier_canvas), 1)
 
         return tab
 
@@ -1629,11 +1634,11 @@ class VariableStarToolWindow(ToolWindowBase):
 
         self.mm_pw_canvas = FigureCanvas(Figure(figsize=(8, 3.2)))
         layout.addWidget(NavigationToolbar(self.mm_pw_canvas, tab))
-        layout.addWidget(self.mm_pw_canvas)
+        layout.addWidget(tame_canvas(self.mm_pw_canvas, min_h=150), 1)
 
         self.mm_canvas = FigureCanvas(Figure(figsize=(8, 6)))
         layout.addWidget(NavigationToolbar(self.mm_canvas, tab))
-        layout.addWidget(self.mm_canvas, 1)
+        layout.addWidget(tame_canvas(self.mm_canvas, min_h=300), 2)
 
         return tab
 
@@ -3867,7 +3872,7 @@ class VariableStarToolWindow(ToolWindowBase):
             if k not in self.filter_visibility:
                 self.filter_visibility[k] = True
 
-        dialog = QDialog(self)
+        dialog = FittedDialog(self)
         dialog.setWindowTitle("필터 색상 / 표시 설정")
         dialog.setMinimumWidth(360)
         layout = QVBoxLayout(dialog)

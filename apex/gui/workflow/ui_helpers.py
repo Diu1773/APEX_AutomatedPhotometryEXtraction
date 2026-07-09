@@ -158,17 +158,18 @@ class CollapsibleSection(QGroupBox):
 
 
 def create_parameter_button(text: str = "Parameters") -> QPushButton:
-    """Return a consistently styled workflow parameter button."""
-    btn = QPushButton(text)
-    btn.setMinimumHeight(34)
-    btn.setStyleSheet(PARAM_BUTTON_STYLE)
-    return btn
+    """Return a consistently styled workflow parameter button (neutral role)."""
+    from apex.gui.theme import Tokens, style_button
+    return style_button(QPushButton(text), height=Tokens.H_BUTTON)
 
 
 def configure_parameter_dialog(dialog: QDialog, title: str, width: int = 560, height: int = 620) -> None:
     """Apply common title, size, and visual style to a parameter dialog."""
     dialog.setWindowTitle(title)
-    dialog.resize(width, height)
+    # Clamp to the monitor: the Save/Cancel row lives outside the scroll area,
+    # so an over-tall dialog would clip those buttons on small screens.
+    from apex.gui.layout_rules import clamp_to_screen
+    dialog.resize(*clamp_to_screen(width, height, dialog))
     dialog.setStyleSheet(PARAM_DIALOG_STYLE)
     QTimer.singleShot(0, lambda: install_parameter_wheel_guard(dialog))
 
@@ -216,11 +217,9 @@ def create_detection_cache_checkbox(checked: bool = True, tooltip: str = "") -> 
 
 
 def create_cache_action_button(text: str) -> QPushButton:
-    """Return a consistently styled cache maintenance button."""
-    button = QPushButton(text)
-    button.setMinimumHeight(34)
-    button.setStyleSheet(_CACHE_ACTION_STYLE)
-    return button
+    """Return a consistently styled cache maintenance button (neutral role)."""
+    from apex.gui.theme import Tokens, style_button
+    return style_button(QPushButton(text), height=Tokens.H_BUTTON)
 
 
 _INFO_LABEL_STYLE = "QLabel { background-color: #E3F2FD; padding: 10px; margin-bottom: 10px; }"

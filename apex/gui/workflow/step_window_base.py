@@ -11,6 +11,7 @@ from PyQt5.QtCore import Qt, pyqtSignal, QThread
 from PyQt5.QtGui import QFont
 
 from apex.gui.window_chrome import WindowChromeMixin
+from apex.gui.theme import ICON, Tokens, style_button
 
 
 class StepWindowBase(WindowChromeMixin, QMainWindow):
@@ -47,18 +48,22 @@ class StepWindowBase(WindowChromeMixin, QMainWindow):
 
         # Setup base UI
         self.setWindowTitle(f"Step {step_index + 1}: {step_name}")
-        self.setMinimumSize(900, 700)
-        # Default size = 85% of available screen, capped at 1200×950 so
-        # the window opens comfortably without being annoying on very
-        # large monitors.  Slightly narrower default than the screen so
-        # CMD/isochrone plots don't get stretched horizontally past
-        # usefulness.
+        # Minimum is clamped to the monitor: a minimum larger than the screen
+        # would make the window impossible to fit, permanently clipping the
+        # bottom nav row on small displays. The real fit happens on first show
+        # via WindowChromeMixin.showEvent (see apex.gui.layout_rules).
+        from apex.gui.layout_rules import clamp_to_screen
+        min_w, min_h = clamp_to_screen(900, 700, self)
+        self.setMinimumSize(min_w, min_h)
+        # Default size = 85% of available screen, capped at 1200×950 so the
+        # window opens comfortably; showEvent then grows it to the content's
+        # real needs (clamped to the screen) so nothing is ever clipped.
         try:
             screen = QApplication.primaryScreen()
             if screen is not None:
                 avail = screen.availableGeometry()
-                w = max(900, min(1200, int(avail.width() * 0.85)))
-                h = max(700, min(950, int(avail.height() * 0.85)))
+                w = max(min_w, min(1200, int(avail.width() * 0.85)))
+                h = max(min_h, min(950, int(avail.height() * 0.85)))
                 self.resize(w, h)
         except Exception:
             pass
@@ -67,6 +72,12 @@ class StepWindowBase(WindowChromeMixin, QMainWindow):
         self.central_widget = QWidget()
         self.setCentralWidget(self.central_widget)
         self.main_layout = QVBoxLayout(self.central_widget)
+        # Snap the window's outer rhythm to the 8px grid (consistent margins +
+        # gaps between the title row, content and nav row across every step).
+        self.main_layout.setContentsMargins(
+            Tokens.MARGIN, Tokens.MARGIN, Tokens.MARGIN, Tokens.S3
+        )
+        self.main_layout.setSpacing(Tokens.S3)
 
         # Title row: centered title + a right-aligned action cluster.
         # Subclasses register buttons via add_header_action()/add_param_button()
@@ -81,18 +92,12 @@ class StepWindowBase(WindowChromeMixin, QMainWindow):
 
         # Action cluster: subclass-added actions appear left of the guide button.
         self.header_actions = QHBoxLayout()
-        self.header_actions.setSpacing(6)
+        self.header_actions.setSpacing(Tokens.GAP)
         title_row.addLayout(self.header_actions)
 
-        self.btn_guide = QPushButton("❔ 가이드")
-        self.btn_guide.setFixedWidth(100)
-        self.btn_guide.setMinimumHeight(30)
+        self.btn_guide = QPushButton(f"{ICON['guide']} 가이드")
         self.btn_guide.setToolTip("이 단계에서 무엇을 하는지 간단히 안내합니다")
-        self.btn_guide.setStyleSheet(
-            "QPushButton { background-color: #1976D2; color: white;"
-            " border-radius: 5px; font-weight: bold; padding: 4px 8px; }"
-            "QPushButton:hover { background-color: #1565C0; }"
-        )
+        style_button(self.btn_guide, "ghost", height=Tokens.H_COMPACT)
         self.btn_guide.clicked.connect(self.show_step_guide)
         title_row.addWidget(self.btn_guide)
         self.main_layout.addLayout(title_row)
@@ -144,31 +149,12 @@ class StepWindowBase(WindowChromeMixin, QMainWindow):
         """Setup Previous/Next navigation buttons at bottom."""
         nav_layout = QHBoxLayout()
 
-        # Previous button (GREEN - always enabled if not first step)
+        # Previous — secondary/neutral (moving back is a supporting action,
+        # not the main one). Disabled on the first step.
         self.btn_previous = QPushButton("← Previous Step")
-        self.btn_previous.setMinimumHeight(40)
-        self.btn_previous.setFont(QFont("Arial", 10, QFont.Bold))
+        style_button(self.btn_previous, height=Tokens.H_ACTION)
         self.btn_previous.clicked.connect(self.go_previous)
-
-        if self.step_index > 0:
-            # Green style for Previous
-            self.btn_previous.setStyleSheet("""
-                QPushButton {
-                    background-color: #4CAF50;
-                    color: white;
-                    border: 2px solid #45a049;
-                    border-radius: 5px;
-                    font-weight: bold;
-                }
-                QPushButton:hover {
-                    background-color: #45a049;
-                }
-            """)
-            self.btn_previous.setEnabled(True)
-        else:
-            # Disabled for Step 1
-            self.btn_previous.setEnabled(False)
-
+        self.btn_previous.setEnabled(self.step_index > 0)
         nav_layout.addWidget(self.btn_previous)
 
         nav_layout.addStretch()
@@ -176,36 +162,17 @@ class StepWindowBase(WindowChromeMixin, QMainWindow):
         # Keep a hidden placeholder for compatibility with embedded tools that
         # still expect this attribute to exist, but remove it from the UI.
         self.btn_complete = QPushButton("Mark as Complete")
-        self.btn_complete.setMinimumHeight(40)
-        self.btn_complete.setFont(QFont("Arial", 10, QFont.Bold))
         self.btn_complete.setEnabled(False)
         self.btn_complete.hide()
         self.btn_complete.clicked.connect(self.mark_complete)
 
-        # Next / Exit button (RED when not ready, GREEN when ready)
+        # Next / Exit — the single primary action of the step. Its disabled
+        # state (until the step validates) is themed automatically.
         self._is_last_step = (self.step_index >= len(self.main_window.step_names) - 1)
         self.btn_next = QPushButton("Exit ✕" if self._is_last_step else "Next Step →")
-        self.btn_next.setMinimumHeight(40)
-        self.btn_next.setFont(QFont("Arial", 10, QFont.Bold))
+        style_button(self.btn_next, "primary", height=Tokens.H_ACTION)
         self.btn_next.setEnabled(False)
         self.btn_next.clicked.connect(self.go_next)
-
-        # Initial red style (not complete)
-        self.btn_next.setStyleSheet("""
-            QPushButton {
-                background-color: #f44336;
-                color: white;
-                border: 2px solid #da190b;
-                border-radius: 5px;
-                font-weight: bold;
-            }
-            QPushButton:disabled {
-                background-color: #CCCCCC;
-                color: #666666;
-                border: 2px solid #AAAAAA;
-            }
-        """)
-
         nav_layout.addWidget(self.btn_next)
 
         self.main_layout.addLayout(nav_layout)
@@ -214,40 +181,16 @@ class StepWindowBase(WindowChromeMixin, QMainWindow):
         self.update_navigation_buttons()
 
     def update_navigation_buttons(self):
-        """Update navigation button states."""
+        """Update navigation button states.
+
+        The primary Next button is simply enabled/disabled; its themed
+        primary/disabled styling (filled accent vs. muted) conveys readiness —
+        no per-state hand-painting.
+        """
         can_proceed = bool(self.validate_step())
         self.btn_complete.setEnabled(False)
         self.btn_complete.hide()
         self.btn_next.setEnabled(can_proceed)
-
-        if can_proceed:
-            self.btn_next.setStyleSheet("""
-                QPushButton {
-                    background-color: #4CAF50;
-                    color: white;
-                    border: 2px solid #45a049;
-                    border-radius: 5px;
-                    font-weight: bold;
-                }
-                QPushButton:hover {
-                    background-color: #45a049;
-                }
-            """)
-        else:
-            self.btn_next.setStyleSheet("""
-                QPushButton {
-                    background-color: #f44336;
-                    color: white;
-                    border: 2px solid #da190b;
-                    border-radius: 5px;
-                    font-weight: bold;
-                }
-                QPushButton:disabled {
-                    background-color: #CCCCCC;
-                    color: #666666;
-                    border: 2px solid #AAAAAA;
-                }
-            """)
 
     def _mark_step_complete(self, notify_main: bool = True) -> bool:
         """Mark the current step complete if needed."""

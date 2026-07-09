@@ -137,6 +137,7 @@ from PyQt5.QtWidgets import (
 )
 from PyQt5.QtCore import Qt, QThread, pyqtSignal
 
+from apex.gui.layout_rules import prevent_collapse, tame_canvas
 from apex.gui.tools.tool_window_base import ToolWindowBase
 from apex.gui.workflow.lc.step11_period_analysis import PeriodAnalysisWorker
 
@@ -721,6 +722,7 @@ class TransitToolWindow(ToolWindowBase):
         rl.setContentsMargins(4, 4, 4, 4)
         splitter.addWidget(right)
         splitter.setSizes([330, 970])
+        prevent_collapse(splitter)
 
         self.tabs = QTabWidget()
         rl.addWidget(self.tabs)
@@ -730,7 +732,7 @@ class TransitToolWindow(ToolWindowBase):
         pgl = QVBoxLayout(pg_tab)
         self.pg_canvas = FigureCanvas(Figure(figsize=(9, 4)))
         pgl.addWidget(NavigationToolbar(self.pg_canvas, pg_tab))
-        pgl.addWidget(self.pg_canvas)
+        pgl.addWidget(tame_canvas(self.pg_canvas), 1)
         self.tabs.addTab(pg_tab, "Periodogram")
 
         # Light curve tab
@@ -738,7 +740,7 @@ class TransitToolWindow(ToolWindowBase):
         lt = QVBoxLayout(lc_tab)
         self.lc_canvas = FigureCanvas(Figure(figsize=(9, 4)))
         lt.addWidget(NavigationToolbar(self.lc_canvas, lc_tab))
-        lt.addWidget(self.lc_canvas)
+        lt.addWidget(tame_canvas(self.lc_canvas), 1)
         self.tabs.addTab(lc_tab, "Light Curve")
 
         # Fit result tab
@@ -753,7 +755,7 @@ class TransitToolWindow(ToolWindowBase):
         ft.addWidget(self.fit_label)
         self.fit_canvas = FigureCanvas(Figure(figsize=(9, 5)))
         ft.addWidget(NavigationToolbar(self.fit_canvas, fit_tab))
-        ft.addWidget(self.fit_canvas, 1)
+        ft.addWidget(tame_canvas(self.fit_canvas), 1)
         self.tabs.addTab(fit_tab, "Fit Result")
 
         # MCMC corner tab
@@ -768,7 +770,7 @@ class TransitToolWindow(ToolWindowBase):
         mt.addWidget(self.mcmc_label)
         self.mcmc_canvas = FigureCanvas(Figure(figsize=(9, 7)))
         mt.addWidget(NavigationToolbar(self.mcmc_canvas, mcmc_tab))
-        mt.addWidget(self.mcmc_canvas, 1)
+        mt.addWidget(tame_canvas(self.mcmc_canvas), 1)
         self.tabs.addTab(mcmc_tab, "MCMC")
 
         # O-C tab
@@ -825,7 +827,7 @@ class TransitToolWindow(ToolWindowBase):
         rl.setContentsMargins(0, 0, 0, 0)
         self.oc_canvas = FigureCanvas(Figure(figsize=(6, 4)))
         rl.addWidget(NavigationToolbar(self.oc_canvas, right))
-        rl.addWidget(self.oc_canvas, 1)
+        rl.addWidget(tame_canvas(self.oc_canvas), 1)
         self.oc_fit_label = QLabel("")
         self.oc_fit_label.setWordWrap(True)
         self.oc_fit_label.setStyleSheet(
@@ -835,6 +837,7 @@ class TransitToolWindow(ToolWindowBase):
         rl.addWidget(self.oc_fit_label)
         splitter.addWidget(right)
         splitter.setSizes([330, 670])
+        prevent_collapse(splitter)
         layout.addWidget(splitter, 1)
 
         return tab

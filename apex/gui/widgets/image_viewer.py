@@ -9,6 +9,8 @@ from matplotlib.patches import Rectangle
 from PyQt5.QtWidgets import QWidget, QVBoxLayout, QHBoxLayout, QPushButton, QComboBox, QLabel
 from PyQt5.QtCore import Qt
 
+from apex.gui.layout_rules import tame_canvas
+
 
 class FITSImageViewer(QWidget):
     """
@@ -70,7 +72,7 @@ class FITSImageViewer(QWidget):
         self.canvas.mpl_connect('button_release_event', self.on_button_release)
         self.canvas.mpl_connect('motion_notify_event', self.on_motion)
 
-        layout.addWidget(self.canvas)
+        layout.addWidget(tame_canvas(self.canvas), 1)
 
     def set_image(self, image_data, title="FITS Image"):
         """Set image data to display"""

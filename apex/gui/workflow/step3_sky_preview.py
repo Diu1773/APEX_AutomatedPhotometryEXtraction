@@ -25,6 +25,7 @@ from matplotlib.backends.backend_qt5agg import FigureCanvasQTAgg as FigureCanvas
 from matplotlib.backends.backend_qt5agg import NavigationToolbar2QT as NavigationToolbar
 from matplotlib.figure import Figure
 from PyQt5.QtGui import QColor
+from apex.gui.layout_rules import FittedDialog, tame_canvas
 from apex.gui.widgets.fits_viewer import FITSViewerWidget, OverlayMarker
 
 from .step_window_base import StepWindowBase
@@ -209,6 +210,7 @@ class SkyPreviewWindow(StepWindowBase):
         main_splitter.addWidget(stats_group)
         main_splitter.setStretchFactor(0, 3)
         main_splitter.setStretchFactor(1, 2)
+        main_splitter.setChildrenCollapsible(False)
 
         self.content_layout.addWidget(main_splitter, 1)
 
@@ -810,7 +812,7 @@ Mag:  {mag_str} ± {mag_err_str}
         # Create or update histogram window
         if self.histogram_dialog is None or not self.histogram_dialog.isVisible():
             # Create new dialog
-            self.histogram_dialog = QDialog(self)
+            self.histogram_dialog = FittedDialog(self)
             self.histogram_dialog.setWindowTitle("Histogram (Press 'h' to update)")
             self.histogram_dialog.resize(700, 500)
             self.histogram_dialog.setWindowFlags(Qt.Window)  # Make it resizable
@@ -823,7 +825,7 @@ Mag:  {mag_str} ± {mag_err_str}
             self.hist_ax = self.hist_fig.add_subplot(111)
 
             layout.addWidget(NavigationToolbar(self.hist_canvas, self.histogram_dialog))
-            layout.addWidget(self.hist_canvas)
+            layout.addWidget(tame_canvas(self.hist_canvas), 1)
 
             # Stats text
             self.hist_stats_label = QLabel()
@@ -934,7 +936,7 @@ Mag:  {mag_str} ± {mag_err_str}
 
             # Create or reuse radial profile window
             if self.radial_profile_dialog is None or not self.radial_profile_dialog.isVisible():
-                self.radial_profile_dialog = QDialog(self)
+                self.radial_profile_dialog = FittedDialog(self)
                 self.radial_profile_dialog.setWindowTitle("Radial Profile (Press 'g' to update)")
                 self.radial_profile_dialog.resize(700, 500)
                 self.radial_profile_dialog.setWindowFlags(Qt.Window)  # Make it resizable
@@ -946,7 +948,7 @@ Mag:  {mag_str} ± {mag_err_str}
                 self.prof_ax = self.prof_fig.add_subplot(111)
 
                 layout.addWidget(NavigationToolbar(self.prof_canvas, self.radial_profile_dialog))
-                layout.addWidget(self.prof_canvas)
+                layout.addWidget(tame_canvas(self.prof_canvas), 1)
 
                 close_btn = QPushButton("Close")
                 close_btn.clicked.connect(self.radial_profile_dialog.close)
@@ -1118,7 +1120,7 @@ Mag:  {mag_str} ± {mag_err_str}
             return
 
         # Create dialog
-        self.stretch_plot_dialog = QDialog(self)
+        self.stretch_plot_dialog = FittedDialog(self)
         self.stretch_plot_dialog.setWindowTitle("2D Plot - Stretch Control")
         self.stretch_plot_dialog.resize(500, 250)
 
@@ -1140,7 +1142,7 @@ Mag:  {mag_str} ± {mag_err_str}
         self.stretch_plot_canvas.mpl_connect('motion_notify_event', self._on_stretch_plot_motion)
         self.stretch_plot_canvas.mpl_connect('button_release_event', self._on_stretch_plot_release)
 
-        layout.addWidget(self.stretch_plot_canvas)
+        layout.addWidget(tame_canvas(self.stretch_plot_canvas, min_h=140), 1)
 
         # Hint label
         hint_label = QLabel("Click and drag < > markers to adjust min/max | Changes apply in real-time")

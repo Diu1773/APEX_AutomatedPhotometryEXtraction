@@ -65,6 +65,7 @@ class WorkflowLogWindow(QWidget):
         splitter.addWidget(side_widget)
         splitter.setStretchFactor(0, int(log_stretch))
         splitter.setStretchFactor(1, int(side_stretch))
+        splitter.setChildrenCollapsible(False)
         layout.addWidget(splitter)
 
     def append(self, message: str) -> None:

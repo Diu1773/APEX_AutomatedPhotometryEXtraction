@@ -25,6 +25,7 @@ from PyQt5.QtWidgets import (
     QApplication,
 )
 
+from apex.gui.layout_rules import FittedDialog
 from apex.gui.tools.tool_window_base import ToolWindowBase
 from apex.utils.step_paths import step5_wcs_dir, step6_refbuild_dir
 from apex.utils.step_paths_cmd import step9_selection_dir, step10_zp_dir
@@ -1206,7 +1207,7 @@ class Gaia3DViewerWindow(ToolWindowBase):
             return
 
         # ── settings dialog ───────────────────────────────────────
-        dlg = QDialog(self)
+        dlg = FittedDialog(self)
         dlg.setWindowTitle("Export 3D Animation")
         dlg.setMinimumWidth(290)
         dl = QVBoxLayout(dlg)

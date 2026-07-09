@@ -52,6 +52,7 @@ from PyQt5.QtCore import Qt, QTimer, QThread, pyqtSignal
 from PyQt5.QtGui import QKeySequence, QColor
 from PyQt5.QtWidgets import QShortcut, QStyle, QStyleOptionSlider, QSplitter, QProgressBar
 
+from apex.gui.layout_rules import FittedDialog
 from apex.gui.workflow.step_window_base import StepWindowBase
 from apex.gui.workflow.ui_helpers import (
     add_parameter_reset_button,
@@ -1953,7 +1954,7 @@ class LightCurveBuilderWindow(StepWindowBase):
             QMessageBox.information(self, "Filter Colors", "먼저 라이트커브를 한 번 표시한 뒤 색상을 변경하세요.")
             return
 
-        dialog = QDialog(self)
+        dialog = FittedDialog(self)
         dialog.setWindowTitle("Filter Colors")
         dialog.setMinimumWidth(320)
         layout = QVBoxLayout(dialog)

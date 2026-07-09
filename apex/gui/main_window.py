@@ -17,13 +17,21 @@ from PyQt5.QtGui import QFont, QIcon, QPixmap, QPainter
 from pathlib import Path
 from typing import Optional, List
 
+from apex.gui.layout_rules import AutoFitMixin, FittedDialog
+from apex.gui.theme import Tokens, style_button
 from apex.gui.tools.registry import iter_tools_for_mode
 
 _RESOURCES = Path(__file__).resolve().parent.parent / "resources"
 
 
 def _svg_to_pixmap(svg_path: Path, size: int = 256) -> QPixmap:
-    pixmap = QPixmap(size, size)
+    # Rasterize at the display's device-pixel ratio so the vector logo stays
+    # crisp under HiDPI scaling instead of being upscaled from 1×.
+    app = QApplication.instance()
+    screen = app.primaryScreen() if app is not None else None
+    dpr = float(screen.devicePixelRatio()) if screen is not None else 1.0
+    side = max(1, int(round(size * dpr)))
+    pixmap = QPixmap(side, side)
     pixmap.fill(Qt.transparent)
     try:
         from PyQt5.QtSvg import QSvgRenderer
@@ -33,12 +41,14 @@ def _svg_to_pixmap(svg_path: Path, size: int = 256) -> QPixmap:
         painter.end()
     except Exception:
         pass
+    pixmap.setDevicePixelRatio(dpr)
     return pixmap
 
 
 def _apply_opacity(pixmap: QPixmap, opacity: float) -> QPixmap:
     result = QPixmap(pixmap.size())
     result.fill(Qt.transparent)
+    result.setDevicePixelRatio(pixmap.devicePixelRatio())  # preserve HiDPI scale
     painter = QPainter(result)
     painter.setOpacity(opacity)
     painter.drawPixmap(0, 0, pixmap)
@@ -86,41 +96,37 @@ class StepButton(QPushButton):
         self.update_appearance()
 
     def update_appearance(self):
+        # Step buttons are a status list, so they keep distinct fills \u2014 but
+        # drawn from the shared palette (done=green, available=accent,
+        # locked=muted) so they sit in the same visual language as the
+        # primary/secondary buttons elsewhere.
+        t = Tokens
+        base = ("font-size: 14px; border-radius: {r}px;"
+                " text-align: left; padding: 10px 14px;").format(r=t.RADIUS_SM)
         if self.completed:
-            self.setStyleSheet("""
-                QPushButton {
-                    background-color: #4CAF50; color: white;
-                    font-size: 14px; font-weight: bold;
-                    border: 2px solid #45a049; border-radius: 5px;
-                    text-align: left; padding: 10px;
-                }
-                QPushButton:hover { background-color: #45a049; }
-            """)
+            self.setStyleSheet(
+                f"QPushButton {{ {base} background: {t.OK}; color: #fff;"
+                f" border: 1px solid {t.OK}; font-weight: 600; }}"
+                f"QPushButton:hover {{ background: #2A8E51; }}"
+            )
             self.setText(f"\u2713 Step {self.step_number}: {self.step_name}")
             self.setEnabled(True)
         elif self.accessible:
-            self.setStyleSheet("""
-                QPushButton {
-                    background-color: #2196F3; color: white;
-                    font-size: 14px; font-weight: bold;
-                    border: 2px solid #1976D2; border-radius: 5px;
-                    text-align: left; padding: 10px;
-                }
-                QPushButton:hover { background-color: #1976D2; }
-            """)
+            self.setStyleSheet(
+                f"QPushButton {{ {base} background: {t.ACCENT}; color: #fff;"
+                f" border: 1px solid {t.ACCENT}; font-weight: 600; }}"
+                f"QPushButton:hover {{ background: {t.ACCENT_HOVER}; }}"
+            )
             self.setText(f"\u25cb Step {self.step_number}: {self.step_name}")
             self.setEnabled(True)
         else:
-            self.setStyleSheet("""
-                QPushButton {
-                    background-color: #E0E0E0; color: #999999;
-                    font-size: 14px;
-                    border: 2px solid #CCCCCC; border-radius: 5px;
-                    text-align: left; padding: 10px;
-                }
-                QPushButton:disabled { background-color: #E0E0E0; color: #999999; }
-            """)
-            self.setText(f"\U0001f512 Step {self.step_number}: {self.step_name} (Locked)")
+            self.setStyleSheet(
+                f"QPushButton {{ {base} background: {t.SURFACE_ALT};"
+                f" color: {t.TEXT_MUTED}; border: 1px solid {t.BORDER}; }}"
+                f"QPushButton:disabled {{ background: {t.SURFACE_ALT}; color: {t.TEXT_MUTED}; }}"
+            )
+            from apex.gui.theme import ICON
+            self.setText(f"{ICON['locked']} Step {self.step_number}: {self.step_name} (Locked)")
             self.setEnabled(False)
 
 
@@ -170,7 +176,7 @@ class ShortcutRouter(QObject):
         return False
 
 
-class MainWindowWorkflow(QMainWindow):
+class MainWindowWorkflow(AutoFitMixin, QMainWindow):
     """Unified APEX main window for CMD (cluster) and LC (light curve) modes."""
 
     step_requested = pyqtSignal(int)
@@ -322,12 +328,12 @@ class MainWindowWorkflow(QMainWindow):
         icon = _load_icon(self.mode)
         self.setWindowIcon(icon)
         QApplication.instance().setWindowIcon(icon)
-        # Minimum chosen so the watermark + title + log all fit; initial
-        # resize chosen so 12 step buttons (CMD) are visible without
-        # scrolling on a 1080p display.  Smaller monitors get a scroll
-        # area inside the Processing Steps group (see below).
-        self.setMinimumSize(820, 640)
-        self.resize(960, 920)
+        # Portrait ~3:4 proportion (narrow width): the workflow is a vertical
+        # list of step buttons, so a tall/narrow window suits it and leaves the
+        # desktop uncluttered. Steps scroll inside the Processing Steps group on
+        # short screens; the Activity Log is collapsed by default.
+        self.setMinimumSize(520, 680)
+        self.resize(600, 800)
 
         central = QWidget()
         self.setCentralWidget(central)
@@ -362,15 +368,7 @@ class MainWindowWorkflow(QMainWindow):
         settings_layout = QHBoxLayout()
         settings_layout.addStretch()
         btn_settings = QPushButton("\u2699 Instrument Settings")
-        btn_settings.setFont(QFont("Arial", 11, QFont.Bold))
-        btn_settings.setMinimumHeight(40)
-        btn_settings.setStyleSheet("""
-            QPushButton {
-                background-color: #9C27B0; color: white;
-                border: 2px solid #7B1FA2; border-radius: 5px; padding: 5px 15px;
-            }
-            QPushButton:hover { background-color: #7B1FA2; }
-        """)
+        style_button(btn_settings, height=Tokens.H_ACTION)
         btn_settings.clicked.connect(self.open_settings)
         settings_layout.addWidget(btn_settings)
         settings_layout.addStretch()
@@ -398,6 +396,13 @@ class MainWindowWorkflow(QMainWindow):
         steps_layout = QVBoxLayout(steps_inner)
         steps_layout.setContentsMargins(0, 0, 0, 0)
         steps_layout.setSpacing(4)
+        # Optional off-chain "Step 0": detector calibration. Rendered at the top
+        # of the workflow but tracked separately (never in completed_steps), so
+        # it shifts no numbered index. Always accessible / re-runnable, and kept
+        # OUT of self.step_buttons (that list stays 1:1 with the linear chain).
+        self.calib_button = StepButton(0, "Detector Calibration")
+        self.calib_button.clicked.connect(lambda checked=False: self.open_calibration())
+        steps_layout.addWidget(self.calib_button)
         for i, step_name in enumerate(self.step_names):
             btn = StepButton(i + 1, step_name)
             btn.clicked.connect(lambda checked, idx=i: self.open_step(idx))
@@ -421,14 +426,35 @@ class MainWindowWorkflow(QMainWindow):
         action_layout.addWidget(btn_reset)
         layout.addLayout(action_layout)
 
-        log_group = QGroupBox("Activity Log")
-        log_layout = QVBoxLayout(log_group)
+        # Activity Log as a collapsible section: a flat header row with a
+        # disclosure arrow, folded by default so it doesn't eat vertical space.
+        from PyQt5.QtWidgets import QToolButton
+        log_container = QWidget()
+        log_v = QVBoxLayout(log_container)
+        log_v.setContentsMargins(0, 0, 0, 0)
+        log_v.setSpacing(4)
+        self.log_toggle = QToolButton()
+        self.log_toggle.setText("Activity Log")
+        self.log_toggle.setCheckable(True)
+        self.log_toggle.setChecked(False)
+        self.log_toggle.setArrowType(Qt.RightArrow)
+        self.log_toggle.setToolButtonStyle(Qt.ToolButtonTextBesideIcon)
+        self.log_toggle.setAutoRaise(True)
+        self.log_toggle.setStyleSheet("QToolButton { font-weight: bold; border: none; }")
         self.log_text = QTextEdit()
         self.log_text.setReadOnly(True)
-        self.log_text.setMaximumHeight(120)
+        self.log_text.setMaximumHeight(110)
         self.log_text.setFont(QFont("Courier", 8))
-        log_layout.addWidget(self.log_text)
-        layout.addWidget(log_group)
+        self.log_text.setVisible(False)
+
+        def _toggle_log(checked):
+            self.log_text.setVisible(checked)
+            self.log_toggle.setArrowType(Qt.DownArrow if checked else Qt.RightArrow)
+
+        self.log_toggle.toggled.connect(_toggle_log)
+        log_v.addWidget(self.log_toggle)
+        log_v.addWidget(self.log_text)
+        layout.addWidget(log_container)
 
         self.status_bar = self.statusBar()
         self.status_bar.showMessage("Ready")
@@ -485,6 +511,14 @@ class MainWindowWorkflow(QMainWindow):
             btn.set_accessible(accessible)
             btn.setEnabled(accessible)
 
+        # Off-chain calibration button: driven by its own status, always usable.
+        calib_button = getattr(self, "calib_button", None)
+        if calib_button is not None:
+            status = self.project_state.calibration_status()
+            calib_button.set_completed(status == "done")
+            calib_button.set_accessible(True)
+            calib_button.setEnabled(True)
+
     # ── Step dispatch ────────────────────────────────────────────────────────
 
     def open_step(self, step_index: int):
@@ -508,6 +542,28 @@ class MainWindowWorkflow(QMainWindow):
                                     f"Step {step_index + 1} is not yet implemented.")
             return
 
+        self.current_step_window = win
+        win.show()
+
+    def open_calibration(self):
+        """Open the optional off-chain Step 0 (detector calibration) window.
+
+        Always accessible; never sets current_step or touches completed_steps.
+        The window records its outcome via ``project_state.mark_calibration``.
+        """
+        try:
+            from apex.gui.workflow.step0_detector_calibration import (
+                DetectorCalibrationWindow,
+            )
+        except Exception as exc:  # pragma: no cover - defensive
+            QMessageBox.warning(self, "Detector Calibration",
+                                f"Could not open the calibration window:\n{exc}")
+            return
+
+        self.append_log("Opening Step 0: Detector Calibration")
+        if self.current_step_window:
+            self.current_step_window.close()
+        win = DetectorCalibrationWindow(self.params, self.project_state, self)
         self.current_step_window = win
         win.show()
 
@@ -742,7 +798,7 @@ class MainWindowWorkflow(QMainWindow):
     def show_wcs_solver_help(self):
         from PyQt5.QtWidgets import QDialog, QDialogButtonBox, QTextBrowser
 
-        dialog = QDialog(self)
+        dialog = FittedDialog(self)
         dialog.setWindowTitle("WCS Solver Installation Help")
         dialog.resize(760, 620)
 
@@ -984,15 +1040,29 @@ class MainWindowWorkflow(QMainWindow):
     def open_settings(self):
         from PyQt5.QtWidgets import (
             QDialog, QVBoxLayout, QLabel, QLineEdit,
-            QDialogButtonBox, QGroupBox, QFormLayout, QCheckBox
+            QDialogButtonBox, QGroupBox, QFormLayout, QCheckBox,
+            QScrollArea, QFrame,
         )
-        dialog = QDialog(self)
+        dialog = FittedDialog(self)
         dialog.setWindowTitle("Instrument Settings")
         dialog.setMinimumWidth(650)
         layout = QVBoxLayout(dialog)
         title = QLabel("Instrument Configuration")
         title.setFont(QFont("Arial", 12, QFont.Bold))
         layout.addWidget(title)
+
+        # Group boxes live inside a scroll area so a screen too short for all
+        # six groups scrolls instead of clipping the Save/Cancel row below.
+        _settings_body = QWidget()
+        _settings_layout = QVBoxLayout(_settings_body)
+        _settings_layout.setContentsMargins(0, 0, 0, 0)
+        _settings_scroll = QScrollArea()
+        _settings_scroll.setWidgetResizable(True)
+        _settings_scroll.setFrameShape(QFrame.NoFrame)
+        _settings_scroll.setWidget(_settings_body)
+        layout.addWidget(_settings_scroll, 1)
+        _settings_outer = layout      # holds the footer button row
+        layout = _settings_layout     # subsequent group adds go into the scroll body
 
         tel_group = QGroupBox("Telescope")
         tel_layout = QFormLayout(tel_group)
@@ -1084,7 +1154,7 @@ class MainWindowWorkflow(QMainWindow):
         buttons = QDialogButtonBox(QDialogButtonBox.Save | QDialogButtonBox.Cancel)
         buttons.accepted.connect(dialog.accept)
         buttons.rejected.connect(dialog.reject)
-        layout.addWidget(buttons)
+        _settings_outer.addWidget(buttons)
 
         if dialog.exec_() == QDialog.Accepted:
             try:

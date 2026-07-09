@@ -45,6 +45,7 @@ from PyQt5.QtWidgets import (
     QFrame, QSlider, QShortcut, QDialog, QHeaderView, QGridLayout
 )
 
+from apex.gui.layout_rules import AutoFitMixin, FittedDialog, clamp_to_screen, tame_canvas
 from apex.gui.widgets.fits_viewer import FITSViewerWidget, OverlayMarker
 from apex.gui.workflow.run_control import RunControlBar
 from apex.gui.workflow.ui_helpers import create_cache_action_button, create_parameter_button
@@ -1478,7 +1479,7 @@ def _pick_first(cols, candidates):
 # ============================================================================
 # Main Window
 # ============================================================================
-class IRAFPhotometryWindow(QMainWindow):
+class IRAFPhotometryWindow(AutoFitMixin, QMainWindow):
     """Comprehensive IRAF Photometry tool with parameters and comparison."""
 
     def __init__(self, params, data_dir: Path, result_dir: Path, project_state=None, parent=None):
@@ -1543,7 +1544,8 @@ class IRAFPhotometryWindow(QMainWindow):
         self._overlay_stretch_marker_max_line = None
 
         self.setWindowTitle("IRAF/DAOPHOT Photometry Tool")
-        self.setMinimumSize(1200, 900)
+        # Minimum clamped to the monitor; AutoFitMixin fits to content on show.
+        self.setMinimumSize(*clamp_to_screen(1200, 900, self))
         self._init_project_path_widgets()
         self.setup_ui()
 
@@ -3148,6 +3150,7 @@ class IRAFPhotometryWindow(QMainWindow):
         splitter.setStretchFactor(0, 1)
         splitter.setStretchFactor(1, 4)
         splitter.setSizes([420, 850])
+        splitter.setChildrenCollapsible(False)
 
         result_layout.addWidget(splitter)
         tabs.addTab(result_tab, "Results")
@@ -3734,7 +3737,7 @@ class IRAFPhotometryWindow(QMainWindow):
             self._overlay_update_stretch_plot()
             return
 
-        self.overlay_stretch_plot_dialog = QDialog(self)
+        self.overlay_stretch_plot_dialog = FittedDialog(self)
         self.overlay_stretch_plot_dialog.setWindowTitle("2D Plot - Stretch Control")
         self.overlay_stretch_plot_dialog.resize(500, 250)
 
@@ -3755,7 +3758,7 @@ class IRAFPhotometryWindow(QMainWindow):
         self.overlay_stretch_plot_canvas.mpl_connect('motion_notify_event', self._overlay_on_stretch_plot_motion)
         self.overlay_stretch_plot_canvas.mpl_connect('button_release_event', self._overlay_on_stretch_plot_release)
 
-        layout.addWidget(self.overlay_stretch_plot_canvas)
+        layout.addWidget(tame_canvas(self.overlay_stretch_plot_canvas, min_h=140), 1)
 
         hint_label = QLabel("Click and drag < > markers to adjust min/max | Changes apply in real-time")
         hint_label.setStyleSheet("QLabel { color: #666; font-size: 10px; }")

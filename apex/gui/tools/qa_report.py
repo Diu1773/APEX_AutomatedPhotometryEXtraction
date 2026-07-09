@@ -50,6 +50,8 @@ from PyQt5.QtWidgets import (
 )
 from PyQt5.QtGui import QFont, QColor
 
+from apex.gui.layout_rules import FittedDialog, prevent_collapse, tame_canvas
+
 try:  # Python 3.11+
     import tomllib  # type: ignore
 except Exception:
@@ -1516,7 +1518,7 @@ class QAReportWindow(ToolWindowBase):
 
     def open_help_dialog(self):
         """Show practical guidance for the QA report."""
-        dialog = QDialog(self)
+        dialog = FittedDialog(self)
         dialog.setWindowTitle("QA Report Help")
         dialog.setMinimumSize(720, 620)
 
@@ -1625,10 +1627,11 @@ QA가 PASS라고 해서 표준성 보정, extinction/color-term 보정, 시간�
         self.error_figure = Figure(figsize=(10, 8))
         self.error_canvas = FigureCanvas(self.error_figure)
         plot_layout.addWidget(NavigationToolbar(self.error_canvas, self))
-        plot_layout.addWidget(self.error_canvas)
+        plot_layout.addWidget(tame_canvas(self.error_canvas), 1)
         splitter.addWidget(plot_widget)
 
         splitter.setSizes([400, 800])
+        prevent_collapse(splitter)
         layout.addWidget(splitter)
 
     def setup_centroid_tab(self):
@@ -1663,10 +1666,11 @@ QA가 PASS라고 해서 표준성 보정, extinction/color-term 보정, 시간�
         self.centroid_figure = Figure(figsize=(10, 6))
         self.centroid_canvas = FigureCanvas(self.centroid_figure)
         plot_layout.addWidget(NavigationToolbar(self.centroid_canvas, self))
-        plot_layout.addWidget(self.centroid_canvas)
+        plot_layout.addWidget(tame_canvas(self.centroid_canvas), 1)
         splitter.addWidget(plot_widget)
 
         splitter.setSizes([300, 900])
+        prevent_collapse(splitter)
         layout.addWidget(splitter)
 
     def setup_frame_quality_tab(self):
@@ -1777,10 +1781,11 @@ QA가 PASS라고 해서 표준성 보정, extinction/color-term 보정, 시간�
         self.background_figure = Figure(figsize=(10, 6))
         self.background_canvas = FigureCanvas(self.background_figure)
         plot_layout.addWidget(NavigationToolbar(self.background_canvas, self))
-        plot_layout.addWidget(self.background_canvas)
+        plot_layout.addWidget(tame_canvas(self.background_canvas), 1)
         splitter.addWidget(plot_widget)
 
         splitter.setSizes([300, 900])
+        prevent_collapse(splitter)
         layout.addWidget(splitter)
 
     def setup_publication_tab(self):
@@ -1852,7 +1857,7 @@ QA가 PASS라고 해서 표준성 보정, extinction/color-term 보정, 시간�
 
     def open_parameters_dialog(self):
         """Open QA parameters dialog with filter on/off controls"""
-        dialog = QDialog(self)
+        dialog = FittedDialog(self)
         dialog.setWindowTitle("QA Report Parameters")
         dialog.setMinimumWidth(500)
 

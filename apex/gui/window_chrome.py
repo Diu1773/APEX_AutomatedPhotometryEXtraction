@@ -28,17 +28,30 @@ from PyQt5.QtWidgets import (
 from apex.gui.workflow.log_panel import (
     append_timestamped_log, create_log_text, show_raised,
 )
+from apex.gui.theme import ICON, Tokens, style_button
 
 
 class WindowChromeMixin:
     """Standard header / workspace bar / log dock for step & tool windows."""
 
-    _HEADER_BTN_QSS = (
-        "QPushButton { background-color: #ECEFF1; color: #263238;"
-        " border: 1px solid #B0BEC5; border-radius: 5px;"
-        " font-weight: bold; padding: 4px 10px; }"
-        "QPushButton:hover { background-color: #CFD8DC; }"
-    )
+    # ── window sizing (shared rule, see apex.gui.layout_rules) ─────────────
+    def showEvent(self, event):
+        """On first show, size the window to its content and keep it on-screen.
+
+        This is the single place that fixes the family of "buttons/inputs are
+        clipped" and "I have to drag the window bigger" bugs for every step and
+        tool window — it grows the window to what its content needs and clamps
+        the result to the monitor so the bottom row is never cut off.
+        """
+        super().showEvent(event)
+        if getattr(self, "_apex_autosize_done", False):
+            return
+        self._apex_autosize_done = True
+        try:
+            from apex.gui.layout_rules import fit_window_to_content
+            fit_window_to_content(self)
+        except Exception:
+            pass
 
     # ── internal helpers ──────────────────────────────────────────────────
     def _chrome_default_title(self) -> str:
@@ -51,23 +64,29 @@ class WindowChromeMixin:
 
     # ── header actions ────────────────────────────────────────────────────
     def add_header_action(self, label, on_click, *, tooltip="", min_width=None):
-        """Add a button to the title-row action cluster. Returns the button."""
+        """Add a button to the title-row action cluster. Returns the button.
+
+        Header actions (Parameters, Log, …) are neutral/compact by design — the
+        eye-catching color is reserved for the primary action (Run/Next).
+        """
         btn = QPushButton(label)
-        btn.setMinimumHeight(30)
+        style_button(btn, height=Tokens.H_COMPACT)
         if min_width:
             btn.setFixedWidth(int(min_width))
         if tooltip:
             btn.setToolTip(tooltip)
-        btn.setStyleSheet(self._HEADER_BTN_QSS)
         if callable(on_click):
             btn.clicked.connect(on_click)
         self.header_actions.addWidget(btn)
         return btn
 
     def add_param_button(self, specs, *, title=None, info_text="",
-                         label="⚙ 파라미터", on_saved=None, resize=(460, 400)):
+                         label=None, on_saved=None, resize=(460, 400)):
         """Add a standard Parameters button wired to the shared param dialog."""
         from apex.gui.workflow.param_dialog import run_param_dialog
+
+        if label is None:
+            label = f"{ICON['params']} 파라미터"
 
         dialog_title = title or f"{self._chrome_default_title()} — 파라미터"
         default_save = getattr(self, "persist_params", None)
@@ -107,8 +126,8 @@ class WindowChromeMixin:
             " border-radius: 5px; }"
         )
         row = QHBoxLayout(bar)
-        row.setContentsMargins(10, 5, 10, 5)
-        row.setSpacing(8)
+        row.setContentsMargins(Tokens.S3, Tokens.S2, Tokens.S3, Tokens.S2)
+        row.setSpacing(Tokens.GAP)
 
         self._workspace_label = QLabel()
         self._workspace_label.setTextInteractionFlags(Qt.TextSelectableByMouse)
@@ -116,7 +135,7 @@ class WindowChromeMixin:
 
         if allow_change:
             btn = QPushButton("출력 폴더 변경…")
-            btn.setStyleSheet(self._HEADER_BTN_QSS)
+            style_button(btn, height=Tokens.H_COMPACT)
             btn.clicked.connect(self._change_workspace)
             row.addWidget(btn)
 
@@ -131,7 +150,7 @@ class WindowChromeMixin:
         data_dir = getattr(P, "data_dir", "—") if P is not None else "—"
         result_dir = getattr(P, "result_dir", "—") if P is not None else "—"
         self._workspace_label.setText(
-            f"📂 입력  {data_dir}      →      💾 출력  {result_dir}"
+            f"{ICON['input']} 입력  {data_dir}      {ICON['next']}      {ICON['output']} 출력  {result_dir}"
         )
 
     def _change_workspace(self):
@@ -171,14 +190,14 @@ class WindowChromeMixin:
             lay = QVBoxLayout(self._log_window)
             lay.addWidget(self._log_text)
             self.add_header_action(
-                "📜 로그", lambda: show_raised(self._log_window),
+                f"{ICON['log']} 로그", lambda: show_raised(self._log_window),
                 tooltip="처리 로그 보기",
             )
         else:
             box = QFrame()
             box.setFrameShape(QFrame.StyledPanel)
             lay = QVBoxLayout(box)
-            lay.setContentsMargins(6, 6, 6, 6)
+            lay.setContentsMargins(Tokens.S2, Tokens.S2, Tokens.S2, Tokens.S2)
             hdr = QLabel(title or "로그")
             hdr.setStyleSheet("QLabel { color: #555; font-weight: bold; }")
             lay.addWidget(hdr)

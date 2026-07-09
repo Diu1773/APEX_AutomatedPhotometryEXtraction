@@ -20,14 +20,21 @@ if str(_ROOT) not in sys.path:
 os.chdir(_ROOT)  # parameters.toml lives at project root
 
 from PyQt5.QtWidgets import QApplication, QMessageBox
+from PyQt5.QtCore import Qt
 from apex.utils.app_setup import configure_fonts
 
 
 def main() -> int:
+    # Native HiDPI rendering (see main.py): avoids fuzzy text / pixelated logo
+    # under Windows display scaling.
+    QApplication.setAttribute(Qt.AA_EnableHighDpiScaling, True)
+    QApplication.setAttribute(Qt.AA_UseHighDpiPixmaps, True)
     app = QApplication(sys.argv)
     app.setApplicationName("APEX CMD")
     app.setOrganizationName("APEX Project")
     configure_fonts(app)
+    from apex.gui.theme import apply_theme
+    apply_theme(app)
     try:
         from apex.gui.main_window import _load_icon
         app.setWindowIcon(_load_icon("cmd"))

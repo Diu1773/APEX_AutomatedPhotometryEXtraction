@@ -34,6 +34,7 @@ from apex.analysis.extinction import (
     robust_linfit,
     robust_weighted_linfit,
 )
+from apex.gui.layout_rules import FittedDialog
 from apex.gui.tools.tool_window_base import ToolWindowBase
 from apex.gui.workflow.log_panel import show_raised
 from apex.gui.widgets.fits_viewer import FITSViewerWidget, OverlayMarker
@@ -2040,19 +2041,14 @@ class ExtinctionFitWindow(ToolWindowBase):
         _log_lay.addWidget(self._log_text)
         self.log_text = self._log_text
 
-        _ctl_qss = (
-            "QPushButton { background-color: #ECEFF1; color: #263238;"
-            " border: 1px solid #B0BEC5; border-radius: 5px;"
-            " font-weight: bold; padding: 5px 12px; }"
-            "QPushButton:hover { background-color: #CFD8DC; }"
-        )
-        btn_params = QPushButton("⚙ 파라미터")
-        btn_params.setStyleSheet(_ctl_qss)
+        from apex.gui.theme import ICON, Tokens, style_button
+        btn_params = QPushButton(f"{ICON['params']} 파라미터")
+        style_button(btn_params, height=Tokens.H_COMPACT)
         btn_params.setToolTip("Tool parameters")
         btn_params.clicked.connect(self.open_parameters_dialog)
         settings_layout.addWidget(btn_params)
-        btn_log = QPushButton("📜 Log")
-        btn_log.setStyleSheet(_ctl_qss)
+        btn_log = QPushButton(f"{ICON['log']} Log")
+        style_button(btn_log, height=Tokens.H_COMPACT)
         btn_log.setToolTip("처리 로그 보기")
         btn_log.clicked.connect(lambda: show_raised(self._log_window))
         settings_layout.addWidget(btn_log)
@@ -3605,7 +3601,7 @@ class ExtinctionFitWindow(ToolWindowBase):
         self.tabs.setCurrentWidget(self.selection_tab)
 
     def open_parameters_dialog(self):
-        dialog = QDialog(self)
+        dialog = FittedDialog(self)
         dialog.setWindowTitle("Extinction Parameters")
         dialog.resize(420, 320)
         layout = QVBoxLayout(dialog)

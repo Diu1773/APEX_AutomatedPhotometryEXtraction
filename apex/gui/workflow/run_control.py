@@ -25,15 +25,7 @@ import time
 
 from PyQt5.QtWidgets import QHBoxLayout, QPushButton, QSizePolicy, QWidget
 
-_RUN_SS = (
-    "QPushButton { background-color: #4CAF50; color: white; font-weight: bold; padding: 8px 20px; }"
-)
-_STOP_SS = (
-    "QPushButton { background-color: #f44336; color: white; font-weight: bold; padding: 8px 15px; }"
-)
-_LOG_SS = (
-    "QPushButton { background-color: #607D8B; color: white; font-weight: bold; padding: 8px 15px; }"
-)
+from apex.gui.theme import Tokens, style_button
 
 
 def format_duration(seconds: float) -> str:
@@ -107,13 +99,15 @@ class RunControlBar(QWidget):
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(6)
 
+        # Run = success (green "go"), Stop = danger (red) — a familiar job-control
+        # pair, deliberately NOT the blue primary used for navigation (Next).
         self.btn_run = QPushButton(run_label)
-        self.btn_run.setStyleSheet(_RUN_SS)
+        style_button(self.btn_run, "success", height=Tokens.H_ACTION)
         self.btn_run.clicked.connect(run_cb)
         layout.addWidget(self.btn_run)
 
         self.btn_stop = QPushButton("Stop")
-        self.btn_stop.setStyleSheet(_STOP_SS)
+        style_button(self.btn_stop, "danger", height=Tokens.H_ACTION)
         self.btn_stop.setEnabled(False)
         self.btn_stop.clicked.connect(stop_cb)
         layout.addWidget(self.btn_stop)
@@ -121,7 +115,7 @@ class RunControlBar(QWidget):
         layout.addStretch()
 
         self.btn_log = QPushButton(log_label)
-        self.btn_log.setStyleSheet(_LOG_SS)
+        style_button(self.btn_log, "ghost", height=Tokens.H_ACTION)
         self.btn_log.clicked.connect(log_cb)
         layout.addWidget(self.btn_log)
 

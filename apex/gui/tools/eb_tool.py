@@ -169,6 +169,7 @@ def _resolve_check_filter(filters) -> str | None:
     unique_filters = sorted({str(f) for f in filters if str(f).strip() and str(f).lower() != "nan"})
     return unique_filters[0] if len(unique_filters) == 1 else None
 
+from apex.gui.layout_rules import FittedDialog
 from apex.gui.tools.tool_window_base import ToolWindowBase
 from apex.gui.workflow.lc.step11_period_analysis import PeriodAnalysisWorker
 
@@ -393,6 +394,8 @@ class EclipsingBinaryToolWindow(ToolWindowBase):
         rl.setContentsMargins(4, 4, 4, 4)
         splitter.addWidget(right)
         splitter.setSizes([290, 910])
+        from apex.gui.layout_rules import prevent_collapse, tame_canvas
+        prevent_collapse(splitter)
 
         self.tabs = QTabWidget()
         rl.addWidget(self.tabs)
@@ -402,7 +405,7 @@ class EclipsingBinaryToolWindow(ToolWindowBase):
         pgl = QVBoxLayout(pg_tab)
         self.pg_canvas = FigureCanvas(Figure(figsize=(9, 4)))
         pgl.addWidget(NavigationToolbar(self.pg_canvas, pg_tab))
-        pgl.addWidget(self.pg_canvas)
+        pgl.addWidget(tame_canvas(self.pg_canvas), 1)
         self.tabs.addTab(pg_tab, "Periodogram")
 
         # Phase plot tab
@@ -410,7 +413,7 @@ class EclipsingBinaryToolWindow(ToolWindowBase):
         phl = QVBoxLayout(ph_tab)
         self.ph_canvas = FigureCanvas(Figure(figsize=(9, 5)))
         phl.addWidget(NavigationToolbar(self.ph_canvas, ph_tab))
-        phl.addWidget(self.ph_canvas)
+        phl.addWidget(tame_canvas(self.ph_canvas), 1)
         self.tabs.addTab(ph_tab, "Phase Plot")
 
         # O-C tab
@@ -468,7 +471,8 @@ class EclipsingBinaryToolWindow(ToolWindowBase):
         rl.setContentsMargins(0, 0, 0, 0)
         self.oc_canvas = FigureCanvas(Figure(figsize=(6, 4)))
         rl.addWidget(NavigationToolbar(self.oc_canvas, right))
-        rl.addWidget(self.oc_canvas, 1)
+        from apex.gui.layout_rules import prevent_collapse, tame_canvas
+        rl.addWidget(tame_canvas(self.oc_canvas), 1)
         fit_row = QHBoxLayout()
         fit_row.addWidget(QLabel("Fit:"))
         self.oc_fit_combo = QComboBox()
@@ -488,6 +492,7 @@ class EclipsingBinaryToolWindow(ToolWindowBase):
         rl.addWidget(self.oc_fit_label)
         splitter.addWidget(right)
         splitter.setSizes([350, 650])
+        prevent_collapse(splitter)
         layout.addWidget(splitter, 1)
 
         return tab
@@ -1265,7 +1270,7 @@ class EclipsingBinaryToolWindow(ToolWindowBase):
             if k not in self.filter_visibility:
                 self.filter_visibility[k] = True
 
-        dialog = QDialog(self)
+        dialog = FittedDialog(self)
         dialog.setWindowTitle("필터 색상 / 표시 설정")
         dialog.setMinimumWidth(360)
         layout = QVBoxLayout(dialog)

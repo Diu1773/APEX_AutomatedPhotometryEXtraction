@@ -32,6 +32,7 @@ from PyQt5.QtCore import Qt, QPoint
 
 from apex.gui.widgets.fits_viewer import FITSViewerWidget, OverlayMarker
 
+from apex.gui.layout_rules import FittedDialog, tame_canvas
 from apex.gui.workflow.step_window_base import StepWindowBase
 from apex.gui.workflow.ui_helpers import (
     add_parameter_reset_button,
@@ -2136,7 +2137,7 @@ class MasterIdEditorWindow(StepWindowBase):
 
             # Create dialog if not exists
             if not hasattr(self, 'radial_dialog') or self.radial_dialog is None or not self.radial_dialog.isVisible():
-                self.radial_dialog = QDialog(self)
+                self.radial_dialog = FittedDialog(self)
                 self.radial_dialog.setWindowTitle("Radial Profile (G key to update)")
                 self.radial_dialog.resize(600, 400)
 
@@ -2145,7 +2146,7 @@ class MasterIdEditorWindow(StepWindowBase):
                 self.prof_canvas = FigureCanvas(self.prof_fig)
                 self.prof_ax = self.prof_fig.add_subplot(111)
                 layout.addWidget(NavigationToolbar(self.prof_canvas, self.radial_dialog))
-                layout.addWidget(self.prof_canvas)
+                layout.addWidget(tame_canvas(self.prof_canvas), 1)
 
             # Plot (always update)
             self.prof_ax.clear()

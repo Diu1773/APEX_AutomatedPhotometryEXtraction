@@ -55,7 +55,13 @@ _SMOKE_IMPORTS = (
 
 
 def _svg_to_pixmap(svg_path: Path, size: int) -> QPixmap:
-    px = QPixmap(size, size)
+    # Rasterize at the display's device-pixel ratio so the vector logo stays
+    # crisp under HiDPI scaling instead of being upscaled from 1×.
+    app = QApplication.instance()
+    screen = app.primaryScreen() if app is not None else None
+    dpr = float(screen.devicePixelRatio()) if screen is not None else 1.0
+    side = max(1, int(round(size * dpr)))
+    px = QPixmap(side, side)
     px.fill(Qt.transparent)
     try:
         from PyQt5.QtSvg import QSvgRenderer
@@ -65,6 +71,7 @@ def _svg_to_pixmap(svg_path: Path, size: int) -> QPixmap:
         p.end()
     except Exception:
         pass
+    px.setDevicePixelRatio(dpr)
     return px
 
 
@@ -288,6 +295,11 @@ def main() -> int:
     if "--smoke" in sys.argv:
         return _run_smoke()
 
+    # Render natively at the display's scale factor (Windows 125%/150% etc.).
+    # Without this Qt draws at 1× and Windows bitmap-upscales the whole window,
+    # which is what makes text fuzzy and the SVG logo look pixelated.
+    QApplication.setAttribute(Qt.AA_EnableHighDpiScaling, True)
+    QApplication.setAttribute(Qt.AA_UseHighDpiPixmaps, True)
     app = QApplication(sys.argv)
     app.setQuitOnLastWindowClosed(False)
     app.setApplicationName("APEX")
@@ -297,6 +309,8 @@ def main() -> int:
         QMessageBox.critical(None, "Startup Error", param_error)
         return 1
     _configure_app_fonts(app)
+    from apex.gui.theme import apply_theme
+    apply_theme(app)
     app.setWindowIcon(_make_app_icon())
 
     try:

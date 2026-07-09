@@ -42,11 +42,24 @@ class ToolWindowBase(WindowChromeMixin, QMainWindow):
 
         self.setWindowTitle(title)
         if min_size:
-            self.setMinimumSize(int(min_size[0]), int(min_size[1]))
+            # Clamp the minimum to the monitor so a large min_size (e.g. a
+            # 1180×820 plot tool) can never exceed a small screen and leave the
+            # bottom controls permanently clipped. First-show auto-fit
+            # (WindowChromeMixin.showEvent) then grows toward the content.
+            from apex.gui.layout_rules import clamp_to_screen
+            min_w, min_h = clamp_to_screen(int(min_size[0]), int(min_size[1]), self)
+            self.setMinimumSize(min_w, min_h)
+
+        from apex.gui.theme import Tokens
 
         self.central_widget = QWidget()
         self.setCentralWidget(self.central_widget)
         self.main_layout = QVBoxLayout(self.central_widget)
+        # Same 8px outer rhythm as step windows so tools feel like one app.
+        self.main_layout.setContentsMargins(
+            Tokens.MARGIN, Tokens.MARGIN, Tokens.MARGIN, Tokens.S3
+        )
+        self.main_layout.setSpacing(Tokens.S3)
 
         # Title row: centered title + right-aligned action cluster.
         title_row = QHBoxLayout()
@@ -57,7 +70,7 @@ class ToolWindowBase(WindowChromeMixin, QMainWindow):
         title_row.addWidget(self.title_label, stretch=1)
 
         self.header_actions = QHBoxLayout()
-        self.header_actions.setSpacing(6)
+        self.header_actions.setSpacing(Tokens.GAP)
         title_row.addLayout(self.header_actions)
         self.main_layout.addLayout(title_row)
 

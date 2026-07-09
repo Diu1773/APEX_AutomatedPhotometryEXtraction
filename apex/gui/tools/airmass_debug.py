@@ -228,8 +228,9 @@ class AirmassHeaderDebugToolWindow(ToolWindowBase):
         self.canvas = FigureCanvas(self.figure)
         self.toolbar = NavigationToolbar(self.canvas, self)
         plot_layout.addWidget(self.toolbar)
-        plot_layout.addWidget(self.canvas)
-        layout.addWidget(plot_group)
+        from apex.gui.layout_rules import tame_canvas
+        plot_layout.addWidget(tame_canvas(self.canvas), 1)
+        layout.addWidget(plot_group, 1)
 
         self.status_label = QLabel("")
         self.status_label.setStyleSheet("QLabel { color: #555; }")

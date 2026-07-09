@@ -83,6 +83,60 @@ main.py        — Root launcher; spawns subprocess for chosen mode
   `step7_forced_aperture_phot.py` and `lc/step9_lightcurve_builder.py`.
 - GUI changes must follow existing PyQt5 patterns in `main_window.py` and `step_window_base.py`.
 
+### GUI layout rules (`apex/gui/layout_rules.py`)
+
+Window sizing/anti-clipping is centralized — do not re-solve it per window.
+
+- **Window sizing is automatic.** Every step/tool window auto-fits to its content
+  and clamps to the monitor on first show. Step/tool windows get this free via
+  `WindowChromeMixin.showEvent`; raw `QMainWindow` windows must mix in
+  `AutoFitMixin` *before* `QMainWindow` (sip routes the `showEvent` virtual to a
+  Python method only when it's defined on the class, never an instance attribute).
+- **Dialogs.** Use `FittedDialog(parent)` instead of `QDialog(parent)` for any
+  modal/popup dialog so it auto-fits and clamps like the windows do. Parameter
+  dialogs built via `run_param_dialog`/`build_scroll_param_dialog` are already
+  clamped (`configure_parameter_dialog`). A dialog that stacks many groups must
+  put them in a `QScrollArea` with the button row *outside* the scroll, so a
+  short screen scrolls instead of clipping Save/Cancel.
+- **Never `setMinimumSize`/`resize` larger than the screen.** A minimum larger
+  than the monitor permanently clips the bottom row. Pass desired sizes through
+  `clamp_to_screen(w, h, self)`.
+- **Embedded matplotlib canvases must be tamed.** A bare `FigureCanvas` reports
+  `minimumSizeHint() == 10×10` and collapses to a sliver next to a table/controls.
+  Wrap with `tame_canvas(canvas)` (min size + Expanding) and add it with `stretch=1`.
+- **Splitters with a plot pane** must call `prevent_collapse(splitter)` (or
+  `setChildrenCollapsible(False)`) so a pane can't be dragged/laid out to 0 px.
+
+### Button hierarchy & color (`apex/gui/theme.py`)
+
+The global stylesheet is the single source of look; `apply_theme(app)` is called
+in all three entry points (`main.py`, `apex/cmd/main.py`, `apex/lightcurve/main.py`).
+
+- **Never hand-paint a button** with `setStyleSheet("background-color: …")`. That
+  is exactly the inconsistency to avoid. Assign a *role* instead with
+  `style_button(btn, variant, height=Tokens.H_*)`.
+- **One hierarchy:** `primary` (filled accent — the single main action: Run /
+  Next / Save) · `danger` (filled red — Stop / destructive) · `ghost` (accent
+  text — tertiary: Log / 가이드) · *no variant* = neutral default (everything
+  else: Parameters / Browse / Export / Previous).
+- **One size scale:** `Tokens.H_ACTION` (38, bottom action row) ·
+  `Tokens.H_BUTTON` (32, standard) · `Tokens.H_COMPACT` (28, header cluster).
+- Disabled primary/danger are themed automatically (muted fill) — just call
+  `setEnabled(...)`, don't swap stylesheets per state.
+
+### Icons & spacing grid (the "keyline" discipline)
+
+- **Button glyphs come from `theme.ICON`**, never pasted emoji literals. Bare
+  emoji (⚙ 📜 🔒 📂 💾) render as multicolor OS emoji on Windows and break the
+  flat look; `ICON` appends U+FE0E (text presentation) to force the monochrome
+  symbol. Use `ICON["params"|"log"|"guide"|"locked"|"input"|"output"|…]`.
+- **Layout snaps to an 8px grid.** Margins/spacing use `Tokens.MARGIN` (16),
+  `Tokens.S3` (12), `Tokens.GAP`/`Tokens.S2` (8) — never 5/6/10. The shared
+  window bases already set the outer rhythm; new panels should follow it.
+- **Placement is fixed by convention:** bottom action row = `[Previous] … (stretch) … [Next]`;
+  run bar = `[Run][Stop] … (stretch) … [Log]`; header cluster (right of title) =
+  subclass actions, then Parameters, then Log, then 가이드.
+
 ## Commits and PRs
 
 Use concise lowercase prefixes: `feat:`, `fix:`, `refactor:`, `remove:`, `chore:`. Keep commits scoped and imperative. PRs should note which mode is affected, list validation commands run, and include screenshots for visible GUI changes.
