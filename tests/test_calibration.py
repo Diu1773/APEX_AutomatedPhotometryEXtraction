@@ -197,3 +197,48 @@ def test_dark_scaled_by_exposure_ratio(tmp_path):
                                      dark_exp=DARK_EXP)
     assert qc["dark_scale"] == pytest.approx(2.0, abs=1e-6)
     assert float(np.median(out)) == pytest.approx(0.0, abs=1e-6)
+
+
+def _write_master(path, data, imagetyp, exptime=0.0, filt=""):
+    hdu = fits.PrimaryHDU(np.asarray(data, dtype=np.float32))
+    hdu.header["IMAGETYP"] = imagetyp
+    hdu.header["EXPTIME"] = float(exptime)
+    if filt:
+        hdu.header["FILTER"] = filt
+    hdu.writeto(path, overwrite=True)
+    return str(path)
+
+
+def test_prebuilt_master_used_directly(tmp_path):
+    """A frame flagged IMAGETYP 'MASTER <kind>' is used verbatim, not re-stacked
+    or re-reduced — mirrors AIPPI's manual-master auto-detection."""
+    opts = CalibrationOptions()
+    rng = np.random.default_rng(0)
+    mbias = (500.0 + rng.normal(0, 1, (32, 32))).astype(np.float32)
+
+    # master BIAS: returned verbatim
+    pb = _write_master(tmp_path / "master_bias.fits", mbias, "Master Bias")
+    out, prov = cal.build_master_bias([pb], opts)
+    assert prov["master_input"] is True and prov["n_frames"] == 1
+    np.testing.assert_allclose(out, mbias, atol=1e-2)
+
+    # master DARK: verbatim + NOT bias-subtracted even when a master_bias is given
+    mdark = (40.0 + rng.normal(0, 1, (32, 32))).astype(np.float32)
+    pd = _write_master(tmp_path / "master_dark.fits", mdark, "Master Dark", exptime=30.0)
+    outd, dexp, provd = cal.build_master_dark([pd], opts, master_bias=mbias)
+    assert provd["master_input"] and provd["bias_subtracted"]
+    assert dexp == pytest.approx(30.0)
+    np.testing.assert_allclose(outd, mdark, atol=1e-2)      # bias was NOT subtracted
+
+    # master FLAT: verbatim, near-unit median left as-is (not re-reduced)
+    mflat = np.full((32, 32), 0.98, np.float32)
+    pf = _write_master(tmp_path / "master_flat.fits", mflat, "Master Flat", filt="V")
+    outf, provf = cal.build_master_flat([pf], opts, master_bias=mbias)
+    assert provf["master_input"]
+    assert float(np.median(outf)) == pytest.approx(0.98, abs=1e-3)
+
+    # a master flat with a non-unit median is defensively renormalised to 1
+    pf2 = _write_master(tmp_path / "master_flat2.fits",
+                        np.full((32, 32), 1000.0, np.float32), "Master Flat", filt="V")
+    outf2, _ = cal.build_master_flat([pf2], opts)
+    assert float(np.median(outf2)) == pytest.approx(1.0, abs=1e-3)

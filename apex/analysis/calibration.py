@@ -209,12 +209,54 @@ def combine_frames(arrays: Sequence[np.ndarray], method: str = "median",
 
 
 # ---------------------------------------------------------------------------
+# Pre-built master detection
+# ---------------------------------------------------------------------------
+# Mirrors AstralImage/AIPPI: a frame whose IMAGETYP reads "MASTER <kind>" is a
+# pre-built master and is used verbatim instead of being re-stacked — so a user
+# can drop a single ready-made master bias/dark/flat into the scan and have it
+# applied directly (no dedicated UI field, exactly like AIPPI's auto-detection).
+
+_IMAGETYP_KEYS = ("IMAGETYP", "IMGTYPE", "FRAMETYP", "OBSTYPE")
+
+
+def _is_master_header(header, kind: str) -> bool:
+    """True when the header marks this frame as a pre-built master of ``kind``."""
+    if header is None:
+        return False
+    for key in _IMAGETYP_KEYS:
+        if key in header:
+            it = str(header[key]).upper()
+            if "MASTER" in it and kind.upper() in it:
+                return True
+    return False
+
+
+def _find_master(paths: Sequence[PathLike], kind: str, opts: CalibrationOptions):
+    """If any path is a pre-built master of ``kind``, load it (overscan applied
+    for grid parity) and return ``(data, header, path)``; else ``None``."""
+    for p in paths:
+        try:
+            data, header = _load_fits(p)
+        except Exception:
+            continue
+        if data is not None and _is_master_header(header, kind):
+            return _apply_overscan(data, header, opts), header, str(p)
+    return None
+
+
+# ---------------------------------------------------------------------------
 # Master builders
 # ---------------------------------------------------------------------------
 
 def build_master_bias(paths: Sequence[PathLike],
                       opts: CalibrationOptions) -> Tuple[np.ndarray, Dict]:
-    """Combine bias frames into a master bias."""
+    """Combine bias frames into a master bias (or use a pre-built master)."""
+    m = _find_master(paths, "BIAS", opts)
+    if m is not None:
+        data, _hdr, src = m
+        return data, {"type": "bias", "n_frames": 1, "master_input": True,
+                      "source": Path(src).name,
+                      "median": float(fast_stats.finite_nanmedian(data, 0.0))}
     arrays = [load_frame(p, opts)[0] for p in paths]
     master = combine_frames(arrays, opts.combine_method,
                             opts.sigma_low, opts.sigma_high, opts.maxiters)
@@ -235,6 +277,15 @@ def build_master_dark(paths: Sequence[PathLike], opts: CalibrationOptions,
     Returns ``(master_dark, dark_exptime, provenance)`` where ``dark_exptime``
     is the reference (median) exposure used to scale to science frames.
     """
+    m = _find_master(paths, "DARK", opts)
+    if m is not None:
+        data, header, src = m           # a master dark is already bias-subtracted
+        dark_exp = _header_exptime(header)
+        return data, dark_exp, {
+            "type": "dark", "n_frames": 1, "master_input": True,
+            "source": Path(src).name, "exptime": dark_exp,
+            "bias_subtracted": True,
+            "median": float(fast_stats.finite_nanmedian(data, 0.0))}
     arrays: List[np.ndarray] = []
     exps: List[float] = []
     for p in paths:
@@ -267,6 +318,16 @@ def build_master_flat(paths: Sequence[PathLike], opts: CalibrationOptions,
     illumination/exposure differences cancel before combining; the master is
     re-normalised to a median of 1.0.
     """
+    m = _find_master(paths, "FLAT", opts)
+    if m is not None:
+        data, _hdr, src = m             # a master flat is already reduced
+        mm = float(fast_stats.finite_nanmedian(data, 1.0))
+        if mm and np.isfinite(mm) and abs(mm - 1.0) > 0.05:
+            data = data / mm            # defensively renormalise to unit median
+        return data, {"type": "flat", "n_frames": 1, "master_input": True,
+                      "source": Path(src).name, "bias_subtracted": True,
+                      "dark_subtracted": True,
+                      "median": float(fast_stats.finite_nanmedian(data, 0.0))}
     arrays: List[np.ndarray] = []
     for p in paths:
         data, header = load_frame(p, opts)

@@ -158,6 +158,7 @@ class FrameInfo:
     filt: str = ""
     night: str = ""                  # YYYYMMDD or "" (global)
     name: str = field(default="")
+    is_master: bool = False          # pre-built master (IMAGETYP "MASTER …")
 
     @property
     def temp_bucket(self) -> Optional[int]:
@@ -179,8 +180,10 @@ def read_frame_info(path: str) -> Optional[FrameInfo]:
     lon = _parse_lon_east(_header_first(header, _LON_KEYS))
     night = night_from_path(path) or night_from_dateobs(
         _header_first(header, _DATE_KEYS), lon)
+    is_master = "MASTER" in str(_header_first(header, _IMAGETYP_KEYS) or "").upper()
     return FrameInfo(path=str(path), ftype=ftype, exp=exp, temp=temp,
-                     filt=filt, night=night, name=os.path.basename(path))
+                     filt=filt, night=night, name=os.path.basename(path),
+                     is_master=is_master)
 
 
 def find_fits(root: str) -> List[str]:

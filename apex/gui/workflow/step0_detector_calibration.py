@@ -103,12 +103,26 @@ class _CalibrationWorker(QThread):
         written: set = set()
         summary: Dict = {"nights": {}, "masters": [], "options": opts.__dict__.copy()}
 
-        def _write_master(fname, arr, prov, label):
+        def _write_master(fname, arr, prov, label, extra=None):
             if fname not in written:
-                fits.writeto(masters_dir / fname, arr.astype(np.float32), overwrite=True)
+                # Stamp a MASTER header so APEX's own masters are auto-detected
+                # and reused verbatim on a later run (parity with AIPPI).
+                hdr = fits.Header()
+                kind = str(prov.get("type", "")).capitalize()
+                if kind:
+                    hdr["IMAGETYP"] = f"Master {kind}"
+                if prov.get("exptime") is not None:
+                    hdr["EXPTIME"] = float(prov["exptime"])
+                hdr["NCOMBINE"] = int(prov.get("n_frames", 1))
+                for k, v in (extra or {}).items():
+                    hdr[k] = v
+                fits.writeto(masters_dir / fname, arr.astype(np.float32),
+                             header=hdr, overwrite=True)
                 written.add(fname)
                 summary["masters"].append({"file": fname, **prov})
-                self.logline.emit(f"{label}: {prov['n_frames']} frame(s) → {fname}")
+                tag = " [pre-built master, used directly]" if prov.get("master_input") else ""
+                self.logline.emit(
+                    f"{label}: {prov['n_frames']} frame(s){tag} → {fname}")
 
         def _bias(paths):
             if not paths:
@@ -129,8 +143,9 @@ class _CalibrationWorker(QThread):
                 cache[key] = (md, dexp)
                 exp, tb = dk
                 tag = night_tag or "global"   # keep per-night darks distinct on disk
+                extra = {"CCD-TEMP": float(tb)} if tb is not None else None
                 _write_master(f"master_dark_{exp:g}s_{tb}C_{tag}.fits", md, prov,
-                              f"master dark {exp:g}s/{tb}°C [{tag}]")
+                              f"master dark {exp:g}s/{tb}°C [{tag}]", extra=extra)
             return cache[key]
 
         def _flat(fis, filt, mbias):
@@ -143,7 +158,7 @@ class _CalibrationWorker(QThread):
                 cache[key] = mf
                 tag = fis[0].night or "global"   # the flat frames' own night
                 _write_master(f"master_flat_{filt}_{tag}.fits", mf, prov,
-                              f"master flat {filt} [{tag}]")
+                              f"master flat {filt} [{tag}]", extra={"FILTER": filt})
             return cache[key]
 
         total = sum(len(scan.group_for_night(self.frames, n)["light"]) for n in nights)
@@ -516,7 +531,9 @@ class DetectorCalibrationWindow(ToolWindowBase):
                 items = [f for f in self._frames if f.ftype == t and f.night == n]
                 if not items:
                     continue
-                type_node = QTreeWidgetItem([t.capitalize(), str(len(items)), ""])
+                n_master = sum(1 for f in items if getattr(f, "is_master", False))
+                hint = "pre-built master → used directly" if n_master else ""
+                type_node = QTreeWidgetItem([t.capitalize(), str(len(items)), hint])
                 node.addChild(type_node)
                 # Always pass the resolved pool so each night's light rows show
                 # which dark/flat (incl. shared/global) will be used.
