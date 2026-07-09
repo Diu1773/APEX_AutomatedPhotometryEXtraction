@@ -32,3 +32,10 @@ validation/_scratch/
 .tmp_pipeline_proof/
 .tmp_detect_demo/
 pipeline_run.json
+
+# Editor / local artifacts
+.vscode/
+tmp/
+ui_screenshots/
+# Benchmark run outputs (timestamped dirs)
+benchmark/*_2026*/
