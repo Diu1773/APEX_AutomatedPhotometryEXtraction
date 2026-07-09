@@ -10,11 +10,16 @@ fitting (CMD step 12) is left for the user to do interactively.
    `E:\observe_DSY`, or `E:\observed_Analysis`. All output goes to
    `E:\APEX_validation\reprocess\<target>\`. (`observed_Analysis` is backed up to
    `D:\APEX_backup\observed_Analysis`.)
-2. **Streaming disk management.** Keeping all calibrated frames is impossible
-   (~115 GB vs ~114 GB free). Per target: Step 0 → photometry → **keep results
-   (catalogs, CMD/LC products, masters, a few sample frames) → DELETE the bulky
-   calibrated light frames** → next target. Never let E: free space drop < 20 GB;
-   if it does, stop and report.
+2. **Disk: free space by deleting the backed-up old output (one clean delete),
+   then keep frames.** Sequence: (a) `observed_Analysis` (248 GB) finishes copying
+   to `D:\APEX_backup\observed_Analysis`; (b) **STRICT verify** — file count AND
+   total bytes on D: match E: exactly (E: = 29 659 files / 248.39 GB) + spot-check
+   a few files open; (c) only then delete `E:\observed_Analysis`, freeing ~248 GB
+   (E: → ~362 GB free). After that the reprocess can keep all calibrated frames —
+   no per-target streaming-delete needed. **The 248 GB delete is gated on (b); if
+   counts/bytes don't match, DO NOT delete — report.** Still never let E: free
+   space drop < 20 GB. Deleting is only ever `observed_Analysis` (the old,
+   backed-up, regenerable output) — never raw.
 3. **Verify before batch.** Build each headless runner, then verify it on ONE
    target end-to-end and confirm results match the existing analysis (they should,
    since APEX Step 0 ≡ AIPPI to sub-DN — a mismatch means a bug). Only batch after
@@ -47,10 +52,11 @@ Each GUI step's real work lives in a QThread worker; drive it headless with a
 5. **Per-target config generation.** Copy `parameters.toml`, set `[io].data_dir` →
    the target's APEX Step-0 output, `[io].result_dir` → `reprocess/<target>/result`,
    `[target].ra_deg/dec_deg` from the object (existing: parameters_M13/M5.toml).
-6. **Streaming orchestrator** `scripts/reprocess_batch.py` — for each target:
+6. **Batch orchestrator** `scripts/reprocess_batch.py` — for each target:
    Step 0 (headless) → split per object → gen config → `apex run 1-7` → CMD 8/9/10/11
-   (or LC 8-11) → keep results → delete calibrated frames → log. Resumable
-   (skip targets already done). Disk guard per rail #2.
+   (or LC 8-11) → keep results **and** calibrated frames (space freed by the
+   observed_Analysis delete, rail #2) → log. Resumable (skip targets already done).
+   Disk guard: stop if E: free < 20 GB.
 
 ## TARGETS
 - **CMD clusters (RAW in observe_raw_Analysis):** NGC6811(20260611), M13(20260515),
