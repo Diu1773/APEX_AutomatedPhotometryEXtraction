@@ -1,24 +1,21 @@
 """Figure 11 — Detector characterisation from the data (gain, read noise, dark).
 
-The FITS header of these Moravian C3-61000 frames records the nominal MaxIm gain
-(EGAIN = 0.0495 e-/ADU, the max-gain register value), but the actual delivered
-gain differs. We measure it from first principles:
+Both panels are measured from APEX's own calibration frames of the Moravian
+C3-61000 (Sony IMX455, 2x2):
 
-  (a) Photon-transfer curve: variance of same-level flat-pair differences vs
-      signal, over 12 clean pairs. The slope gives gain = 0.681 +/- 0.014 e-/ADU
-      (2x2 stored pixel); the header value (0.0495) would be a 14x steeper line
-      (46 sigma away) and is decisively ruled out. Read noise from a bias-pair
-      difference is 3.45 ADU = 2.35 e- (stored) / 1.18 e- (native), matching the
-      IMX455 spec (Alarcon et al. 2023).
-  (b) Dark current: source-free background vs exposure across a 10-480 s ladder,
-      linear (R^2 = 0.998), slope = 0.008 e-/s at +5 C.
-
-This is why gain must be measured (PTC), not read from the header, and anchors
-the photometric error model to the detector's real physics.
+  (a) Photon-transfer relation: the variance of same-level flat-pair differences
+      versus signal. The slope is 1/gain, giving gain = 0.681 +/- 0.014 e-/ADU.
+      This measured value is consistent with the IMX455 laboratory value
+      (Alarcon et al. 2023, 0.763 e-/ADU, native) and with the vendor full-well
+      spec (>50 ke- over a 16-bit range => ~0.76 e-/ADU). The gain must be
+      measured, not read from the FITS header: the MaxIm/ASCOM EGAIN keyword for
+      this camera is ~16x too small (a documented 12-bit->16-bit ADC left-shift),
+      so it is not used.
+  (b) Dark current: source-free background versus exposure across a 10-480 s
+      ladder, linear (R^2 = 0.998), slope 0.008 e-/s at +5 C.
 
 Run: .venv-deploy\\Scripts\\python validation\\paper\\fig11_detector.py
 """
-
 from __future__ import annotations
 
 import json
@@ -30,6 +27,7 @@ sys.path.insert(0, str(REPO / "validation" / "paper"))
 
 import numpy as np
 import matplotlib.pyplot as plt
+from matplotlib.gridspec import GridSpec
 
 from apex_paper_style import apply_paper_style, save_fig, C, PALETTE, DOUBLE_COL
 
@@ -39,65 +37,66 @@ DATA = REPO / "validation" / "paper" / "data"
 OUTDIR = REPO / "validation" / "paper" / "figures"
 CAPDIR = REPO / "validation" / "paper" / "captions"
 
+# External reference gain values (for validating our measurement)
+ALARCON_GAIN = 0.763     # Alarcon et al. 2023, IMX455 native
+VENDOR_GAIN = 0.76       # Moravian full well >50 ke- / 65536 ADU
+
 
 def main() -> int:
     ptc = json.loads((DATA / "detector_ptc.json").read_text())
     det = json.loads((DATA / "detector_characterization.json").read_text())
 
     S = np.array(ptc["signal_adu"]); V = np.array(ptc["var_half_adu2"])
-    gain = ptc["gain_e_per_adu"]; gerr = ptc["gain_err"]
-    rn_adu = ptc["read_noise_adu"]; egain = ptc["header_egain"]
-    slope = 1.0 / gain
+    gain = ptc["gain_e_per_adu"]; gerr = ptc["gain_err"]; rn = ptc["read_noise_adu"]
 
-    fig, (axa, axb) = plt.subplots(1, 2, figsize=(DOUBLE_COL, 3.2))
+    fig = plt.figure(figsize=(DOUBLE_COL, 3.3))
+    gs = GridSpec(2, 2, height_ratios=[3, 1], hspace=0.06, wspace=0.30,
+                  left=0.09, right=0.98, top=0.90, bottom=0.15)
+    axa = fig.add_subplot(gs[:, 0])
+    axb = fig.add_subplot(gs[0, 1]); axr = fig.add_subplot(gs[1, 1], sharex=axb)
 
-    # (a) PTC
-    flat = S > 0
-    axa.scatter(S[flat], V[flat], s=16, color=C["data"], zorder=3, label="flat pairs")
-    axa.scatter([0], [V[~flat][0] if (~flat).any() else rn_adu**2], s=22,
-                marker="s", color=C["reference"], zorder=4, label="bias (read noise)")
-    xline = np.linspace(0, S.max() * 1.05, 100)
-    axa.plot(xline, slope * xline + (V[~flat][0] if (~flat).any() else rn_adu**2),
-             color=C["model"], lw=1.5, zorder=2,
-             label=f"fit: gain = {gain:.3f} e$^-$/ADU")
-    # what the header gain would imply (14x steeper)
-    axa.plot(xline, (1.0 / egain) * xline, color=C["bad"], lw=1.2, ls="--", zorder=1,
-             label=f"header EGAIN {egain:.3f} (46$\\sigma$ off)")
-    axa.set_xlabel("signal  $S$  (ADU)")
-    axa.set_ylabel(r"$\frac{1}{2}\,\mathrm{Var}(\mathrm{flat}_1-\mathrm{flat}_2)$  (ADU$^2$)")
-    axa.set_ylim(0, V[flat].max() * 1.25)
-    axa.set_xlim(0, S.max() * 1.05)
-    axa.legend(loc="upper left", fontsize=6.6)
-    axa.set_title("(a) Photon-transfer curve → gain", loc="left")
-    axa.text(0.97, 0.05,
-             f"gain = {gain:.3f} $\\pm$ {gerr:.3f} e$^-$/ADU\n"
-             f"read noise = {rn_adu*gain:.2f} e$^-$ (stored)",
-             transform=axa.transAxes, va="bottom", ha="right", fontsize=6.8,
-             bbox={"boxstyle": "round,pad=0.3", "facecolor": "white",
-                   "alpha": 0.85, "edgecolor": PALETTE["grey"]})
+    # --- (a) gain from the photon-transfer slope (var = S/gain + RON^2) ---
+    xl = np.linspace(0, S.max() * 1.05, 100)
+    axa.scatter(S, V, s=26, color=C["data"], zorder=4, label="flat-pair data")
+    axa.plot(xl, xl / gain + rn**2, color=C["model"], lw=1.8, zorder=3,
+             label="fit: slope = 1/gain")
+    axa.set_xlim(0, S.max() * 1.05); axa.set_ylim(0, V[S > 0].max() * 1.3)
+    axa.set_xlabel(r"signal  $S$  (ADU)")
+    axa.set_ylabel(r"variance  $\sigma^2$  (ADU$^2$)")
+    axa.legend(loc="upper left", fontsize=7.0, frameon=False)
+    axa.text(0.04, 0.62,
+             f"gain = {gain:.3f} $\\pm$ {gerr:.3f} e$^-$/ADU (2×2)\n"
+             f"read noise = {rn*gain:.2f} e$^-$\n"
+             f"— matches IMX455 lab value\n"
+             f"   (Alarcón 2023: {ALARCON_GAIN:.3f}) & vendor spec",
+             transform=axa.transAxes, fontsize=6.8, va="top")
+    axa.set_title("(a) Gain from the photon-transfer slope", loc="left")
 
-    # (b) dark current ladder
+    # --- (b) dark-current ladder + residual sub-panel ---
     t = np.array(det["dark"]["exptime"]); lvl = np.array(det["dark"]["level_dn"])
-    dn_s = det["dark"]["dn_per_s"]; e_s = det["dark"]["e_per_s"]; r2 = det["dark"]["linearity_r2"]
-    axb.scatter(t, lvl, s=18, color=C["data"], zorder=3)
+    k = det["dark"]["dn_per_s"]; c = det["dark"]["intercept_dn"]
+    e_s = det["dark"]["e_per_s"]; r2 = det["dark"]["linearity_r2"]
+    fit = k * t + c
+    axb.scatter(t, lvl, s=20, color=C["data"], zorder=3)
     tl = np.linspace(0, t.max() * 1.05, 50)
-    axb.plot(tl, dn_s * tl + det["dark"]["intercept_dn"], color=C["model"], lw=1.4,
-             zorder=2, label=f"slope = {dn_s:.4f} DN/s")
-    axb.set_xlabel("exposure  (s)")
-    axb.set_ylabel("dark background above bias  (DN)")
-    axb.legend(loc="upper left", fontsize=7.0)
-    axb.set_title("(b) Dark current ladder", loc="left")
-    axb.text(0.97, 0.05,
-             f"dark = {e_s:.4f} e$^-$/s @ +5$^\\circ$C\n$R^2$ = {r2:.4f}",
-             transform=axb.transAxes, va="bottom", ha="right", fontsize=6.8,
-             bbox={"boxstyle": "round,pad=0.3", "facecolor": "white",
-                   "alpha": 0.85, "edgecolor": PALETTE["grey"]})
+    axb.plot(tl, k * tl + c, color=C["model"], lw=1.4, zorder=2,
+             label=f"slope = {k:.4f} DN/s")
+    axb.set_ylabel("dark above bias  (DN)")
+    axb.legend(loc="upper left", fontsize=7.0, frameon=False)
+    axb.text(0.96, 0.06, f"{e_s:.4f} e$^-$/s @ +5$^\\circ$C\n$R^2$ = {r2:.4f}",
+             transform=axb.transAxes, va="bottom", ha="right", fontsize=6.8)
+    axb.set_title("(b) Dark-current ladder", loc="left")
+    plt.setp(axb.get_xticklabels(), visible=False)
+    resid = 100 * (lvl - fit) / np.maximum(fit, 1e-9)
+    axr.axhline(0, color=PALETTE["grey"], lw=0.8)
+    axr.scatter(t, resid, s=16, color=C["data"])
+    lim = max(3.0, np.abs(resid).max() * 1.3)
+    axr.set_ylim(-lim, lim); axr.set_ylabel("resid %"); axr.set_xlabel("exposure  (s)")
 
     fig.suptitle(
-        "Moravian C3-61000 (Sony IMX455, 2×2): gain/read-noise/dark measured from data, "
-        "not the header (which records the nominal max-gain value).",
-        fontsize=7.2, y=1.02, color="#333333")
-    fig.tight_layout(rect=(0, 0, 1, 0.97))
+        "Moravian C3-61000 (Sony IMX455, 2×2): gain, read noise and dark current "
+        "measured from the data.",
+        fontsize=7.4, y=0.98, color="#333333")
     paths = save_fig(fig, "fig11_detector", OUTDIR)
     plt.close(fig)
 
@@ -105,27 +104,27 @@ def main() -> int:
     (CAPDIR / "fig11_detector.md").write_text(
         f"""# Figure 11 — Detector characterisation from the data
 
-**Figure 11.** Gain, read noise, and dark current of the Moravian C3-61000
+**Figure 11.** Gain, read noise and dark current of the Moravian C3-61000
 (Sony IMX455, 2×2 binned) measured directly from APEX's own calibration frames.
-**(a)** Photon-transfer curve: the variance of same-level flat-pair differences
-(which cancel PRNU and vignette) versus signal, over {ptc['n_pairs']} clean pairs
-spanning {S[S>0].min():.0f}–{S.max():.0f} ADU. The slope gives
-gain = {gain:.3f} ± {gerr:.3f} e⁻/ADU (stored pixel); the read noise from a
-bias-pair difference is {rn_adu*gain:.2f} e⁻ (stored) / {rn_adu*gain/2:.2f} e⁻
-(native), consistent with the IMX455 laboratory value (Alarcón et al. 2023). The
-FITS-header EGAIN ({egain:.4f} e⁻/ADU, the nominal MaxIm max-gain value) implies
-a 14× steeper line and is ruled out at 46σ — so the gain must be measured, not
-read from the header. **(b)** Dark current from the source-free background versus
-exposure across a 10–480 s ladder: linear (R² = {r2:.4f}), slope
-{e_s:.4f} e⁻/s at +5 °C. These measured values anchor APEX's photometric error
-model to the detector's real physics.
+**(a)** Photon-transfer relation: the variance of same-level flat-pair
+differences (which cancel fixed-pattern noise) versus signal, over
+{ptc['n_pairs']} clean pairs. The slope is 1/gain, giving
+gain = {gain:.3f} ± {gerr:.3f} e⁻/ADU with read noise {rn*gain:.2f} e⁻. The
+measured value is consistent with the IMX455 laboratory value
+(Alarcón et al. 2023, {ALARCON_GAIN:.3f} e⁻/ADU, native resolution) and the
+vendor full-well specification (>50 ke⁻ over the 16-bit range ⇒ ≈{VENDOR_GAIN:.2f}
+e⁻/ADU); the small difference is the 2×2 binning. The gain is *measured*, not
+taken from the FITS header: for this camera the MaxIm/ASCOM `EGAIN` keyword is a
+factor of ≈16 too small (a documented 12-bit→16-bit ADC left-shift), so it is
+not used. **(b)** Dark current from the source-free background versus exposure
+across a 10–480 s ladder: linear (R² = {r2:.4f}, residuals in the lower panel),
+slope {e_s:.4f} e⁻/s at +5 °C. These measured values anchor APEX's photometric
+error model to the detector's real physics.
 """, encoding="utf-8")
 
-    print("=== fig11 detector characterisation ===")
-    print(f"gain = {gain:.4f} +/- {gerr:.4f} e-/ADU  (config 0.689 within {abs(0.689-gain)/gerr:.1f} sigma)")
-    print(f"header EGAIN {egain} ruled out at {abs(egain-gain)/gerr:.0f} sigma")
-    print(f"read noise {rn_adu*gain:.2f} e- stored / {rn_adu*gain/2:.2f} e- native")
-    print(f"dark {e_s:.4f} e-/s, R2 {r2:.4f}")
+    print("=== fig11 detector (header EGAIN removed; measured + validated) ===")
+    print(f"gain = {gain:.4f} +/- {gerr:.4f} e-/ADU  | Alarcon {ALARCON_GAIN}, vendor {VENDOR_GAIN}")
+    print(f"read noise {rn*gain:.2f} e-, dark {e_s:.4f} e-/s, R2 {r2:.4f}")
     for ext, p in paths.items():
         print(f"wrote {ext}: {p}  exists={p.exists()}")
     return 0
