@@ -2,6 +2,7 @@
 Step path helpers shared across all APEX modes.
 
 Canonical layout:
+  step0_calibration/      Detector calibration (optional): masters + calibrated frames
   step1_file_selection/   File selection + FITS header scan
   step2_crop/             Crop region + cropped images
   step3_sky_preview/      Sky preview QC metadata
@@ -17,6 +18,9 @@ from typing import Union
 
 PathLike = Union[str, Path]
 
+# Detector calibration is an optional off-chain pre-stage ("Step 0"); it is not
+# part of the numbered step chain, but its outputs live alongside the others.
+STEP0_CALIBRATION_DIRNAME = "step0_calibration"
 STEP1_DIRNAME = "step1_file_selection"
 STEP2_DIRNAME = "step2_crop"
 STEP3_DIRNAME = "step3_sky_preview"
@@ -29,6 +33,10 @@ def _as_path(p: PathLike) -> Path:
 
 def step_dir(result_dir: PathLike, dirname: str) -> Path:
     return _as_path(result_dir) / dirname
+
+
+def step0_calibration_dir(result_dir: PathLike) -> Path:
+    return step_dir(result_dir, STEP0_CALIBRATION_DIRNAME)
 
 
 def step1_dir(result_dir: PathLike) -> Path:

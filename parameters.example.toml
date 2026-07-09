@@ -610,3 +610,31 @@ use_color_terms = false
 [extinction_fit.color_c1_by_filter]
 
 [extinction_fit.color_c2_by_filter]
+
+# ── Detector calibration (optional Step 0) ───────────────────────────────────
+# Builds master bias/dark/flat and applies them to raw science frames, turning
+# APEX into a raw->science tool. Mono science CCDs only (no debayer). The GUI
+# Step-0 window exposes these; values here are documentation/defaults.
+[calibration]
+enabled = false            # opt-in; most users feed already-calibrated frames
+combine_method = "median"  # "median" | "mean" | "sigmaclip_mean"
+sigma_low = 3.0            # sigma-clip reject threshold (sigmaclip_mean)
+sigma_high = 3.0
+maxiters = 5
+flat_min = 0.01           # flat values below this -> dead pixel (NaN)
+pedestal_mode = "adaptive" # "none" | "adaptive" | "fixed"
+pedestal_value = 100.0     # DN, used when pedestal_mode = "fixed"
+dark_scale = true          # scale master dark by exposure-time ratio
+dark_optimize = false      # optional noise-min k-fit (imaging heuristic; off)
+# Cosmic-ray + hot-pixel removal (L.A.Cosmic via astroscrappy, star-protected).
+# Standard CCD reduction (van Dokkum 2001); off by default since it alters pixels.
+cosmetic_enable = false
+cr_sigclip = 4.5           # L.A.Cosmic detection sigma
+cr_objlim = 5.0            # contrast limit (protects real point sources)
+hot_sigma = 6.0            # hot-pixel threshold on the master dark
+
+[calibration.overscan]
+enable = false             # subtract row/column overscan bias before masters
+edge = "right"            # "left" | "right" | "top" | "bottom"
+width = 32                 # overscan strip width in pixels
+trim = true                # trim the overscan region after subtracting
