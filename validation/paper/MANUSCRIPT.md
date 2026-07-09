@@ -166,3 +166,27 @@ Two components of the measurement chain itself remain validated only in part (Ta
 ## 6. Conclusion
 
 By the evidence assembled here, APEX's shared photometric measurement chain is a validated, honestly-erred, cross-checked instrument for aperture and PSF photometry of point sources, from uncrowded open-cluster fields to real globular-cluster cores, and its CMD-mode product reproduces what independent instruments see for the same stars. This is a claim about *measurement*, deliberately scoped away from automated isochrone-parameter recovery, from photometry against strongly structured backgrounds, from sub-resolution blending, and from instruments not yet re-verified against the current code. The contribution of APEX is to make that validated measurement chain reachable, through a graphical workflow, by observers for whom the established command-line tools have been out of reach, and to have shown, rather than asserted, that the accessibility need not cost accuracy within the regime established here.
+
+## Data and code availability
+
+APEX is open-source software released under the MIT licence at `https://github.com/Diu1773/APEX_AutomatedPhotometryEXtraction`. The validation suite under `validation/paper/` reproduces every figure through `run_all.py`: the self-contained synthetic figures (Figs 1–4, 6) regenerate from fixed seeds with no external data, while the real-data figures (Figs 5, 7–9) require the observation volume; the Pan-STARRS 1 cross-match used in Figs 7–8 is cached in the repository. The `references.bib` accompanying this manuscript lists every cited work with its DOI.
+
+## Software
+
+This work uses Astropy \citep{astropy2013, astropy2018, astropy2022}, photutils \citep{photutils}, and Barbary's SEP \citep{bertin1996}; astrometric solutions use ASTAP \citep{astap} with an astrometry.net \citep{lang2010} fallback; the independent cross-check uses IRAF/DAOPHOT \citep{stetson1987} via PyRAF. Detector calibration of the input frames (bias, dark, and flat-field correction; Section 2.2) was performed with the authors' separate AstralImage reduction tool (its AIPPI calibration engine), which is upstream of APEX and is not validated in this work.
+
+## Author contributions
+
+*[CRediT statement to be completed before submission — solo software development and analysis; advisor contribution (supervision, data/resources) to be specified once co-authorship is confirmed.]*
+
+## Conflict of interest
+
+The authors declare no conflict of interest.
+
+## Funding
+
+*[To be specified.]*
+
+## AI-usage disclosure
+
+The APEX software was developed with substantial assistance from AI coding tools, and AI-based writing tools were used in drafting and editing this manuscript. This is disclosed plainly because it is central to the paper's argument rather than incidental to it: modern AI-assisted development lowers the barrier to *building* scientific software, and the appropriate response is not to hide that fact but to subject the result to independent, reproducible validation. Every scientific claim in Section 3 is checked against something the pipeline did not itself produce — an independently implemented engine, an independent reference catalogue, or an injected known truth — and the coverage and the gaps of that validation are stated explicitly (Table 1). The authors reviewed and verified all code, figures, and text, and take full responsibility for their correctness.
