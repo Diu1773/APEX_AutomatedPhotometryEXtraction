@@ -62,6 +62,8 @@ gui = [
 build = ["pyinstaller>=6.5,<7"]
 test = ["pytest>=8,<9", "emcee>=3.1"]
 docs = ["mkdocs-material>=9.5", "mkdocstrings[python]>=0.24"]
+# Cross-check benchmarks against independent reductions (validation figures only).
+validation = ["ccdproc>=2.4,<3"]
 # Everything a contributor needs in one shot.
 dev = [
     "PyQt5>=5.15.10,<5.16",
@@ -75,6 +77,7 @@ dev = [
     "pytest>=8,<9",
     "mkdocs-material>=9.5",
     "mkdocstrings[python]>=0.24",
+    "ccdproc>=2.4,<3",
 ]
 # Full runtime (headless core + GUI) without dev/build tooling.
 all = [
