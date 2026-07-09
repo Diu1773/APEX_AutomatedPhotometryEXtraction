@@ -38,6 +38,7 @@ FIGURES = [
     ("fig10_calibration", "Detector calibration (Step 0): flat-field, APEX-vs-AIPPI equivalence, cosmetics"),
     ("fig11_detector", "Detector characterisation from data (PTC gain, read noise, dark current)"),
     ("fig12_preproc_crosscheck", "Per-step preprocessing cross-check vs astropy ccdproc"),
+    ("fig13_cross_instrument", "Cross-instrument + cross-pipeline validation vs LCO BANZAI (two cameras)"),
 ]
 
 

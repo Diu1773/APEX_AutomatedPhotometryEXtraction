@@ -575,20 +575,22 @@ Vector: [`figures/fig11_detector.pdf`](figures/fig11_detector.pdf) · Script: [`
 
 # Figure 11 — Detector characterisation from the data
 
-**Figure 11.** Gain, read noise, and dark current of the Moravian C3-61000
+**Figure 11.** Gain, read noise and dark current of the Moravian C3-61000
 (Sony IMX455, 2×2 binned) measured directly from APEX's own calibration frames.
-**(a)** Photon-transfer curve: the variance of same-level flat-pair differences
-(which cancel PRNU and vignette) versus signal, over 12 clean pairs
-spanning 19120–36510 ADU. The slope gives
-gain = 0.681 ± 0.014 e⁻/ADU (stored pixel); the read noise from a
-bias-pair difference is 2.35 e⁻ (stored) / 1.18 e⁻
-(native), consistent with the IMX455 laboratory value (Alarcón et al. 2023). The
-FITS-header EGAIN (0.0495 e⁻/ADU, the nominal MaxIm max-gain value) implies
-a 14× steeper line and is ruled out at 46σ — so the gain must be measured, not
-read from the header. **(b)** Dark current from the source-free background versus
-exposure across a 10–480 s ladder: linear (R² = 0.9978), slope
-0.0077 e⁻/s at +5 °C. These measured values anchor APEX's photometric error
-model to the detector's real physics.
+**(a)** Photon-transfer relation: the variance of same-level flat-pair
+differences (which cancel fixed-pattern noise) versus signal, over
+12 clean pairs. The slope is 1/gain, giving
+gain = 0.681 ± 0.014 e⁻/ADU with read noise 2.35 e⁻. The
+measured value is consistent with the IMX455 laboratory value
+(Alarcón et al. 2023, 0.763 e⁻/ADU, native resolution) and the
+vendor full-well specification (>50 ke⁻ over the 16-bit range ⇒ ≈0.76
+e⁻/ADU); the small difference is the 2×2 binning. The gain is *measured*, not
+taken from the FITS header: for this camera the MaxIm/ASCOM `EGAIN` keyword is a
+factor of ≈16 too small (a documented 12-bit→16-bit ADC left-shift), so it is
+not used. **(b)** Dark current from the source-free background versus exposure
+across a 10–480 s ladder: linear (R² = 0.9978, residuals in the lower panel),
+slope 0.0077 e⁻/s at +5 °C. These measured values anchor APEX's photometric
+error model to the detector's real physics.
 
 ## Figure 12 — Per-step preprocessing cross-check vs astropy ccdproc
 
@@ -616,3 +618,26 @@ cross-implementation check (analogous to the sep and IRAF photometry
 cross-checks), not a ground-truth validation — the latter is the synthetic
 inject->recover test. Cosmetic correction uses astroscrappy, the L.A.Cosmic
 reference implementation.
+
+## Figure 13 — Cross-instrument + cross-pipeline validation vs LCO BANZAI (two cameras)
+
+![Figure 13](figures/fig13_cross_instrument.png)
+
+Vector: [`figures/fig13_cross_instrument.pdf`](figures/fig13_cross_instrument.pdf) · Script: [`fig13_cross_instrument.py`](fig13_cross_instrument.py)
+
+# Figure 13 — Cross-instrument + cross-pipeline validation (LCO)
+
+**Figure 13.** APEX reduces public raw frames from two different Las Cumbres
+Observatory cameras and is compared pixel-for-pixel against the archive's
+BANZAI-processed product — an independent, published pipeline — testing the
+calibration on foreign detectors. **Top:** a QHY600 CMOS camera (single
+amplifier, 0.4 m; Proxima Cen field). The whole frame agrees to a uniform
++0.063 e⁻ offset (robust σ 0.080 e⁻); the
+difference image is featureless. **Bottom:** a Sinistro CCD (four amplifiers,
+1 m; NGC 5985 field). The sky and sources agree to ≈0.3 %, but the difference
+shows a four-quadrant pattern (Δmedian +1.95 e⁻,
+σ 0.74 e⁻): the per-amplifier assembly — gain, overscan and
+cross-talk — that BANZAI performs with dedicated Sinistro handling and a generic
+reduction does not. The bias/dark/flat calibration arithmetic generalises across
+cameras; multi-amplifier detector assembly is instrument-specific (APEX targets
+single-CCD detectors). ZScale stretch; raw data from archive.lco.global.
