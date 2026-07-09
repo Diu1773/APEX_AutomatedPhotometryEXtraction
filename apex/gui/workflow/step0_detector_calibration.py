@@ -120,7 +120,7 @@ class _CalibrationWorker(QThread):
                 _write_master("master_bias.fits", mb, prov, "master bias")
             return cache[key]
 
-        def _dark(paths, dk, mbias):
+        def _dark(paths, dk, mbias, night_tag):
             if not paths:
                 return None, 1.0
             key = ("dark", frozenset(paths))
@@ -128,8 +128,9 @@ class _CalibrationWorker(QThread):
                 md, dexp, prov = cal.build_master_dark(paths, opts, master_bias=mbias)
                 cache[key] = (md, dexp)
                 exp, tb = dk
-                _write_master(f"master_dark_{exp:g}s_{tb}C.fits", md, prov,
-                              f"master dark {exp:g}s/{tb}°C")
+                tag = night_tag or "global"   # keep per-night darks distinct on disk
+                _write_master(f"master_dark_{exp:g}s_{tb}C_{tag}.fits", md, prov,
+                              f"master dark {exp:g}s/{tb}°C [{tag}]")
             return cache[key]
 
         def _flat(fis, filt, mbias):
@@ -162,7 +163,8 @@ class _CalibrationWorker(QThread):
                     break
                 self.progress.emit(done, total, f"[{night}] {l.name}")
                 dk = scan.match_dark(g["dark"], l.exp, l.temp)
-                md, dexp = _dark([f.path for f in g["dark"][dk]], dk, mbias) if dk else (None, 1.0)
+                md, dexp = (_dark([f.path for f in g["dark"][dk]], dk, mbias,
+                                  g["dark"][dk][0].night) if dk else (None, 1.0))
                 ff = scan.match_flat(g["flat"], l.filt)
                 mf = _flat(g["flat"][ff], ff, mbias) if ff else None
                 if mf is None:

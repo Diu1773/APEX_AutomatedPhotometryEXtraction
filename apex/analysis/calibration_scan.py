@@ -34,6 +34,8 @@ _TEMP_KEYS = ("CCD-TEMP", "CCD_TEMP", "CCDTEMP", "SET-TEMP", "SETTEMP",
               "SENSORTEMP", "CAMTEMP", "TEMP")
 _IMAGETYP_KEYS = ("IMAGETYP", "IMGTYPE", "FRAMETYP", "OBSTYPE")
 _DATE_KEYS = ("DATE-OBS", "DATE", "DATEOBS")
+_LON_KEYS = ("SITELONG", "SITELON", "LONG-OBS", "LONGITUD", "OBSGEO-L",
+             "OBSLONG", "TELLONG")
 _PATH_DATE_RE = re.compile(r"(20\d{6})")
 
 
@@ -78,12 +80,38 @@ def night_from_path(path: str) -> str:
     return ""
 
 
-def night_from_dateobs(dateobs: Optional[str]) -> str:
+def _parse_lon_east(val) -> Optional[float]:
+    """Parse a site-longitude header ('127 21 37', '127:21:37 E', or a float)
+    to signed degrees east; None if unparseable. West is negative."""
+    if val is None:
+        return None
+    if isinstance(val, (int, float)):
+        return float(val)
+    s = str(val).strip()
+    if not s:
+        return None
+    up = s.upper()
+    sign = -1.0 if (s[0] == "-" or "W" in up) else 1.0
+    nums = re.findall(r"\d+(?:\.\d+)?", s)
+    if not nums:
+        return None
+    nums = [float(x) for x in nums]
+    deg = nums[0] + (nums[1] / 60 if len(nums) > 1 else 0) \
+        + (nums[2] / 3600 if len(nums) > 2 else 0)
+    return sign * deg if abs(deg) <= 180 else None
+
+
+def night_from_dateobs(dateobs: Optional[str],
+                       lon_east_deg: Optional[float] = None) -> str:
     """Observing night as YYYYMMDD from DATE-OBS, split at local noon.
 
-    Evening and the following pre-dawn hours share one night: subtract 12 h and
-    take the calendar date, so 20:00 on day N and 03:00 on day N+1 both bucket
-    to night N.
+    Evening and the following pre-dawn hours share one night: the split is at
+    local noon, so a full night buckets to a single date. When ``lon_east_deg``
+    is given, DATE-OBS (UTC) is first shifted to local solar time
+    (UTC + lon/15 h) before the noon split — essential for East-Asian sites,
+    where the whole night sits around UTC noon and a plain −12 h (UTC) split
+    would tear evening frames off to the previous night. Without a longitude it
+    falls back to the −12 h rule (correct only near the Greenwich meridian).
     """
     if not dateobs:
         return ""
@@ -92,9 +120,11 @@ def night_from_dateobs(dateobs: Optional[str]) -> str:
                 "%Y-%m-%dT%H:%M", "%Y-%m-%d"):
         try:
             dt = datetime.strptime(s.split(".")[0] if fmt.endswith("S") else s, fmt)
-            return (dt - timedelta(hours=12)).strftime("%Y%m%d")
         except ValueError:
             continue
+        if lon_east_deg is not None:
+            dt = dt + timedelta(hours=lon_east_deg / 15.0)
+        return (dt - timedelta(hours=12)).strftime("%Y%m%d")
     return ""
 
 
@@ -146,7 +176,9 @@ def read_frame_info(path: str) -> Optional[FrameInfo]:
     exp = _to_float(_header_first(header, EXPTIME_HEADER_KEYS), 0.0) or 0.0
     temp = _to_float(_header_first(header, _TEMP_KEYS), None)
     filt = str(_header_first(header, FILTER_HEADER_KEYS, "") or "").strip()
-    night = night_from_path(path) or night_from_dateobs(_header_first(header, _DATE_KEYS))
+    lon = _parse_lon_east(_header_first(header, _LON_KEYS))
+    night = night_from_path(path) or night_from_dateobs(
+        _header_first(header, _DATE_KEYS), lon)
     return FrameInfo(path=str(path), ftype=ftype, exp=exp, temp=temp,
                      filt=filt, night=night, name=os.path.basename(path))
 

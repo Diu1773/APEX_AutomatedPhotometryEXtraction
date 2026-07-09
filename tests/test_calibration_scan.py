@@ -45,6 +45,23 @@ def test_night_from_path_and_dateobs():
     assert cs.night_from_dateobs("2026-05-15T20:00:00") == "20260515"
 
 
+def test_night_rollover_uses_longitude():
+    # East-Asian site (SITELONG 127.36 E): the UTC night sits ~10-20 h UTC,
+    # straddling UTC noon. A plain -12 h split tears the evening flat (10:47 UTC)
+    # onto the previous night; the longitude-aware split keeps the whole session
+    # on one night, matching the lights (13:22 UTC).
+    lon = cs._parse_lon_east("127 21 37")
+    assert 127.3 < lon < 127.4
+    flat = cs.night_from_dateobs("2026-05-15T10:47:52", lon)
+    light = cs.night_from_dateobs("2026-05-15T13:22:30", lon)
+    assert flat == light == "20260515"
+    # without the longitude, the same evening frame mis-buckets a day earlier
+    assert cs.night_from_dateobs("2026-05-15T10:47:52") == "20260514"
+    # W longitude parses negative; bare float passes through
+    assert cs._parse_lon_east("70 W") < 0
+    assert cs._parse_lon_east(-70.5) == -70.5
+
+
 def test_temp_bucket():
     assert cs.temp_bucket(4.8) == 5
     assert cs.temp_bucket(-9.9) == -10
