@@ -9,6 +9,17 @@ from datetime import datetime
 from typing import Dict, Any, Optional, List
 
 
+# State-file schema version (independent of the config schema_version). Bumped
+# to 2 when the optional off-chain "Step 0: Detector Calibration" was added.
+STATE_SCHEMA_VERSION = 2
+
+# Detector-calibration status (off-chain: NOT part of completed_steps).
+#   not_run  — never opened for this project
+#   skipped  — user chose to skip, or a legacy project predates Step 0
+#   done     — calibration ran and produced calibrated frames
+_CALIB_STATES = {"not_run", "skipped", "done"}
+
+
 class ProjectState:
     """
     Manages workflow state for step-by-step processing.
@@ -35,8 +46,10 @@ class ProjectState:
             "project_name": "Untitled Project",
             "created": datetime.now().isoformat(),
             "last_modified": datetime.now().isoformat(),
+            "state_schema_version": STATE_SCHEMA_VERSION,
             "current_step": 0,
             "completed_steps": [],
+            "calibration": {"status": "not_run"},
             "step_data": {},
         }
 
@@ -57,6 +70,29 @@ class ProjectState:
         if step_index == 0:
             return True
         return self.is_step_completed(step_index - 1)
+
+    # ── Detector calibration (off-chain optional Step 0) ──────────────────────
+    # Calibration is NOT a member of the numbered step chain: it never appears
+    # in completed_steps / current_step and never gates File Selection or any
+    # downstream step. It is always accessible (re-runnable) and carries its own
+    # status so the UI can show done / skipped / not_run.
+
+    def calibration_status(self) -> str:
+        calib = self.state.get("calibration") or {}
+        status = calib.get("status", "not_run")
+        return status if status in _CALIB_STATES else "not_run"
+
+    def is_calibration_done(self) -> bool:
+        return self.calibration_status() == "done"
+
+    def mark_calibration(self, status: str) -> None:
+        if status not in _CALIB_STATES:
+            raise ValueError(
+                f"invalid calibration status {status!r}; expected one of {sorted(_CALIB_STATES)}"
+            )
+        self.state["calibration"] = {"status": status}
+        self.state["last_modified"] = datetime.now().isoformat()
+        self.save()
 
     def mark_step_completed(self, step_index: int):
         if step_index not in self.state["completed_steps"]:
@@ -133,10 +169,29 @@ class ProjectState:
     def load(self):
         try:
             with open(self.state_file, "r", encoding="utf-8") as f:
-                self.state.update(json.load(f))
+                loaded = json.load(f)
+            self.state.update(loaded)
+            self._migrate_state(loaded)
             self._normalize_state()
         except Exception as e:
             print(f"Warning: Could not load project state: {e}")
+
+    def _migrate_state(self, loaded: Dict[str, Any]) -> None:
+        """Bring a just-loaded state file up to STATE_SCHEMA_VERSION.
+
+        ``loaded`` is the raw dict read from disk (not the merged ``self.state``,
+        whose defaults would otherwise mask legacy markers).
+
+        v1 (pre-calibration) → v2: a legacy project predates Step 0 and never ran
+        detector calibration, so it is marked "skipped" — a resolved state, so
+        the UI does not nag finished projects. Crucially completed_steps /
+        current_step are left UNTOUCHED (Scheme B introduces no index shift, so
+        old progress stays valid).
+        """
+        version = loaded.get("state_schema_version", 1)
+        if version < 2 and "calibration" not in loaded:
+            self.state["calibration"] = {"status": "skipped"}
+        self.state["state_schema_version"] = STATE_SCHEMA_VERSION
 
     def _normalize_state(self) -> None:
         if not self.steps:
@@ -173,8 +228,10 @@ class ProjectState:
             "project_name": project_name,
             "created": created,
             "last_modified": datetime.now().isoformat(),
+            "state_schema_version": STATE_SCHEMA_VERSION,
             "current_step": 0,
             "completed_steps": [],
+            "calibration": {"status": "not_run"},
             "step_data": {},
         }
         self.save()

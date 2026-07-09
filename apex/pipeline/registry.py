@@ -12,6 +12,7 @@ from __future__ import annotations
 from typing import List, Optional, Set
 
 from apex.pipeline.base import DeferredStep, PipelineStep
+from apex.pipeline.steps.calibration import CalibrationStep
 from apex.pipeline.steps.scan import ScanStep
 from apex.pipeline.steps.crop import CropStep
 from apex.pipeline.steps.sky_qc import SkyQCStep
@@ -40,10 +41,20 @@ def _shared_steps() -> List[PipelineStep]:
 
 def get_steps(mode: str) -> List[PipelineStep]:
     """Ordered steps for a mode. Today both modes share Steps 1-7; mode-specific
-    Steps 8+ (CMD 8-12 / LC 8-11) will be appended as they are ported."""
+    Steps 8+ (CMD 8-12 / LC 8-11) will be appended as they are ported.
+
+    Detector calibration (index 0) is deliberately excluded here — it is an
+    optional off-chain pre-stage; use :func:`get_calibration_step` for it. This
+    keeps the runner's 1-based ``step.index - 1`` math from ever seeing 0."""
     if mode not in ("cmd", "lc"):
         raise ValueError(f"mode must be 'cmd' or 'lc', got {mode!r}")
     return _shared_steps()
+
+
+def get_calibration_step() -> PipelineStep:
+    """The optional off-chain Step 0 (detector calibration), separate from the
+    numbered 1-7 chain returned by :func:`get_steps`."""
+    return CalibrationStep()
 
 
 def parse_step_range(spec: str) -> Set[int]:
