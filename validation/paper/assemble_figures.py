@@ -35,6 +35,8 @@ FIGURES = [
     ("fig7_reference_crosscheck", "Cross-catalog reference validation (PS1) — a Gaia BP faint bias"),
     ("fig8_cmd_reproduction", "CMD reproduction across three independent photometric systems"),
     ("fig9_crowded_field", "Crowded-field validation on a real globular cluster (M5)"),
+    ("fig10_calibration", "Detector calibration (Step 0): flat-field, APEX-vs-AIPPI equivalence, cosmetics"),
+    ("fig11_detector", "Detector characterisation from data (PTC gain, read noise, dark current)"),
 ]
 
 
