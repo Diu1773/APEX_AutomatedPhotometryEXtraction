@@ -56,7 +56,21 @@ def crop_rect_path(result_dir: PathLike) -> Path:
 
 
 def crop_is_active(result_dir: PathLike) -> bool:
-    return crop_rect_path(result_dir).exists()
+    # A crop_rect.json that only records a skip marker ({"skipped": true}) means
+    # crop is NOT active. Checking mere file existence wrongly reports True for a
+    # skip marker, which desyncs use_cropped between detection (reads the marker,
+    # -> False) and refbuild's signature check (-> True) in the headless pipeline.
+    rect_path = crop_rect_path(result_dir)
+    if not rect_path.exists():
+        return False
+    try:
+        import json as _json
+        data = _json.loads(rect_path.read_text(encoding="utf-8"))
+        if isinstance(data, dict) and data.get("skipped"):
+            return False
+    except Exception:
+        pass
+    return True
 
 
 def step3_dir(result_dir: PathLike) -> Path:
