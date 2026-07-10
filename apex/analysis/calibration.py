@@ -89,6 +89,12 @@ class CalibrationOptions:
     gain: float = 1.0                     # e-/ADU fallback (header EGAIN preferred)
     readnoise: float = 6.5                # e- fallback (header RDNOISE preferred)
 
+    # Skip frames whose header shows they were ALREADY bias/dark/flat-corrected
+    # (CALBIAS/CALFLAT/CALSOFT keys or "CAL BIAS/FLAT" HISTORY, from a prior APEX
+    # run or an external pipeline like MaxIm/AstralImage). Re-calibrating them
+    # double-subtracts bias/dark and double-divides by flat, producing artifacts.
+    skip_precalibrated: bool = True
+
 
 # ---------------------------------------------------------------------------
 # FITS I/O + header helpers
@@ -431,6 +437,31 @@ def frame_stats(data: np.ndarray) -> Dict[str, float]:
     }
 
 
+def frame_is_calibrated(header) -> bool:
+    """True if the header records prior bias/dark/flat calibration — from a
+    previous APEX run or an external pipeline (MaxIm DL, AstralImage). Detected
+    from the CALSOFT/CALBIAS/CALFLAT/CALDARK keywords (APEX writes booleans,
+    external tools write the master-frame filename) or "CAL BIAS/FLAT" HISTORY
+    lines. Used to skip re-calibration and avoid double bias/dark/flat."""
+    if header is None:
+        return False
+    for key in ("CALSOFT", "CALBIAS", "CALFLAT", "CALDARK"):
+        if key in header:
+            val = header[key]
+            if isinstance(val, bool):
+                if val:
+                    return True
+            elif str(val).strip().lower() not in ("", "false", "0", "none"):
+                return True
+    try:
+        hist = " ".join(str(h) for h in header.get("HISTORY", [])).upper()
+        if "CAL BIAS" in hist or "CAL FLAT" in hist or "APEX CALIBRATION" in hist:
+            return True
+    except Exception:
+        pass
+    return False
+
+
 def calibrate_light(data: np.ndarray, header, opts: CalibrationOptions,
                     master_bias: Optional[np.ndarray] = None,
                     master_dark: Optional[np.ndarray] = None,
@@ -444,6 +475,18 @@ def calibrate_light(data: np.ndarray, header, opts: CalibrationOptions,
     """
     work = np.array(data, dtype=np.float64, copy=True)
     prov: Dict[str, Any] = {}
+
+    # Guard: never re-calibrate an already-calibrated frame. A prior APEX run or
+    # an external pipeline (MaxIm/AstralImage) leaves CALBIAS/CALFLAT/CALSOFT in
+    # the header; re-applying bias/dark/flat would double-subtract and double-
+    # divide, leaving artifacts (e.g. i-band fringe residuals that SEP then
+    # detects as thousands of spurious sources). Pass such frames through as-is.
+    if opts.skip_precalibrated and frame_is_calibrated(header):
+        qc = frame_stats(work)
+        qc.update({"already_calibrated": True, "skipped_recalibration": True})
+        if header is not None:
+            header.add_history("APEX Step 0: skipped (already calibrated)")
+        return work.astype(_OUTPUT_DTYPE), header, qc
 
     # A. bias
     if master_bias is not None:
