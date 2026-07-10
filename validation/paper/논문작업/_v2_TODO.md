@@ -19,10 +19,14 @@
 - 정직성 스파인: §3.1·§3.8·Table 1(direct/indirect/not-yet)·§5.2 다 있음
 - 측광 방법: §2.2에 구경+apcorr+PSF, apcorr 성장곡선 서술 있음
 
-## 🔧 이번에 반영 완료 (2026-07-10)
-- **AIPPI 검증 제거** — Table 1 / §3.11 / §Software / §2.2 4곳:
-  - §3.11: "AIPPI bit-identical" → **합성 inject–recover + ccdproc(§3.13) 독립검증**으로 교체
-  - AIPPI는 provenance(코드 heritage)로만 명시, 검증 레퍼런스 아님으로 강등
+## 🔧 반영 완료 (2026-07-10)
+- **AIPPI 검증 제거** — Table 1 / §3.11 / §Software / §2.2 4곳. AIPPI는 provenance로만 강등
+- **§3.11 실수치**: 합성 inject–recover(calibrated offset −0.016 DN·scatter 3.18 DN≈잡음바닥·
+  bias/dark ~1 DN RMS·flat vignette 21→2 DN) + ccdproc(§3.13)로 AIPPI 대체. (커밋 e0f538e)
+- **§3.2 완전도**: 로지스틱=경험적 요약+인용(REF_completeness→Fleming) + SNR-임계 물리(전이
+  SNR≈7.4, 로지스틱=잡음-임계 누적가우시안 근사) + 밝은쪽 결손 정직. (커밋 68e43b7)
+- **§3.6 IRAF 매칭 + T2 표**: all-APEX NGC6811 V, 구경 1.0×FWHM·annulus 6-9 매칭 재실행
+  (N=498, MAD 0.0092, r=0.99984). NGC457(g,278)과 짝지어 "단일프레임" 한계 해소. (커밋 17620df)
 
 ## 🔲 남은 v2 델타 (우선순위)
 
