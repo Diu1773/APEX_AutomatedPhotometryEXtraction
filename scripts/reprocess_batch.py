@@ -82,21 +82,42 @@ def run_step0(target: str, raw_dir: str) -> Path:
     return out
 
 
+def _object_aliases(target: str) -> set[str]:
+    """Filename object-name aliases for a target. A single raw night can image
+    several objects (e.g. 20260611 has NGC6811 AND NGC3231), and calibrated
+    frames are named by the object header (pp_<object>-NNNN-FILT.fit), which is
+    often the long form: M3 -> 'messier3', M67 -> 'Messier67'. Match on that."""
+    t = target.replace("_", "").lower()
+    aliases = {t}
+    m = re.match(r"m(\d+)$", t)
+    if m:
+        aliases |= {f"messier{m.group(1)}"}
+    return aliases
+
+
+def _obj_token(name: str) -> str:
+    """pp_messier3-0001-B.fit -> 'messier3' ; pp_NGC6811-0005-V.fit -> 'ngc6811'."""
+    stem = name[3:] if name.lower().startswith("pp_") else name
+    return stem.split("-")[0].strip().lower()
+
+
 def reorg_per_object(target: str) -> Path:
-    """Move this target's calibrated frames into reprocess/<target>/sci/ (one object)."""
+    """Move this target's calibrated frames into reprocess/<target>/sci/, keeping
+    only frames whose object token matches the target (excludes co-imaged other
+    objects like NGC3231 and stray tokens)."""
     cal = REPROCESS / target / "calibrated"
     sci = REPROCESS / target / "sci"
     sci.mkdir(parents=True, exist_ok=True)
-    stem = re.split(r"[_\d]", target)[0]  # NGC6811 -> NGC, M13 -> M ; refine per object below
-    frames = list(cal.rglob(f"pp_{target}-*.fit")) + list(cal.rglob(f"pp_{target.replace('_','')}-*.fit"))
-    if not frames:  # fall back: object token from filenames
-        frames = [p for p in cal.rglob("pp_*.fit")
-                  if target.replace("_", "").lower() in p.name.replace(" ", "").lower()]
+    aliases = _object_aliases(target)
+    frames = [p for p in cal.rglob("pp_*.fit") if _obj_token(p.name) in aliases]
+    other = sorted({_obj_token(p.name) for p in cal.rglob("pp_*.fit")} - aliases)
     for p in frames:
         dst = sci / p.name
         if not dst.exists():
             shutil.move(str(p), str(dst))
-    print(f"[{target}] reorg: {len(list(sci.glob('pp_*.fit')))} frames in sci/")
+    n = len(list(sci.glob("pp_*.fit")))
+    print(f"[{target}] reorg: {n} frames in sci/ (aliases={sorted(aliases)}; "
+          f"excluded objects={other})")
     return sci
 
 
