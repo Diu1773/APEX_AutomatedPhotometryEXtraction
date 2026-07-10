@@ -113,30 +113,6 @@ def apex_run(cfg: Path, steps="1-7", mode="cmd"):
         raise RuntimeError(f"apex run {steps} failed ({cfg})")
 
 
-def _patch_detect_cache(target: str, sci: Path):
-    """Rewrite each detect_*.json source signature to the current Windows frame so
-    refbuild accepts it (works around WSL-path/mtime contamination from the WCS step)."""
-    import json
-    step4 = REPROCESS / target / "result" / "step4_detection"
-    n = 0
-    for jf in step4.glob("detect_*.json"):
-        try:
-            d = json.loads(jf.read_text(encoding="utf-8"))
-        except Exception:
-            continue
-        fname = jf.name[len("detect_"):-len(".json")]  # e.g. pp_NGC6811-0001-B.fit
-        frame = sci / fname
-        if not frame.exists():
-            continue
-        st = frame.stat()
-        d["source_path"] = str(frame)
-        d["source_size"] = st.st_size
-        d["source_mtime_ns"] = st.st_mtime_ns
-        jf.write_text(json.dumps(d), encoding="utf-8")
-        n += 1
-    print(f"[{target}] patched {n} detect_*.json source signatures", flush=True)
-
-
 def run_one(target: str) -> bool:
     raw, kind, ra, dec = TARGETS[target]
     log(f"\n### {target} ({kind}) — start, E: free {free_gb():.0f} GB")
@@ -147,14 +123,7 @@ def run_one(target: str) -> bool:
     if not list(sci.glob("pp_*.fit")):
         log(f"[SKIP] {target}: no calibrated frames after reorg"); return False
     cfg = gen_config(target, sci, ra, dec)
-    # WCS (step 5, WSL astnet) rewrites frame headers AND leaves the detection cache
-    # with a WSL-lowercased source_path + stale mtime, so refbuild's signature check
-    # rejects the (valid) detection metadata even though size matches. Work around it
-    # without touching core code: run 1-5, patch each detect_*.json's source signature
-    # to the current Windows frame, then run refbuild+forcedphot (6,7).
-    apex_run(cfg, "1-5", "cmd")
-    _patch_detect_cache(target, sci)
-    apex_run(cfg, "6-7", "cmd")
+    apex_run(cfg, "1-7", "cmd")
     log(f"[STEP1-7] {target}: forced photometry done -> {REPROCESS/target/'result'}")
     # CMD 8-11 runners wired once built; then mark [DONE]
     log(f"[PENDING-CMD] {target}: steps 8-11 await runner build")
