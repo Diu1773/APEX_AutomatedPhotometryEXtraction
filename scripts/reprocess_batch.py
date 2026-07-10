@@ -95,29 +95,63 @@ def _object_aliases(target: str) -> set[str]:
     return aliases
 
 
+_FILTER_SUFFIX = re.compile(r"[-_ ](g|r|i|z|u|b|v|ha|o3|oiii|sii|l)$", re.IGNORECASE)
+
+
+def _norm_object(o: str) -> str:
+    """Normalize a FITS OBJECT value to a comparable token: strip a trailing
+    filter suffix ('M5-g' -> 'm5'), drop spaces, lowercase ('NGC 6811' handled
+    by callers via aliases)."""
+    o = _FILTER_SUFFIX.sub("", str(o).strip())
+    return o.replace(" ", "").lower()
+
+
 def _obj_token(name: str) -> str:
-    """pp_messier3-0001-B.fit -> 'messier3' ; pp_NGC6811-0005-V.fit -> 'ngc6811'."""
+    """Filename object token: pp_messier3-0001-B.fit -> 'messier3'."""
     stem = name[3:] if name.lower().startswith("pp_") else name
     return stem.split("-")[0].strip().lower()
 
 
+def _frame_object(path: Path) -> str:
+    """Normalized OBJECT header of a calibrated frame ('' if unreadable)."""
+    try:
+        from astropy.io import fits
+        return _norm_object(fits.getheader(str(path)).get("OBJECT", ""))
+    except Exception:
+        return ""
+
+
 def reorg_per_object(target: str) -> Path:
-    """Move this target's calibrated frames into reprocess/<target>/sci/, keeping
-    only frames whose object token matches the target (excludes co-imaged other
-    objects like NGC3231 and stray tokens)."""
+    """Move this target's calibrated frames into reprocess/<target>/sci/. A frame
+    belongs to the target if its FITS OBJECT header (filter suffix stripped) OR
+    its filename token matches the target aliases {m<n>, messier<n>} / NGC key.
+    Header-driven so it works when filenames carry no object (M5: pp_0002.fit,
+    OBJECT='M5-g'). Double-calibrated frames (raw already pp_ -> pp_pp_*) are
+    excluded: their OBJECT still matches, but re-calibrating a calibrated frame
+    is wrong, so only the clean single-pass set is kept."""
     cal = REPROCESS / target / "calibrated"
     sci = REPROCESS / target / "sci"
     sci.mkdir(parents=True, exist_ok=True)
     aliases = _object_aliases(target)
-    frames = [p for p in cal.rglob("pp_*.fit") if _obj_token(p.name) in aliases]
-    other = sorted({_obj_token(p.name) for p in cal.rglob("pp_*.fit")} - aliases)
+    all_frames = [p for p in cal.rglob("pp_*.fit")
+                  if not p.name.lower().startswith("pp_pp_")]
+    frames, seen_obj = [], {}
+    for p in all_frames:
+        obj = _frame_object(p)
+        tok = _obj_token(p.name)
+        key = obj or tok
+        seen_obj[key] = seen_obj.get(key, 0) + 1
+        if obj in aliases or tok in aliases:
+            frames.append(p)
+    n_dpp = sum(1 for p in cal.rglob("pp_pp_*.fit"))
     for p in frames:
         dst = sci / p.name
         if not dst.exists():
             shutil.move(str(p), str(dst))
     n = len(list(sci.glob("pp_*.fit")))
-    print(f"[{target}] reorg: {n} frames in sci/ (aliases={sorted(aliases)}; "
-          f"excluded objects={other})")
+    excluded = sorted(k for k in seen_obj if k not in aliases)
+    print(f"[{target}] reorg: {n} frames -> sci/ (aliases={sorted(aliases)}; "
+          f"excluded_objects={excluded}; double_pp_skipped={n_dpp})")
     return sci
 
 
