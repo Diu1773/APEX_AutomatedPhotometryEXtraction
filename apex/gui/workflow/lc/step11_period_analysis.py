@@ -42,8 +42,13 @@ from apex.gui.layout_rules import tame_canvas
 from apex.gui.theme import style_button, Tokens
 from apex.gui.workflow.step_window_base import StepWindowBase
 from apex.analysis.light_curve.period_analysis_service import (
+    compute_ls,
     run_period_analysis,
-    resolve_multinight_period,
+)
+from apex.analysis.light_curve.period_alias_service import (
+    analyze_period_aliases,
+    diagnose_multimode_suspicion,
+    periods_are_window_aliases,
 )
 from apex.analysis.light_curve.period_io_service import (
     detect_corr_mode_from_df,
@@ -139,30 +144,6 @@ def _detect_corr_mode(filename: str) -> tuple[str, str]:
     return detect_corr_mode_from_df(pd.DataFrame(), filename)
 
 
-def _compute_1day_aliases(period: float) -> list[float]:
-    """Compute 1-day sampling aliases of a period.
-
-    Formula: 1/f_alias = 1/f_true ± n/f_samp  (f_samp = 1 day⁻¹, n=1,2)
-    Returns list of alias periods (positive, finite only).
-    """
-    f = 1.0 / period
-    aliases = []
-    for n in (1, 2):
-        for sign in (+1, -1):
-            f_alias = f + sign * n
-            if f_alias > 0:
-                aliases.append(1.0 / f_alias)
-    return aliases
-
-
-def _is_1day_alias(p1: float, p2: float, tol: float = 0.005) -> bool:
-    """Check if two periods are related by 1-day sampling alias."""
-    for alias_p in _compute_1day_aliases(p1):
-        if abs(alias_p - p2) / p2 < tol:
-            return True
-    return False
-
-
 class PeriodAnalysisWorker(QThread):
     """Worker thread for period analysis (Lomb-Scargle, PDM, BLS)."""
     progress = pyqtSignal(str)
@@ -181,6 +162,8 @@ class PeriodAnalysisWorker(QThread):
         methods: Optional[List[str]] = None,
         pdm_n_bins: int = 10,
         night_id: Optional[np.ndarray] = None,
+        include_alias_diagnostics: bool = False,
+        include_multimode_diagnostic: bool = False,
     ):
         super().__init__()
         self.time = time
@@ -193,6 +176,8 @@ class PeriodAnalysisWorker(QThread):
         self.methods = methods or ["ls"]
         self.pdm_n_bins = pdm_n_bins
         self.night_id = night_id
+        self.include_alias_diagnostics = bool(include_alias_diagnostics)
+        self.include_multimode_diagnostic = bool(include_multimode_diagnostic)
 
     def run(self):
         try:
@@ -208,21 +193,48 @@ class PeriodAnalysisWorker(QThread):
                 pdm_n_bins=self.pdm_n_bins,
                 progress_cb=self.progress.emit,
             )
-            # Multi-night 1-day-alias resolution: when the data spans >=2 nights
-            # the tallest LS peak is often a +/-1 c/d alias; resolve it against
-            # the best single night (period_analysis_service.resolve_multinight_period).
-            if self.night_id is not None:
-                try:
-                    n_nights = len(set(str(n) for n in self.night_id))
-                except TypeError:
-                    n_nights = 1
-                if n_nights >= 2:
-                    self.progress.emit("Resolving multi-night 1-day alias...")
-                    mag = self.mag_corr if (self.mag_corr is not None
-                                            and np.any(np.isfinite(self.mag_corr))) else self.mag_raw
-                    results["multinight"] = resolve_multinight_period(
-                        self.time, mag, self.night_id,
-                        self.min_period, self.max_period, self.mag_err,
+            mag = self.mag_corr if (
+                self.mag_corr is not None and np.any(np.isfinite(self.mag_corr))
+            ) else self.mag_raw
+            needs_diagnostics = self.include_alias_diagnostics or self.include_multimode_diagnostic
+            ls_result = results.get("corr_ls") or results.get("raw_ls")
+            if needs_diagnostics and not ls_result:
+                ls_result = compute_ls(
+                    self.time,
+                    mag,
+                    self.mag_err,
+                    "alias-scan",
+                    self.min_period,
+                    self.max_period,
+                    self.samples_per_peak,
+                )
+            if needs_diagnostics and ls_result and "error" not in ls_result and "frequency" in ls_result:
+                self.progress.emit("Evaluating sampling-window aliases...")
+                alias_analysis = analyze_period_aliases(
+                    self.time,
+                    mag,
+                    self.mag_err,
+                    self.night_id,
+                    ls_result["frequency"],
+                    ls_result["power"],
+                    self.min_period,
+                    self.max_period,
+                    harmonics=2,
+                )
+                if self.include_alias_diagnostics:
+                    results["alias_analysis"] = alias_analysis
+                if self.include_multimode_diagnostic:
+                    self.progress.emit("Testing for independent residual frequencies...")
+                    results["multimode_diagnostic"] = diagnose_multimode_suspicion(
+                        self.time,
+                        mag,
+                        self.mag_err,
+                        self.night_id,
+                        alias_analysis,
+                        self.min_period,
+                        self.max_period,
+                        harmonics=2,
+                        samples_per_peak=max(self.samples_per_peak, 10),
                     )
             self.finished.emit(results)
         except Exception as e:
@@ -238,6 +250,8 @@ class PeriodAnalysisWindow(StepWindowBase):
         self.worker = None
         self.results = {}
         self.multinight = None
+        self.alias_analysis = None
+        self.multimode_diagnostic = None
         self.lc_data = None
         self.current_filter = None
         self._ui_ready = False
@@ -284,8 +298,7 @@ class PeriodAnalysisWindow(StepWindowBase):
 
         info = QLabel(
             "Period analysis: Lomb-Scargle, PDM, BLS.\n"
-            "Multiple methods reduce aliasing; consensus = true period. "
-            "Multi-night data is automatically alias-resolved.\n"
+            "Sampling-window aliases are ranked; unresolved families remain ambiguous.\n"
             "For detailed analysis (refine, bootstrap, O-C, transit fit) → Tools menu."
         )
         info.setStyleSheet(
@@ -301,6 +314,11 @@ class PeriodAnalysisWindow(StepWindowBase):
         self.result_callout.setWordWrap(True)
         self.result_callout.setVisible(False)
         self.content_layout.addWidget(self.result_callout)
+
+        self.mode_callout = QLabel("")
+        self.mode_callout.setWordWrap(True)
+        self.mode_callout.setVisible(False)
+        self.content_layout.addWidget(self.mode_callout)
 
         # Data selection
         data_group = QGroupBox("Data Selection")
@@ -398,7 +416,7 @@ class PeriodAnalysisWindow(StepWindowBase):
         periodogram_layout = QVBoxLayout(periodogram_tab)
 
         alias_row = QHBoxLayout()
-        self.chk_alias = QCheckBox("Show 1-day aliases of best period")
+        self.chk_alias = QCheckBox("Show sampling-window candidates")
         self.chk_alias.setChecked(True)
         self.chk_alias.toggled.connect(self._update_periodogram_plot)
         alias_row.addWidget(self.chk_alias)
@@ -448,6 +466,17 @@ class PeriodAnalysisWindow(StepWindowBase):
         self.results_table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeToContents)
         self.results_table.horizontalHeader().setStretchLastSection(True)
         results_layout.addWidget(self.results_table)
+
+        self.alias_table = QTableWidget()
+        self.alias_table.setColumnCount(7)
+        self.alias_table.setHorizontalHeaderLabels([
+            "Rank", "Period (days)", "Freq (d^-1)", "Rel. power",
+            "Delta BIC", "LOO votes", "Relation",
+        ])
+        self.alias_table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeToContents)
+        self.alias_table.horizontalHeader().setStretchLastSection(True)
+        self.alias_table.setMaximumHeight(190)
+        results_layout.addWidget(self.alias_table)
 
         # Bootstrap FAP controls
         bsfap_row = QHBoxLayout()
@@ -545,7 +574,11 @@ class PeriodAnalysisWindow(StepWindowBase):
 
     def _clear_analysis_results(self):
         self.results = {}
+        self.alias_analysis = None
+        self.multimode_diagnostic = None
+        self.multinight = None
         self.results_table.setRowCount(0)
+        self.alias_table.setRowCount(0)
         self.phase_period_combo.blockSignals(True)
         self.phase_period_combo.clear()
         self.phase_period_combo.blockSignals(False)
@@ -554,6 +587,8 @@ class PeriodAnalysisWindow(StepWindowBase):
         self.phase_canvas.figure.clear()
         self.phase_canvas.draw_idle()
         self.progress_label.setText("")
+        self.result_callout.setVisible(False)
+        self.mode_callout.setVisible(False)
 
     def _load_light_curve(self, silent: bool = False):
         target_id = self.target_id_spin.value()
@@ -655,6 +690,8 @@ class PeriodAnalysisWindow(StepWindowBase):
             methods=methods,
             pdm_n_bins=self.pdm_bins_spin.value(),
             night_id=self.lc_data.get("night_id"),
+            include_alias_diagnostics=True,
+            include_multimode_diagnostic=True,
         )
         self.worker.progress.connect(self._on_progress)
         self.worker.finished.connect(self._on_finished)
@@ -674,14 +711,17 @@ class PeriodAnalysisWindow(StepWindowBase):
     def _on_finished(self, results: dict):
         self.btn_run.setEnabled(True)
         self.progress_label.setText("Done")
-        # Separate the multi-night resolution from the per-method period results
-        # so the plot/table/phase consumers only ever see period-result dicts.
+        # Keep diagnostics separate from per-method periodogram result dicts.
+        self.alias_analysis = results.pop("alias_analysis", None)
+        self.multimode_diagnostic = results.pop("multimode_diagnostic", None)
         self.multinight = results.pop("multinight", None)
         self.results = results
 
         self._show_result_callout()
+        self._show_multimode_callout()
         self._update_periodogram_plot()
         self._update_results_table()
+        self._update_alias_candidate_table()
         self._populate_phase_periods()
         self._update_phase_plot()
         self._save_results()
@@ -693,27 +733,26 @@ class PeriodAnalysisWindow(StepWindowBase):
         self.btn_bootstrap.setEnabled(has_ls)
 
     def _show_result_callout(self):
-        """Surface the trustworthy period in a prominent callout (and log the
-        multi-night alias-resolution detail)."""
+        """Surface the adopted candidate without hiding unresolved aliases."""
         t = Tokens
-        m = self.multinight
-        if m and m.get("n_nights", 0) >= 2 and np.isfinite(m.get("period", np.nan)):
-            if m.get("was_aliased"):
-                self.log(
-                    f"[MULTI-NIGHT] tallest peak {m['naive_period']:.6f} d was a "
-                    f"1-day alias — resolved to {m['period']:.6f} d using the best "
-                    f"single night ({m['reference_night']}) as reference."
-                )
-                text = (f"Resolved period  {m['period']:.6f} d   "
-                        f"(1-day alias {m['naive_period']:.6f} d corrected · "
-                        f"{m['n_nights']} nights)")
-                bg, fg = t.ACCENT_SOFT, t.ACCENT
+        analysis = self.alias_analysis
+        if analysis and np.isfinite(analysis.get("adopted_period", np.nan)):
+            status = str(analysis.get("status", "AMBIGUOUS")).upper()
+            period = float(analysis["adopted_period"])
+            reason = str(analysis.get("reason", "")).strip()
+            text = f"{status}  |  candidate period {period:.6f} d"
+            if reason:
+                text += f"\n{reason}"
+            if status == "RESOLVED":
+                bg, fg = "#E8F5E9", t.OK
+            elif status == "INSUFFICIENT":
+                bg, fg = "#FDECEC", t.ERROR
             else:
-                self.log(f"[MULTI-NIGHT] resolved period {m['period']:.6f} d "
-                         f"(ref night {m['reference_night']}; no alias correction needed).")
-                text = (f"Period  {m['period']:.6f} d   "
-                        f"({m['n_nights']} nights, no alias correction needed)")
-                bg, fg = t.SURFACE_ALT, t.TEXT
+                bg, fg = "#FFF4E5", t.WARN
+            self.log(
+                f"[ALIAS {status}] P={period:.8f} d; "
+                f"window peaks={len(analysis.get('window_peaks', []))}; {reason}"
+            )
         else:
             # single-night: show the strongest LS/PDM period
             best = None
@@ -733,6 +772,31 @@ class PeriodAnalysisWindow(StepWindowBase):
             f"padding: {t.S2}px {t.S3}px; border-radius: {t.RADIUS_SM}px; }}"
         )
         self.result_callout.setVisible(True)
+
+    def _show_multimode_callout(self):
+        diagnostic = self.multimode_diagnostic or {}
+        status = str(diagnostic.get("status", "")).upper()
+        if not status:
+            self.mode_callout.setVisible(False)
+            return
+
+        reason = str(diagnostic.get("reason", "")).strip()
+        text = f"MODE DIAGNOSTIC  |  {status}"
+        if reason:
+            text += f"\n{reason}"
+        if status == "MULTIMODE-SUSPECT":
+            bg, fg = "#FCE8E6", "#B3261E"
+        elif status == "SINGLE-COMPATIBLE":
+            bg, fg = "#E8F5E9", Tokens.OK
+        else:
+            bg, fg = "#FFF4E5", Tokens.WARN
+        self.mode_callout.setText(text)
+        self.mode_callout.setStyleSheet(
+            f"QLabel {{ background: {bg}; color: {fg}; font-weight: 600; "
+            f"padding: {Tokens.S2}px {Tokens.S3}px; border-radius: {Tokens.RADIUS_SM}px; }}"
+        )
+        self.mode_callout.setVisible(True)
+        self.log(f"[MODE {status}] {reason}")
 
     def _run_bootstrap_fap(self):
         """Run Bootstrap FAP for the best LS result in a background thread."""
@@ -890,14 +954,26 @@ class PeriodAnalysisWindow(StepWindowBase):
                 )
                 ax.set_xscale("log")
 
-                # 1/day alias lines of the best period
+                # Candidate family generated from the actual sampling window.
                 if hasattr(self, "chk_alias") and self.chk_alias.isChecked():
                     p_min = self.min_period_spin.value()
                     p_max = self.max_period_spin.value()
-                    for k, ap in enumerate(_compute_1day_aliases(best_period)):
-                        if p_min <= ap <= p_max:
-                            ax.axvline(ap, color="orange", ls="--", lw=1.2, alpha=0.7,
-                                       label=f"1d-alias {ap:.4f}d" if k == 0 else f"{ap:.4f}d")
+                    analysis = self.alias_analysis or {}
+                    for candidate in analysis.get("candidates", [])[1:6]:
+                        ap = float(candidate.get("period", np.nan))
+                        if np.isfinite(ap) and p_min <= ap <= p_max:
+                            ax.axvline(
+                                ap,
+                                color="orange",
+                                ls="--",
+                                lw=1.0,
+                                alpha=0.65,
+                                label=(
+                                    f"window candidate {ap:.4f}d"
+                                    if int(candidate.get("rank", 0)) == 2
+                                    else None
+                                ),
+                            )
 
                 ax.legend(loc="upper right", fontsize=7)
                 ax.grid(True, alpha=0.3)
@@ -946,17 +1022,16 @@ class PeriodAnalysisWindow(StepWindowBase):
             fap_str = f"{fap:.2e}" if np.isfinite(fap) else "-"
             self.results_table.setItem(row, 4, QTableWidgetItem(fap_str))
 
-            # Alias detection: check if this method's best period is a 1-day alias
-            # of another method's best period (same data type)
+            # Compare method peaks against the measured sampling-window family.
             alias_tag = ""
             bp = data["best_period"]
             others = best_periods_by_dtype.get(dtype, {})
             for other_method, other_p in others.items():
                 if other_method == method:
                     continue
-                if _is_1day_alias(bp, other_p):
+                if self._periods_are_sampling_aliases(bp, other_p):
                     oml = method_labels.get(other_method, other_method.upper())
-                    alias_tag = f"1d-alias of {oml} ({other_p:.4f}d)"
+                    alias_tag = f"window alias of {oml} ({other_p:.4f}d)"
                     break
             item_alias = QTableWidgetItem(alias_tag)
             if alias_tag:
@@ -967,6 +1042,38 @@ class PeriodAnalysisWindow(StepWindowBase):
             top_str = ", ".join(f"{p:.4f}" for p in top_periods)
             self.results_table.setItem(row, 6, QTableWidgetItem(top_str))
 
+    def _periods_are_sampling_aliases(self, period1: float, period2: float) -> bool:
+        analysis = self.alias_analysis or {}
+        return periods_are_window_aliases(
+            float(period1),
+            float(period2),
+            analysis.get("window_peaks", []),
+            float(analysis.get("baseline_days", 1.0)),
+        )
+
+    def _update_alias_candidate_table(self):
+        self.alias_table.setRowCount(0)
+        analysis = self.alias_analysis or {}
+        for row_idx, candidate in enumerate(analysis.get("candidates", [])):
+            self.alias_table.insertRow(row_idx)
+            values = [
+                str(candidate.get("rank", row_idx + 1)),
+                f"{float(candidate.get('period', np.nan)):.8f}",
+                f"{float(candidate.get('freq_cd', np.nan)):.5f}",
+                f"{float(candidate.get('relative_power', np.nan)):.3f}",
+                f"{float(candidate.get('delta_bic', np.nan)):.2f}",
+                str(candidate.get("leave_one_out_votes", 0)),
+                str(candidate.get("relation_to_best", "")),
+            ]
+            relation = str(candidate.get("relation_to_best", ""))
+            for col_idx, value in enumerate(values):
+                item = QTableWidgetItem(value)
+                if relation == "adopted":
+                    item.setForeground(Qt.darkGreen)
+                elif relation == "window-alias":
+                    item.setForeground(Qt.darkYellow)
+                self.alias_table.setItem(row_idx, col_idx, item)
+
     def _populate_phase_periods(self):
         self.phase_period_combo.blockSignals(True)
         self.phase_period_combo.clear()
@@ -976,13 +1083,14 @@ class PeriodAnalysisWindow(StepWindowBase):
 
         periods = []
         seen = set()
-        # The multi-night-resolved period is the trustworthy answer on gapped
-        # data, so offer it first (and as the default fold period).
-        m = getattr(self, "multinight", None)
-        if m and np.isfinite(m.get("period", np.nan)) and m.get("n_nights", 0) >= 2:
-            rp = float(m["period"])
-            periods.append((f"Multi-night resolved: {rp:.6f} d", rp))
-            seen.add(round(rp, 8))
+        analysis = self.alias_analysis or {}
+        for candidate in analysis.get("candidates", [])[:5]:
+            period = float(candidate.get("period", np.nan))
+            if not np.isfinite(period) or period <= 0:
+                continue
+            relation = str(candidate.get("relation_to_best", "candidate"))
+            periods.append((f"Alias rank {candidate.get('rank', '?')} ({relation}): {period:.6f} d", period))
+            seen.add(round(period, 8))
         for key, data in self.results.items():
             if "error" in data:
                 continue
@@ -1161,7 +1269,7 @@ class PeriodAnalysisWindow(StepWindowBase):
     # ------------------------------------------------------------------
 
     def _log_alias_warnings(self):
-        """Log warnings when different methods disagree due to 1-day aliases."""
+        """Log warnings when methods select different sampling-window aliases."""
         if not self.results:
             return
         # Group best periods by data type
@@ -1185,13 +1293,13 @@ class PeriodAnalysisWindow(StepWindowBase):
                     p1, p2 = methods[m1], methods[m2]
                     if abs(p1 - p2) / max(p1, p2) < 0.005:
                         continue  # same period, no alias issue
-                    if _is_1day_alias(p1, p2):
+                    if self._periods_are_sampling_aliases(p1, p2):
                         ml1 = method_labels.get(m1, m1.upper())
                         ml2 = method_labels.get(m2, m2.upper())
                         self.log(
                             f"[ALIAS WARNING] {dtype}: {ml1}={p1:.6f}d ↔ "
-                            f"{ml2}={p2:.6f}d are 1-day aliases! "
-                            f"PDM is generally more reliable for ground-based data."
+                            f"{ml2}={p2:.6f}d match the measured sampling window. "
+                            "Method agreement alone does not resolve the alias."
                         )
 
     def _save_results(self):
@@ -1211,6 +1319,8 @@ class PeriodAnalysisWindow(StepWindowBase):
             results=self.results,
             min_period=self.min_period_spin.value(),
             max_period=self.max_period_spin.value(),
+            alias_analysis=self.alias_analysis,
+            multimode_diagnostic=self.multimode_diagnostic,
         )
         self.log(f"Saved: {summary_path}")
 

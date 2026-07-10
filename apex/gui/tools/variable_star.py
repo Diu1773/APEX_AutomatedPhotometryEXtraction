@@ -222,6 +222,15 @@ def _resolve_check_filter(filters, selected_filter: str | None = None) -> str | 
 from apex.gui.tools.tool_window_base import ToolWindowBase
 from apex.gui.workflow.lc.step11_period_analysis import PeriodAnalysisWorker
 from apex.analysis.light_curve.period_analysis_service import run_period_analysis
+from apex.analysis.light_curve.period_alias_service import (
+    classify_frequency_relation,
+    compute_spectral_window,
+    evaluate_multimode_result as _service_evaluate_multimode_result,
+    fit_multimode_model as _service_fit_multimode_model,
+    infer_night_ids,
+    periods_are_window_aliases,
+    search_multimode_alias_solutions,
+)
 
 
 def _load_check_star_for_plot(result_dir: Path, filt: str | None = None):
@@ -348,7 +357,10 @@ def _is_near_harmonic_period(p1: float, p2: float, max_order: int = 6, tol: floa
     return False
 
 
-def _recommend_analysis_mode_from_scan(results: dict | None) -> tuple[str, str]:
+def _recommend_analysis_mode_from_scan(
+    results: dict | None,
+    alias_analysis: dict | None = None,
+) -> tuple[str, str]:
     if not results:
         return "unknown", "Run a scan first."
 
@@ -371,10 +383,14 @@ def _recommend_analysis_mode_from_scan(results: dict | None) -> tuple[str, str]:
         return "unknown", "No period peaks found."
     best_period = top_periods[0]
     best_power = top_powers[0] if top_powers else float(primary.get("best_power", np.nan))
+    window_peaks = (alias_analysis or {}).get("window_peaks", [])
+    baseline_days = float((alias_analysis or {}).get("baseline_days", 1.0))
 
     for idx, cand_period in enumerate(top_periods[1:], start=1):
         cand_power = top_powers[idx] if idx < len(top_powers) else np.nan
-        if _is_1day_alias_period(best_period, cand_period):
+        if periods_are_window_aliases(best_period, cand_period, window_peaks, baseline_days):
+            continue
+        if not window_peaks and _is_1day_alias_period(best_period, cand_period):
             continue
         if _is_near_harmonic_period(best_period, cand_period):
             continue
@@ -399,7 +415,9 @@ def _recommend_analysis_mode_from_scan(results: dict | None) -> tuple[str, str]:
             for jdx in range(idx + 1, len(unique_periods)):
                 p1 = unique_periods[idx]
                 p2 = unique_periods[jdx]
-                if _is_1day_alias_period(p1, p2) or _is_near_harmonic_period(p1, p2):
+                if periods_are_window_aliases(p1, p2, window_peaks, baseline_days):
+                    continue
+                if (not window_peaks and _is_1day_alias_period(p1, p2)) or _is_near_harmonic_period(p1, p2):
                     continue
                 return "multi", (
                     f"Different methods prefer distinct non-alias periods ({p1:.6f} d vs {p2:.6f} d)."
@@ -408,14 +426,20 @@ def _recommend_analysis_mode_from_scan(results: dict | None) -> tuple[str, str]:
     return "single", f"Current scan is dominated by one primary period near {best_period:.6f} d."
 
 
-def _classify_candidate_period(period: float, adopted_periods: list[float]) -> str:
+def _classify_candidate_period(
+    period: float,
+    adopted_periods: list[float],
+    window_peaks: list[dict] | None = None,
+    baseline_days: float = 1.0,
+) -> tuple[str, str]:
     if any(abs(float(period) - float(prev)) / max(abs(float(prev)), 1e-12) < 1e-5 for prev in adopted_periods):
-        return "duplicate"
-    if any(_is_1day_alias_period(float(period), float(prev)) for prev in adopted_periods):
-        return "alias"
-    if any(_is_near_harmonic_period(float(period), float(prev)) for prev in adopted_periods):
-        return "harmonic"
-    return "new"
+        return "duplicate", "already adopted"
+    return classify_frequency_relation(
+        _period_to_frequency(period),
+        [_period_to_frequency(prev) for prev in adopted_periods],
+        window_peaks=window_peaks,
+        baseline_days=baseline_days,
+    )
 
 
 def _find_harmonic_order(target_freq: float, base_freq: float, max_order: int = 6, tol: float = 0.02) -> int | None:
@@ -464,7 +488,11 @@ def _find_combination_relation(
     return None if best_match is None else f"near {best_match[1]}"
 
 
-def _classify_fitted_periods(periods: list[float]) -> list[dict]:
+def _classify_fitted_periods(
+    periods: list[float],
+    window_peaks: list[dict] | None = None,
+    baseline_days: float = 1.0,
+) -> list[dict]:
     labels: list[dict] = []
     freqs = [_period_to_frequency(period) for period in periods]
     for idx, period in enumerate(periods):
@@ -475,13 +503,14 @@ def _classify_fitted_periods(periods: list[float]) -> list[dict]:
             labels.append({"relation": relation, "note": note})
             continue
 
-        note = "not matched to earlier fitted modes"
-        for prev_idx in range(idx):
-            prev_period = periods[prev_idx]
-            if _is_1day_alias_period(period, prev_period):
-                relation = "alias"
-                note = f"near 1-day alias of M{prev_idx + 1}"
-                break
+        relation, note = classify_frequency_relation(
+            freq,
+            freqs[:idx],
+            window_peaks=window_peaks,
+            baseline_days=baseline_days,
+        )
+        if relation == "new":
+            relation = "independent"
         if relation == "independent":
             for prev_idx in range(idx):
                 order = _find_harmonic_order(freq, freqs[prev_idx])
@@ -529,35 +558,7 @@ def _build_multimode_design_matrix(time_rel: np.ndarray, periods: list[float], h
 
 
 def _evaluate_multimode_result(result: dict, times: np.ndarray) -> dict:
-    arr_t = np.asarray(times, dtype=float)
-    tau = arr_t - float(result["time_ref"])
-    coeff = np.asarray(result["coeff"], dtype=float)
-    periods = [float(p) for p in result["periods"]]
-    components = np.zeros((len(periods), len(arr_t)), dtype=float)
-    derivs = np.zeros_like(components)
-    total = np.full(len(arr_t), float(coeff[0]), dtype=float)
-
-    for coeff_idx, term in enumerate(result["terms"], start=1):
-        omega = float(term["omega"])
-        if term["kind"] == "cos":
-            basis = np.cos(omega * tau)
-            deriv_basis = -omega * np.sin(omega * tau)
-        else:
-            basis = np.sin(omega * tau)
-            deriv_basis = omega * np.cos(omega * tau)
-        contrib = float(coeff[coeff_idx]) * basis
-        components[int(term["mode_index"])] += contrib
-        derivs[int(term["mode_index"])] += float(coeff[coeff_idx]) * deriv_basis
-        total += contrib
-
-    return {
-        "times": arr_t,
-        "intercept": float(coeff[0]),
-        "total": total,
-        "components": components,
-        "component_derivatives": derivs,
-        "total_derivative": np.sum(derivs, axis=0),
-    }
+    return _service_evaluate_multimode_result(result, times)
 
 
 def _fit_multimode_model(
@@ -566,72 +567,17 @@ def _fit_multimode_model(
     mag_err: np.ndarray | None,
     periods: list[float],
     harmonics: int = 1,
+    night_id: np.ndarray | None = None,
 ) -> dict:
-    mask = np.isfinite(time) & np.isfinite(mag)
-    if mag_err is not None:
-        mask &= np.isfinite(mag_err)
-    t = np.asarray(time[mask], dtype=float)
-    y = np.asarray(mag[mask], dtype=float)
-    dy = np.asarray(mag_err[mask], dtype=float) if mag_err is not None else None
-    if len(t) < 10:
-        raise ValueError("Not enough valid data points for multi-mode fit (< 10).")
-
-    order = np.argsort(t)
-    t = t[order]
-    y = y[order]
-    dy = dy[order] if dy is not None else None
-    time_ref = float(np.min(t))
-    time_rel = t - time_ref
-    design, terms = _build_multimode_design_matrix(time_rel, periods, harmonics)
-
-    if dy is not None and np.any(dy > 0):
-        sigma = np.clip(np.asarray(dy, dtype=float), 1e-6, None)
-        coeff, _, rank, singular_values = np.linalg.lstsq(design / sigma[:, None], y / sigma, rcond=None)
-    else:
-        sigma = None
-        coeff, _, rank, singular_values = np.linalg.lstsq(design, y, rcond=None)
-
-    coeff = np.asarray(coeff, dtype=float)
-    eval_obs = _evaluate_multimode_result(
-        {"time_ref": time_ref, "coeff": coeff, "periods": periods, "terms": terms},
-        t,
+    return _service_fit_multimode_model(
+        time,
+        mag,
+        mag_err,
+        periods=periods,
+        harmonics=harmonics,
+        night_id=night_id,
+        include_night_offsets=night_id is not None,
     )
-    model = eval_obs["total"]
-    residual = y - model
-    baseline = float(np.max(t) - np.min(t)) if len(t) else 0.0
-    rmse = float(np.sqrt(np.nanmean(residual ** 2))) if len(residual) else np.nan
-    if sigma is not None and len(sigma) == len(residual):
-        wrms = float(np.sqrt(np.nanmean((residual / sigma) ** 2)))
-    else:
-        wrms = np.nan
-    singular_values = np.asarray(singular_values, dtype=float)
-    if singular_values.size >= 2 and np.all(np.isfinite(singular_values)) and singular_values[-1] > 0:
-        design_condition = float(singular_values[0] / singular_values[-1])
-    else:
-        design_condition = np.inf
-
-    return {
-        "time": t,
-        "mag": y,
-        "mag_err": sigma,
-        "periods": [float(p) for p in periods],
-        "harmonics": int(harmonics),
-        "coeff": coeff,
-        "terms": terms,
-        "time_ref": time_ref,
-        "intercept": float(coeff[0]),
-        "model": model,
-        "components": eval_obs["components"],
-        "component_derivatives": eval_obs["component_derivatives"],
-        "residual": residual,
-        "baseline": baseline,
-        "n_points": int(len(t)),
-        "n_params": int(design.shape[1]),
-        "rank": int(rank),
-        "rmse": rmse,
-        "wrms": wrms,
-        "design_condition": design_condition,
-    }
 
 
 def _trend_label(dm_dt: float) -> str:
@@ -879,6 +825,7 @@ class VariableStarToolWindow(ToolWindowBase):
         self.lc_data: Optional[dict] = None
         self.series_options: dict[str, dict] = {}
         self.scan_result: Optional[dict] = None
+        self.scan_alias_analysis: Optional[dict] = None
         self.refined_period: Optional[float] = None
         self.sigma_period: Optional[float] = None
         self.multimode_result: Optional[dict] = None
@@ -1110,6 +1057,12 @@ class VariableStarToolWindow(ToolWindowBase):
         self.mm_harm = QSpinBox()
         self.mm_harm.setRange(1, 4); self.mm_harm.setValue(1)
         mm_form.addRow("Harmonics/mode:", self.mm_harm)
+        self.mm_alias_search_chk = QCheckBox("Compare sampling-window aliases")
+        self.mm_alias_search_chk.setChecked(True)
+        self.mm_alias_search_chk.setToolTip(
+            "Disable for fixed literature-frequency validation."
+        )
+        mm_form.addRow(self.mm_alias_search_chk)
         focus_row = QHBoxLayout()
         self.mm_focus_combo = QComboBox()
         self.mm_focus_combo.setEnabled(False)
@@ -1898,13 +1851,18 @@ class VariableStarToolWindow(ToolWindowBase):
         periods = [float(p) for p in result.get("periods", [])]
         coeff = np.asarray(result.get("coeff", []), dtype=float)
         terms = result.get("terms", [])
-        mode_labels = _classify_fitted_periods(periods)
+        mode_labels = _classify_fitted_periods(
+            periods,
+            window_peaks=list(result.get("window_peaks", [])),
+            baseline_days=float(result.get("baseline", 1.0)),
+        )
         harmonic_map: dict[tuple[int, int], dict[str, float]] = {}
 
         for coeff_idx, term in enumerate(terms, start=1):
             key = (int(term["mode_index"]), int(term["harmonic"]))
             entry = harmonic_map.setdefault(key, {})
-            entry[str(term["kind"])] = float(coeff[coeff_idx])
+            actual_idx = int(term.get("coefficient_index", coeff_idx))
+            entry[str(term["kind"])] = float(coeff[actual_idx])
 
         rows: list[dict] = []
         harmonics = max(1, int(result.get("harmonics", 1)))
@@ -2035,6 +1993,22 @@ class VariableStarToolWindow(ToolWindowBase):
                 cand_path = out_dir / f"{stem}_multimode_candidates.csv"
                 pd.DataFrame(self.mm_candidate_scan.get("candidates", [])).to_csv(cand_path, index=False)
                 written.append(cand_path)
+            if self.multimode_result and self.multimode_result.get("alias_solutions"):
+                alias_path = out_dir / f"{stem}_multimode_alias_solutions.csv"
+                alias_rows = []
+                for row in self.multimode_result.get("alias_solutions", []):
+                    alias_rows.append({
+                        "rank": row.get("rank"),
+                        "periods_d": _format_period_list(row.get("periods", [])),
+                        "frequencies_cd": ", ".join(
+                            f"{float(value):.8f}" for value in row.get("frequencies_cd", [])
+                        ),
+                        "bic": row.get("bic"),
+                        "delta_bic": row.get("delta_bic"),
+                        "rmse": row.get("rmse"),
+                    })
+                pd.DataFrame(alias_rows).to_csv(alias_path, index=False)
+                written.append(alias_path)
 
             summary_path = out_dir / f"{stem}_multimode_summary.txt"
             summary_lines = [
@@ -2137,6 +2111,7 @@ class VariableStarToolWindow(ToolWindowBase):
         t_v: np.ndarray,
         m_v: np.ndarray,
         current_period: float,
+        night_id: np.ndarray | None = None,
     ) -> dict | None:
         if not self.multimode_result or not np.isfinite(current_period) or current_period <= 0:
             return None
@@ -2152,6 +2127,12 @@ class VariableStarToolWindow(ToolWindowBase):
         eval_obs = _evaluate_multimode_result(self.multimode_result, t_v)
         focus_component = np.asarray(eval_obs["components"][idx], dtype=float)
         iso_mag = m_v - (eval_obs["total"] - (float(eval_obs["intercept"]) + focus_component))
+        if night_id is not None:
+            offsets = self.multimode_result.get("night_offsets", {})
+            iso_mag = iso_mag - np.asarray(
+                [float(offsets.get(str(value), 0.0)) for value in night_id],
+                dtype=float,
+            )
         return {
             "index": idx,
             "period": periods[idx],
@@ -2184,14 +2165,21 @@ class VariableStarToolWindow(ToolWindowBase):
         mag = np.asarray(self.lc_data["mag"], dtype=float)
         mag_err = self.lc_data.get("mag_err")
         err = np.asarray(mag_err, dtype=float) if mag_err is not None else None
+        night_data = self.lc_data.get("night_id")
+        night_ids = np.asarray(night_data, dtype=object) if night_data is not None else None
         mask = np.isfinite(time) & np.isfinite(mag)
         if err is not None:
             mask &= np.isfinite(err)
         t = time[mask]
         y = mag[mask]
         dy = err[mask] if err is not None else None
+        nid = night_ids[mask] if night_ids is not None else None
         if len(t) < 10:
             return None
+
+        window = compute_spectral_window(t)
+        window_peaks = list(window.get("peaks", []))
+        baseline_days = float(window.get("baseline_days", np.ptp(t)))
 
         fit_result = None
         signal = y.copy()
@@ -2203,6 +2191,7 @@ class VariableStarToolWindow(ToolWindowBase):
                 dy,
                 periods=adopted_periods,
                 harmonics=int(self.mm_harm.value()),
+                night_id=nid,
             )
             signal = np.asarray(fit_result["residual"], dtype=float)
             stage_label = "residual"
@@ -2235,14 +2224,12 @@ class VariableStarToolWindow(ToolWindowBase):
         candidates = []
         for idx, period in enumerate(top_periods[: max(3, int(self.mm_n_modes.value()) + 2)]):
             power = top_powers[idx] if idx < len(top_powers) else np.nan
-            relation = _classify_candidate_period(period, adopted_periods)
-            note = ""
-            if relation == "alias":
-                note = "1-day alias of adopted mode"
-            elif relation == "harmonic":
-                note = "near harmonic of adopted mode"
-            elif relation == "duplicate":
-                note = "already adopted"
+            relation, note = _classify_candidate_period(
+                period,
+                adopted_periods,
+                window_peaks=window_peaks,
+                baseline_days=baseline_days,
+            )
             candidates.append(
                 {
                     "rank": idx + 1,
@@ -2261,6 +2248,8 @@ class VariableStarToolWindow(ToolWindowBase):
             "signal": signal,
             "ls_result": ls_result,
             "candidates": candidates,
+            "window_peaks": window_peaks,
+            "baseline_days": baseline_days,
         }
 
     def _detect_multimode_candidates(self):
@@ -2464,7 +2453,25 @@ class VariableStarToolWindow(ToolWindowBase):
         )
 
     def _set_multimode_periods_from_scan(self):
-        periods = _scan_top_periods(self.scan_result, max_count=self.mm_n_modes.value())
+        periods: list[float] = []
+        analysis = self.scan_alias_analysis or {}
+        adopted = float(analysis.get("adopted_period", np.nan))
+        if np.isfinite(adopted) and adopted > 0:
+            periods.append(adopted)
+        raw_periods = _scan_top_periods(self.scan_result, max_count=12)
+        window_peaks = list(analysis.get("window_peaks", []))
+        baseline_days = float(analysis.get("baseline_days", 1.0))
+        for period in raw_periods:
+            if len(periods) >= int(self.mm_n_modes.value()):
+                break
+            relation, _ = _classify_candidate_period(
+                period,
+                periods,
+                window_peaks=window_peaks,
+                baseline_days=baseline_days,
+            )
+            if relation == "new":
+                periods.append(float(period))
         if not periods:
             QMessageBox.information(self, "Multi-Mode", "먼저 period scan을 실행하세요.")
             return
@@ -2532,13 +2539,31 @@ class VariableStarToolWindow(ToolWindowBase):
             self.workflow_step = "multi"
             self._refresh_tool_workflow_ui()
             self.mm_status.setText("Fitting…")
-            result = _fit_multimode_model(
-                self.lc_data["time"],
-                self.lc_data["mag"],
-                self.lc_data.get("mag_err"),
-                periods=periods,
-                harmonics=int(self.mm_harm.value()),
-            )
+            window = compute_spectral_window(self.lc_data["time"])
+            if self.mm_alias_search_chk.isChecked():
+                result = search_multimode_alias_solutions(
+                    self.lc_data["time"],
+                    self.lc_data["mag"],
+                    self.lc_data.get("mag_err"),
+                    seed_periods=periods,
+                    harmonics=int(self.mm_harm.value()),
+                    window_peaks=window.get("peaks", []),
+                    night_id=self.lc_data.get("night_id"),
+                    max_alias_offsets=2 if len(periods) <= 3 else 1,
+                    max_solutions=64,
+                )
+                periods = [float(p) for p in result["periods"]]
+                self.mm_periods_edit.setText(_format_period_list(periods))
+            else:
+                result = _fit_multimode_model(
+                    self.lc_data["time"],
+                    self.lc_data["mag"],
+                    self.lc_data.get("mag_err"),
+                    periods=periods,
+                    harmonics=int(self.mm_harm.value()),
+                    night_id=self.lc_data.get("night_id"),
+                )
+                result["window_peaks"] = list(window.get("peaks", []))
         except Exception as e:
             self.mm_status.setText("Fit failed")
             QMessageBox.warning(self, "Multi-Mode Fit", str(e))
@@ -2557,9 +2582,19 @@ class VariableStarToolWindow(ToolWindowBase):
         self.mm_focus_combo.blockSignals(False)
         self._sync_phase_mode_combo()
         self._update_multimode_mode_views()
+        alias_status = str(result.get("alias_status", "FIXED"))
         self.mm_status.setText(
-            f"Fitted {len(result['periods'])} mode(s), {int(result['harmonics'])} harmonic(s)/mode."
+            f"Fitted {len(result['periods'])} mode(s), {int(result['harmonics'])} "
+            f"harmonic(s)/mode | alias status: {alias_status}."
         )
+        if result.get("alias_solutions"):
+            delta = float(result.get("alias_runner_delta_bic", np.nan))
+            self.mm_status.setText(
+                self.mm_status.text() + f" Runner-up delta BIC={delta:.2f}."
+            )
+            reason = str(result.get("alias_status_reason", "")).strip()
+            if reason:
+                self.mm_status.setText(self.mm_status.text() + f" {reason}")
         cond = float(result.get("design_condition", np.nan))
         n_points = int(result.get("n_points", 0))
         n_params = int(result.get("n_params", 0))
@@ -2816,6 +2851,7 @@ class VariableStarToolWindow(ToolWindowBase):
         self.lc_data = None
         self.series_options = {}
         self.scan_result = None
+        self.scan_alias_analysis = None
         self.refined_period = None
         self.sigma_period = None
         self.multimode_result = None
@@ -2885,6 +2921,14 @@ class VariableStarToolWindow(ToolWindowBase):
                     (c for c in ["filter", "Filter", "FILTER", "band", "Band"] if c in df.columns), None
                 )
                 filters = df[filter_col].astype(str).to_numpy()[time_mask] if filter_col else None
+                night_col = next(
+                    (c for c in ["night_id", "night", "date"] if c in df.columns),
+                    None,
+                )
+                if night_col:
+                    night_ids = df[night_col].astype(str).to_numpy()[time_mask]
+                else:
+                    night_ids = infer_night_ids(t)
                 corr_tag = _detect_corr_mode_from_df(df, path.name)
                 target_id = _detect_target_id_from_df(df, path.name)
 
@@ -2897,6 +2941,7 @@ class VariableStarToolWindow(ToolWindowBase):
                         "mag_col": col,
                         "mag_err": e,
                         "filters": filters,
+                        "night_id": night_ids,
                         "source": path.name,
                         "corr_tag": corr_tag,
                         "series_label": _describe_series(corr_tag, col),
@@ -2966,18 +3011,21 @@ class VariableStarToolWindow(ToolWindowBase):
         mag = item["mag"]
         mag_err = item.get("mag_err")
         filters = item.get("filters")
+        night_id = item.get("night_id")
         if selected_filter and selected_filter != "__all__" and filters is not None:
             mask = (filters == selected_filter)
             t = t[mask]
             mag = mag[mask]
             mag_err = mag_err[mask] if mag_err is not None else None
             filters = filters[mask]
+            night_id = night_id[mask] if night_id is not None else None
         self.lc_data = {
             "time": t,
             "mag": mag,
             "mag_col": item["mag_col"],
             "mag_err": mag_err,
             "filters": filters,
+            "night_id": night_id,
             "source": item["source"],
             "corr_tag": item.get("corr_tag", ""),
             "analysis_filter": selected_filter,
@@ -3015,6 +3063,7 @@ class VariableStarToolWindow(ToolWindowBase):
         self._update_fourier_filter_combo()
         self._clear_multimode_result(clear_inputs=False)
         self.scan_result = None
+        self.scan_alias_analysis = None
         self.refined_period = None
         self.sigma_period = None
         self.recommended_mode = "unknown"
@@ -3099,6 +3148,8 @@ class VariableStarToolWindow(ToolWindowBase):
             samples_per_peak=self.spp.value(),
             methods=methods,
             pdm_n_bins=self.pdm_bins.value(),
+            night_id=self.lc_data.get("night_id"),
+            include_alias_diagnostics=True,
         )
         self._scan_worker.progress.connect(self.scan_status.setText)
         self._scan_worker.finished.connect(self._on_scan_done)
@@ -3107,13 +3158,22 @@ class VariableStarToolWindow(ToolWindowBase):
 
     def _on_scan_done(self, results: dict):
         # results keyed as "raw_ls", "raw_pdm", "raw_bls"
+        self.scan_alias_analysis = results.pop("alias_analysis", None)
+        results.pop("multinight", None)
         self.scan_result = results
         best_period, best_power, fap = self._best_from_results(results)
-        self.recommended_mode, self.recommendation_text = _recommend_analysis_mode_from_scan(results)
+        adopted = float((self.scan_alias_analysis or {}).get("adopted_period", np.nan))
+        if np.isfinite(adopted) and adopted > 0:
+            best_period = adopted
+        self.recommended_mode, self.recommendation_text = _recommend_analysis_mode_from_scan(
+            results,
+            self.scan_alias_analysis,
+        )
         fap_str = f"{fap:.2e}" if np.isfinite(fap) else "—"
         methods_run = [k.split("_", 1)[1].upper() for k in results]
+        alias_status = str((self.scan_alias_analysis or {}).get("status", "UNASSESSED"))
         self.scan_status.setText(
-            f"Best P = {best_period:.6f} d  [{'/'.join(methods_run)}]"
+            f"Candidate P = {best_period:.6f} d  [{'/'.join(methods_run)}] | {alias_status}"
         )
         self.center_p.setValue(best_period)
         self.phase_p.setValue(best_period)
@@ -3180,6 +3240,10 @@ class VariableStarToolWindow(ToolWindowBase):
     # ------------------------------------------------------------------
 
     def _set_center_from_scan(self):
+        adopted = float((self.scan_alias_analysis or {}).get("adopted_period", np.nan))
+        if np.isfinite(adopted) and adopted > 0:
+            self.center_p.setValue(adopted)
+            return
         if self.scan_result:
             best, _, _ = self._best_from_results(self.scan_result)
             if np.isfinite(best):
@@ -3383,10 +3447,12 @@ class VariableStarToolWindow(ToolWindowBase):
         mag = self.lc_data["mag"]
         mag_err = self.lc_data.get("mag_err")
         filters = self.lc_data.get("filters")
+        night_ids = self.lc_data.get("night_id")
         mask = np.isfinite(t) & np.isfinite(mag)
         t_v, m_v = t[mask], mag[mask]
         dy_v = mag_err[mask] if mag_err is not None else None
         filt_v = filters[mask] if filters is not None else None
+        night_v = night_ids[mask] if night_ids is not None else None
 
         phase = ((t_v - t0) / period) % 1.0
         plot_mag = m_v
@@ -3394,7 +3460,12 @@ class VariableStarToolWindow(ToolWindowBase):
         phase_view_mode = self.phase_data_mode.currentData() if hasattr(self, "phase_data_mode") else "raw"
         focus_payload = None
         if phase_view_mode == "focused":
-            focus_payload = self._phase_multimode_payload(t_v, m_v, float(period))
+            focus_payload = self._phase_multimode_payload(
+                t_v,
+                m_v,
+                float(period),
+                night_id=night_v,
+            )
             if focus_payload is not None:
                 plot_mag = np.asarray(focus_payload["iso_mag"], dtype=float)
                 title_suffix = f"  [M{int(focus_payload['index']) + 1} isolated]"
