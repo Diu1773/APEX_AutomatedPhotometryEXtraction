@@ -97,8 +97,13 @@ def main() -> int:
     for mm, lo, hi in [(m90, None, None), (m10, None, None)]:
         axa.axvline(mm, color=C["accent"], lw=0.9, ls="-.", zorder=1, alpha=.8)
     grid = np.linspace(mag.min() - 0.3, mag.max() + 0.3, 300)
-    axa.plot(grid, expit((m50 - grid) / width), color=C["model"], lw=1.8,
-             zorder=4, label="empirical summary (logistic)")
+    # error-function detection model (Masci 2011; the form AutoPhOT adopts),
+    # fit to the magnitude bins — replaces the logistic, keeps the same depth
+    def erf_comp(m, m50f, wf):
+        return 0.5 * (1 - erf((m - m50f) / (np.sqrt(2) * wf)))
+    pa, _ = curve_fit(erf_comp, mag, comp, p0=[m50, width], maxfev=20000)
+    axa.plot(grid, erf_comp(grid, *pa), color=C["model"], lw=1.8,
+             zorder=4, label="error-function fit")
     axa.errorbar(mag, comp,
                  yerr=[np.clip(comp - ci[:, 0], 0, None), np.clip(ci[:, 1] - comp, 0, None)],
                  fmt="o", color=C["data"], ms=4, lw=1, capsize=2, zorder=5,
