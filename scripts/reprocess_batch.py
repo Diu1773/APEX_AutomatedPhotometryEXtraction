@@ -43,6 +43,16 @@ TARGETS = {
     "YZ_Boo":  (r"E:\observe_raw_Analysis\YZbootis",     "lc", None, None),
 }
 
+# Reference CMD (existing AIPPI-preprocessed result) to validate the new all-APEX
+# CMD against. None -> no prior reference (reprocess only, no cross-check).
+REF_CMD = {
+    "NGC6811": r"E:\observed_Analysis\NGC6811\pp\result\cmd_zeropoint\median_by_ID_filter_wide_cmd.csv",
+    "M67":     r"E:\observed_Analysis\M67\pp\result\cmd_zeropoint\median_by_ID_filter_wide_cmd.csv",
+    "M13":     r"E:\observed_Analysis\M13\light\result\cmd_zeropoint\median_by_ID_filter_wide_cmd.csv",
+    "M5":      r"E:\observed_Analysis\M5\light\result\cmd_zeropoint\median_by_ID_filter_wide_cmd.csv",
+    "M3":      None,
+}
+
 
 def free_gb(drive="E:\\") -> float:
     return shutil.disk_usage(drive).free / 1e9
@@ -113,6 +123,36 @@ def apex_run(cfg: Path, steps="1-7", mode="cmd"):
         raise RuntimeError(f"apex run {steps} failed ({cfg})")
 
 
+def run_step10(cfg: Path) -> Path:
+    """CMD Step 10 (ZP calibration -> CMD table) headless. Step 8/9 not needed
+    on the forced-aperture path (Step 10 reads ID from Step 7 TSVs + Step 6
+    master catalog). Returns the produced CMD table path."""
+    r = subprocess.run([str(VENV_PY), "-X", "utf8",
+                        str(REPO / "scripts" / "run_step10_headless.py"),
+                        "--params", str(cfg)], cwd=str(REPO))
+    if r.returncode != 0:
+        raise RuntimeError(f"step10 failed ({cfg})")
+    result = cfg.parent / "result"
+    return result / "cmd_zeropoint" / "median_by_ID_filter_wide_cmd.csv"
+
+
+def validate_cmd(target: str, new_cmd: Path):
+    """Cross-match the new all-APEX CMD against the reference (AIPPI) CMD and log
+    per-band agreement. No-op (logged) if no reference exists."""
+    ref = REF_CMD.get(target)
+    if not ref or not Path(ref).exists():
+        log(f"[VALIDATE] {target}: no reference CMD — reprocess only, skip cross-check")
+        return
+    import compare_cmd  # scripts/ is on sys.path via REPO insert
+    jpath = REPROCESS / target / "cmd_compare_vs_ref.json"
+    res = compare_cmd.compare(str(new_cmd), str(ref), tol_arcsec=1.0)
+    import json as _json
+    jpath.write_text(_json.dumps(res, indent=2), encoding="utf-8")
+    parts = [f"{b}:dMag={s['median_dmag']:+.4f}/sig={s['sigma_mad']:.4f}(N={s['n']})"
+             for b, s in res["bands"].items()]
+    log(f"[VALIDATE] {target}: matched {res['n_matched']}/{res['n_new']} vs ref  " + "  ".join(parts))
+
+
 def run_one(target: str) -> bool:
     raw, kind, ra, dec = TARGETS[target]
     log(f"\n### {target} ({kind}) — start, E: free {free_gb():.0f} GB")
@@ -125,20 +165,30 @@ def run_one(target: str) -> bool:
     cfg = gen_config(target, sci, ra, dec)
     apex_run(cfg, "1-7", "cmd")
     log(f"[STEP1-7] {target}: forced photometry done -> {REPROCESS/target/'result'}")
-    # CMD 8-11 runners wired once built; then mark [DONE]
-    log(f"[PENDING-CMD] {target}: steps 8-11 await runner build")
+    new_cmd = run_step10(cfg)
+    if not new_cmd.exists():
+        log(f"[SKIP] {target}: step10 produced no CMD table"); return False
+    log(f"[STEP10] {target}: CMD table -> {new_cmd}")
+    validate_cmd(target, new_cmd)
+    log(f"[DONE] {target}: full-APEX CMD complete (isochrone step 12 left to user)")
     return True
 
 
 def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--only", default=None, help="run a single target")
+    ap.add_argument("--lc", action="store_true",
+                    help="also run LC targets (Step 0 preprocess). Deferred by "
+                         "default: LC calibrated output is ~180 GB and needs "
+                         "E:\\observed_Analysis deleted first.")
     a = ap.parse_args()
     log(f"# reprocess {time.strftime('%Y-%m-%d %H:%M')} — E: free {free_gb():.0f} GB")
     names = [a.only] if a.only else list(TARGETS)
     for t in names:
         if is_done(t):
             print(f"skip {t} (done)"); continue
+        if TARGETS[t][1] == "lc" and not a.lc:
+            print(f"skip {t} (lc deferred — pass --lc to run)"); continue
         if free_gb() < MIN_FREE_GB:
             log(f"[STOP] E: free {free_gb():.0f} GB < {MIN_FREE_GB} — halt."); break
         try:
