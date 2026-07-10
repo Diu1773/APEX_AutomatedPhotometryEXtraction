@@ -32,7 +32,7 @@ from apex_paper_style import apply_paper_style, save_fig, C, PALETTE, DOUBLE_COL
 
 apply_paper_style()
 
-RUN = REPO / "benchmark" / "runs" / "ngc6811_iraf_allapex_v1"
+RUN = REPO / "benchmark" / "runs" / "ngc6811_iraf_matched_v1"
 CSV = RUN / "phot_fixed_coords" / "fixed_comparison.csv"
 MANIFEST = RUN / "iraf_crosscheck_manifest.json"
 OUTDIR = REPO / "validation" / "paper" / "figures"

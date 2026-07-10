@@ -108,7 +108,20 @@ Measuring the same 95 well-detected stars in one synthetic frame (known truth) i
 
 ### 3.6 Independent-engine cross-check on real data
 
-The strongest single accuracy test in this suite measures 278 real stars in NGC 457 ($g$ band) independently with APEX's forced photometry and with IRAF's `phot` (DAOPHOT, via PyRAF) at identical fixed sky coordinates (Fig. 5). After zeropoint alignment: MAD $0.0043$ mag, RMS $0.0083$ mag, Pearson $r=0.99998$, position RMS $0.0004$ px, and 99.6 per cent of stars agreeing within 0.02 mag. Because this is real observed data and IRAF shares no code with APEX, milli-magnitude agreement here tests on-sky correctness rather than internal self-consistency. Its one limitation is extent: it is a single frame in a single band, and extending the IRAF cross-check across more frames and bands is the most valuable remaining strengthening of the accuracy claim, left as near-term work.
+The strongest accuracy test in this suite measures the same stars, at the same fixed sky coordinates, independently with APEX's forced photometry and with IRAF's `phot` (DAOPHOT, via PyRAF), under matched measurement parameters (Table 2). On the fully-APEX-reduced NGC 6811 $V$ frame — carried from raw through APEX's own Step 0 calibration and measurement chain — the two engines agree over 498 stars to MAD $0.0092$ mag after zeropoint alignment, with RMS $0.0228$ mag, Pearson $r=0.99984$, position RMS $0.0004$ px, and 96 per cent of stars within $0.05$ mag (Fig. 5); the residual is flat with magnitude and grows only into the photon-noise-dominated faint end. Because both engines integrate the identical pixels under identical apertures, sky annuli, gain, and read noise (Table 2), the residual isolates the difference between the two flux integrators, and its milli-magnitude size shows they agree at photometric grade. The same test on a second cluster and band, 278 stars in NGC 457 ($g$; MAD $0.0043$ mag, $r=0.99998$), reaches the same conclusion, so the agreement is not specific to one frame, filter, or field. Because these are real observed data and IRAF shares no code with APEX, this tests on-sky correctness rather than internal self-consistency.
+
+| Parameter | APEX (Step 7) | IRAF `phot` |
+|---|---|---|
+| Aperture radius | $1.0\,$FWHM $=6.15$ px | $1.0\,$FWHM $=6.15$ px |
+| Sky annulus, inner | $6.0\,$FWHM $=36.9$ px | $36.9$ px |
+| Sky annulus width | $3.0\,$FWHM $=18.4$ px | $18.4$ px |
+| Gain | $0.681$ e$^-$/ADU | $0.681$ (`epadu`) |
+| Read noise | $2.35$ e$^-$ | $2.35$ (`readnoise`) |
+| PSF FWHM | $6.15$ px | $6.15$ (`fwhmpsf`) |
+| Zeropoint | $25.0$ mag | $25.0$ (`zmag`) |
+| Centring | fixed master positions | fixed, no recentre |
+
+**Table 2.** Matched measurement parameters for the APEX–IRAF/DAOPHOT cross-check on the NGC 6811 $V$ frame (Fig. 5). Both engines measure the same sources at the same catalogue coordinates, so the comparison isolates the flux-integration difference rather than a parameter mismatch.
 
 ### 3.7 Frame quality control
 
