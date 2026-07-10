@@ -4211,10 +4211,12 @@ Step 10은 여러 밤의 관측을 합칠 때 기준선을 맞추는 단계입�
     def validate_step(self) -> bool:
         target_id = None
         try:
+            # AttributeError: base __init__ validates once before
+            # setup_step_ui() has created target_edit.
             text = self.target_edit.text().strip()
             if text:
                 target_id = int(text)
-        except (TypeError, ValueError):
+        except (TypeError, ValueError, AttributeError):
             pass
         for path in list_lightcurve_csvs(self.params.P.result_dir, target_id):
             try:

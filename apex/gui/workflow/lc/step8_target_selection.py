@@ -44,7 +44,7 @@ from PyQt5.QtWidgets import (
     QColorDialog, QGridLayout, QScrollArea, QMenu, QAction
 )
 from PyQt5.QtGui import QKeySequence, QColor
-from PyQt5.QtCore import Qt, pyqtSignal
+from PyQt5.QtCore import Qt, QTimer, pyqtSignal
 
 from apex.gui.layout_rules import FittedDialog, tame_canvas
 from apex.gui.workflow.step_window_base import StepWindowBase
@@ -2001,7 +2001,15 @@ class TargetComparisonSelectionWindow(StepWindowBase):
         except Exception as e:
             import traceback
             self.log(f"[ERROR] Failed to load {filename}: {e}\n{traceback.format_exc()}")
-            QMessageBox.critical(self, "Error", f"Failed to load {filename}:\n{str(e)}")
+            msg = f"Failed to load {filename}:\n{str(e)}"
+            if self.isVisible():
+                QMessageBox.critical(self, "Error", msg)
+            else:
+                # Constructor path (setup_step_ui → populate_file_list →
+                # on_file_changed): exec-ing a modal on the half-built window
+                # spins a nested event loop and hard-crashes the app
+                # (0xC0000409). Defer the dialog until the window is up.
+                QTimer.singleShot(0, lambda: QMessageBox.critical(self, "Error", msg))
 
     def _load_fits_cached(self, file_path: Path):
         """Load FITS data/header with LRU cache to avoid repeated disk I/O."""

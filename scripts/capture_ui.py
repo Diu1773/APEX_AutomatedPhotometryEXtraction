@@ -12,12 +12,24 @@ import sys
 import traceback
 from pathlib import Path
 
+# Offscreen render (no window flash on the user's display) — same recipe as
+# capture_tool_screenshots.py. FONTDIR is required or all Qt text is blank.
+os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+os.environ.setdefault("QT_QPA_FONTDIR", "C:/Windows/Fonts")
+os.environ.setdefault("QT_OPENGL", "software")
+
 REPO = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(REPO))
 os.chdir(REPO)
 
-from PyQt5.QtWidgets import QApplication
+from PyQt5.QtWidgets import QApplication, QMessageBox
 from PyQt5.QtCore import Qt
+
+# Never let a modal dialog block (or crash) this headless run — same recipe
+# as capture_tool_screenshots.py.
+QMessageBox.exec_ = lambda *a, **k: None  # type: ignore[assignment]
+for _m in ("information", "warning", "critical", "question", "about"):
+    setattr(QMessageBox, _m, staticmethod(lambda *a, **k: None))
 
 OUT = REPO / "ui_screenshots"
 OUT.mkdir(exist_ok=True)
@@ -54,7 +66,18 @@ def _capture_mode(mode: str, param_file: str | None = None) -> None:
     _pump(10)
     _grab(mw, OUT / f"00_main_{mode}.png")
 
+    # Optional filter: APEX_CAPTURE_STEPS="8,9,11" captures only those step
+    # numbers (1-based). A native crash in one step window (e.g. an image
+    # viewer under the offscreen platform) kills the whole process, so the
+    # caller can loop steps in separate processes.
+    only_steps = None
+    steps_env = os.environ.get("APEX_CAPTURE_STEPS", "").strip()
+    if steps_env:
+        only_steps = {int(s) for s in steps_env.split(",") if s.strip()}
+
     for idx, name in enumerate(mw.step_names):
+        if only_steps is not None and (idx + 1) not in only_steps:
+            continue
         slug = _slug(name)
         out = OUT / f"{mode}_step{idx + 1:02d}_{slug}.png"
         try:
@@ -87,6 +110,10 @@ def _capture_mode(mode: str, param_file: str | None = None) -> None:
 def main() -> int:
     app = QApplication.instance() or QApplication(sys.argv)
     app.setAttribute(Qt.AA_DontUseNativeMenuBar, True)
+    # Match the real entry points: without the global QSS the capture shows a
+    # different (unthemed) UI than users actually see.
+    from apex.gui.theme import apply_theme
+    apply_theme(app)
     mode_params = {
         "cmd": "parameters_capture_cmd.toml" if (REPO / "parameters_capture_cmd.toml").exists() else None,
         "lc": None,

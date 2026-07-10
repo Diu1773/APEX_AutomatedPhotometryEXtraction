@@ -4487,10 +4487,12 @@ class LightCurveBuilderWindow(StepWindowBase):
     def validate_step(self) -> bool:
         target_ids: list[int] = []
         try:
+            # AttributeError: base __init__ validates once before
+            # setup_step_ui() has created target_edit.
             text = self.target_edit.text().strip()
             if text:
                 target_ids.append(int(text))
-        except (TypeError, ValueError):
+        except (TypeError, ValueError, AttributeError):
             pass
         if not target_ids and self.datasets:
             target_id, _ = _load_selection_ids(self.datasets[0][1])
