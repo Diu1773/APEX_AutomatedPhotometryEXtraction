@@ -78,6 +78,7 @@ class StepButton(QPushButton):
         self.step_name = step_name
         self.completed = False
         self.accessible = False
+        self.emphasized = False  # the single "do this next" step
         self.setText(f"Step {step_number}: {step_name}")
         # Fixed-vertical size policy so a cramped window cannot crush the
         # 12 step buttons into illegible 25px slivers on small displays.
@@ -95,38 +96,59 @@ class StepButton(QPushButton):
         self.accessible = accessible
         self.update_appearance()
 
+    def set_emphasized(self, emphasized: bool):
+        if emphasized != self.emphasized:
+            self.emphasized = emphasized
+            self.update_appearance()
+
     def update_appearance(self):
-        # Step buttons are a status list, so they keep distinct fills \u2014 but
-        # drawn from the shared palette (done=green, available=accent,
-        # locked=muted) so they sit in the same visual language as the
-        # primary/secondary buttons elsewhere.
+        # Quiet status rows instead of a wall of saturated green/blue fills:
+        # every row is a neutral surface; state is carried by a 3px left bar
+        # plus the leading glyph. Only the *next actionable* step gets an
+        # accent-tinted background so the eye lands on "what to do next".
+        # Styles are rebuilt from Tokens on every call, so a theme switch
+        # restyles the list via update_step_buttons().
         t = Tokens
-        base = ("font-size: 14px; border-radius: {r}px;"
-                " text-align: left; padding: 10px 14px;").format(r=t.RADIUS_SM)
+        base = (
+            f"font-size: 14px; border-radius: {t.RADIUS_SM}px;"
+            f" text-align: left; padding: 10px 14px;"
+            f" border: 1px solid {t.BORDER};"
+        )
         if self.completed:
             self.setStyleSheet(
-                f"QPushButton {{ {base} background: {t.OK}; color: #fff;"
-                f" border: 1px solid {t.OK}; font-weight: 600; }}"
-                f"QPushButton:hover {{ background: #2A8E51; }}"
+                f"QPushButton {{ {base} background: {t.SURFACE}; color: {t.TEXT};"
+                f" border-left: 3px solid {t.OK}; }}"
+                f"QPushButton:hover {{ background: {t.SURFACE_ALT}; }}"
             )
             self.setText(f"\u2713 Step {self.step_number}: {self.step_name}")
             self.setEnabled(True)
-        elif self.accessible:
+        elif self.accessible and self.emphasized:
             self.setStyleSheet(
-                f"QPushButton {{ {base} background: {t.ACCENT}; color: #fff;"
-                f" border: 1px solid {t.ACCENT}; font-weight: 600; }}"
-                f"QPushButton:hover {{ background: {t.ACCENT_HOVER}; }}"
+                f"QPushButton {{ {base} background: {t.ACCENT_SOFT}; color: {t.TEXT};"
+                f" border: 1px solid {t.ACCENT}; border-left: 3px solid {t.ACCENT};"
+                f" font-weight: 600; }}"
+                f"QPushButton:hover {{ border-color: {t.ACCENT_HOVER}; }}"
+            )
+            self.setText(f"\u25cb Step {self.step_number}: {self.step_name}")
+            self.setEnabled(True)
+        elif self.accessible:
+            # Reachable but not the next action \u2014 quiet row, accent bar only.
+            self.setStyleSheet(
+                f"QPushButton {{ {base} background: {t.SURFACE}; color: {t.TEXT};"
+                f" border-left: 3px solid {t.ACCENT}; }}"
+                f"QPushButton:hover {{ background: {t.SURFACE_ALT}; }}"
             )
             self.setText(f"\u25cb Step {self.step_number}: {self.step_name}")
             self.setEnabled(True)
         else:
+            # No glyph: the \ud83d\udd12 emoji stays multicolour on Windows even with
+            # U+FE0E, and a muted row reads as locked on its own.
             self.setStyleSheet(
-                f"QPushButton {{ {base} background: {t.SURFACE_ALT};"
-                f" color: {t.TEXT_MUTED}; border: 1px solid {t.BORDER}; }}"
-                f"QPushButton:disabled {{ background: {t.SURFACE_ALT}; color: {t.TEXT_MUTED}; }}"
+                f"QPushButton {{ {base} background: transparent; color: {t.TEXT_MUTED};"
+                f" border-left: 3px solid {t.BORDER}; }}"
+                f"QPushButton:disabled {{ color: {t.TEXT_MUTED}; }}"
             )
-            from apex.gui.theme import ICON
-            self.setText(f"{ICON['locked']} Step {self.step_number}: {self.step_name} (Locked)")
+            self.setText(f"Step {self.step_number}: {self.step_name}")
             self.setEnabled(False)
 
 
@@ -473,6 +495,22 @@ class MainWindowWorkflow(AutoFitMixin, QMainWindow):
         action_export.triggered.connect(self.export_summary)
         file_menu.addAction(action_export)
         file_menu.addSeparator()
+
+        # Theme presets — applied app-wide immediately and persisted to
+        # ~/.apex/theme.txt (picked up by all entry points on next launch).
+        from apex.gui.theme import THEME_PRESETS, current_theme
+        theme_menu = file_menu.addMenu("&Theme")
+        self._theme_actions = {}
+        active = current_theme()
+        for key, label in THEME_PRESETS:
+            act = QAction(label, self)
+            act.setCheckable(True)
+            act.setChecked(key == active)
+            act.triggered.connect(lambda _=False, k=key: self._switch_theme(k))
+            theme_menu.addAction(act)
+            self._theme_actions[key] = act
+        file_menu.addSeparator()
+
         action_exit = QAction("E&xit", self)
         action_exit.setShortcut("Ctrl+Q")
         action_exit.triggered.connect(self.close)
@@ -497,6 +535,16 @@ class MainWindowWorkflow(AutoFitMixin, QMainWindow):
         help_menu.addSeparator()
         help_menu.addAction(action_about)
 
+    def _switch_theme(self, key: str):
+        """Apply + persist a theme preset and refresh hand-styled widgets."""
+        from apex.gui.theme import set_theme
+        applied = set_theme(QApplication.instance(), key)
+        for k, act in self._theme_actions.items():
+            act.setChecked(k == applied)
+        # Step buttons build their stylesheet from Tokens at set-time — rerun.
+        self.update_step_buttons()
+        self.append_log(f"Theme: {applied}")
+
     # ── Step button state ────────────────────────────────────────────────────
 
     def update_step_buttons(self):
@@ -504,11 +552,16 @@ class MainWindowWorkflow(AutoFitMixin, QMainWindow):
         self.progress_label.setText(
             f"Progress: {completed_count}/{len(self.step_names)} steps finished"
         )
+        next_emphasized = False  # only the FIRST reachable-incomplete step pops
         for i, btn in enumerate(self.step_buttons):
             completed = self.project_state.is_step_completed(i)
             accessible = self.project_state.is_step_accessible(i)
             btn.set_completed(completed)
             btn.set_accessible(accessible)
+            emphasize = accessible and not completed and not next_emphasized
+            if emphasize:
+                next_emphasized = True
+            btn.set_emphasized(emphasize)
             btn.setEnabled(accessible)
 
         # Off-chain calibration button: driven by its own status, always usable.

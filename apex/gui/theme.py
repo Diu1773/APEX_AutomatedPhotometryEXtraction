@@ -17,12 +17,19 @@ Role hooks used by the QSS (set with setProperty or objectName):
 
 from __future__ import annotations
 
+from pathlib import Path
+
 
 # ── Design tokens ──────────────────────────────────────────────────────────
 class Tokens:
-    # Surfaces — the canvas (BG) is deliberately a few shades below white so
-    # white cards/panels/inputs read as raised "cards on a canvas" and their
+    # Surfaces — the canvas (BG) is deliberately a few shades off the surface
+    # so cards/panels/inputs read as raised "cards on a canvas" and their
     # edges stay visible even with thin borders.
+    #
+    # NOTE: the colour attributes below are MUTABLE — apply_theme() overwrites
+    # them from a named preset in PALETTES (AstralImage-style theme system).
+    # The values written here are the "apex-light" preset (the historical
+    # default look).
     BG          = "#E9ECF1"   # window background (canvas)
     SURFACE     = "#FFFFFF"   # cards / panels
     SURFACE_ALT = "#F1F3F5"   # subtle fills (inputs, log)
@@ -36,16 +43,25 @@ class Tokens:
     TEXT_SUB    = "#5B6573"   # secondary
     TEXT_MUTED  = "#98A2B3"   # captions / disabled
 
-    # Single calm accent (replaces the rainbow of material primaries)
+    # Single calm accent (replaces the rainbow of material primaries).
+    # ACCENT is the *fill* colour (primary buttons, selected underline bars);
+    # ACCENT_TEXT is the accent used *as text/outline on surfaces* — identical
+    # on light themes, brighter on dark themes where a fill-strength blue is
+    # too dim to read as text.
     ACCENT      = "#3A66DB"
     ACCENT_HOVER = "#2F56C0"
     ACCENT_PRESS = "#274AA6"
     ACCENT_SOFT = "#EAF0FE"   # accent-tinted background for info chips
+    ACCENT_TEXT = "#3A66DB"
 
     # Semantic, desaturated vs. material 2014
     OK          = "#2E9E5B"
     WARN        = "#C77A12"
     ERROR       = "#D24343"
+    # Soft tinted backgrounds for status banners (status="warn"/"error" cards)
+    OK_SOFT     = "#E5F4EB"
+    WARN_SOFT   = "#FBF1E2"
+    ERROR_SOFT  = "#FBE9E9"
 
     # Muted variant fills (for disabled primary/danger so they don't look active)
     ACCENT_MUTED = "#C2CCEA"
@@ -76,6 +92,93 @@ class Tokens:
     FS_SUBTITLE = 13
     FS_BASE     = 13
     FS_CAPTION  = 11
+
+
+# ── Theme presets (AstralImage-style) ──────────────────────────────────────
+# Each preset overrides the colour tokens above; geometry/typography never
+# change per theme. "apex-light" is the historical default; the dark presets
+# are adapted from AstralImage's owner-approved palettes (charcoal / aurora /
+# midnight) so the two apps share a family look.
+#
+# Keys listed in every preset — add a colour token above? add it here too,
+# or dark themes will keep the stale light value after a switch.
+_LIGHT = {
+    "BG": "#E9ECF1", "SURFACE": "#FFFFFF", "SURFACE_ALT": "#F1F3F5",
+    "BORDER": "#CDD4DE", "BORDER_STRONG": "#AEB8C6",
+    "TEXT": "#1F2933", "TEXT_SUB": "#5B6573", "TEXT_MUTED": "#98A2B3",
+    "ACCENT": "#3A66DB", "ACCENT_HOVER": "#2F56C0", "ACCENT_PRESS": "#274AA6",
+    "ACCENT_SOFT": "#EAF0FE", "ACCENT_TEXT": "#3A66DB",
+    "OK": "#2E9E5B", "WARN": "#C77A12", "ERROR": "#D24343",
+    "OK_SOFT": "#E5F4EB", "WARN_SOFT": "#FBF1E2", "ERROR_SOFT": "#FBE9E9",
+    "ACCENT_MUTED": "#C2CCEA", "ERROR_MUTED": "#E6C5C5",
+}
+
+PALETTES: dict[str, dict[str, str]] = {
+    "apex-light": dict(_LIGHT),
+    # Charcoal — neutral grey dark (AstralImage default; PixInsight-style).
+    "charcoal": {
+        "BG": "#212121", "SURFACE": "#2B2B2B", "SURFACE_ALT": "#333333",
+        "BORDER": "#3D3D3D", "BORDER_STRONG": "#4E4E4E",
+        "TEXT": "#EDEDED", "TEXT_SUB": "#B4B4B4", "TEXT_MUTED": "#8A8A8A",
+        "ACCENT": "#2F78AD", "ACCENT_HOVER": "#3A8AC4", "ACCENT_PRESS": "#27638F",
+        "ACCENT_SOFT": "#243A4A", "ACCENT_TEXT": "#67B7FF",
+        "OK": "#2E9E5B", "WARN": "#C08A28", "ERROR": "#C75048",
+        "OK_SOFT": "#22352A", "WARN_SOFT": "#38301D", "ERROR_SOFT": "#3A2626",
+        "ACCENT_MUTED": "#2B4356", "ERROR_MUTED": "#5A3535",
+    },
+    # Aurora — deep cool slate + teal-cyan accent (AstralImage signature).
+    "aurora": {
+        "BG": "#151A21", "SURFACE": "#1D242D", "SURFACE_ALT": "#232B35",
+        "BORDER": "#2D3742", "BORDER_STRONG": "#3B4753",
+        "TEXT": "#E6EBF1", "TEXT_SUB": "#AEB9C6", "TEXT_MUTED": "#77828F",
+        "ACCENT": "#2A7480", "ACCENT_HOVER": "#338B99", "ACCENT_PRESS": "#22606A",
+        "ACCENT_SOFT": "#1C3238", "ACCENT_TEXT": "#4FC8CF",
+        "OK": "#3FA56C", "WARN": "#C69B3D", "ERROR": "#CC5F55",
+        "OK_SOFT": "#1C3226", "WARN_SOFT": "#332B18", "ERROR_SOFT": "#38221F",
+        "ACCENT_MUTED": "#24444B", "ERROR_MUTED": "#54322E",
+    },
+    # Midnight Navy — deep rich blue.
+    "midnight": {
+        "BG": "#0C1730", "SURFACE": "#12233F", "SURFACE_ALT": "#182C4D",
+        "BORDER": "#1F3355", "BORDER_STRONG": "#2C4470",
+        "TEXT": "#CDD8EE", "TEXT_SUB": "#9DABC9", "TEXT_MUTED": "#66748F",
+        "ACCENT": "#23558F", "ACCENT_HOVER": "#2C67AC", "ACCENT_PRESS": "#1C4574",
+        "ACCENT_SOFT": "#16294D", "ACCENT_TEXT": "#5A93E0",
+        "OK": "#4CB87C", "WARN": "#CCAE52", "ERROR": "#CC5F55",
+        "OK_SOFT": "#143832", "WARN_SOFT": "#31301F", "ERROR_SOFT": "#3A2430",
+        "ACCENT_MUTED": "#1B3455", "ERROR_MUTED": "#4E3048",
+    },
+}
+
+# (key, menu label) — drives the theme menu; add a preset to PALETTES and
+# list it here to expose it.
+THEME_PRESETS: tuple[tuple[str, str], ...] = (
+    ("apex-light", "APEX Light"),
+    ("charcoal",   "Charcoal"),
+    ("aurora",     "Aurora"),
+    ("midnight",   "Midnight Navy"),
+)
+
+DEFAULT_THEME = "apex-light"
+
+_THEME_FILE = Path.home() / ".apex" / "theme.txt"
+
+
+def current_theme() -> str:
+    """Name of the persisted (or default) theme preset."""
+    try:
+        name = _THEME_FILE.read_text(encoding="utf-8").strip()
+    except OSError:
+        return DEFAULT_THEME
+    return name if name in PALETTES else DEFAULT_THEME
+
+
+def _persist_theme(name: str) -> None:
+    try:
+        _THEME_FILE.parent.mkdir(parents=True, exist_ok=True)
+        _THEME_FILE.write_text(name, encoding="utf-8")
+    except OSError:
+        pass  # persistence is best-effort; the session still gets the theme
 
 
 # ── Icon glyphs ──────────────────────────────────────────────────────────────
@@ -156,7 +259,7 @@ def global_qss(t: type[Tokens] = Tokens) -> str:
     QLabel[role="caption"]  {{ font-size: {t.FS_CAPTION}px; color: {t.TEXT_MUTED}; }}
     QLabel[role="info"] {{
         background: {t.ACCENT_SOFT};
-        color: {t.ACCENT_PRESS};
+        color: {t.ACCENT_TEXT};
         border-radius: {t.RADIUS_SM}px;
         padding: {t.S2}px {t.S3}px;
     }}
@@ -166,6 +269,17 @@ def global_qss(t: type[Tokens] = Tokens) -> str:
     QLabel[status="warn"]  {{ color: {t.WARN};  font-weight: 600; }}
     QLabel[status="error"] {{ color: {t.ERROR}; font-weight: 600; }}
     QLabel[status="idle"]  {{ color: {t.TEXT_MUTED}; }}
+
+    /* Status banners — tinted card versions of the pills, for the step-top
+       "do X first" notices that used to hand-paint pink/blue rectangles. */
+    QLabel[banner="ok"], QLabel[banner="warn"], QLabel[banner="error"] {{
+        border-radius: {t.RADIUS_SM}px;
+        padding: {t.S2}px {t.S3}px;
+        font-weight: 600;
+    }}
+    QLabel[banner="ok"]    {{ background: {t.OK_SOFT};    color: {t.OK}; }}
+    QLabel[banner="warn"]  {{ background: {t.WARN_SOFT};  color: {t.WARN}; }}
+    QLabel[banner="error"] {{ background: {t.ERROR_SOFT}; color: {t.ERROR}; }}
 
     /* Buttons — ONE hierarchy, applied everywhere:
          (no variant)      → secondary / neutral, the quiet default
@@ -208,10 +322,10 @@ def global_qss(t: type[Tokens] = Tokens) -> str:
     QPushButton[variant="success"]:disabled {{ background: #BFE0CB; color: #FFFFFF; }}
 
     QPushButton[variant="ghost"] {{
-        background: transparent; border: none; color: {t.ACCENT};
+        background: transparent; border: none; color: {t.ACCENT_TEXT};
         font-weight: 600; padding: 6px 10px;
     }}
-    QPushButton[variant="ghost"]:hover   {{ color: {t.ACCENT_HOVER}; background: {t.ACCENT_SOFT}; }}
+    QPushButton[variant="ghost"]:hover   {{ color: {t.ACCENT_TEXT}; background: {t.ACCENT_SOFT}; }}
     QPushButton[variant="ghost"]:disabled {{ color: {t.TEXT_MUTED}; background: transparent; }}
 
     /* Inputs */
@@ -223,8 +337,17 @@ def global_qss(t: type[Tokens] = Tokens) -> str:
         selection-background-color: {t.ACCENT_SOFT};
     }}
     QLineEdit:focus, QComboBox:focus, QSpinBox:focus, QDoubleSpinBox:focus {{
-        border: 1px solid {t.ACCENT};
+        border: 1px solid {t.ACCENT_TEXT};
     }}
+
+    /* Menus — follow the theme instead of the OS default (matters on dark) */
+    QMenuBar {{ background: {t.BG}; }}
+    QMenuBar::item {{ background: transparent; padding: 4px 10px; }}
+    QMenuBar::item:selected {{ background: {t.ACCENT_SOFT}; border-radius: 4px; }}
+    QMenu {{ background: {t.SURFACE}; border: 1px solid {t.BORDER_STRONG}; }}
+    QMenu::item {{ padding: 5px 24px 5px 12px; }}
+    QMenu::item:selected {{ background: {t.ACCENT_SOFT}; }}
+    QMenu::separator {{ height: 1px; background: {t.BORDER}; margin: 4px 8px; }}
 
     /* Tabs — flat underline, no chunky 3D pane */
     QTabWidget::pane {{ border: none; border-top: 1px solid {t.BORDER}; }}
@@ -233,7 +356,7 @@ def global_qss(t: type[Tokens] = Tokens) -> str:
         padding: {t.S2}px {t.S4}px; border: none;
         border-bottom: 2px solid transparent;
     }}
-    QTabBar::tab:selected {{ color: {t.ACCENT}; border-bottom: 2px solid {t.ACCENT}; }}
+    QTabBar::tab:selected {{ color: {t.ACCENT_TEXT}; border-bottom: 2px solid {t.ACCENT_TEXT}; }}
     QTabBar::tab:hover    {{ color: {t.TEXT}; }}
 
     /* Tables — a white surface with readable gridlines + a divided header,
@@ -273,10 +396,30 @@ def global_qss(t: type[Tokens] = Tokens) -> str:
     """
 
 
-def apply_theme(app) -> None:
-    """Install the global stylesheet on a QApplication."""
+def apply_theme(app, name: str | None = None) -> str:
+    """Load a theme preset into Tokens and (re)install the global stylesheet.
+
+    ``name=None`` uses the persisted preset (``~/.apex/theme.txt``) so all
+    three entry points pick up the user's choice. Returns the applied name.
+    """
+    theme = name if name in PALETTES else current_theme()
+    for key, value in PALETTES[theme].items():
+        setattr(Tokens, key, value)
     if app is not None:
         app.setStyleSheet(global_qss())
+    return theme
+
+
+def set_theme(app, name: str) -> str:
+    """Apply *and persist* a theme preset (the theme-menu entry point).
+
+    Widgets styled purely by the global QSS restyle instantly; code that
+    hand-painted colours must re-run its styling (e.g. the main window's
+    step buttons) — callers refresh those explicitly.
+    """
+    theme = apply_theme(app, name)
+    _persist_theme(theme)
+    return theme
 
 
 def refresh(widget) -> None:
