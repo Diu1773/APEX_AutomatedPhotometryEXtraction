@@ -185,6 +185,12 @@ def run_step10(cfg: Path) -> Path:
 def run_one(target: str) -> bool:
     raw, kind, ra, dec = TARGETS[target]
     log(f"\n### {target} ({kind}) — start, E: free {free_gb():.0f} GB")
+    # Resumable: if the CMD is already built, skip BEFORE Step 0 so a re-run does
+    # not re-calibrate (reorg has already emptied calibrated/ into sci/).
+    new_cmd = REPROCESS / target / "result" / "cmd_zeropoint" / "median_by_ID_filter_wide_cmd.csv"
+    if kind != "lc" and new_cmd.exists():
+        log(f"[DONE] {target}: CMD table already present -> {new_cmd}")
+        return True
     run_step0(target, raw)
     if kind == "lc":
         log(f"[DONE-Step0] {target} (lc, preprocess only)"); return True
@@ -192,10 +198,6 @@ def run_one(target: str) -> bool:
     if not list(sci.glob("pp_*.fit")):
         log(f"[SKIP] {target}: no calibrated frames after reorg"); return False
     cfg = gen_config(target, sci, ra, dec)
-    new_cmd = REPROCESS / target / "result" / "cmd_zeropoint" / "median_by_ID_filter_wide_cmd.csv"
-    if new_cmd.exists():  # resumable: skip an already-produced CMD
-        log(f"[DONE] {target}: CMD table already present -> {new_cmd}")
-        return True
     apex_run(cfg, "1-7", "cmd")
     log(f"[STEP1-7] {target}: forced photometry done -> {REPROCESS/target/'result'}")
     new_cmd = run_step10(cfg)
