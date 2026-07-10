@@ -243,9 +243,11 @@ def run_detection(file_list, params, data_dir, cache_dir, use_cropped=False,
                     detect_engine=getattr(P, 'detect_engine', 'segm'),
                 )
 
-                # Load FITS
+                # Load FITS. float32, not float64: halves per-frame RAM (244 MB
+                # vs 488 MB for a 61 MP frame) and the SEP path downcasts to
+                # float32 anyway, so this also drops the float64 intermediate.
                 with fits.open(file_path) as hdul:
-                    data = hdul[0].data.astype(float)
+                    data = hdul[0].data.astype(np.float32)
                     header = hdul[0].header
 
                 # Get filter - preserve original case from header
