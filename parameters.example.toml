@@ -36,7 +36,10 @@ enable = false
 
 [parallel]
 mode = "auto"
-max_workers = 0
+# 2 keeps peak RAM bounded on 16 GB laptops (Step-7 holds one 61 MP float32
+# frame ~244 MB per worker). 0 = auto (75% of cores) can freeze low-RAM
+# machines. Raise on a workstation with more memory.
+max_workers = 2
 resume_mode = true
 force_redetect = false
 force_rephot = false
@@ -334,7 +337,8 @@ require_qc_pass = true
 force_solve = false
 timeout_s = 120.0
 refine_enable = true
-max_workers = 4
+# One plate-solve subprocess per worker; 2 caps peak RAM on 16 GB laptops.
+max_workers = 2
 astnet_local_enable = true
 astnet_local_use_wsl = true
 astnet_local_command = "solve-field"
