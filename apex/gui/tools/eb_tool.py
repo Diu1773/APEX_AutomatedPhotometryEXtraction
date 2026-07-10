@@ -170,6 +170,7 @@ def _resolve_check_filter(filters) -> str | None:
     return unique_filters[0] if len(unique_filters) == 1 else None
 
 from apex.gui.layout_rules import FittedDialog
+from apex.gui.theme import Tokens, style_button
 from apex.gui.tools.tool_window_base import ToolWindowBase
 from apex.gui.workflow.lc.step11_period_analysis import PeriodAnalysisWorker
 
@@ -243,7 +244,7 @@ class EclipsingBinaryToolWindow(ToolWindowBase):
         header = QLabel(
             "LS + BLS period scan → phase fold → eclipse timing → O-C → depth/duration"
         )
-        header.setStyleSheet("QLabel { color: #666; font-size: 9pt; }")
+        header.setProperty("role", "caption")
         header.setWordWrap(True)
         root.addWidget(header)
 
@@ -252,7 +253,9 @@ class EclipsingBinaryToolWindow(ToolWindowBase):
 
         # ---- Left panel ----
         left = QWidget()
-        left.setMaximumWidth(300)
+        # 300px clipped the form labels ("Workspac…") and the LS/PDM/BLS
+        # checkbox row under the themed paddings.
+        left.setMaximumWidth(400)
         ll = QVBoxLayout(left)
         ll.setContentsMargins(4, 4, 4, 4)
         splitter.addWidget(left)
@@ -263,18 +266,22 @@ class EclipsingBinaryToolWindow(ToolWindowBase):
         self.lc_status = QLabel("Not loaded")
         self.lc_status.setWordWrap(True)
         lc_form.addRow("Status:", self.lc_status)
-        ws_row = QWidget()
-        ws_layout = QHBoxLayout(ws_row)
-        ws_layout.setContentsMargins(0, 0, 0, 0)
+        # Workspace: edit on its own row, buttons on the next — one row with
+        # edit + two buttons compresses the form's label column until both the
+        # labels and the buttons clip ("Workspac…", "owse").
         self.workspace_edit = QLineEdit(str(self.workspace_dir))
+        lc_form.addRow("Workspace:", self.workspace_edit)
+        ws_btn_row = QWidget()
+        ws_btn_layout = QHBoxLayout(ws_btn_row)
+        ws_btn_layout.setContentsMargins(0, 0, 0, 0)
         btn_workspace = QPushButton("Browse…")
         btn_workspace.clicked.connect(self._browse_workspace)
         btn_reload = QPushButton("Load")
         btn_reload.clicked.connect(self._load_lc_from_workspace)
-        ws_layout.addWidget(self.workspace_edit, 1)
-        ws_layout.addWidget(btn_workspace)
-        ws_layout.addWidget(btn_reload)
-        lc_form.addRow("Workspace:", ws_row)
+        ws_btn_layout.addWidget(btn_workspace)
+        ws_btn_layout.addWidget(btn_reload)
+        ws_btn_layout.addStretch()
+        lc_form.addRow("", ws_btn_row)
         self.mag_col_combo = QComboBox()
         self.mag_col_combo.setEnabled(False)
         self.mag_col_combo.currentIndexChanged.connect(self._on_mag_col_changed)
@@ -321,9 +328,7 @@ class EclipsingBinaryToolWindow(ToolWindowBase):
         self.pdm_bins.setRange(5, 100); self.pdm_bins.setValue(20)
         scan_form.addRow("PDM bins:", self.pdm_bins)
         btn_scan = QPushButton("Scan")
-        btn_scan.setStyleSheet(
-            "QPushButton { background: #E65100; color: white; font-weight: bold; padding: 6px; }"
-        )
+        style_button(btn_scan, "primary", height=Tokens.H_BUTTON)
         btn_scan.clicked.connect(self._run_scan)
         scan_form.addRow(btn_scan)
         self.scan_status = QLabel("")
@@ -357,15 +362,13 @@ class EclipsingBinaryToolWindow(ToolWindowBase):
         meas_group = QGroupBox("Eclipse Measurement")
         meas_form = QFormLayout(meas_group)
         btn_meas = QPushButton("Fit Eclipse (parabola)")
-        btn_meas.setStyleSheet(
-            "QPushButton { background: #1976D2; color: white; font-weight: bold; padding: 5px; }"
-        )
+        style_button(btn_meas, "primary", height=Tokens.H_BUTTON)
         btn_meas.clicked.connect(self._measure_eclipse)
         meas_form.addRow(btn_meas)
         self.meas_label = QLabel("")
         self.meas_label.setWordWrap(True)
         self.meas_label.setStyleSheet(
-            "QLabel { background: #FFF8E1; padding: 6px; border-radius: 4px; "
+            f"QLabel {{ background: {Tokens.SURFACE_ALT}; padding: 6px; border-radius: 4px; "
             "font-family: monospace; font-size: 8pt; }"
         )
         meas_form.addRow(self.meas_label)
@@ -541,7 +544,7 @@ class EclipsingBinaryToolWindow(ToolWindowBase):
         self.analysis_filter_combo.setEnabled(False)
         self.analysis_filter_combo.blockSignals(False)
         self.lc_status.setText(status)
-        self.lc_status.setStyleSheet("color: #C62828;")
+        self.lc_status.setStyleSheet(f"color: {Tokens.ERROR};")
         for canvas_name in ("pg_canvas", "ph_canvas", "oc_canvas"):
             canvas = getattr(self, canvas_name, None)
             if canvas is None:
@@ -697,7 +700,7 @@ class EclipsingBinaryToolWindow(ToolWindowBase):
         self.lc_status.setText(
             f"{workspace_name}{workspace_type}\n{self.lc_data['source']}\n{n} pts{corr_line}\n{self.mag_col_combo.currentText()}"
         )
-        self.lc_status.setStyleSheet("color: green;")
+        self.lc_status.setStyleSheet(f"color: {Tokens.OK};")
         filt_label = self.lc_data.get("analysis_filter", "__all__")
         filt_info = f", filter={filt_label}" if filt_label and filt_label != "__all__" else ""
         self.log(

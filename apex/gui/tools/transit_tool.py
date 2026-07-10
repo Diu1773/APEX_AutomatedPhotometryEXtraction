@@ -138,6 +138,7 @@ from PyQt5.QtWidgets import (
 from PyQt5.QtCore import Qt, QThread, pyqtSignal
 
 from apex.gui.layout_rules import prevent_collapse, tame_canvas
+from apex.gui.theme import Tokens, style_button
 from apex.gui.tools.tool_window_base import ToolWindowBase
 from apex.gui.workflow.lc.step11_period_analysis import PeriodAnalysisWorker
 
@@ -545,7 +546,7 @@ class TransitToolWindow(ToolWindowBase):
         splitter.addWidget(left)
 
         # Target + parameter fetch
-        tgt_group = QGroupBox("Target & Prior Parameters")
+        tgt_group = QGroupBox("Target && Prior Parameters")  # && — a bare & renders as a mnemonic underline
         tgt_form = QFormLayout(tgt_group)
         name_row = QHBoxLayout()
         self.target_edit = QLineEdit()
@@ -598,18 +599,21 @@ class TransitToolWindow(ToolWindowBase):
         self.lc_status = QLabel("Not loaded")
         self.lc_status.setWordWrap(True)
         lc_form.addRow("Status:", self.lc_status)
-        ws_row = QWidget()
-        ws_layout = QHBoxLayout(ws_row)
-        ws_layout.setContentsMargins(0, 0, 0, 0)
+        # Workspace: edit on its own row, buttons below — one row with edit +
+        # two buttons compresses the label column until labels/buttons clip.
         self.workspace_edit = QLineEdit(str(self.workspace_dir))
+        lc_form.addRow("Workspace:", self.workspace_edit)
+        ws_btn_row = QWidget()
+        ws_btn_layout = QHBoxLayout(ws_btn_row)
+        ws_btn_layout.setContentsMargins(0, 0, 0, 0)
         btn_workspace = QPushButton("Browse…")
         btn_workspace.clicked.connect(self._browse_workspace)
         btn_reload = QPushButton("Load")
         btn_reload.clicked.connect(self._load_lc_from_workspace)
-        ws_layout.addWidget(self.workspace_edit, 1)
-        ws_layout.addWidget(btn_workspace)
-        ws_layout.addWidget(btn_reload)
-        lc_form.addRow("Workspace:", ws_row)
+        ws_btn_layout.addWidget(btn_workspace)
+        ws_btn_layout.addWidget(btn_reload)
+        ws_btn_layout.addStretch()
+        lc_form.addRow("", ws_btn_row)
         self.data_combo = QComboBox()
         self.data_combo.setEnabled(False)
         self.data_combo.currentIndexChanged.connect(self._on_series_changed)
@@ -633,7 +637,7 @@ class TransitToolWindow(ToolWindowBase):
         trim_row2.addWidget(QLabel("to:"))
         trim_row2.addWidget(self.trim_end)
         lc_form.addRow("", trim_row2)
-        btn_trim = QPushButton("Apply Trim & Show")
+        btn_trim = QPushButton("Apply Trim && Show")
         btn_trim.clicked.connect(self._apply_trim)
         lc_form.addRow(btn_trim)
         ll.addWidget(lc_group)
@@ -659,9 +663,7 @@ class TransitToolWindow(ToolWindowBase):
         scan_method_row.addWidget(self.scan_chk_bls)
         scan_form.addRow("Methods:", scan_method_row)
         btn_scan = QPushButton("Scan Period")
-        btn_scan.setStyleSheet(
-            "QPushButton { background: #00796B; color: white; font-weight: bold; padding: 5px; }"
-        )
+        style_button(btn_scan, "primary", height=Tokens.H_BUTTON)
         btn_scan.clicked.connect(self._run_scan)
         scan_form.addRow(btn_scan)
         self.scan_status = QLabel("")
@@ -672,10 +674,9 @@ class TransitToolWindow(ToolWindowBase):
         # Fit buttons
         fit_group = QGroupBox("Fit")
         fit_form = QFormLayout(fit_group)
+        # The Fit group's main action; MCMC is the optional follow-up.
         btn_fit = QPushButton("Batman Fit (least-squares)")
-        btn_fit.setStyleSheet(
-            "QPushButton { background: #388E3C; color: white; font-weight: bold; padding: 6px; }"
-        )
+        style_button(btn_fit, "primary", height=Tokens.H_BUTTON)
         btn_fit.clicked.connect(self._run_batman_fit)
         fit_form.addRow(btn_fit)
         mcmc_row = QHBoxLayout()
@@ -689,9 +690,7 @@ class TransitToolWindow(ToolWindowBase):
         mcmc_row.addWidget(self.n_steps_spin)
         fit_form.addRow(mcmc_row)
         btn_mcmc = QPushButton("MCMC (emcee)")
-        btn_mcmc.setStyleSheet(
-            "QPushButton { background: #7B1FA2; color: white; font-weight: bold; padding: 6px; }"
-        )
+        style_button(btn_mcmc, height=Tokens.H_BUTTON)
         btn_mcmc.clicked.connect(self._run_mcmc)
         fit_form.addRow(btn_mcmc)
         self.fit_status = QLabel("")
