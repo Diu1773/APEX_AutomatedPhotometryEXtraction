@@ -23,8 +23,10 @@
 - **AIPPI 검증 제거** — Table 1 / §3.11 / §Software / §2.2 4곳. AIPPI는 provenance로만 강등
 - **§3.11 실수치**: 합성 inject–recover(calibrated offset −0.016 DN·scatter 3.18 DN≈잡음바닥·
   bias/dark ~1 DN RMS·flat vignette 21→2 DN) + ccdproc(§3.13)로 AIPPI 대체. (커밋 e0f538e)
-- **§3.2 완전도**: 로지스틱=경험적 요약+인용(REF_completeness→Fleming) + SNR-임계 물리(전이
-  SNR≈7.4, 로지스틱=잡음-임계 누적가우시안 근사) + 밝은쪽 결손 정직. (커밋 68e43b7)
+- **§3.2 완전도**: **erf 검출모델**로 확정 — AutoPhOT(brennan2022) 선례 확인 결과 걔네가 로지스틱
+  아니라 error function β=½[1−erf(z/√2)] 사용, Masci 2011+Kashyap 2010 인용. 내 SNR-임계(7.4)
+  물리와 정확히 일치 → 로지스틱 폐기, **Stetson1987(주입법)+Masci2011+Kashyap2010(erf)+brennan2022
+  (선례)** 인용. Fig1 양패널 erf 재적합. bib에 kashyap2010·masci2011 추가. (커밋 53e5b4a)
 - **§3.6 IRAF 매칭 + T2 표**: all-APEX NGC6811 V, 구경 1.0×FWHM·annulus 6-9 매칭 재실행
   (N=498, MAD 0.0092, r=0.99984). NGC457(g,278)과 짝지어 "단일프레임" 한계 해소. (커밋 17620df)
 
