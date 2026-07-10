@@ -43,15 +43,6 @@ TARGETS = {
     "YZ_Boo":  (r"E:\observe_raw_Analysis\YZbootis",     "lc", None, None),
 }
 
-# Reference CMD (existing AIPPI-preprocessed result) to validate the new all-APEX
-# CMD against. None -> no prior reference (reprocess only, no cross-check).
-REF_CMD = {
-    "NGC6811": r"E:\observed_Analysis\NGC6811\pp\result\cmd_zeropoint\median_by_ID_filter_wide_cmd.csv",
-    "M67":     r"E:\observed_Analysis\M67\pp\result\cmd_zeropoint\median_by_ID_filter_wide_cmd.csv",
-    "M13":     r"E:\observed_Analysis\M13\light\result\cmd_zeropoint\median_by_ID_filter_wide_cmd.csv",
-    "M5":      r"E:\observed_Analysis\M5\light\result\cmd_zeropoint\median_by_ID_filter_wide_cmd.csv",
-    "M3":      None,
-}
 
 
 def free_gb(drive="E:\\") -> float:
@@ -191,23 +182,6 @@ def run_step10(cfg: Path) -> Path:
     return result / "cmd_zeropoint" / "median_by_ID_filter_wide_cmd.csv"
 
 
-def validate_cmd(target: str, new_cmd: Path):
-    """Cross-match the new all-APEX CMD against the reference (AIPPI) CMD and log
-    per-band agreement. No-op (logged) if no reference exists."""
-    ref = REF_CMD.get(target)
-    if not ref or not Path(ref).exists():
-        log(f"[VALIDATE] {target}: no reference CMD — reprocess only, skip cross-check")
-        return
-    import compare_cmd  # scripts/ is on sys.path via REPO insert
-    jpath = REPROCESS / target / "cmd_compare_vs_ref.json"
-    res = compare_cmd.compare(str(new_cmd), str(ref), tol_arcsec=1.0)
-    import json as _json
-    jpath.write_text(_json.dumps(res, indent=2), encoding="utf-8")
-    parts = [f"{b}:dMag={s['median_dmag']:+.4f}/sig={s['sigma_mad']:.4f}(N={s['n']})"
-             for b, s in res["bands"].items()]
-    log(f"[VALIDATE] {target}: matched {res['n_matched']}/{res['n_new']} vs ref  " + "  ".join(parts))
-
-
 def run_one(target: str) -> bool:
     raw, kind, ra, dec = TARGETS[target]
     log(f"\n### {target} ({kind}) — start, E: free {free_gb():.0f} GB")
@@ -218,14 +192,21 @@ def run_one(target: str) -> bool:
     if not list(sci.glob("pp_*.fit")):
         log(f"[SKIP] {target}: no calibrated frames after reorg"); return False
     cfg = gen_config(target, sci, ra, dec)
+    new_cmd = REPROCESS / target / "result" / "cmd_zeropoint" / "median_by_ID_filter_wide_cmd.csv"
+    if new_cmd.exists():  # resumable: skip an already-produced CMD
+        log(f"[DONE] {target}: CMD table already present -> {new_cmd}")
+        return True
     apex_run(cfg, "1-7", "cmd")
     log(f"[STEP1-7] {target}: forced photometry done -> {REPROCESS/target/'result'}")
     new_cmd = run_step10(cfg)
     if not new_cmd.exists():
         log(f"[SKIP] {target}: step10 produced no CMD table"); return False
-    log(f"[STEP10] {target}: CMD table -> {new_cmd}")
-    validate_cmd(target, new_cmd)
-    log(f"[DONE] {target}: full-APEX CMD complete (isochrone step 12 left to user)")
+    # NOTE: no comparison against E:\observed_Analysis (AIPPI-preprocessed) — that
+    # is the author's own tool, not an independent reference, so it is not a
+    # validation. Independent accuracy checks (IRAF / ccdproc / PS1 / Gaia) are
+    # done per-figure in validation/paper/. Filter systems also differ per target
+    # (M13 Johnson vs its AIPPI SDSS run), so a band cross-match is not meaningful.
+    log(f"[DONE] {target}: full-APEX CMD complete ({new_cmd}); isochrone step 12 left to user")
     return True
 
 
