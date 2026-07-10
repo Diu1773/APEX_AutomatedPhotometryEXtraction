@@ -47,6 +47,7 @@ from PyQt5.QtGui import QKeySequence, QColor
 from PyQt5.QtCore import Qt, QTimer, pyqtSignal
 
 from apex.gui.layout_rules import FittedDialog, tame_canvas
+from apex.gui.theme import Tokens, style_button
 from apex.gui.workflow.step_window_base import StepWindowBase
 from apex.utils.step_paths_lc import (
     step2_cropped_dir,
@@ -240,11 +241,11 @@ class TargetComparisonSelectionWindow(StepWindowBase):
         top_bar.addWidget(self.filter_combo)
 
         self.step7_status_label = QLabel("Checking...")
-        self.step7_status_label.setStyleSheet("color: #888; font-size: 10px;")
+        self.step7_status_label.setProperty("role", "caption")
         top_bar.addWidget(self.step7_status_label)
 
         sep1 = QLabel("|")
-        sep1.setStyleSheet("color: #999;")
+        sep1.setProperty("role", "caption")
         top_bar.addWidget(sep1)
 
         top_bar.addWidget(QLabel("Frame:"))
@@ -255,7 +256,7 @@ class TargetComparisonSelectionWindow(StepWindowBase):
         top_bar.addStretch()
 
         info_label = QLabel("T=target C=comp A=add D=remove .=filter [/]=frame")
-        info_label.setStyleSheet("color: #888; font-size: 10px;")
+        info_label.setProperty("role", "caption")
         info_label.setToolTip(
             "ID: 고정 번호 (1,2,3...) | Gaia ID: Gaia DR3 source_id\n"
             "Shift+D: box remove | G: profile"
@@ -263,7 +264,7 @@ class TargetComparisonSelectionWindow(StepWindowBase):
         top_bar.addWidget(info_label)
 
         btn_log = QPushButton("Log")
-        btn_log.setStyleSheet("QPushButton { background-color: #607D8B; color: white; padding: 4px 10px; }")
+        style_button(btn_log, "ghost", height=Tokens.H_COMPACT)
         btn_log.clicked.connect(self.show_log_window)
         top_bar.addWidget(btn_log)
 
@@ -418,20 +419,19 @@ class TargetComparisonSelectionWindow(StepWindowBase):
         # Top bar: 2D Plot + Flip buttons
         ctrl_layout = QHBoxLayout()
 
-        btn_2d_plot = QPushButton("2D Plot")
-        btn_2d_plot.setStyleSheet("QPushButton { background-color: #FF9800; color: white; font-weight: bold; }")
+        btn_2d_plot = QPushButton("2D Plot")  # utility dialog opener — neutral
         btn_2d_plot.clicked.connect(self.open_stretch_plot)
         ctrl_layout.addWidget(btn_2d_plot)
 
+        # No setFixedWidth: 55px clipped the labels to "lip" under the themed
+        # button padding — let sizeHint decide.
         self.btn_flip_x = QPushButton("Flip X")
-        self.btn_flip_x.setFixedWidth(55)
         self.btn_flip_x.setCheckable(True)
         self.btn_flip_x.setToolTip("이미지 좌우 반전 (X축)")
         self.btn_flip_x.clicked.connect(self._toggle_flip_x)
         ctrl_layout.addWidget(self.btn_flip_x)
 
         self.btn_flip_y = QPushButton("Flip Y")
-        self.btn_flip_y.setFixedWidth(55)
         self.btn_flip_y.setCheckable(True)
         self.btn_flip_y.setToolTip("이미지 상하 반전 (Y축)")
         self.btn_flip_y.clicked.connect(self._toggle_flip_y)

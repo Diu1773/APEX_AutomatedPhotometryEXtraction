@@ -622,10 +622,19 @@ class FitsGLWidget(QOpenGLWidget):
 _MODES    = ["STF", "Linear", "Log", "Asinh", "Sqrt"]
 _MODE_KEYS = ["stf", "linear", "log", "asinh", "sqrt"]
 
-_CTRL_SS = """
-QWidget#FitsCtrlBar { background: #ECEFF1; border-bottom: 1px solid #B0BEC5; }
-QWidget#FitsCtrlBar QLabel { color: #37474F; font-size: 11px; }
-"""
+def _ctrl_ss() -> str:
+    """Control-bar QSS from the live theme tokens (built at construction so a
+    theme switch applies to newly opened viewers)."""
+    from apex.gui.theme import Tokens as T
+    return (
+        f"QWidget#FitsCtrlBar {{ background: {T.SURFACE_ALT};"
+        f" border-bottom: 1px solid {T.BORDER_STRONG}; }}"
+        f"QWidget#FitsCtrlBar QLabel {{ color: {T.TEXT_SUB}; font-size: 11px; }}"
+        # Compact paddings: the themed 6/14px button+input padding clips the
+        # fixed-width compact controls in this 30px bar.
+        f"QWidget#FitsCtrlBar QPushButton {{ padding: 2px 8px; }}"
+        f"QWidget#FitsCtrlBar QComboBox {{ padding: 2px 6px; }}"
+    )
 
 
 class FITSViewerWidget(QWidget):
@@ -679,14 +688,15 @@ class FITSViewerWidget(QWidget):
         ctrl = QWidget()
         ctrl.setObjectName("FitsCtrlBar")
         ctrl.setFixedHeight(30)
-        ctrl.setStyleSheet(_CTRL_SS)
+        ctrl.setStyleSheet(_ctrl_ss())
         bar = QHBoxLayout(ctrl)
         bar.setContentsMargins(6, 2, 6, 2)
         bar.setSpacing(6)
 
         self._mode_combo = QComboBox()
         self._mode_combo.addItems(_MODES)
-        self._mode_combo.setFixedWidth(80)
+        # 80px clipped "Linear"/"STF" under the themed 6/8px input padding.
+        self._mode_combo.setFixedWidth(96)
         self._mode_combo.currentIndexChanged.connect(self._on_mode_changed)
         bar.addWidget(self._mode_combo)
 
@@ -721,7 +731,7 @@ class FITSViewerWidget(QWidget):
         sp.addWidget(self._sl_highlight)
 
         self._btn_auto = QPushButton("Auto")
-        self._btn_auto.setFixedWidth(44)
+        self._btn_auto.setFixedWidth(64)  # 44px clipped the label to "ut"
         self._btn_auto.clicked.connect(self.auto_stf)
         sp.addWidget(self._btn_auto)
 

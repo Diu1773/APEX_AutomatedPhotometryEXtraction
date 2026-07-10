@@ -298,6 +298,10 @@ def global_qss(t: type[Tokens] = Tokens) -> str:
     }}
     QPushButton:hover  {{ background: {t.SURFACE_ALT}; border-color: {t.TEXT_MUTED}; }}
     QPushButton:pressed {{ background: {t.BORDER}; }}
+    /* Checkable neutral buttons (Flip X/Y, toggles) need a visible on-state */
+    QPushButton:checked {{
+        background: {t.ACCENT_SOFT}; border-color: {t.ACCENT}; color: {t.ACCENT_TEXT};
+    }}
     QPushButton:disabled {{ background: {t.SURFACE}; color: {t.TEXT_MUTED}; border-color: {t.BORDER}; }}
 
     QPushButton[variant="primary"] {{
