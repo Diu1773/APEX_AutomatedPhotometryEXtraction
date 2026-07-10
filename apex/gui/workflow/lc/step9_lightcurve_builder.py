@@ -53,6 +53,7 @@ from PyQt5.QtGui import QKeySequence, QColor
 from PyQt5.QtWidgets import QShortcut, QStyle, QStyleOptionSlider, QSplitter, QProgressBar
 
 from apex.gui.layout_rules import FittedDialog
+from apex.gui.theme import Tokens, refresh, style_button
 from apex.gui.workflow.step_window_base import StepWindowBase
 from apex.gui.workflow.ui_helpers import (
     add_parameter_reset_button,
@@ -1143,7 +1144,8 @@ class LightCurveBuilderWindow(StepWindowBase):
             "대상/비교성 선택 결과를 이용해 라이트커브를 생성합니다.\n"
             "RAW 차등측광을 생성하고 비교성 QC를 수행합니다."
         )
-        info.setStyleSheet("QLabel { background-color: #E3F2FD; padding: 10px; border-radius: 5px; }")
+        info.setProperty("role", "info")  # themed banner instead of hand-painted blue
+        info.setWordWrap(True)
         self.content_layout.addWidget(info)
 
         # Hidden QLineEdits (used internally by build logic)
@@ -1152,10 +1154,7 @@ class LightCurveBuilderWindow(StepWindowBase):
 
         # Read-only info bar for target / comparison IDs (auto-loaded from Step 8)
         self.id_info_label = QLabel("Target / Comp: (loading...)")
-        self.id_info_label.setStyleSheet(
-            "QLabel { background-color: #E8F5E9; padding: 8px 12px; border-radius: 5px;"
-            " font-weight: bold; color: #2E7D32; }"
-        )
+        self.id_info_label.setProperty("banner", "warn")
         self.id_info_label.setWordWrap(True)
         self.content_layout.addWidget(self.id_info_label)
 
@@ -1165,7 +1164,7 @@ class LightCurveBuilderWindow(StepWindowBase):
 
         # ----- 추가 데이터셋 패널 -----
         ds_group = QGroupBox("추가 데이터셋")
-        ds_group.setStyleSheet("QGroupBox { font-size: 8pt; } QGroupBox::title { color: #555; }")
+        ds_group.setStyleSheet("QGroupBox { font-size: 8pt; }")  # colors from theme
         self.ds_group = ds_group
         ds_vbox = QVBoxLayout(ds_group)
         ds_vbox.setContentsMargins(4, 4, 4, 4)
@@ -1177,14 +1176,16 @@ class LightCurveBuilderWindow(StepWindowBase):
         self.btn_ds_toggle.setCheckable(True)
         self.btn_ds_toggle.setChecked(False)
         self.btn_ds_toggle.setStyleSheet(
-            "QPushButton { border: none; text-align: left; color: #555; font-size: 8pt; padding: 0px; }"
-            "QPushButton:checked { color: #1565C0; }"
+            f"QPushButton {{ border: none; background: transparent; text-align: left;"
+            f" color: {Tokens.TEXT_SUB}; font-size: 8pt; padding: 0px; }}"
+            f"QPushButton:checked {{ color: {Tokens.ACCENT_TEXT}; }}"
         )
         self.btn_ds_toggle.toggled.connect(lambda checked: self._set_dataset_panel_expanded(checked, persist=True))
         ds_header_row.addWidget(self.btn_ds_toggle)
 
         self.ds_summary_label = QLabel()
-        self.ds_summary_label.setStyleSheet("QLabel { color: #607D8B; font-size: 8pt; }")
+        self.ds_summary_label.setStyleSheet(
+            f"QLabel {{ color: {Tokens.TEXT_SUB}; font-size: 8pt; }}")
         ds_header_row.addWidget(self.ds_summary_label)
         ds_header_row.addStretch()
         ds_vbox.addLayout(ds_header_row)
@@ -1229,14 +1230,10 @@ class LightCurveBuilderWindow(StepWindowBase):
         self.tab_widget.addTab(self.light_tab, "Light Curve")
         self.content_layout.addWidget(self.tab_widget, 1)
 
-        plot_group = QGroupBox("Target - Comparison Light Curve")
-        plot_group.setStyleSheet(
-            "QGroupBox { background-color: #F7F9FB; border: 1px solid #CFD8DC; border-radius: 8px; margin-top: 8px; }"
-            "QGroupBox::title { subcontrol-origin: margin; left: 10px; padding: 0 4px; color: #37474F; font-weight: bold; }"
-        )
+        plot_group = QGroupBox("Target - Comparison Light Curve")  # themed QSS
         plot_layout = QVBoxLayout(plot_group)
         plot_hint = QLabel("←/→ 키로 비교성을 전환합니다.")
-        plot_hint.setStyleSheet("QLabel { color: #455A64; }")
+        plot_hint.setProperty("role", "subtitle")
         plot_layout.addWidget(plot_hint)
 
         self.plot_info_label = QLabel("Comparison: (none)")
@@ -1260,18 +1257,15 @@ class LightCurveBuilderWindow(StepWindowBase):
         btn_row.addWidget(self.x_axis_combo)
 
         self.btn_filter_colors = QPushButton("Browse Colors")
-        self.btn_filter_colors.setStyleSheet(
-            "QPushButton { background-color: #ECEFF1; border: 1px solid #B0BEC5; border-radius: 4px; padding: 4px 10px; }"
-            "QPushButton:hover { border: 1px solid #78909C; }"
-        )
+        style_button(self.btn_filter_colors, height=Tokens.H_BUTTON)
         self.btn_filter_colors.clicked.connect(self.show_filter_color_browser)
         btn_row.addWidget(self.btn_filter_colors)
 
         btn_row.addStretch()
 
-        # Plot 버튼 (자동 저장 포함)
+        # Plot 버튼 (자동 저장 포함) — the Light Curve tab's single primary.
         self.btn_plot = QPushButton("Plot && Save")
-        self.btn_plot.setStyleSheet("QPushButton { background-color: #4CAF50; color: white; font-weight: bold; padding: 4px 16px; font-size: 10pt; }")
+        style_button(self.btn_plot, "primary", height=Tokens.H_BUTTON)
         self.btn_plot.clicked.connect(self.plot_and_save)
         btn_row.addWidget(self.btn_plot)
 
@@ -1329,24 +1323,18 @@ class LightCurveBuilderWindow(StepWindowBase):
         frame_qc_row = QHBoxLayout()
         frame_qc_row.addWidget(QLabel("더블클릭=선택  D=제외  A=복원  R=리셋"))
         self.frame_qc_selected_label = QLabel("Selected: (none)")
-        self.frame_qc_selected_label.setStyleSheet("QLabel { font-weight: bold; color: #1565C0; }")
+        self.frame_qc_selected_label.setStyleSheet("QLabel { font-weight: 600; }")
         frame_qc_row.addWidget(self.frame_qc_selected_label, 1)
         self.frame_qc_summary_label = QLabel("Excluded: 0/0")
-        self.frame_qc_summary_label.setStyleSheet("QLabel { color: #546E7A; }")
+        self.frame_qc_summary_label.setProperty("role", "subtitle")
         frame_qc_row.addWidget(self.frame_qc_summary_label)
         self.btn_frame_qc_save = QPushButton("Save")
-        self.btn_frame_qc_save.setStyleSheet(
-            "QPushButton { background-color: #4CAF50; color: white; font-weight: bold; padding: 3px 10px; }"
-            "QPushButton:disabled { background-color: #CFD8DC; color: #90A4AE; }"
-        )
+        style_button(self.btn_frame_qc_save, height=Tokens.H_COMPACT)
         self.btn_frame_qc_save.clicked.connect(self.save_frame_excludes)
         self.btn_frame_qc_save.setEnabled(False)
         frame_qc_row.addWidget(self.btn_frame_qc_save)
         self.btn_frame_qc_clear = QPushButton("Reset")
-        self.btn_frame_qc_clear.setStyleSheet(
-            "QPushButton { background-color: #F44336; color: white; font-weight: bold; padding: 3px 10px; }"
-            "QPushButton:disabled { background-color: #CFD8DC; color: #90A4AE; }"
-        )
+        style_button(self.btn_frame_qc_clear, "danger", height=Tokens.H_COMPACT)
         self.btn_frame_qc_clear.clicked.connect(self.clear_frame_excludes)
         self.btn_frame_qc_clear.setEnabled(False)
         frame_qc_row.addWidget(self.btn_frame_qc_clear)
@@ -1354,11 +1342,7 @@ class LightCurveBuilderWindow(StepWindowBase):
 
         self.light_layout.addWidget(plot_group, 1)
 
-        qc_group = QGroupBox("Comparison QC")
-        qc_group.setStyleSheet(
-            "QGroupBox { background-color: #F7F9FB; border: 1px solid #CFD8DC; border-radius: 8px; margin-top: 8px; }"
-            "QGroupBox::title { subcontrol-origin: margin; left: 10px; padding: 0 4px; color: #37474F; font-weight: bold; }"
-        )
+        qc_group = QGroupBox("Comparison QC")  # themed by the global QGroupBox QSS
         qc_layout = QVBoxLayout(qc_group)
 
         qc_btn_row = QHBoxLayout()
@@ -1366,30 +1350,26 @@ class LightCurveBuilderWindow(StepWindowBase):
         btn_qc_params.clicked.connect(self.show_qc_parameters_dialog)
         qc_btn_row.addWidget(btn_qc_params)
 
+        # One primary per view: Run QC is the tab's main action; Auto Use is a
+        # follow-up utility and stays neutral (was orange + green hand-paint).
         self.btn_qc_run = QPushButton("Run QC")
-        self.btn_qc_run.setStyleSheet(
-            "QPushButton { background-color: #FF9800; color: white; font-weight: bold; padding: 4px 12px; }"
-            "QPushButton:disabled { background-color: #CFD8DC; color: #90A4AE; }"
-        )
+        style_button(self.btn_qc_run, "primary", height=Tokens.H_BUTTON)
         self.btn_qc_run.clicked.connect(self.run_comp_qc)
         qc_btn_row.addWidget(self.btn_qc_run)
 
         self.btn_qc_auto = QPushButton("Auto Use")
-        self.btn_qc_auto.setStyleSheet(
-            "QPushButton { background-color: #4CAF50; color: white; font-weight: bold; padding: 4px 12px; }"
-            "QPushButton:disabled { background-color: #CFD8DC; color: #90A4AE; }"
-        )
+        style_button(self.btn_qc_auto, height=Tokens.H_BUTTON)
         self.btn_qc_auto.clicked.connect(self.auto_use_qc)
         qc_btn_row.addWidget(self.btn_qc_auto)
 
         qc_btn_row.addStretch()
         self.lbl_comp_count = QLabel("Active comps: 0")
-        self.lbl_comp_count.setStyleSheet("QLabel { font-weight: bold; color: #37474F; }")
+        self.lbl_comp_count.setStyleSheet("QLabel { font-weight: 600; }")
         qc_btn_row.addWidget(self.lbl_comp_count)
         qc_layout.addLayout(qc_btn_row)
 
         self.lbl_qc_thresholds = QLabel()
-        self.lbl_qc_thresholds.setStyleSheet("QLabel { color: #546E7A; }")
+        self.lbl_qc_thresholds.setProperty("role", "subtitle")
         qc_layout.addWidget(self.lbl_qc_thresholds)
         self._update_qc_threshold_label()
 
@@ -1398,14 +1378,14 @@ class LightCurveBuilderWindow(StepWindowBase):
         self.qc_progress_bar.setMaximumHeight(6)
         self.qc_progress_bar.setTextVisible(False)
         self.qc_progress_bar.setStyleSheet(
-            "QProgressBar { border: none; background-color: #ECEFF1; border-radius: 3px; }"
-            "QProgressBar::chunk { background-color: #FF9800; border-radius: 3px; }"
+            f"QProgressBar {{ border: none; background-color: {Tokens.SURFACE_ALT}; border-radius: 3px; }}"
+            f"QProgressBar::chunk {{ background-color: {Tokens.ACCENT}; border-radius: 3px; }}"
         )
         self.qc_progress_bar.hide()
         qc_layout.addWidget(self.qc_progress_bar)
 
         self.qc_status_label = QLabel("")
-        self.qc_status_label.setStyleSheet("QLabel { color: #546E7A; font-weight: bold; }")
+        self.qc_status_label.setProperty("role", "subtitle")
         self.qc_status_label.hide()
         qc_layout.addWidget(self.qc_status_label)
 
@@ -1483,24 +1463,18 @@ class LightCurveBuilderWindow(StepWindowBase):
         qc_frame_row = QHBoxLayout()
         qc_frame_row.addWidget(QLabel("더블클릭=선택  D=제외  A=복원  R=리셋"))
         self.qc_frame_selected_label = QLabel("Selected: (none)")
-        self.qc_frame_selected_label.setStyleSheet("QLabel { font-weight: bold; color: #1565C0; }")
+        self.qc_frame_selected_label.setStyleSheet("QLabel { font-weight: 600; }")
         qc_frame_row.addWidget(self.qc_frame_selected_label, 1)
         self.qc_frame_summary_label = QLabel("Excluded: 0/0")
-        self.qc_frame_summary_label.setStyleSheet("QLabel { color: #546E7A; }")
+        self.qc_frame_summary_label.setProperty("role", "subtitle")
         qc_frame_row.addWidget(self.qc_frame_summary_label)
         self.btn_qc_frame_save = QPushButton("Save")
-        self.btn_qc_frame_save.setStyleSheet(
-            "QPushButton { background-color: #4CAF50; color: white; font-weight: bold; padding: 3px 10px; }"
-            "QPushButton:disabled { background-color: #CFD8DC; color: #90A4AE; }"
-        )
+        style_button(self.btn_qc_frame_save, height=Tokens.H_COMPACT)
         self.btn_qc_frame_save.clicked.connect(self.save_frame_excludes)
         self.btn_qc_frame_save.setEnabled(False)
         qc_frame_row.addWidget(self.btn_qc_frame_save)
         self.btn_qc_frame_reset = QPushButton("Reset")
-        self.btn_qc_frame_reset.setStyleSheet(
-            "QPushButton { background-color: #F44336; color: white; font-weight: bold; padding: 3px 10px; }"
-            "QPushButton:disabled { background-color: #CFD8DC; color: #90A4AE; }"
-        )
+        style_button(self.btn_qc_frame_reset, "danger", height=Tokens.H_COMPACT)
         self.btn_qc_frame_reset.clicked.connect(self.clear_frame_excludes)
         self.btn_qc_frame_reset.setEnabled(False)
         qc_frame_row.addWidget(self.btn_qc_frame_reset)
@@ -1532,7 +1506,7 @@ class LightCurveBuilderWindow(StepWindowBase):
 
         log_row = QHBoxLayout()
         btn_log = QPushButton("Log")
-        btn_log.setStyleSheet("QPushButton { background-color: #607D8B; color: white; font-weight: bold; padding: 6px 12px; }")
+        style_button(btn_log, "ghost", height=Tokens.H_COMPACT)
         btn_log.clicked.connect(self.show_log_window)
         log_row.addWidget(btn_log)
         log_row.addStretch()
@@ -2117,22 +2091,15 @@ class LightCurveBuilderWindow(StepWindowBase):
         c = self.comp_edit.text().strip()
         if t and c:
             self.id_info_label.setText(f"Target: ID {t}  |  Comp: {c}")
-            self.id_info_label.setStyleSheet(
-                "QLabel { background-color: #E8F5E9; padding: 8px 12px; border-radius: 5px;"
-                " font-weight: bold; color: #2E7D32; }"
-            )
+            banner = "ok"
         elif t:
             self.id_info_label.setText(f"Target: ID {t}  |  Comp: (없음)")
-            self.id_info_label.setStyleSheet(
-                "QLabel { background-color: #FFF8E1; padding: 8px 12px; border-radius: 5px;"
-                " font-weight: bold; color: #F57C00; }"
-            )
+            banner = "warn"
         else:
             self.id_info_label.setText("Target / Comp: Step 8에서 선택해주세요")
-            self.id_info_label.setStyleSheet(
-                "QLabel { background-color: #FFEBEE; padding: 8px 12px; border-radius: 5px;"
-                " font-weight: bold; color: #C62828; }"
-            )
+            banner = "error"
+        self.id_info_label.setProperty("banner", banner)
+        refresh(self.id_info_label)
 
     def clear_diff_series_cache(self, clear_headers: bool = False):
         """캐시 클리어 (데이터셋/선택 변경 시 호출)"""

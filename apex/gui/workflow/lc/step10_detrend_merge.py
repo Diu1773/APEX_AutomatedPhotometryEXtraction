@@ -51,6 +51,7 @@ from PyQt5.QtCore import Qt, QSignalBlocker
 from PyQt5.QtGui import QColor, QFont
 
 from apex.gui.layout_rules import FittedDialog
+from apex.gui.theme import Tokens, refresh, style_button
 from apex.gui.workflow.step_window_base import StepWindowBase
 from apex.analysis.light_curve.global_ensemble import solve_global_ensemble
 from apex.analysis.light_curve.detrend_output_service import (
@@ -413,14 +414,12 @@ class DetrendNightMergeWindow(StepWindowBase):
 
         # Info banner (compact)
         info = QLabel("여러 밤의 차등측광 데이터를 보정하여 병합합니다.")
-        info.setStyleSheet(
-            "QLabel { background-color: #E3F2FD; padding: 6px; border-radius: 4px; font-size: 9pt; }"
-        )
+        info.setProperty("role", "info")
+        info.setWordWrap(True)
         left_layout.addWidget(info)
 
-        # Left tabs
+        # Left tabs — pane border comes from the themed QSS
         self.left_tabs = QTabWidget()
-        self.left_tabs.setStyleSheet("QTabWidget::pane { border: 1px solid #ccc; }")
         left_layout.addWidget(self.left_tabs, 1)
 
         # ----- Tab 1: Data & Target -----
@@ -437,10 +436,7 @@ class DetrendNightMergeWindow(StepWindowBase):
 
         # Read-only info bar (auto-loaded from Step 10 / Step 8)
         self.id_info_label = QLabel("Target / Comp: (loading...)")
-        self.id_info_label.setStyleSheet(
-            "QLabel { background-color: #E8F5E9; padding: 8px 10px; border-radius: 5px;"
-            " font-weight: bold; color: #2E7D32; font-size: 9pt; }"
-        )
+        self.id_info_label.setProperty("banner", "warn")
         self.id_info_label.setWordWrap(True)
         data_layout.addWidget(self.id_info_label)
 
@@ -510,7 +506,7 @@ class DetrendNightMergeWindow(StepWindowBase):
         mode_header = QHBoxLayout()
         mode_header.setSpacing(6)
         mode_help_label = QLabel("각 모드의 입력 데이터, 보정식, 결과 설명")
-        mode_help_label.setStyleSheet("QLabel { color: #616161; font-size: 8pt; }")
+        mode_help_label.setStyleSheet(f"QLabel {{ color: {Tokens.TEXT_SUB}; font-size: 8pt; }}")
         mode_header.addWidget(mode_help_label)
         mode_header.addStretch()
         btn_mode_help = QPushButton("?")
@@ -539,7 +535,7 @@ class DetrendNightMergeWindow(StepWindowBase):
             "• 밤별 영점 오프셋만 보정\n"
             "• Target-Comp 색차가 작을 때 (|ΔC| < 0.3)"
         )
-        offset_desc.setStyleSheet("QLabel { color: #616161; font-size: 8pt; margin-left: 16px; }")
+        offset_desc.setStyleSheet(f"QLabel {{ color: {Tokens.TEXT_SUB}; font-size: 8pt; margin-left: 16px; }}")
         offset_layout.addWidget(offset_desc)
         mode_group_layout.addWidget(offset_frame)
 
@@ -556,7 +552,7 @@ class DetrendNightMergeWindow(StepWindowBase):
             "• 2차 소광계수(k'')로 색차 보정\n"
             "• Target-Comp 색차가 클 때 (|ΔC| ≥ 0.3)"
         )
-        color_desc.setStyleSheet("QLabel { color: #616161; font-size: 8pt; margin-left: 16px; }")
+        color_desc.setStyleSheet(f"QLabel {{ color: {Tokens.TEXT_SUB}; font-size: 8pt; margin-left: 16px; }}")
         color_layout.addWidget(color_desc)
 
         self.chk_global_k2 = QCheckBox("Global k'' (전체 데이터로 k'' 한 번 피팅)")
@@ -578,7 +574,7 @@ class DetrendNightMergeWindow(StepWindowBase):
             "• 프레임별 Z_t를 전역 최소제곱으로 동시 추정\n"
             "• comparison ensemble 기준 차등광도 스케일 유지"
         )
-        global_desc.setStyleSheet("QLabel { color: #616161; font-size: 8pt; margin-left: 16px; }")
+        global_desc.setStyleSheet(f"QLabel {{ color: {Tokens.TEXT_SUB}; font-size: 8pt; margin-left: 16px; }}")
         global_layout.addWidget(global_desc)
         mode_group_layout.addWidget(global_frame)
 
@@ -595,7 +591,7 @@ class DetrendNightMergeWindow(StepWindowBase):
             "• 외부 영향(대기, 측기 변화)에 강인\n"
             "• Step 7 강제측광 데이터 직접 사용"
         )
-        sysrem_desc.setStyleSheet("QLabel { color: #616161; font-size: 8pt; margin-left: 16px; }")
+        sysrem_desc.setStyleSheet(f"QLabel {{ color: {Tokens.TEXT_SUB}; font-size: 8pt; margin-left: 16px; }}")
         sysrem_layout.addWidget(sysrem_desc)
         sysrem_params_layout = QHBoxLayout()
         sysrem_params_layout.addWidget(QLabel("반복 수:"))
@@ -625,7 +621,7 @@ class DetrendNightMergeWindow(StepWindowBase):
         self.mode_sysrem.toggled.connect(lambda checked: checked and self._set_mode("sysrem"))
 
         self.color_status_label = QLabel("")
-        self.color_status_label.setStyleSheet("QLabel { color: #D32F2F; font-size: 9pt; }")
+        self.color_status_label.setStyleSheet(f"QLabel {{ color: {Tokens.ERROR}; font-size: 9pt; }}")
         self.color_status_label.setWordWrap(True)
         mode_group_layout.addWidget(self.color_status_label)
 
@@ -677,7 +673,7 @@ class DetrendNightMergeWindow(StepWindowBase):
         phase_layout.addRow("T₀ (JD):", t0_row)
 
         t0_note = QLabel("※ T₀ = 기준시점 (주극소/극대). 0이면 min(JD) 사용")
-        t0_note.setStyleSheet("QLabel { color: #757575; font-size: 8pt; }")
+        t0_note.setStyleSheet(f"QLabel {{ color: {Tokens.TEXT_MUTED}; font-size: 8pt; }}")
         phase_layout.addRow("", t0_note)
 
         self.spin_cycles = QDoubleSpinBox()
@@ -698,7 +694,7 @@ class DetrendNightMergeWindow(StepWindowBase):
             "피팅 시 잔차가 Nσ 이상인 이상치를 반복 제거합니다.\n"
             "(구름, 장비 오류 등으로 인한 outlier 제거용)"
         )
-        clip_desc.setStyleSheet("QLabel { color: #616161; font-size: 8pt; }")
+        clip_desc.setStyleSheet(f"QLabel {{ color: {Tokens.TEXT_SUB}; font-size: 8pt; }}")
         clip_desc.setWordWrap(True)
         clip_layout.addWidget(clip_desc)
 
@@ -808,25 +804,25 @@ class DetrendNightMergeWindow(StepWindowBase):
 
         # Action buttons (at bottom of left panel)
         btn_group = QFrame()
-        btn_group.setStyleSheet("QFrame { background-color: #ECEFF1; border-radius: 4px; padding: 4px; }")
+        btn_group.setObjectName("Card")  # themed flat surface
         btn_layout = QHBoxLayout(btn_group)
         btn_layout.setSpacing(8)
 
+        # The step's single primary action (was a hand-painted green fill).
         self.btn_apply = QPushButton("Fit && Apply (저장)")
-        self.btn_apply.setStyleSheet(
-            "QPushButton { background-color: #4CAF50; color: white; font-weight: bold; padding: 6px 16px; }"
-        )
+        style_button(self.btn_apply, "primary", height=Tokens.H_ACTION)
         self.btn_apply.setToolTip("피팅 수행 후 종합 결과 파일 자동 저장")
         self.btn_apply.clicked.connect(self.fit_and_apply)
         btn_layout.addWidget(self.btn_apply)
 
         self.btn_revert = QPushButton("Revert")
+        style_button(self.btn_revert, height=Tokens.H_ACTION)
         self.btn_revert.setToolTip("보정 결과 초기화")
         self.btn_revert.clicked.connect(self.revert_raw)
         btn_layout.addWidget(self.btn_revert)
 
         self.busy_status_label = QLabel("")
-        self.busy_status_label.setStyleSheet("QLabel { color: #546E7A; font-weight: bold; }")
+        self.busy_status_label.setProperty("role", "subtitle")
         self.busy_status_label.hide()
         btn_layout.addWidget(self.busy_status_label)
 
@@ -836,8 +832,8 @@ class DetrendNightMergeWindow(StepWindowBase):
         self.busy_progress_bar.setMaximumHeight(10)
         self.busy_progress_bar.setTextVisible(False)
         self.busy_progress_bar.setStyleSheet(
-            "QProgressBar { border: none; background-color: #CFD8DC; border-radius: 4px; }"
-            "QProgressBar::chunk { background-color: #4CAF50; border-radius: 4px; }"
+            f"QProgressBar {{ border: none; background-color: {Tokens.SURFACE_ALT}; border-radius: 4px; }}"
+            f"QProgressBar::chunk {{ background-color: {Tokens.ACCENT}; border-radius: 4px; }}"
         )
         self.busy_progress_bar.hide()
         btn_layout.addWidget(self.busy_progress_bar)
@@ -1265,22 +1261,15 @@ Step 10은 여러 밤의 관측을 합칠 때 기준선을 맞추는 단계입�
             c += f" +{len(comp_ids) - 8}"
         if t and c:
             self.id_info_label.setText(f"Target: ID {t}  |  Comp: {c}")
-            self.id_info_label.setStyleSheet(
-                "QLabel { background-color: #E8F5E9; padding: 8px 10px; border-radius: 5px;"
-                " font-weight: bold; color: #2E7D32; font-size: 9pt; }"
-            )
+            banner = "ok"
         elif t:
             self.id_info_label.setText(f"Target: ID {t}  |  Comp: (없음)")
-            self.id_info_label.setStyleSheet(
-                "QLabel { background-color: #FFF8E1; padding: 8px 10px; border-radius: 5px;"
-                " font-weight: bold; color: #F57C00; font-size: 9pt; }"
-            )
+            banner = "warn"
         else:
             self.id_info_label.setText("Target / Comp: Step 9를 먼저 실행해주세요")
-            self.id_info_label.setStyleSheet(
-                "QLabel { background-color: #FFEBEE; padding: 8px 10px; border-radius: 5px;"
-                " font-weight: bold; color: #C62828; font-size: 9pt; }"
-            )
+            banner = "error"
+        self.id_info_label.setProperty("banner", banner)
+        refresh(self.id_info_label)
 
     def _parse_target_id_from_name(self, name: str) -> int | None:
         m = re.search(r"lightcurve_ID(\d+)_raw\.csv", name)
@@ -2244,7 +2233,7 @@ Step 10은 여러 밤의 관측을 합칠 때 기준선을 맞추는 단계입�
         self.color_map_combos = {}
         if not options:
             note = QLabel("색지수 데이터 없음")
-            note.setStyleSheet("QLabel { color: #9E9E9E; font-size: 9pt; }")
+            note.setStyleSheet(f"QLabel {{ color: {Tokens.TEXT_MUTED}; font-size: 9pt; }}")
             self.color_map_layout.addRow(note)
             return
 
