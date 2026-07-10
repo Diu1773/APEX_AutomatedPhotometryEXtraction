@@ -550,7 +550,10 @@ def run_forced_photometry(
             with fits.open(path) as hdul:
                 for hdu in hdul:
                     if hdu.data is not None and hdu.data.ndim == 2:
-                        return hdu.data.astype(float)
+                        # float32, not float64: halves per-frame memory (a 61 MP
+                        # frame is 244 MB vs 488 MB). Aperture sums stay exact to
+                        # ~1e-7 relative — far below the photometric noise floor.
+                        return hdu.data.astype(np.float32)
         except Exception:
             pass
         return None
