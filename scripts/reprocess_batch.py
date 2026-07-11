@@ -171,7 +171,10 @@ def reorg_per_object(target: str) -> Path:
 
 def gen_config(target: str, sci: Path, ra: float, dec: float) -> Path:
     """Write reprocess/<target>/parameters.toml from the template with new io/target."""
-    txt = TEMPLATE.read_text(encoding="utf-8")
+    # utf-8-sig strips a UTF-8 BOM if one crept into the template (e.g. a
+    # PowerShell `Set-Content -Encoding utf8` edit adds one); a leading BOM makes
+    # the TOML parser fail with "Invalid statement (at line 1, column 1)".
+    txt = TEMPLATE.read_text(encoding="utf-8-sig")
     result = REPROCESS / target / "result"
     esc = lambda p: str(p).replace("\\", "\\\\")   # TOML needs doubled backslashes
     # lambda replacements avoid re.sub interpreting backslashes in the replacement
