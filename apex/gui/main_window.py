@@ -495,22 +495,6 @@ class MainWindowWorkflow(AutoFitMixin, QMainWindow):
         action_export.triggered.connect(self.export_summary)
         file_menu.addAction(action_export)
         file_menu.addSeparator()
-
-        # Theme presets — applied app-wide immediately and persisted to
-        # ~/.apex/theme.txt (picked up by all entry points on next launch).
-        from apex.gui.theme import THEME_PRESETS, current_theme
-        theme_menu = file_menu.addMenu("&Theme")
-        self._theme_actions = {}
-        active = current_theme()
-        for key, label in THEME_PRESETS:
-            act = QAction(label, self)
-            act.setCheckable(True)
-            act.setChecked(key == active)
-            act.triggered.connect(lambda _=False, k=key: self._switch_theme(k))
-            theme_menu.addAction(act)
-            self._theme_actions[key] = act
-        file_menu.addSeparator()
-
         action_exit = QAction("E&xit", self)
         action_exit.setShortcut("Ctrl+Q")
         action_exit.triggered.connect(self.close)
@@ -525,6 +509,27 @@ class MainWindowWorkflow(AutoFitMixin, QMainWindow):
                 action.setShortcut(spec.shortcut)
             action.triggered.connect(getattr(self, spec.launcher))
             tools_menu.addAction(action)
+
+        # Settings — app-wide configuration lives here (not under File).
+        settings_menu = menubar.addMenu("&Settings")
+        action_instrument = QAction("&Instrument Settings...", self)
+        action_instrument.triggered.connect(self.open_settings)
+        settings_menu.addAction(action_instrument)
+        settings_menu.addSeparator()
+
+        # Theme presets — applied app-wide immediately and persisted to
+        # ~/.apex/theme.txt (picked up by all entry points on next launch).
+        from apex.gui.theme import THEME_PRESETS, current_theme
+        theme_menu = settings_menu.addMenu("&Theme")
+        self._theme_actions = {}
+        active = current_theme()
+        for key, label in THEME_PRESETS:
+            act = QAction(label, self)
+            act.setCheckable(True)
+            act.setChecked(key == active)
+            act.triggered.connect(lambda _=False, k=key: self._switch_theme(k))
+            theme_menu.addAction(act)
+            self._theme_actions[key] = act
 
         help_menu = menubar.addMenu("&Help")
         action_wcs_help = QAction("WCS Solver Installation Help...", self)

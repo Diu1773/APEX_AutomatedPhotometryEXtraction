@@ -67,6 +67,13 @@ class Tokens:
     ACCENT_MUTED = "#C2CCEA"
     ERROR_MUTED  = "#E6C5C5"
 
+    # Matplotlib plot surface (applied to rcParams by apply_theme, so figures
+    # created after the theme is set match it — dark themes get grey plots)
+    PLOT_BG      = "#FFFFFF"
+    PLOT_AXES_BG = "#FFFFFF"
+    PLOT_FG      = "#1F2933"
+    PLOT_GRID    = "#D0D5DC"
+
     # Geometry
     RADIUS      = 8
     RADIUS_SM   = 6
@@ -111,9 +118,14 @@ _LIGHT = {
     "OK": "#2E9E5B", "WARN": "#C77A12", "ERROR": "#D24343",
     "OK_SOFT": "#E5F4EB", "WARN_SOFT": "#FBF1E2", "ERROR_SOFT": "#FBE9E9",
     "ACCENT_MUTED": "#C2CCEA", "ERROR_MUTED": "#E6C5C5",
-    # Geometry participates in presets: "lab" squares the corners for the
-    # instrument look, everything else keeps the soft default.
+    # Geometry participates in presets. Squared corners are the app standard
+    # (instrument look, owner-approved 2026-07-11); apex-light keeps the
+    # original soft radii as the legacy option.
     "RADIUS": 8, "RADIUS_SM": 6,
+    # Matplotlib plot surface — light themes keep publication-white plots;
+    # dark themes restyle new figures to a matching grey (never white cards).
+    "PLOT_BG": "#FFFFFF", "PLOT_AXES_BG": "#FFFFFF",
+    "PLOT_FG": "#1F2933", "PLOT_GRID": "#D0D5DC",
 }
 
 PALETTES: dict[str, dict[str, str]] = {
@@ -131,6 +143,8 @@ PALETTES: dict[str, dict[str, str]] = {
         "OK_SOFT": "#DCE8E0", "WARN_SOFT": "#EDE4D1", "ERROR_SOFT": "#EAD9D7",
         "ACCENT_MUTED": "#AFC2D5", "ERROR_MUTED": "#D5BAB6",
         "RADIUS": 2, "RADIUS_SM": 1,
+        "PLOT_BG": "#FFFFFF", "PLOT_AXES_BG": "#FFFFFF",
+        "PLOT_FG": "#141414", "PLOT_GRID": "#C8C8C8",
     },
     # Charcoal — neutral grey dark (AstralImage default; PixInsight-style).
     "charcoal": {
@@ -142,7 +156,9 @@ PALETTES: dict[str, dict[str, str]] = {
         "OK": "#2E9E5B", "WARN": "#C08A28", "ERROR": "#C75048",
         "OK_SOFT": "#22352A", "WARN_SOFT": "#38301D", "ERROR_SOFT": "#3A2626",
         "ACCENT_MUTED": "#2B4356", "ERROR_MUTED": "#5A3535",
-        "RADIUS": 8, "RADIUS_SM": 6,
+        "RADIUS": 2, "RADIUS_SM": 1,
+        "PLOT_BG": "#2B2B2B", "PLOT_AXES_BG": "#333333",
+        "PLOT_FG": "#D6D6D6", "PLOT_GRID": "#4A4A4A",
     },
     # Aurora — deep cool slate + teal-cyan accent (AstralImage signature).
     "aurora": {
@@ -154,7 +170,9 @@ PALETTES: dict[str, dict[str, str]] = {
         "OK": "#3FA56C", "WARN": "#C69B3D", "ERROR": "#CC5F55",
         "OK_SOFT": "#1C3226", "WARN_SOFT": "#332B18", "ERROR_SOFT": "#38221F",
         "ACCENT_MUTED": "#24444B", "ERROR_MUTED": "#54322E",
-        "RADIUS": 8, "RADIUS_SM": 6,
+        "RADIUS": 2, "RADIUS_SM": 1,
+        "PLOT_BG": "#1D242D", "PLOT_AXES_BG": "#232B35",
+        "PLOT_FG": "#CCD4DE", "PLOT_GRID": "#3B4753",
     },
     # Midnight Navy — deep rich blue.
     "midnight": {
@@ -166,7 +184,9 @@ PALETTES: dict[str, dict[str, str]] = {
         "OK": "#4CB87C", "WARN": "#CCAE52", "ERROR": "#CC5F55",
         "OK_SOFT": "#143832", "WARN_SOFT": "#31301F", "ERROR_SOFT": "#3A2430",
         "ACCENT_MUTED": "#1B3455", "ERROR_MUTED": "#4E3048",
-        "RADIUS": 8, "RADIUS_SM": 6,
+        "RADIUS": 2, "RADIUS_SM": 1,
+        "PLOT_BG": "#12233F", "PLOT_AXES_BG": "#182C4D",
+        "PLOT_FG": "#CDD8EE", "PLOT_GRID": "#2C4470",
     },
 }
 
@@ -180,7 +200,7 @@ THEME_PRESETS: tuple[tuple[str, str], ...] = (
     ("midnight",   "Midnight Navy"),
 )
 
-DEFAULT_THEME = "apex-light"
+DEFAULT_THEME = "lab"  # squared instrument look (owner pick, 2026-07-11)
 
 _THEME_FILE = Path.home() / ".apex" / "theme.txt"
 
@@ -421,6 +441,37 @@ def global_qss(t: type[Tokens] = Tokens) -> str:
     """
 
 
+def _apply_mpl_theme() -> None:
+    """Point matplotlib rcParams at the active plot tokens.
+
+    Dark presets get grey plot surfaces instead of white cards. Only figures
+    created *after* this call pick it up — step/tool windows build their
+    canvases on open, so a theme switch applies to the next window opened.
+    Saved PNGs match the screen (savefig.* follows the same tokens).
+    """
+    try:
+        import matplotlib as mpl
+    except ImportError:  # headless installs without plotting
+        return
+    t = Tokens
+    mpl.rcParams.update({
+        "figure.facecolor": t.PLOT_BG,
+        "figure.edgecolor": t.PLOT_BG,
+        "savefig.facecolor": t.PLOT_BG,
+        "savefig.edgecolor": t.PLOT_BG,
+        "axes.facecolor": t.PLOT_AXES_BG,
+        "axes.edgecolor": t.PLOT_FG,
+        "axes.labelcolor": t.PLOT_FG,
+        "axes.titlecolor": t.PLOT_FG,
+        "xtick.color": t.PLOT_FG,
+        "ytick.color": t.PLOT_FG,
+        "text.color": t.PLOT_FG,
+        "grid.color": t.PLOT_GRID,
+        "legend.facecolor": t.PLOT_AXES_BG,
+        "legend.edgecolor": t.PLOT_GRID,
+    })
+
+
 def apply_theme(app, name: str | None = None) -> str:
     """Load a theme preset into Tokens and (re)install the global stylesheet.
 
@@ -430,6 +481,7 @@ def apply_theme(app, name: str | None = None) -> str:
     theme = name if name in PALETTES else current_theme()
     for key, value in PALETTES[theme].items():
         setattr(Tokens, key, value)
+    _apply_mpl_theme()
     if app is not None:
         app.setStyleSheet(global_qss())
     return theme
