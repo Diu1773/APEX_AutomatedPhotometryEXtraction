@@ -111,10 +111,27 @@ _LIGHT = {
     "OK": "#2E9E5B", "WARN": "#C77A12", "ERROR": "#D24343",
     "OK_SOFT": "#E5F4EB", "WARN_SOFT": "#FBF1E2", "ERROR_SOFT": "#FBE9E9",
     "ACCENT_MUTED": "#C2CCEA", "ERROR_MUTED": "#E6C5C5",
+    # Geometry participates in presets: "lab" squares the corners for the
+    # instrument look, everything else keeps the soft default.
+    "RADIUS": 8, "RADIUS_SM": 6,
 }
 
 PALETTES: dict[str, dict[str, str]] = {
     "apex-light": dict(_LIGHT),
+    # Lab Gray — instrument/legacy-Qt feel: blue-cast-free neutral greys,
+    # hard borders, squared corners, one restrained slate accent. For eyes
+    # that read the classic utilitarian look as "scientific".
+    "lab": {
+        "BG": "#DEDEDE", "SURFACE": "#F2F2F2", "SURFACE_ALT": "#E6E6E6",
+        "BORDER": "#A6A6A6", "BORDER_STRONG": "#7F7F7F",
+        "TEXT": "#141414", "TEXT_SUB": "#454545", "TEXT_MUTED": "#7E7E7E",
+        "ACCENT": "#2F6FB0", "ACCENT_HOVER": "#3A80C6", "ACCENT_PRESS": "#275E96",
+        "ACCENT_SOFT": "#D6DEE6", "ACCENT_TEXT": "#1F5187",
+        "OK": "#1F7442", "WARN": "#9A6300", "ERROR": "#A83A31",
+        "OK_SOFT": "#DCE8E0", "WARN_SOFT": "#EDE4D1", "ERROR_SOFT": "#EAD9D7",
+        "ACCENT_MUTED": "#AFC2D5", "ERROR_MUTED": "#D5BAB6",
+        "RADIUS": 2, "RADIUS_SM": 1,
+    },
     # Charcoal — neutral grey dark (AstralImage default; PixInsight-style).
     "charcoal": {
         "BG": "#212121", "SURFACE": "#2B2B2B", "SURFACE_ALT": "#333333",
@@ -125,6 +142,7 @@ PALETTES: dict[str, dict[str, str]] = {
         "OK": "#2E9E5B", "WARN": "#C08A28", "ERROR": "#C75048",
         "OK_SOFT": "#22352A", "WARN_SOFT": "#38301D", "ERROR_SOFT": "#3A2626",
         "ACCENT_MUTED": "#2B4356", "ERROR_MUTED": "#5A3535",
+        "RADIUS": 8, "RADIUS_SM": 6,
     },
     # Aurora — deep cool slate + teal-cyan accent (AstralImage signature).
     "aurora": {
@@ -136,6 +154,7 @@ PALETTES: dict[str, dict[str, str]] = {
         "OK": "#3FA56C", "WARN": "#C69B3D", "ERROR": "#CC5F55",
         "OK_SOFT": "#1C3226", "WARN_SOFT": "#332B18", "ERROR_SOFT": "#38221F",
         "ACCENT_MUTED": "#24444B", "ERROR_MUTED": "#54322E",
+        "RADIUS": 8, "RADIUS_SM": 6,
     },
     # Midnight Navy — deep rich blue.
     "midnight": {
@@ -147,6 +166,7 @@ PALETTES: dict[str, dict[str, str]] = {
         "OK": "#4CB87C", "WARN": "#CCAE52", "ERROR": "#CC5F55",
         "OK_SOFT": "#143832", "WARN_SOFT": "#31301F", "ERROR_SOFT": "#3A2430",
         "ACCENT_MUTED": "#1B3455", "ERROR_MUTED": "#4E3048",
+        "RADIUS": 8, "RADIUS_SM": 6,
     },
 }
 
@@ -154,6 +174,7 @@ PALETTES: dict[str, dict[str, str]] = {
 # list it here to expose it.
 THEME_PRESETS: tuple[tuple[str, str], ...] = (
     ("apex-light", "APEX Light"),
+    ("lab",        "Lab Gray"),
     ("charcoal",   "Charcoal"),
     ("aurora",     "Aurora"),
     ("midnight",   "Midnight Navy"),
