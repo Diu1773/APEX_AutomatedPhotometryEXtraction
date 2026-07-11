@@ -390,12 +390,8 @@ def _load_validate_config(config_path: Optional[str]):
     if not path.exists():
         print(f"{_WARN} validate config not found, ignoring: {path}")
         return None
-    try:
-        import tomllib  # type: ignore
-    except Exception:  # pragma: no cover - py3.10
-        import tomli as tomllib  # type: ignore
-    with path.open("rb") as handle:
-        raw = tomllib.load(handle)
+    from apex.utils.io_utils import load_toml
+    raw = load_toml(path)  # BOM-tolerant (PowerShell-written files)
     section = raw.get("validate", raw)
     import types
 

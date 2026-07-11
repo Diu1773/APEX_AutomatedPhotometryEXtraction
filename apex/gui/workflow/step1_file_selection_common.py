@@ -565,8 +565,8 @@ class CommonFileSelectionWindow(StepWindowBase):
             return
 
         try:
-            with param_path.open("rb") as f:
-                data = tomllib.load(f)
+            from apex.utils.io_utils import load_toml
+            data = load_toml(param_path)  # BOM-tolerant
         except Exception:
             return
 

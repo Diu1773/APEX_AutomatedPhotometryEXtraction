@@ -14,6 +14,21 @@ from decimal import Decimal, InvalidOperation
 import pandas as pd
 
 
+def load_toml(path: Union[str, Path]) -> dict:
+    """Parse a TOML file, tolerating a UTF-8 BOM.
+
+    PowerShell 5.1's ``-Encoding utf8`` prefixes files with a BOM, which
+    ``tomllib.load`` rejects as "Invalid statement (at line 1, column 1)".
+    Decoding with ``utf-8-sig`` accepts both BOM'd and clean files, so an
+    externally rewritten parameters.toml can't brick every entry point.
+    """
+    try:
+        import tomllib
+    except ImportError:  # pragma: no cover - py3.10
+        import tomli as tomllib  # type: ignore
+    return tomllib.loads(Path(path).read_bytes().decode("utf-8-sig"))
+
+
 def _parse_int64_col(series: pd.Series) -> pd.array:
     """Convert a string/object series of source_ids to pandas Int64.
 

@@ -347,8 +347,8 @@ def _read_toml(path: Path) -> Dict[str, Any]:
     if not path.exists():
         return {}
 
-    with path.open("rb") as f:
-        data = tomllib.load(f)
+    from apex.utils.io_utils import load_toml
+    data = load_toml(path)  # BOM-tolerant (PowerShell-written files)
 
     raw: Dict[str, Any] = {}
     raw["schema_version"] = read_schema_version(data)
@@ -884,8 +884,8 @@ class Parameters:
             return False
         param_path = Path(path or getattr(self, "param_file", "parameters.toml"))
         try:
-            with param_path.open("rb") as f:
-                data = tomllib.load(f)
+            from apex.utils.io_utils import load_toml
+            data = load_toml(param_path)
         except Exception:
             data = {}
         ensure_schema_version(data)

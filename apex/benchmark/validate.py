@@ -136,12 +136,8 @@ def _resolve_gain(config: Any) -> float:
         try:
             if not path or not Path(path).exists():
                 continue
-            try:
-                import tomllib
-            except ImportError:  # pragma: no cover
-                import tomli as tomllib  # type: ignore
-            with Path(path).open("rb") as handle:
-                raw = tomllib.load(handle)
+            from apex.utils.io_utils import load_toml
+            raw = load_toml(path)  # BOM-tolerant
             for section in (raw, raw.get("instrument", {}), raw.get("camera", {})):
                 if isinstance(section, dict) and "gain_e_per_adu" in section:
                     g = _finite(section["gain_e_per_adu"])

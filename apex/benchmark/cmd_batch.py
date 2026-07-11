@@ -63,8 +63,8 @@ class CmdBatchConfig:
 
 def load_cmd_batch_config(path: str | Path) -> CmdBatchConfig:
     config_path = Path(path)
-    with config_path.open("rb") as handle:
-        raw = tomllib.load(handle)
+    from apex.utils.io_utils import load_toml
+    raw = load_toml(config_path)  # BOM-tolerant
     section = dict(raw.get("cmd_batch", raw))
     known = set(CmdBatchConfig.__dataclass_fields__)
     unknown = sorted(set(section) - known)

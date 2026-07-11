@@ -82,8 +82,8 @@ class BenchmarkConfig:
 
 def load_benchmark_config(path: str | Path) -> BenchmarkConfig:
     config_path = Path(path)
-    with config_path.open("rb") as handle:
-        raw = tomllib.load(handle)
+    from apex.utils.io_utils import load_toml
+    raw = load_toml(config_path)  # BOM-tolerant
     section = dict(raw.get("benchmark", raw))
     detection_overrides = dict(raw.get("detection_overrides", {}))
     known = set(BenchmarkConfig.__dataclass_fields__)

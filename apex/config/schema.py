@@ -1602,8 +1602,8 @@ class Parameters(BaseModel):
     def from_toml(cls, path: Path | str) -> "Parameters":
         """Load parameters from TOML file"""
         path = Path(path)
-        with open(path, "rb") as f:
-            data = tomllib.load(f)
+        from apex.utils.io_utils import load_toml
+        data = load_toml(path)  # BOM-tolerant (PowerShell-written files)
 
         # Handle nested configs
         params = cls._parse_toml_data(data)

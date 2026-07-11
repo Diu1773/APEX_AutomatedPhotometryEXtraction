@@ -1184,8 +1184,8 @@ class QAReportWindow(ToolWindowBase):
         if not path.exists():
             return
         try:
-            with path.open("rb") as f:
-                data = tomllib.load(f)
+            from apex.utils.io_utils import load_toml
+            data = load_toml(path)  # BOM-tolerant
             tools = data.get("tools", {}) if isinstance(data, dict) else {}
             cfg = tools.get("qa_report", {}) if isinstance(tools, dict) else {}
             if not cfg:
@@ -1225,8 +1225,8 @@ class QAReportWindow(ToolWindowBase):
         data = {}
         if path.exists():
             try:
-                with path.open("rb") as f:
-                    data = tomllib.load(f)
+                from apex.utils.io_utils import load_toml
+                data = load_toml(path)  # BOM-tolerant
             except Exception:
                 data = {}
         cfg = {
