@@ -35,6 +35,8 @@ from PyQt5.QtWidgets import (
     QDoubleSpinBox,
     QSpinBox,
     QTabWidget,
+    QScrollArea,
+    QFrame,
 )
 from PyQt5.QtCore import Qt, QThread, pyqtSignal
 
@@ -292,33 +294,36 @@ class PeriodAnalysisWindow(StepWindowBase):
         self.target_hint.setText("")
 
     def setup_step_ui(self):
+        # 2-column "tool" layout: a fixed-width, scrollable control column on
+        # the left; the plot/result tabs take every remaining pixel on the
+        # right. The old vertical stack needed 1309px minimum height (clipped
+        # even on a 1528px monitor, and Qt squeezed the plot canvas first).
+        # The intro banner is gone — the same text lives in the ⓘ 가이드 popup.
         t = Tokens
         self.content_layout.setContentsMargins(t.MARGIN, t.MARGIN, t.MARGIN, t.MARGIN)
         self.content_layout.setSpacing(t.S3)
 
-        info = QLabel(
-            "Period analysis: Lomb-Scargle, PDM, BLS.\n"
-            "Sampling-window aliases are ranked; unresolved families remain ambiguous.\n"
-            "For detailed analysis (refine, bootstrap, O-C, transit fit) → Tools menu."
-        )
-        info.setStyleSheet(
-            f"QLabel {{ background: {t.ACCENT_SOFT}; color: {t.TEXT_SUB}; "
-            f"padding: {t.S3}px; border-radius: {t.RADIUS_SM}px; }}"
-        )
-        info.setWordWrap(True)
-        self.content_layout.addWidget(info)
+        root = QHBoxLayout()
+        root.setSpacing(t.S3)
+        self.content_layout.addLayout(root, 1)
+
+        # ── Left: control column (scrolls; never drives window height) ──
+        left_host = QWidget()
+        lv = QVBoxLayout(left_host)
+        lv.setContentsMargins(0, 0, t.S2, 0)  # right pad so the scrollbar doesn't kiss the fields
+        lv.setSpacing(t.S3)
 
         # Prominent result callout — the trustworthy period, surfaced out of the
         # log so the user's eye lands on the answer, not the scroll-back.
         self.result_callout = QLabel("")
         self.result_callout.setWordWrap(True)
         self.result_callout.setVisible(False)
-        self.content_layout.addWidget(self.result_callout)
+        lv.addWidget(self.result_callout)
 
         self.mode_callout = QLabel("")
         self.mode_callout.setWordWrap(True)
         self.mode_callout.setVisible(False)
-        self.content_layout.addWidget(self.mode_callout)
+        lv.addWidget(self.mode_callout)
 
         # Data selection
         data_group = QGroupBox("Data Selection")
@@ -348,7 +353,7 @@ class PeriodAnalysisWindow(StepWindowBase):
         self.data_status.setWordWrap(True)
         data_layout.addRow("Status:", self.data_status)
 
-        self.content_layout.addWidget(data_group)
+        lv.addWidget(data_group)
 
         # Period search parameters
         param_group = QGroupBox("Period Search Parameters")
@@ -373,7 +378,10 @@ class PeriodAnalysisWindow(StepWindowBase):
         self.samples_spin.setValue(10)
         param_layout.addRow("Samples per peak:", self.samples_spin)
 
+        # Spanning row (no label column): with the form's label column the
+        # three checkboxes need ~430px and clip the 400px control column.
         method_row = QHBoxLayout()
+        method_row.addWidget(QLabel("Methods:"))
         self.chk_ls = QCheckBox("Lomb-Scargle")
         self.chk_ls.setChecked(True)
         method_row.addWidget(self.chk_ls)
@@ -384,29 +392,53 @@ class PeriodAnalysisWindow(StepWindowBase):
         self.chk_bls.setChecked(False)
         method_row.addWidget(self.chk_bls)
         method_row.addStretch()
-        param_layout.addRow("Methods:", method_row)
+        param_layout.addRow(method_row)
 
         self.pdm_bins_spin = QSpinBox()
         self.pdm_bins_spin.setRange(5, 50)
         self.pdm_bins_spin.setValue(10)
         param_layout.addRow("PDM bins:", self.pdm_bins_spin)
 
-        self.content_layout.addWidget(param_group)
+        lv.addWidget(param_group)
 
-        # Run bar — single primary action, left-aligned per the app convention.
-        run_layout = QHBoxLayout()
-        run_layout.setSpacing(Tokens.GAP)
+        # Run — single primary action, full column width.
         self.btn_run = QPushButton("Compute Periodogram")
         style_button(self.btn_run, "primary", height=Tokens.H_ACTION)
         self.btn_run.clicked.connect(self._run_analysis)
         self.btn_run.setEnabled(False)
-        run_layout.addWidget(self.btn_run)
+        lv.addWidget(self.btn_run)
 
         self.progress_label = QLabel("")
         self.progress_label.setStyleSheet(f"QLabel {{ color: {Tokens.TEXT_SUB}; }}")
-        run_layout.addWidget(self.progress_label)
-        run_layout.addStretch()
-        self.content_layout.addLayout(run_layout)
+        lv.addWidget(self.progress_label)
+
+        lv.addStretch(1)
+
+        ctrl_scroll = QScrollArea()
+        ctrl_scroll.setWidgetResizable(True)
+        ctrl_scroll.setFrameShape(QFrame.NoFrame)
+        ctrl_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        ctrl_scroll.setWidget(left_host)
+
+        left_col = QWidget()
+        # Measured on the real (windows) font stack: the control stack's
+        # minimumSizeHint is 453px wide — the Methods checkbox row dominates.
+        # 480 = 453 + vertical-scrollbar allowance; narrower clips the right
+        # edge because the horizontal scrollbar is off.
+        left_col.setFixedWidth(480)
+        left_v = QVBoxLayout(left_col)
+        left_v.setContentsMargins(0, 0, 0, 0)
+        left_v.setSpacing(t.S2)
+        left_v.addWidget(ctrl_scroll, 1)
+        # Log stays pinned below the scroll so it's always visible.
+        self.log_text = QTextEdit()
+        self.log_text.setReadOnly(True)
+        self.log_text.setMaximumHeight(100)
+        self.log_text.setStyleSheet(
+            f"QTextEdit {{ background: {Tokens.SURFACE_ALT}; color: {Tokens.TEXT_SUB}; }}"
+        )
+        left_v.addWidget(self.log_text)
+        root.addWidget(left_col)
 
         # Results tabs
         self.tabs = QTabWidget()
@@ -500,16 +532,8 @@ class PeriodAnalysisWindow(StepWindowBase):
 
         self.tabs.addTab(results_tab, "Results")
 
-        self.content_layout.addWidget(self.tabs)
-
-        # Log
-        self.log_text = QTextEdit()
-        self.log_text.setReadOnly(True)
-        self.log_text.setMaximumHeight(100)
-        self.log_text.setStyleSheet(
-            f"QTextEdit {{ background: {Tokens.SURFACE_ALT}; color: {Tokens.TEXT_SUB}; }}"
-        )
-        self.content_layout.addWidget(self.log_text)
+        # ── Right: plots/results take everything that's left ──
+        root.addWidget(self.tabs, 1)
 
         self._scan_available_data()
 
