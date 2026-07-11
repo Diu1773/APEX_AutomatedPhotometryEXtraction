@@ -48,6 +48,18 @@ from apex.utils.noise_params import resolve_effective_noise_params
 from apex.utils.qc_utils import is_passed_value
 from apex.utils.source_quality import compute_source_quality
 
+
+def _json_np_default(obj):
+    """json.dump default: unwrap numpy scalars.
+
+    Frames are loaded as float32 (ccd5e7f), so summary stats arrive as
+    np.float32/np.int64 — stdlib json refuses those and every detect cache
+    write failed with "Object of type float32 is not JSON serializable".
+    """
+    if isinstance(obj, np.generic):
+        return obj.item()
+    raise TypeError(f"Object of type {type(obj).__name__} is not JSON serializable")
+
 _DETECT_MODE_PRESETS = {
     "normal": {
         "detect_sigma": 3.2,
@@ -1034,7 +1046,7 @@ def run_detection(file_list, params, data_dir, cache_dir, use_cropped=False,
                     **source_sig,
                 }
                 with open(cache_file, 'w') as f:
-                    json.dump(payload, f)
+                    json.dump(payload, f, default=_json_np_default)
                 copy_if_different(cache_file, step4_file)
 
                 # Save positions with extended info (DAO stats, FWHM, peak value)
@@ -1140,7 +1152,7 @@ def run_detection(file_list, params, data_dir, cache_dir, use_cropped=False,
                     result.update(quality_summary)
                     payload.update(quality_summary)
                     with open(cache_file, 'w') as f:
-                        json.dump(payload, f)
+                        json.dump(payload, f, default=_json_np_default)
                     copy_if_different(cache_file, step4_file)
                     df_sources.to_csv(pos_file, index=False)
                     copy_if_different(pos_file, step4_pos)
