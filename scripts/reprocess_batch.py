@@ -103,6 +103,22 @@ def _obj_token(name: str) -> str:
     return stem.split("-")[0].strip().lower()
 
 
+# Per-target filter allow-list. None = keep every filter. M3's SDSS g/i/r frames
+# carry i-band fringe residuals that SEP detects as thousands of spurious sources
+# (master catalogue blows up to 16714 vs ~2000), so M3 is restricted to the clean
+# Johnson B/V/R set — the same system as M13/NGC 6811.
+FILTER_ALLOW = {
+    "M3": {"b", "v", "r"},
+}
+_FILT_RE = re.compile(r"-(\d+)-([A-Za-z0-9]+?)(?:_\d+)?\.fits?$", re.IGNORECASE)
+
+
+def _frame_filter(name: str) -> str:
+    """Filter token from a calibrated filename: pp_messier3-0001-B.fit -> 'b'."""
+    m = _FILT_RE.search(name)
+    return m.group(2).lower() if m else ""
+
+
 def _frame_object(path: Path) -> str:
     """Normalized OBJECT header of a calibrated frame ('' if unreadable)."""
     try:
@@ -124,17 +140,24 @@ def reorg_per_object(target: str) -> Path:
     sci = REPROCESS / target / "sci"
     sci.mkdir(parents=True, exist_ok=True)
     aliases = _object_aliases(target)
+    allow = FILTER_ALLOW.get(target)          # None = all filters
     all_frames = [p for p in cal.rglob("pp_*.fit")
                   if not p.name.lower().startswith("pp_pp_")]
-    frames, seen_obj = [], {}
+    frames, seen_obj, n_filt_drop = [], {}, 0
     for p in all_frames:
         obj = _frame_object(p)
         tok = _obj_token(p.name)
         key = obj or tok
         seen_obj[key] = seen_obj.get(key, 0) + 1
-        if obj in aliases or tok in aliases:
-            frames.append(p)
+        if not (obj in aliases or tok in aliases):
+            continue
+        if allow is not None and _frame_filter(p.name) not in allow:
+            n_filt_drop += 1
+            continue
+        frames.append(p)
     n_dpp = sum(1 for p in cal.rglob("pp_pp_*.fit"))
+    if allow is not None:
+        print(f"[{target}] filter allow-list {sorted(allow)}: dropped {n_filt_drop} off-filter frames")
     for p in frames:
         dst = sci / p.name
         if not dst.exists():
