@@ -1140,13 +1140,19 @@ class LightCurveBuilderWindow(StepWindowBase):
         log_layout.addWidget(self.log_text)
 
     def setup_step_ui(self):
-        info = QLabel(
-            "대상/비교성 선택 결과를 이용해 라이트커브를 생성합니다.\n"
-            "RAW 차등측광을 생성하고 비교성 QC를 수행합니다."
-        )
-        info.setProperty("role", "info")  # themed banner instead of hand-painted blue
-        info.setWordWrap(True)
-        self.content_layout.addWidget(info)
+        # 2-column layout (approved 2026-07-11): fixed control column left,
+        # plots right — Comparison Preview above the Light Curve, both always
+        # visible so picking a comp reflects immediately (no tab round-trip).
+        # The old intro banner lives in the ⓘ 가이드 popup.
+        root = QHBoxLayout()
+        root.setSpacing(Tokens.S3)
+        self.content_layout.addLayout(root, 1)
+
+        left_col = QWidget()
+        left_v = QVBoxLayout(left_col)
+        left_v.setContentsMargins(0, 0, 0, 0)
+        left_v.setSpacing(Tokens.S2)
+        root.addWidget(left_col)
 
         # Hidden QLineEdits (used internally by build logic)
         self.target_edit = QLineEdit()
@@ -1156,7 +1162,7 @@ class LightCurveBuilderWindow(StepWindowBase):
         self.id_info_label = QLabel("Target / Comp: (loading...)")
         self.id_info_label.setProperty("banner", "warn")
         self.id_info_label.setWordWrap(True)
-        self.content_layout.addWidget(self.id_info_label)
+        left_v.addWidget(self.id_info_label)
 
         # Fix base dataset to current result_dir
         rd = Path(self.params.P.result_dir)
@@ -1217,28 +1223,28 @@ class LightCurveBuilderWindow(StepWindowBase):
         ds_btn_row.addStretch()
         ds_container_layout.addLayout(ds_btn_row)
         ds_vbox.addWidget(self.ds_container)
-        self.content_layout.addWidget(ds_group)
+        left_v.addWidget(ds_group)
         self._update_dataset_summary()
         self._set_dataset_panel_expanded(False, persist=False)
 
-        self.tab_widget = QTabWidget()
-        self.light_tab = QWidget()
-        self.qc_tab = QWidget()
-        self.light_layout = QVBoxLayout(self.light_tab)
-        self.qc_layout = QVBoxLayout(self.qc_tab)
-        self.tab_widget.addTab(self.qc_tab, "Comparison QC")
-        self.tab_widget.addTab(self.light_tab, "Light Curve")
-        self.content_layout.addWidget(self.tab_widget, 1)
+        # Right side: Comparison Preview (top) / Light Curve (bottom).
+        self.right_splitter = QSplitter(Qt.Vertical)
+        self.right_splitter.setChildrenCollapsible(False)
+        root.addWidget(self.right_splitter, 1)
 
         plot_group = QGroupBox("Target - Comparison Light Curve")  # themed QSS
         plot_layout = QVBoxLayout(plot_group)
-        plot_hint = QLabel("←/→ 키로 비교성을 전환합니다.")
-        plot_hint.setProperty("role", "subtitle")
-        plot_layout.addWidget(plot_hint)
 
+        # Comparison 라벨 + 단축키 힌트를 한 줄로 (세로 예산 절약).
+        info_row = QHBoxLayout()
         self.plot_info_label = QLabel("Comparison: (none)")
         self.plot_info_label.setStyleSheet("QLabel { font-weight: bold; }")
-        plot_layout.addWidget(self.plot_info_label)
+        info_row.addWidget(self.plot_info_label)
+        plot_hint = QLabel("←/→ 키로 비교성을 전환합니다.")
+        plot_hint.setProperty("role", "caption")
+        info_row.addWidget(plot_hint)
+        info_row.addStretch()
+        plot_layout.addLayout(info_row)
 
         # 컨트롤 버튼 row
         btn_row = QHBoxLayout()
@@ -1263,7 +1269,12 @@ class LightCurveBuilderWindow(StepWindowBase):
 
         btn_row.addStretch()
 
-        # Plot 버튼 (자동 저장 포함) — the Light Curve tab's single primary.
+        # Navigation toolbar shares the control line (saves a fixed row).
+        self.plot_canvas = FigureCanvas(Figure(figsize=(8, 3.5)))
+        self.plot_toolbar = NavigationToolbar(self.plot_canvas, self)
+        btn_row.addWidget(self.plot_toolbar)
+
+        # Plot 버튼 (자동 저장 포함) — the Light Curve pane's single primary.
         self.btn_plot = QPushButton("Plot && Save")
         style_button(self.btn_plot, "primary", height=Tokens.H_BUTTON)
         self.btn_plot.clicked.connect(self.plot_and_save)
@@ -1271,23 +1282,21 @@ class LightCurveBuilderWindow(StepWindowBase):
 
         plot_layout.addLayout(btn_row)
 
-        self.plot_canvas = FigureCanvas(Figure(figsize=(8, 3.5)))
-        self.plot_toolbar = NavigationToolbar(self.plot_canvas, self)
-        plot_layout.addWidget(self.plot_toolbar)
         self.plot_ax = self.plot_canvas.figure.add_subplot(111)
         self.plot_canvas.setFocusPolicy(Qt.ClickFocus)
-        self.plot_canvas.setMinimumHeight(220)
+        # Low floor: both plot panes stack vertically now — 220+260 minimums
+        # pushed the window past small laptop screens.
+        self.plot_canvas.setMinimumHeight(150)
         self.plot_canvas.setStyleSheet("background-color: #FFFFFF; border: 1px solid #ECEFF1;")
         self.plot_canvas.mpl_connect("button_press_event", self._on_plot_click)
         plot_layout.addWidget(self.plot_canvas, 1)
 
-        # Phase Folding 슬라이더
+        # Phase Folding 슬라이더 — Period와 T0를 한 줄에 (세로 예산 절약;
+        # 우측에 플롯 pane이 두 개 쌓이므로 고정 행 하나가 곧 플롯 픽셀).
         phase_box = QGroupBox("Phase Folding")
-        phase_layout = QVBoxLayout(phase_box)
+        phase_row = QHBoxLayout(phase_box)
 
-        # Period 슬라이더 (클릭으로 이동 가능)
-        period_row = QHBoxLayout()
-        period_row.addWidget(QLabel("Period:"))
+        phase_row.addWidget(QLabel("Period:"))
         self.period_slider = ClickableSlider(Qt.Horizontal)
         self.period_slider.setRange(0, 1000)  # 0~1000 -> period_min ~ period_max
         self.period_slider.setValue(0)
@@ -1295,15 +1304,13 @@ class LightCurveBuilderWindow(StepWindowBase):
         self.period_slider.setPageStep(50)
         self.period_slider.valueChanged.connect(self._on_period_slider_preview)  # Preview only (no plot)
         self.period_slider.sliderReleased.connect(self._on_period_slider_released)  # Plot on release
-        period_row.addWidget(self.period_slider)
+        phase_row.addWidget(self.period_slider, 1)
         self.period_label = QLabel("0.000 d")
         self.period_label.setMinimumWidth(80)
-        period_row.addWidget(self.period_label)
-        phase_layout.addLayout(period_row)
+        phase_row.addWidget(self.period_label)
 
-        # T0 슬라이더 (클릭으로 이동 가능)
-        t0_row = QHBoxLayout()
-        t0_row.addWidget(QLabel("T0 offset:"))
+        phase_row.addSpacing(Tokens.S3)
+        phase_row.addWidget(QLabel("T0 offset:"))
         self.t0_slider = ClickableSlider(Qt.Horizontal)
         self.t0_slider.setRange(0, 1000)  # 0~1000 -> 0 ~ period (주기 내 오프셋)
         self.t0_slider.setValue(0)
@@ -1311,11 +1318,10 @@ class LightCurveBuilderWindow(StepWindowBase):
         self.t0_slider.setPageStep(50)
         self.t0_slider.valueChanged.connect(self._on_t0_slider_preview)  # Preview only (no plot)
         self.t0_slider.sliderReleased.connect(self._on_t0_slider_released)  # Plot on release
-        t0_row.addWidget(self.t0_slider)
+        phase_row.addWidget(self.t0_slider, 1)
         self.t0_label = QLabel("0.000")
         self.t0_label.setMinimumWidth(80)
-        t0_row.addWidget(self.t0_label)
-        phase_layout.addLayout(t0_row)
+        phase_row.addWidget(self.t0_label)
 
         plot_layout.addWidget(phase_box)
 
@@ -1340,7 +1346,8 @@ class LightCurveBuilderWindow(StepWindowBase):
         frame_qc_row.addWidget(self.btn_frame_qc_clear)
         plot_layout.addLayout(frame_qc_row)
 
-        self.light_layout.addWidget(plot_group, 1)
+        # LC pane goes in now; the preview pane is inserted above it later.
+        self.right_splitter.addWidget(plot_group)
 
         qc_group = QGroupBox("Comparison QC")  # themed by the global QGroupBox QSS
         qc_layout = QVBoxLayout(qc_group)
@@ -1363,14 +1370,19 @@ class LightCurveBuilderWindow(StepWindowBase):
         qc_btn_row.addWidget(self.btn_qc_auto)
 
         qc_btn_row.addStretch()
-        self.lbl_comp_count = QLabel("Active comps: 0")
-        self.lbl_comp_count.setStyleSheet("QLabel { font-weight: 600; }")
-        qc_btn_row.addWidget(self.lbl_comp_count)
         qc_layout.addLayout(qc_btn_row)
 
+        # Threshold caption + active-comp count share the second line — three
+        # buttons plus the count clipped inside the 520px control column.
+        qc_info_row = QHBoxLayout()
         self.lbl_qc_thresholds = QLabel()
         self.lbl_qc_thresholds.setProperty("role", "subtitle")
-        qc_layout.addWidget(self.lbl_qc_thresholds)
+        self.lbl_qc_thresholds.setWordWrap(True)  # column is narrow — wrap, don't clip
+        qc_info_row.addWidget(self.lbl_qc_thresholds, 1)
+        self.lbl_comp_count = QLabel("Active comps: 0")
+        self.lbl_comp_count.setStyleSheet("QLabel { font-weight: 600; }")
+        qc_info_row.addWidget(self.lbl_comp_count)
+        qc_layout.addLayout(qc_info_row)
         self._update_qc_threshold_label()
 
         self.qc_progress_bar = QProgressBar()
@@ -1398,7 +1410,7 @@ class LightCurveBuilderWindow(StepWindowBase):
         _qc_hdr.setSectionResizeMode(QHeaderView.ResizeToContents)
         _qc_hdr.setStretchLastSection(False)
         _qc_hdr.setSectionResizeMode(6, QHeaderView.Fixed)
-        self.qc_table.setColumnWidth(6, 52)
+        self.qc_table.setColumnWidth(6, 64)  # 52px clipped the "Out%" header
         self.qc_table.setSelectionBehavior(QTableWidget.SelectRows)
         self.qc_table.setEditTriggers(QTableWidget.NoEditTriggers)
         self.qc_table.itemSelectionChanged.connect(self._on_qc_selection_changed)
@@ -1422,20 +1434,27 @@ class LightCurveBuilderWindow(StepWindowBase):
         stats_vbox.addWidget(self.qc_stats_table)
         stats_group.setMinimumWidth(200)
 
-        # Top pane: table (left) + stats (right) — horizontal splitter
-        top_splitter = QSplitter(Qt.Horizontal)
-        top_splitter.setChildrenCollapsible(False)
-        top_splitter.addWidget(self.qc_table)
-        top_splitter.addWidget(stats_group)
-        top_splitter.setStretchFactor(0, 3)
-        top_splitter.setStretchFactor(1, 2)
-        top_splitter.setMinimumHeight(160)
+        # Control column: table gets the vertical stretch (scrolls internally),
+        # stats sit under it — the old table|stats splitter drove the window
+        # too wide once the QC section moved into the left column.
+        self.qc_table.setMinimumHeight(160)
+        qc_layout.addWidget(self.qc_table, 1)
+        stats_group.setMaximumHeight(200)
+        qc_layout.addWidget(stats_group)
 
         # Bottom pane: date/filter controls + preview canvas
         check_group = QGroupBox("Comparison Preview")
         check_layout = QVBoxLayout(check_group)
         check_layout.setContentsMargins(4, 4, 4, 4)
         check_layout.setSpacing(4)
+
+        # Date/Filter + navigation toolbar share one line above the plot
+        # (two stacked control rows cost plot pixels in the split view).
+        self.check_plot_canvas = FigureCanvas(Figure(figsize=(6, 4)))
+        self.check_plot_ax = self.check_plot_canvas.figure.add_subplot(111)
+        self.check_plot_canvas.setMinimumHeight(150)
+        self.check_plot_canvas.mpl_connect("button_press_event", self._on_qc_plot_click)
+        self.check_plot_toolbar = NavigationToolbar(self.check_plot_canvas, self)
 
         preview_ctrl = QHBoxLayout()
         preview_ctrl.addWidget(QLabel("Date:"))
@@ -1449,15 +1468,8 @@ class LightCurveBuilderWindow(StepWindowBase):
         self.qc_filter_combo.currentIndexChanged.connect(self._on_qc_preview_changed)
         preview_ctrl.addWidget(self.qc_filter_combo)
         preview_ctrl.addStretch()
+        preview_ctrl.addWidget(self.check_plot_toolbar)
         check_layout.addLayout(preview_ctrl)
-
-        self.check_plot_canvas = FigureCanvas(Figure(figsize=(6, 4)))
-        self.check_plot_ax = self.check_plot_canvas.figure.add_subplot(111)
-        self.check_plot_canvas.setMinimumHeight(260)
-        self.check_plot_canvas.setStyleSheet("background-color: #FFFFFF; border: 1px solid #ECEFF1;")
-        self.check_plot_canvas.mpl_connect("button_press_event", self._on_qc_plot_click)
-        self.check_plot_toolbar = NavigationToolbar(self.check_plot_canvas, self)
-        check_layout.addWidget(self.check_plot_toolbar)
         check_layout.addWidget(self.check_plot_canvas, 1)
 
         qc_frame_row = QHBoxLayout()
@@ -1480,16 +1492,12 @@ class LightCurveBuilderWindow(StepWindowBase):
         qc_frame_row.addWidget(self.btn_qc_frame_reset)
         check_layout.addLayout(qc_frame_row)
 
-        # Vertical splitter: top=table+stats, bottom=preview
-        qc_splitter = QSplitter(Qt.Vertical)
-        qc_splitter.setChildrenCollapsible(False)
-        qc_splitter.addWidget(top_splitter)
-        qc_splitter.addWidget(check_group)
-        qc_splitter.setStretchFactor(0, 2)
-        qc_splitter.setStretchFactor(1, 3)
+        # Preview pane sits above the Light Curve pane on the right.
+        self.right_splitter.insertWidget(0, check_group)
+        self.right_splitter.setStretchFactor(0, 1)
+        self.right_splitter.setStretchFactor(1, 1)
 
-        qc_layout.addWidget(qc_splitter, 1)
-        self.qc_layout.addWidget(qc_group, 1)
+        left_v.addWidget(qc_group, 1)
 
         self.shortcut_prev = QShortcut(QKeySequence(Qt.Key_Left), self)
         self.shortcut_prev.activated.connect(lambda: self._step_comp(-1))
@@ -1502,15 +1510,17 @@ class LightCurveBuilderWindow(StepWindowBase):
         self.shortcut_reset = QShortcut(QKeySequence(Qt.Key_R), self)
         self.shortcut_reset.activated.connect(self.clear_frame_excludes)
 
-        self.tab_widget.currentChanged.connect(self._on_tab_changed)
-
         log_row = QHBoxLayout()
         btn_log = QPushButton("Log")
         style_button(btn_log, "ghost", height=Tokens.H_COMPACT)
         btn_log.clicked.connect(self.show_log_window)
         log_row.addWidget(btn_log)
         log_row.addStretch()
-        self.content_layout.addLayout(log_row)
+        left_v.addLayout(log_row)
+
+        # Width measured on the real font stack after build (see step11):
+        # the 7-column QC table dominates (540 clears its horizontal scrollbar).
+        left_col.setFixedWidth(540)
 
         self.log_window = QWidget(self, Qt.Window)
         self.log_window.setWindowTitle("Light Curve Log & Workers")
@@ -1529,6 +1539,9 @@ class LightCurveBuilderWindow(StepWindowBase):
         # build button moved to plot group
         self._update_qc_gate_ui()
         self._init_qc_view()
+        # Both panes are always visible now (no tab-change hook) — refresh the
+        # frame-QC summary once at build time.
+        self._update_frame_qc_summary()
 
     def log(self, msg: str):
         self.log_text.append(msg)

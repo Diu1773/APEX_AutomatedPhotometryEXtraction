@@ -46,6 +46,7 @@ from PyQt5.QtWidgets import (
     QFrame,
     QTextBrowser,
     QProgressBar,
+    QScrollArea,
 )
 from PyQt5.QtCore import Qt, QSignalBlocker
 from PyQt5.QtGui import QColor, QFont
@@ -101,6 +102,21 @@ from apex.utils.astro_utils import (
 def _load_night_assignments_from_disk(result_dir: Path) -> dict[str, int]:
     """Load filename -> night_id from step1/night_assignments.json."""
     return _load_night_assignments_util(result_dir)
+
+
+def _wrap_scroll(widget: QWidget) -> QScrollArea:
+    """Frameless scroll wrapper for a tab page.
+
+    QTabWidget's minimum height is its tallest page's — the mode/options
+    stacks alone pushed the whole window past small screens. Wrapped pages
+    scroll instead of dictating window height.
+    """
+    scroll = QScrollArea()
+    scroll.setWidgetResizable(True)
+    scroll.setFrameShape(QFrame.NoFrame)
+    scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+    scroll.setWidget(widget)
+    return scroll
 
 
 def _fmt_float(value, default: str = "") -> str:
@@ -260,6 +276,8 @@ class DetrendNightMergeWindow(StepWindowBase):
         self.clip_iters = 2
         self.x_axis_mode = "time"
         self.phase_cycles = 2.0  # 기본 2주기 표시
+        # Plot view: one big plot by default; "all" = classic 3-stack.
+        self._plot_view_mode = "corr"
 
         self.delta_c_map: dict[str, float] = {}
 
@@ -447,7 +465,8 @@ class DetrendNightMergeWindow(StepWindowBase):
         date_layout = QVBoxLayout(date_group)
         date_layout.setContentsMargins(4, 4, 4, 4)
         self.date_list = QListWidget()
-        self.date_list.setMaximumHeight(120)
+        # No max height: the night list fills the tab (the 120px cap left the
+        # bottom half of the panel as dead space with many nights hidden).
         self.date_list.itemChanged.connect(self._on_date_selection_changed)
         date_layout.addWidget(self.date_list)
         selection_row.addWidget(date_group)
@@ -465,8 +484,7 @@ class DetrendNightMergeWindow(StepWindowBase):
         filter_layout.addRow("Color by:", self.color_by_combo)
         selection_row.addWidget(filter_group)
 
-        data_layout.addLayout(selection_row)
-        data_layout.addStretch()
+        data_layout.addLayout(selection_row, 1)
         self.left_tabs.addTab(data_tab, "데이터")
 
         # ----- Tab 2: Correction Mode -----
@@ -635,7 +653,9 @@ class DetrendNightMergeWindow(StepWindowBase):
         mode_layout.addWidget(self.color_map_group)
 
         mode_layout.addStretch()
-        self.left_tabs.addTab(mode_tab, "보정 모드")
+        # Scroll-wrapped: QTabWidget's minimum height is the TALLEST tab's —
+        # this stack of mode groups alone pushed the window past 1200px.
+        self.left_tabs.addTab(_wrap_scroll(mode_tab), "보정 모드")
 
         # ----- Tab 3: Phase & Options -----
         options_tab = QWidget()
@@ -791,7 +811,7 @@ class DetrendNightMergeWindow(StepWindowBase):
         options_layout.addWidget(global_group)
 
         options_layout.addStretch()
-        self.left_tabs.addTab(options_tab, "옵션")
+        self.left_tabs.addTab(_wrap_scroll(options_tab), "옵션")
 
         # ----- Tab 4: Log -----
         log_tab = QWidget()
@@ -849,6 +869,27 @@ class DetrendNightMergeWindow(StepWindowBase):
         right_layout.setContentsMargins(0, 0, 0, 0)
         right_layout.setSpacing(4)
 
+        # View selector — one big plot with a segment switch; "All" restores
+        # the classic 3-stack (the old always-on stack needed 1283px minimum
+        # height and clipped on laptops).
+        view_row = QHBoxLayout()
+        view_row.setSpacing(Tokens.GAP)
+        view_row.addWidget(QLabel("보기:"))
+        self._plot_view_group = QButtonGroup(self)
+        self._plot_view_group.setExclusive(True)
+        self._plot_view_buttons = {}
+        for key, label in (("raw", "Raw"), ("corr", "Corrected"),
+                           ("diag", "Diagnostics"), ("all", "모두 보기")):
+            btn = QPushButton(label)
+            btn.setCheckable(True)
+            style_button(btn, height=Tokens.H_COMPACT)
+            btn.clicked.connect(lambda _=False, k=key: self._set_plot_view(k))
+            self._plot_view_group.addButton(btn)
+            self._plot_view_buttons[key] = btn
+            view_row.addWidget(btn)
+        view_row.addStretch()
+        right_layout.addLayout(view_row)
+
         # Plot canvas
         self.plot_canvas = FigureCanvas(Figure(figsize=(9, 7)))
         self.ax_raw = self.plot_canvas.figure.add_subplot(311)
@@ -856,23 +897,62 @@ class DetrendNightMergeWindow(StepWindowBase):
         self.ax_diag = self.plot_canvas.figure.add_subplot(313)
         right_layout.addWidget(self.plot_canvas, 3)
 
-        # Results table
-        result_group = QGroupBox("피팅 결과")
-        result_layout = QVBoxLayout(result_group)
-        result_layout.setContentsMargins(4, 4, 4, 4)
+        # 피팅 결과 테이블은 좌측 "결과" 탭으로 이동 — 우측은 플롯 전용.
         self.result_table = QTableWidget()
         self.result_table.setColumnCount(9)
         self.result_table.setHorizontalHeaderLabels(
             ["Date", "Filter", "N", "ZP₀", "±σ(ZP)", "k''", "±σ(k'')", "RMS전", "RMS후"]
         )
         self.result_table.horizontalHeader().setSectionResizeMode(QHeaderView.Stretch)
-        self.result_table.setMaximumHeight(150)
-        result_layout.addWidget(self.result_table)
-        right_layout.addWidget(result_group, 1)
+        result_tab = QWidget()
+        result_tab_layout = QVBoxLayout(result_tab)
+        result_tab_layout.setContentsMargins(4, 4, 4, 4)
+        result_tab_layout.addWidget(self.result_table)
+        # Insert before the trailing 로그 tab.
+        self.left_tabs.insertTab(self.left_tabs.count() - 1, result_tab, "결과")
+
+        self._plot_view_buttons[self._plot_view_mode].setChecked(True)
+        self._apply_plot_view(redraw=False)
 
         main_splitter.addWidget(right_widget)
         main_splitter.setSizes([320, 680])
         main_splitter.setChildrenCollapsible(False)
+
+    def _set_plot_view(self, mode: str) -> None:
+        if mode == getattr(self, "_plot_view_mode", "corr"):
+            return
+        self._plot_view_mode = mode
+        self._apply_plot_view()
+        self.save_state()
+
+    def _apply_plot_view(self, redraw: bool = True) -> None:
+        """Re-lay the raw/corr/diag axes for the selected view.
+
+        The three axes objects stay alive (50+ call sites draw into them);
+        only their subplotspec/visibility changes. In single view the hidden
+        axes share the visible one's spec so tight_layout math stays sane.
+        """
+        from matplotlib.gridspec import GridSpec
+        fig = self.plot_canvas.figure
+        order = ("raw", "corr", "diag")
+        axmap = {"raw": self.ax_raw, "corr": self.ax_corr, "diag": self.ax_diag}
+        mode = getattr(self, "_plot_view_mode", "corr")
+        if mode == "all":
+            gs = GridSpec(3, 1, figure=fig)
+            for i, key in enumerate(order):
+                axmap[key].set_subplotspec(gs[i])
+                axmap[key].set_visible(True)
+        else:
+            gs = GridSpec(1, 1, figure=fig)
+            for key in order:
+                axmap[key].set_subplotspec(gs[0])
+                axmap[key].set_visible(key == mode)
+        if redraw:
+            try:
+                fig.tight_layout()
+            except Exception:
+                pass
+            self.plot_canvas.draw_idle()
 
     def log(self, msg: str):
         if self._busy_log_buffer is not None:
@@ -4221,6 +4301,7 @@ Step 10은 여러 밤의 관측을 합칠 때 기준선을 맞추는 단계입�
             "clip_sigma": self.clip_sigma,
             "clip_iters": self.clip_iters,
             "sigma_clip": self.sigma_clip,
+            "plot_view_mode": self._plot_view_mode,
             "x_axis_mode": self.x_axis_mode,
             "phase_period": self.phase_period,
             "phase_t0": self.phase_t0,
@@ -4253,6 +4334,12 @@ Step 10은 여러 밤의 관측을 합칠 때 기준선을 맞추는 단계입�
             self.clip_sigma = float(state_data.get("clip_sigma", 3.0))
             self.clip_iters = int(state_data.get("clip_iters", 2))
             self.sigma_clip = bool(state_data.get("sigma_clip", True))
+            view = state_data.get("plot_view_mode", self._plot_view_mode)
+            if view in ("raw", "corr", "diag", "all"):
+                self._plot_view_mode = view
+                if hasattr(self, "_plot_view_buttons"):
+                    self._plot_view_buttons[view].setChecked(True)
+                    self._apply_plot_view(redraw=False)
             self.x_axis_mode = state_data.get("x_axis_mode", self.x_axis_mode)
             self.phase_period = float(state_data.get("phase_period", 0.0))
             self.phase_t0 = float(state_data.get("phase_t0", 0.0))
