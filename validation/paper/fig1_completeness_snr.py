@@ -1,12 +1,13 @@
 """Figure 1 (v2) — Detection completeness, two panels.
 
 (a) Completeness vs injected magnitude: measured recovery fractions (Wilson 95%
-    CIs) with an empirical logistic *summary* (not a theoretical prediction);
-    m50/m90/m10 marked.
-(b) Completeness vs source S/N: the same recoveries collapse onto a single clean
-    threshold near S/N ~ 7.4 — the physical reason the magnitude completeness has
-    its sigmoid shape (detection is S/N-governed; the logistic is the smooth
-    approximation to this noise-threshold crossing).
+    CIs). Following AutoPhOT / Masci 2011 / Kashyap+2010 we do NOT fit a curve in
+    magnitude space — the limiting depth m50 (and m90/m10) is read off where the
+    measured recovery crosses the chosen fraction.
+(b) Completeness vs source S/N: the erf detection-probability model
+    beta = 1/2[1 + erf((S/N - x50)/(sqrt(2) w))], the reference form, fits the
+    S/N-binned recoveries with 50% near S/N ~ 7.4. This is the physical model;
+    detection is S/N-governed, which is why the magnitude depth is what it is.
 
 Per-star S/N is derived from the injected flux and a noise term calibrated on the
 recovered stars' own reported magnitude errors, so it applies to detected and
@@ -27,7 +28,7 @@ sys.path.insert(0, str(REPO / "validation" / "paper"))
 
 import numpy as np
 import pandas as pd
-from scipy.special import expit, erf
+from scipy.special import expit, erf, erfinv
 from scipy.optimize import curve_fit
 import matplotlib.pyplot as plt
 
@@ -88,6 +89,28 @@ def main() -> int:
     snr = flux / np.sqrt(flux + Cnoise)
     p_snr, _ = curve_fit(erfmod, snr, rec.astype(float), p0=[7, 1], maxfev=20000)
 
+    # ── limiting magnitude read OFF the measured completeness (AutoPhOT-style) ──
+    # The erf detection model lives in S/N space (panel b; Masci 2011, Kashyap+2010,
+    # the form AutoPhOT adopts). Following those references we do NOT fit a curve in
+    # magnitude space — we read the depth where recovery crosses a chosen fraction.
+    snr50 = float(p_snr[0])
+    _o = np.argsort(mag)
+    mm, cc = mag[_o], comp[_o]
+
+    def mag_at_comp(t):
+        for i in range(len(mm) - 1):
+            if cc[i] >= t >= cc[i + 1]:
+                den = cc[i] - cc[i + 1]
+                f = (cc[i] - t) / den if den else 0.0
+                return float(mm[i] + f * (mm[i + 1] - mm[i]))
+        return float("nan")
+
+    m50 = mag_at_comp(0.5)
+    m90 = mag_at_comp(0.9)
+    m10 = mag_at_comp(0.1)
+    _half = 0.5 * (m50hi - m50lo)  # bootstrap depth CI half-width
+    m50lo, m50hi = m50 - _half, m50 + _half
+
     fig, (axa, axb) = plt.subplots(1, 2, figsize=(DOUBLE_COL, 3.5))
 
     # ── (a) completeness vs magnitude ──
@@ -96,14 +119,10 @@ def main() -> int:
     axa.axhline(0.5, color=C["floor"], lw=0.8, ls=":", zorder=1)
     for mm, lo, hi in [(m90, None, None), (m10, None, None)]:
         axa.axvline(mm, color=C["accent"], lw=0.9, ls="-.", zorder=1, alpha=.8)
-    grid = np.linspace(mag.min() - 0.3, mag.max() + 0.3, 300)
-    # error-function detection model (Masci 2011; the form AutoPhOT adopts),
-    # fit to the magnitude bins — replaces the logistic, keeps the same depth
-    def erf_comp(m, m50f, wf):
-        return 0.5 * (1 - erf((m - m50f) / (np.sqrt(2) * wf)))
-    pa, _ = curve_fit(erf_comp, mag, comp, p0=[m50, width], maxfev=20000)
-    axa.plot(grid, erf_comp(grid, *pa), color=C["model"], lw=1.8,
-             zorder=4, label="error-function fit")
+    # no fitted magnitude curve (references read the limit off the data);
+    # the physical model is the S/N erf in panel (b)
+    for lvl in (0.9, 0.1):
+        axa.axhline(lvl, color=C["floor"], lw=0.6, ls=":", zorder=1, alpha=0.6)
     axa.errorbar(mag, comp,
                  yerr=[np.clip(comp - ci[:, 0], 0, None), np.clip(ci[:, 1] - comp, 0, None)],
                  fmt="o", color=C["data"], ms=4, lw=1, capsize=2, zorder=5,
@@ -112,12 +131,13 @@ def main() -> int:
     axa.set_ylim(-0.03, 1.05)
     axa.text(0.05, 0.30,
              rf"$m_{{50}}={m50:.2f}^{{+{m50hi-m50:.2f}}}_{{-{m50-m50lo:.2f}}}$"
-             + f"\nwidth $={width:.2f}$\n$m_{{90}}={m90:.2f}$, $m_{{10}}={m10:.2f}$",
+             + "\n" + rf"$m_{{90}}={m90:.2f}$, $m_{{10}}={m10:.2f}$"
+             + "\n" + rf"50% at S/N $\approx$ {snr50:.1f}",
              transform=axa.transAxes, va="top", fontsize=7.6,
              bbox={"boxstyle": "round,pad=0.3", "facecolor": "white",
                    "alpha": .85, "edgecolor": PALETTE["grey"]})
     axa.legend(loc="upper right", fontsize=7.2)
-    axa.set_title("(a) vs magnitude — measured + summary", loc="left")
+    axa.set_title("(a) vs magnitude — measured depth", loc="left")
 
     # ── (b) completeness vs S/N ──
     edges = np.array([2, 4, 5, 6, 7, 8, 9, 11, 14, 20, 40])
@@ -149,7 +169,7 @@ def main() -> int:
     fig.tight_layout()
     paths = save_fig(fig, "fig1_completeness", OUTDIR)
     plt.close(fig)
-    print(f"m50={m50:.2f} width={width:.2f} | SNR50={p_snr[0]:.2f} width={p_snr[1]:.2f} Cnoise={Cnoise:.0f}")
+    print(f"[proj] m50={m50:.2f} m90={m90:.2f} m10={m10:.2f} | SNR50={p_snr[0]:.2f} snrW={p_snr[1]:.2f} Cnoise={Cnoise:.0f}")
     print(f"saved: {paths['png']}")
     return 0
 
