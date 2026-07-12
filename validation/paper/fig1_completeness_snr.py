@@ -1,17 +1,19 @@
-"""Figure 1 (v2) — Detection completeness, two panels.
+"""Figure — Detection completeness (dense injection-recovery, 21,000 sources).
 
-(a) Completeness vs injected magnitude: measured recovery fractions (Wilson 95%
-    CIs). Following AutoPhOT / Masci 2011 / Kashyap+2010 we do NOT fit a curve in
-    magnitude space — the limiting depth m50 (and m90/m10) is read off where the
-    measured recovery crosses the chosen fraction.
-(b) Completeness vs source S/N: the erf detection-probability model
-    beta = 1/2[1 + erf((S/N - x50)/(sqrt(2) w))], the reference form, fits the
-    S/N-binned recoveries with 50% near S/N ~ 7.4. This is the physical model;
-    detection is S/N-governed, which is why the magnitude depth is what it is.
+Top panel (DES-Balrog style): completeness vs injected magnitude from 300
+Monte-Carlo trials x 70 injections. With ~21k injections the binned recovery
+fraction is itself a smooth curve, so — following DES Balrog, AutoPhOT, and
+the artificial-star literature — NO functional form is fitted in magnitude
+space; the depths m90/m50/m10 are read off where the measured completeness
+crosses each fraction. The isolated / field split quantifies crowding: field
+placements (no exclusion around real stars) lose depth relative to isolated
+placements. The erf detection-probability form (Masci 2011; Kashyap+2010;
+the AutoPhOT appendix) lives in S/N space and is cited in the text.
 
-Per-star S/N is derived from the injected flux and a noise term calibrated on the
-recovered stars' own reported magnitude errors, so it applies to detected and
-undetected injections alike.
+Bottom row (AutoPhOT Fig-12 style): cutouts of sources injected with the SAME
+production injection code (empirical PSF, Poisson photons, gain 0.689) at
+representative magnitudes, so the reader sees what a star at the measured
+50 per cent depth actually looks like against the noise.
 
     .venv-deploy\\Scripts\\python.exe validation\\paper\\fig1_completeness_snr.py
 """
@@ -28,19 +30,23 @@ sys.path.insert(0, str(REPO / "validation" / "paper"))
 
 import numpy as np
 import pandas as pd
-from scipy.special import expit, erf, erfinv
-from scipy.optimize import curve_fit
+from astropy.io import fits
 import matplotlib.pyplot as plt
+from matplotlib.gridspec import GridSpec
+from matplotlib.patches import Circle
 
 from apex_paper_style import apply_paper_style, save_fig, C, PALETTE, DOUBLE_COL
 
 apply_paper_style()
 
 RUN = REPO / "validation" / "paper" / "data" / "artificial_star" / "benchmark_run"
-BINS = RUN / "magnitude_bins.csv"
-FIT = RUN / "completeness_fit.json"
-STARS = RUN / "stars.csv"
+SUITE = RUN.parent
 OUTDIR = REPO / "validation" / "paper" / "figures"
+
+GAIN = 0.689          # e-/ADU, from run manifest (instrument.gain_e_per_adu)
+ZP = 25.0             # injection zeropoint, from run summary
+CUTOUT_MAGS = [16.0, 17.0, 17.5, 18.3]
+CUT = 21              # cutout half-size in px
 
 
 def wilson(k, n, z=1.96):
@@ -53,123 +59,138 @@ def wilson(k, n, z=1.96):
     return c - h, c + h
 
 
-def erfmod(x, x50, w):
-    return 0.5 * (1 + erf((x - x50) / (np.sqrt(2) * w)))
+def binned_completeness(mags, rec, bw):
+    lo0 = np.floor(mags.min() / bw) * bw
+    edges = np.arange(lo0, mags.max() + bw, bw)
+    out = []
+    for lo, hi in zip(edges[:-1], edges[1:]):
+        m = (mags >= lo) & (mags < hi)
+        if m.sum() >= 20:
+            k, n = int(rec[m].sum()), int(m.sum())
+            w = wilson(k, n)
+            out.append((0.5 * (lo + hi), k / n, w[0], w[1]))
+    a = np.array(out)
+    return a[:, 0], a[:, 1], a[:, 2], a[:, 3]
+
+
+def read_off(mag, comp, level):
+    """Magnitude where the measured completeness crosses `level` (linear interp)."""
+    o = np.argsort(mag)
+    mm, cc = mag[o], comp[o]
+    for i in range(len(mm) - 1):
+        if cc[i] >= level >= cc[i + 1]:
+            den = cc[i] - cc[i + 1]
+            f = (cc[i] - level) / den if den else 0.0
+            return float(mm[i] + f * (mm[i + 1] - mm[i]))
+    return float("nan")
 
 
 def main() -> int:
-    fit = json.loads(FIT.read_text())
-    m50, width = fit["m50"], fit["width_mag"]
-    m90, m10 = fit["m90"], fit["m10"]
-    m50lo, m50hi = fit["m50_ci95_low"], fit["m50_ci95_high"]
-
-    # per-star data (eligible = reasonably isolated injections)
-    s = pd.read_csv(STARS)
-    s = s[s["nearest_real_sep_fwhm"] > 2].copy()
-    flux = s["flux_realized_e"].to_numpy(float)
+    s = pd.read_csv(RUN / "stars.csv")
+    eligible = ~s["baseline_confounded"].astype(bool)
+    s = s[eligible].copy()
+    mags = s["magnitude_true"].to_numpy(float)
     rec = s["recovered"].to_numpy(bool)
-    magt = s["magnitude_true"].to_numpy(float)
+    iso = s["placement_stratum"].astype(str).eq("isolated").to_numpy()
 
-    # (a) completeness vs magnitude, binned at 0.25 mag from the stars themselves
-    bw = 0.25
-    lo0 = np.floor(magt.min() / bw) * bw
-    medges = np.arange(lo0, magt.max() + bw, bw)
-    mag, comp, ci = [], [], []
-    for lo, hi in zip(medges[:-1], medges[1:]):
-        m = (magt >= lo) & (magt < hi)
-        if m.sum() >= 5:
-            k, n = int(rec[m].sum()), int(m.sum())
-            mag.append(0.5 * (lo + hi)); comp.append(k / n); ci.append(wilson(k, n))
-    mag = np.array(mag); comp = np.array(comp); ci = np.array(ci)
-    me = pd.to_numeric(s["forced_mag_error"], errors="coerce").to_numpy(float)
-    ok = rec & np.isfinite(me) & (me > 0)
-    snr_meas = 1.0857 / me[ok]
-    Carr = (flux[ok] / snr_meas) ** 2 - flux[ok]
-    Cnoise = float(np.median(Carr[np.isfinite(Carr) & (Carr > 0)]))
-    snr = flux / np.sqrt(flux + Cnoise)
-    p_snr, _ = curve_fit(erfmod, snr, rec.astype(float), p0=[7, 1], maxfev=20000)
+    bw = 0.15
+    m_all, c_all, lo_all, hi_all = binned_completeness(mags, rec, bw)
+    m_iso, c_iso, *_ = binned_completeness(mags[iso], rec[iso], bw)
+    m_fld, c_fld, *_ = binned_completeness(mags[~iso], rec[~iso], bw)
 
-    # ── limiting magnitude read OFF the measured completeness (AutoPhOT-style) ──
-    # The erf detection model lives in S/N space (panel b; Masci 2011, Kashyap+2010,
-    # the form AutoPhOT adopts). Following those references we do NOT fit a curve in
-    # magnitude space — we read the depth where recovery crosses a chosen fraction.
-    snr50 = float(p_snr[0])
-    _o = np.argsort(mag)
-    mm, cc = mag[_o], comp[_o]
+    m50 = read_off(m_all, c_all, 0.5)
+    m90 = read_off(m_all, c_all, 0.9)
+    m10 = read_off(m_all, c_all, 0.1)
+    m50_iso = read_off(m_iso, c_iso, 0.5)
+    m50_fld = read_off(m_fld, c_fld, 0.5)
 
-    def mag_at_comp(t):
-        for i in range(len(mm) - 1):
-            if cc[i] >= t >= cc[i + 1]:
-                den = cc[i] - cc[i + 1]
-                f = (cc[i] - t) / den if den else 0.0
-                return float(mm[i] + f * (mm[i + 1] - mm[i]))
-        return float("nan")
+    # completeness at the cutout magnitudes — read off the ISOLATED curve,
+    # because the demo cutouts are injected at isolated positions
+    comp_at = {m: float(np.interp(m, m_iso, c_iso)) for m in CUTOUT_MAGS}
 
-    m50 = mag_at_comp(0.5)
-    m90 = mag_at_comp(0.9)
-    m10 = mag_at_comp(0.1)
-    _half = 0.5 * (m50hi - m50lo)  # bootstrap depth CI half-width
-    m50lo, m50hi = m50 - _half, m50 + _half
+    # ── demo cutouts: inject with the production code at isolated positions ──
+    from apex.benchmark.artificial_stars import inject_catalog
+    frame = fits.getdata(SUITE / "synthetic_reference.fits").astype(float)
+    psf = fits.getdata(RUN / "empirical_psf.fits").astype(float)
+    pos_pool = s[iso & (s["nearest_real_sep_fwhm"] > 4)][["x_true", "y_true"]]
+    rng = np.random.default_rng(20260712)
+    picks = pos_pool.sample(len(CUTOUT_MAGS), random_state=7).to_numpy()
+    cat = pd.DataFrame({
+        "injection_id": np.arange(len(CUTOUT_MAGS)),
+        "x_true": picks[:, 0], "y_true": picks[:, 1],
+        "magnitude_true": CUTOUT_MAGS,
+    })
+    injected, _, _, _ = inject_catalog(
+        frame, psf, cat, gain_e_per_adu=GAIN, zeropoint_mag=ZP, rng=rng)
 
-    fig, (axa, axb) = plt.subplots(1, 2, figsize=(DOUBLE_COL, 3.5))
+    # ── figure ──
+    fig = plt.figure(figsize=(DOUBLE_COL, 5.4))
+    gs = GridSpec(2, len(CUTOUT_MAGS), height_ratios=[2.35, 1.0],
+                  hspace=0.34, wspace=0.06, figure=fig)
+    ax = fig.add_subplot(gs[0, :])
 
-    # ── (a) completeness vs magnitude ──
-    axa.axvspan(m50lo, m50hi, color=C["floor"], alpha=0.16, lw=0, zorder=1)
-    axa.axvline(m50, color=C["floor"], lw=1.1, ls="--", zorder=2)
-    axa.axhline(0.5, color=C["floor"], lw=0.8, ls=":", zorder=1)
-    for mm, lo, hi in [(m90, None, None), (m10, None, None)]:
-        axa.axvline(mm, color=C["accent"], lw=0.9, ls="-.", zorder=1, alpha=.8)
-    # no fitted magnitude curve (references read the limit off the data);
-    # the physical model is the S/N erf in panel (b)
-    for lvl in (0.9, 0.1):
-        axa.axhline(lvl, color=C["floor"], lw=0.6, ls=":", zorder=1, alpha=0.6)
-    axa.errorbar(mag, comp,
-                 yerr=[np.clip(comp - ci[:, 0], 0, None), np.clip(ci[:, 1] - comp, 0, None)],
-                 fmt="o", color=C["data"], ms=4, lw=1, capsize=2, zorder=5,
-                 label="injections (Wilson 95%)")
-    axa.set_xlabel("injected magnitude"); axa.set_ylabel("completeness")
-    axa.set_ylim(-0.03, 1.05)
-    axa.text(0.05, 0.30,
-             rf"$m_{{50}}={m50:.2f}^{{+{m50hi-m50:.2f}}}_{{-{m50-m50lo:.2f}}}$"
-             + "\n" + rf"$m_{{90}}={m90:.2f}$, $m_{{10}}={m10:.2f}$"
-             + "\n" + rf"50% at S/N $\approx$ {snr50:.1f}",
-             transform=axa.transAxes, va="top", fontsize=7.6,
-             bbox={"boxstyle": "round,pad=0.3", "facecolor": "white",
-                   "alpha": .85, "edgecolor": PALETTE["grey"]})
-    axa.legend(loc="upper right", fontsize=7.2)
-    axa.set_title("(a) vs magnitude — measured depth", loc="left")
+    # all injections: smooth measured curve + Wilson band
+    ax.fill_between(m_all, lo_all, hi_all, color=C["data"], alpha=0.18, lw=0,
+                    zorder=2)
+    ax.plot(m_all, c_all, "-", color=C["data"], lw=2.0, zorder=5,
+            label=f"all injections (N={len(s):,})")
+    # crowding split
+    ax.plot(m_iso, c_iso, "-", color=C["reference"], lw=1.2, alpha=0.9, zorder=4,
+            label=f"isolated ($m_{{50}}$={m50_iso:.2f})")
+    ax.plot(m_fld, c_fld, "-", color=C["accent"], lw=1.2, alpha=0.9, zorder=4,
+            label=f"field ($m_{{50}}$={m50_fld:.2f})")
+    # depth read-offs
+    ax.axhline(0.5, color=PALETTE["grey"], lw=0.7, ls=":", zorder=1)
+    ax.axhline(0.9, color=PALETTE["grey"], lw=0.5, ls=":", zorder=1, alpha=0.6)
+    ax.axvline(m50, color=C["data"], lw=1.2, ls="--", zorder=3)
+    ax.annotate(rf"$m_{{50}}={m50:.2f}$", xy=(m50, 0.52), xytext=(-64, 10),
+                textcoords="offset points", fontsize=9, fontweight="bold",
+                color=C["data"])
+    # cutout magnitude markers on the curve
+    for mtag in CUTOUT_MAGS:
+        ax.plot(mtag, comp_at[mtag], "v", color="k", ms=5, zorder=6)
+    ax.set_xlabel("injected magnitude")
+    ax.set_ylabel("completeness")
+    ax.set_ylim(-0.03, 1.06)
+    ax.set_xlim(m_all.min() - 0.2, m_all.max() + 0.2)
+    ax.text(0.03, 0.42,
+            rf"$m_{{90}}={m90:.2f}$" + "\n" + rf"$m_{{50}}={m50:.2f}$"
+            + "\n" + rf"$m_{{10}}={m10:.2f}$"
+            + "\n" + rf"$\Delta m_{{50}}$(crowding)$={m50_iso - m50_fld:.2f}$",
+            transform=ax.transAxes, va="top", fontsize=8,
+            bbox={"boxstyle": "round,pad=0.32", "facecolor": "white",
+                  "alpha": .9, "edgecolor": PALETTE["grey"]})
+    ax.legend(loc="lower left", fontsize=7.4)
+    # right axis in percent
+    ax2 = ax.twinx()
+    ax2.set_ylim(-3, 106)
+    ax2.set_ylabel("recovered [%]")
 
-    # ── (b) completeness vs S/N ──
-    edges = np.array([2, 4, 5, 6, 7, 8, 9, 11, 14, 20, 40])
-    cx, cy, clo, chi = [], [], [], []
-    for lo, hi in zip(edges[:-1], edges[1:]):
-        m = (snr >= lo) & (snr < hi)
-        if m.sum() >= 8:
-            k, n = int(rec[m].sum()), int(m.sum())
-            cx.append(np.median(snr[m])); cy.append(k / n)
-            l, h = wilson(k, n); clo.append(max(0, k/n - l)); chi.append(max(0, h - k/n))
-    cx = np.array(cx)
-    gg = np.linspace(2, 30, 300)
-    axb.axvline(p_snr[0], color=C["floor"], lw=1.1, ls="--", zorder=2)
-    axb.axhline(0.5, color=C["floor"], lw=0.8, ls=":", zorder=1)
-    axb.plot(gg, erfmod(gg, *p_snr), color=C["reference"], lw=1.8, zorder=4,
-             label=r"S/N-threshold (erf)")
-    axb.errorbar(cx, cy, yerr=[clo, chi], fmt="s", color=C["data"], ms=4, lw=1,
-                 capsize=2, zorder=5, label="recovered fraction")
-    axb.set_xscale("log")
-    axb.set_xlabel("source S/N"); axb.set_ylabel("completeness")
-    axb.set_ylim(-0.03, 1.05); axb.set_xlim(2.5, 30)
-    axb.text(0.05, 0.92, rf"50% at S/N $\approx {p_snr[0]:.1f}$",
-             transform=axb.transAxes, va="top", fontsize=8,
-             bbox={"boxstyle": "round,pad=0.3", "facecolor": "white",
-                   "alpha": .85, "edgecolor": PALETTE["grey"]})
-    axb.legend(loc="lower right", fontsize=7.2)
-    axb.set_title("(b) vs S/N — detection is S/N-governed", loc="left")
+    # ── cutout row ──
+    bg = np.median(frame)
+    mad = 1.4826 * np.median(np.abs(frame - bg))
+    vmin, vmax = bg - 2.0 * mad, bg + 9.0 * mad
+    for j, mtag in enumerate(CUTOUT_MAGS):
+        axc = fig.add_subplot(gs[1, j])
+        x, y = picks[j]
+        xi, yi = int(round(x)), int(round(y))
+        cut = injected[yi - CUT:yi + CUT + 1, xi - CUT:xi + CUT + 1]
+        axc.imshow(cut, origin="lower", cmap="gray_r", vmin=vmin, vmax=vmax,
+                   interpolation="nearest")
+        axc.add_patch(Circle((CUT + (x - xi), CUT + (y - yi)), 6.5, fill=False,
+                             ec=C["accent"], lw=1.1))
+        axc.set_xticks([]); axc.set_yticks([])
+        axc.set_title(rf"$m={mtag:.1f}$  ($C\approx{100*comp_at[mtag]:.0f}$%)",
+                      fontsize=8)
+    fig.text(0.5, 0.015,
+             "sources injected with the production pipeline (empirical PSF, "
+             f"Poisson photons, gain {GAIN} e$^-$/ADU)",
+             ha="center", fontsize=7, color=PALETTE["grey"])
 
-    fig.tight_layout()
     paths = save_fig(fig, "fig1_completeness", OUTDIR)
     plt.close(fig)
-    print(f"[proj] m50={m50:.2f} m90={m90:.2f} m10={m10:.2f} | SNR50={p_snr[0]:.2f} snrW={p_snr[1]:.2f} Cnoise={Cnoise:.0f}")
+    print(f"[dense] N={len(s)} m50={m50:.2f} m90={m90:.2f} m10={m10:.2f} "
+          f"| iso={m50_iso:.2f} field={m50_fld:.2f} dCrowd={m50_iso-m50_fld:.2f}")
     print(f"saved: {paths['png']}")
     return 0
 
