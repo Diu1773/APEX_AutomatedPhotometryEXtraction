@@ -151,9 +151,11 @@ def main() -> int:
     ax.annotate(rf"$m_{{50}}={m50:.2f}$", xy=(m50, 0.52), xytext=(-64, 10),
                 textcoords="offset points", fontsize=9, fontweight="bold",
                 color=C["data"])
-    # cutout magnitude markers on the curve
-    for mtag in CUTOUT_MAGS:
-        ax.plot(mtag, comp_at[mtag], "v", color="k", ms=5, zorder=6)
+    # cutout magnitude markers on the curve (link to the bottom row)
+    for i, mtag in enumerate(CUTOUT_MAGS):
+        ax.plot(mtag, comp_at[mtag], "v", color=C["accent"], mec="k", mew=0.5,
+                ms=6, zorder=6,
+                label="cutout magnitudes (below)" if i == 0 else None)
     ax.set_xlabel("injected magnitude")
     ax.set_ylabel("completeness")
     ax.set_ylim(-0.03, 1.06)
