@@ -130,17 +130,22 @@ def main() -> int:
     ax = fig.add_subplot(gs[0, :])
 
     # AutoPhOT-style scatter cloud: one dot = one trial's recovery fraction
-    # in one magnitude bin (300 MC trials -> a dense cloud), x-jittered
+    # in one magnitude bin. Subsampled per bin and lightly jittered (display
+    # only, declared in the caption) so the piled-up 1.0/0.0 fractions read
+    # as a cloud rather than a solid line.
     bws = 0.25
     s["mbin"] = np.floor(s["magnitude_true"] / bws) * bws + bws / 2
     per_trial = (s.groupby(["trial", "mbin"])["recovered"]
                    .agg(["mean", "size"]).reset_index())
     per_trial = per_trial[per_trial["size"] >= 3]
+    per_trial = (per_trial.groupby("mbin", group_keys=False)
+                 .apply(lambda g: g.sample(min(len(g), 45), random_state=3)))
     rng_j = np.random.default_rng(11)
-    jit = rng_j.uniform(-0.085, 0.085, len(per_trial))
-    ax.plot(per_trial["mbin"] + jit, per_trial["mean"], "o",
-            color=C["data"], ms=2.0, alpha=0.10, mew=0, zorder=2,
-            label=f"per-trial fractions (300 trials, N={len(s):,})")
+    jx = rng_j.uniform(-0.09, 0.09, len(per_trial))
+    jy = rng_j.uniform(-0.014, 0.014, len(per_trial))
+    ax.plot(per_trial["mbin"] + jx, per_trial["mean"] + jy, "o",
+            color=C["data"], ms=1.9, alpha=0.18, mew=0, zorder=2,
+            label=f"per-trial fractions (300 trials, N={len(s):,}; jittered)")
     # pooled completeness over all injections
     ax.plot(m_all, c_all, "-", color="k", lw=1.8, zorder=5,
             label="pooled completeness")
@@ -151,10 +156,11 @@ def main() -> int:
     ax.annotate(rf"$m_{{50}}={m50:.2f}$", xy=(m50, 0.52), xytext=(-64, 10),
                 textcoords="offset points", fontsize=9, fontweight="bold",
                 color=C["data"])
-    # cutout magnitude markers on the curve (link to the bottom row)
+    # cutout magnitude markers along the top margin (link to the bottom row),
+    # kept off the data so they never overlap the 1.0 fraction band
     for i, mtag in enumerate(CUTOUT_MAGS):
-        ax.plot(mtag, comp_at[mtag], "v", color=C["accent"], mec="k", mew=0.5,
-                ms=6, zorder=6,
+        ax.plot(mtag, 1.10, "v", color=C["accent"], mec="k", mew=0.5,
+                ms=6.5, zorder=6, clip_on=False,
                 label="cutout magnitudes (below)" if i == 0 else None)
     ax.set_xlabel("injected magnitude")
     ax.set_ylabel("completeness")
