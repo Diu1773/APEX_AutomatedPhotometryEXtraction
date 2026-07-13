@@ -129,16 +129,21 @@ def main() -> int:
                   hspace=0.34, wspace=0.06, figure=fig)
     ax = fig.add_subplot(gs[0, :])
 
-    # all injections: smooth measured curve + Wilson band
-    ax.fill_between(m_all, lo_all, hi_all, color=C["data"], alpha=0.18, lw=0,
-                    zorder=2)
-    ax.plot(m_all, c_all, "-", color=C["data"], lw=2.0, zorder=5,
-            label=f"all injections (N={len(s):,})")
-    # crowding split
-    ax.plot(m_iso, c_iso, "-", color=C["reference"], lw=1.2, alpha=0.9, zorder=4,
-            label=f"isolated ($m_{{50}}$={m50_iso:.2f})")
-    ax.plot(m_fld, c_fld, "-", color=C["accent"], lw=1.2, alpha=0.9, zorder=4,
-            label=f"field ($m_{{50}}$={m50_fld:.2f})")
+    # AutoPhOT-style scatter cloud: one dot = one trial's recovery fraction
+    # in one magnitude bin (300 MC trials -> a dense cloud), x-jittered
+    bws = 0.25
+    s["mbin"] = np.floor(s["magnitude_true"] / bws) * bws + bws / 2
+    per_trial = (s.groupby(["trial", "mbin"])["recovered"]
+                   .agg(["mean", "size"]).reset_index())
+    per_trial = per_trial[per_trial["size"] >= 3]
+    rng_j = np.random.default_rng(11)
+    jit = rng_j.uniform(-0.085, 0.085, len(per_trial))
+    ax.plot(per_trial["mbin"] + jit, per_trial["mean"], "o",
+            color=C["data"], ms=2.0, alpha=0.10, mew=0, zorder=2,
+            label=f"per-trial fractions (300 trials, N={len(s):,})")
+    # pooled completeness over all injections
+    ax.plot(m_all, c_all, "-", color="k", lw=1.8, zorder=5,
+            label="pooled completeness")
     # depth read-offs
     ax.axhline(0.5, color=PALETTE["grey"], lw=0.7, ls=":", zorder=1)
     ax.axhline(0.9, color=PALETTE["grey"], lw=0.5, ls=":", zorder=1, alpha=0.6)
