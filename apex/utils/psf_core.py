@@ -30,6 +30,35 @@ def _finite_xy(xy: np.ndarray) -> np.ndarray:
     return arr[keep]
 
 
+def target_pixel_from_wcs(
+    header,
+    ra_deg: float | None,
+    dec_deg: float | None,
+    image_shape: tuple[int, int],
+) -> tuple[float, float] | None:
+    """Project a configured target coordinate into a valid image pixel."""
+
+    try:
+        ra = float(ra_deg)
+        dec = float(dec_deg)
+        if not (np.isfinite(ra) and np.isfinite(dec)):
+            return None
+        from astropy.wcs import WCS
+
+        wcs = WCS(header)
+        if not wcs.has_celestial:
+            return None
+        x, y = wcs.celestial.world_to_pixel_values(ra, dec)
+        x = float(np.asarray(x))
+        y = float(np.asarray(y))
+    except Exception:
+        return None
+    h, w = int(image_shape[0]), int(image_shape[1])
+    if not (np.isfinite(x) and np.isfinite(y) and 0 <= x < w and 0 <= y < h):
+        return None
+    return x, y
+
+
 def _auto_density_center(
     xy: np.ndarray,
     image_shape: tuple[int, int],
@@ -59,6 +88,56 @@ def _auto_density_center(
     if int(np.sum(near)) >= 5:
         return float(np.nanmedian(xy[near, 0])), float(np.nanmedian(xy[near, 1])), ratio
     return float(cx0), float(cy0), ratio
+
+
+def _auto_surface_brightness_center(
+    image: np.ndarray | None,
+    fwhm_px: float,
+) -> tuple[float, float] | None:
+    """Locate a broad unresolved cluster core without following one bright star."""
+    if image is None:
+        return None
+    data = np.asarray(image, dtype=float)
+    if data.ndim != 2 or min(data.shape) < 32:
+        return None
+    height, width = data.shape
+    factor = max(1, int(np.ceil(max(height, width) / 600.0)))
+    trim_h = (height // factor) * factor
+    trim_w = (width // factor) * factor
+    if trim_h <= 0 or trim_w <= 0:
+        return None
+    blocks = data[:trim_h, :trim_w].reshape(
+        trim_h // factor,
+        factor,
+        trim_w // factor,
+        factor,
+    )
+    with np.errstate(invalid="ignore"):
+        reduced = np.nanmean(blocks, axis=(1, 3))
+    finite = reduced[np.isfinite(reduced)]
+    if finite.size < 16:
+        return None
+    low, high = np.percentile(finite, (10.0, 99.5))
+    if not (np.isfinite(low) and np.isfinite(high) and high > low):
+        return None
+    reduced = np.nan_to_num(reduced, nan=low, posinf=high, neginf=low)
+    reduced = np.clip(reduced, low, high) - low
+
+    from scipy.ndimage import gaussian_filter
+
+    sigma = max(2.0, 4.0 * max(float(fwhm_px), 1.0) / float(factor))
+    smoothed = gaussian_filter(reduced, sigma=sigma, mode="nearest")
+    margin = max(1, int(np.ceil(2.0 * sigma)))
+    if smoothed.shape[0] <= 2 * margin or smoothed.shape[1] <= 2 * margin:
+        return None
+    interior = smoothed[margin:-margin, margin:-margin]
+    y_small, x_small = np.unravel_index(int(np.nanargmax(interior)), interior.shape)
+    y_small += margin
+    x_small += margin
+    return (
+        float((x_small + 0.5) * factor),
+        float((y_small + 0.5) * factor),
+    )
 
 
 def _auto_radius(
@@ -120,11 +199,12 @@ def estimate_psf_core_cut(
     center_mode: str = "auto",
     manual_center: tuple[float, float] | None = None,
     radius_px: float = 0.0,
-    radius_fwhm_mult: float = 25.0,
+    radius_fwhm_mult: float = 20.0,
     auto_cell_fwhm_mult: float = 8.0,
     auto_min_density_ratio: float = 1.5,
     auto_min_sources: int = 50,
     max_exclude_frac: float = 0.70,
+    image: np.ndarray | None = None,
 ) -> PSFCoreCut:
     """Estimate a central crowded-core exclusion from detection coordinates."""
 
@@ -163,6 +243,13 @@ def estimate_psf_core_cut(
                 reason="density_peak_below_threshold",
             )
         method = "auto_density"
+        surface_center = _auto_surface_brightness_center(image, fwhm)
+        if surface_center is not None:
+            sx, sy = surface_center
+            agreement_limit = max(30.0 * fwhm, 0.15 * min(h, w))
+            if np.hypot(sx - cx, sy - cy) <= agreement_limit:
+                cx, cy = sx, sy
+                method = "auto_surface_brightness"
 
     try:
         radius = float(radius_px)
@@ -179,6 +266,10 @@ def estimate_psf_core_cut(
             float(auto_min_density_ratio),
         )
         method = f"{method}+auto_radius"
+        radius_cap = max(3.0 * fwhm, float(radius_fwhm_mult) * fwhm)
+        if radius > radius_cap:
+            radius = radius_cap
+            method = f"{method}+fwhm_cap"
     else:
         method = f"{method}+manual_radius"
 

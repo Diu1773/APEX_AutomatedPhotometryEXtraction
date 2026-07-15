@@ -16,6 +16,7 @@ from apex.config.parameter_map import (
     COMMON_TOML_KEY_MAP,
     LC_ONLY_TOML_KEY_MAP,
     LC_TOML_KEY_MAP,
+    PSF_TOML_KEY_MAP,
     duplicate_runtime_attrs,
     duplicate_toml_paths,
     ensure_schema_version,
@@ -89,6 +90,12 @@ def _write_minimal_toml(tmp_path, *, include_filename_prefix=True):
             apcorr_flux_pct = 70.0
             psf_seed_flux_pct = 35.0
             edge_fwhm_mult = 1.2
+
+            [psf]
+            fit_engine = "apex_iterative"
+            n_stars_max = 0
+            grouper_max_size = 3
+            substar_iters = 1
             """
         ).strip()
         + "\n",
@@ -134,6 +141,8 @@ def test_mode_toml_maps_are_centralized():
     assert toml_key_map_for_mode("lc") is LC_TOML_KEY_MAP
     assert len(COMMON_TOML_KEY_MAP) > len(CMD_ONLY_TOML_KEY_MAP)
     assert len(COMMON_TOML_KEY_MAP) > len(LC_ONLY_TOML_KEY_MAP)
+    assert PSF_TOML_KEY_MAP
+    assert (("psf", "fit_engine"), "psf_fit_engine") in PSF_TOML_KEY_MAP
 
 
 def test_parameter_maps_have_no_duplicate_toml_paths_and_known_attr_aliases():
@@ -175,6 +184,35 @@ def test_cmd_and_lc_load_top_level_schema_version(tmp_path):
     assert lc.P.source_quality_anchor_neighbor_fwhm_mult == 2.1
     assert cmd.P.source_quality_apcorr_flux_pct == 70.0
     assert lc.P.source_quality_apcorr_flux_pct == 70.0
+    assert cmd.P.psf_fit_engine == "apex_iterative"
+    assert lc.P.psf_fit_engine == "apex_iterative"
+    assert cmd.P.psf_n_stars_max == 0
+    assert lc.P.psf_n_stars_max == 0
+    assert cmd.P.psf_epsf_contamination_filter is True
+    assert lc.P.psf_epsf_contamination_filter is True
+    assert cmd.P.psf_flux_scale_correction is False
+    assert lc.P.psf_flux_scale_correction is False
+    assert cmd.P.psf_flux_scale_min_snr == 50.0
+    assert lc.P.psf_flux_scale_min_stars == 8
+    assert cmd.P.psf_flux_scale_min_neighbor_fwhm == 4.0
+    assert lc.P.psf_flux_scale_max_scatter_mag == 0.10
+    assert cmd.P.psf_grouper_max_size == 3
+    assert lc.P.psf_grouper_max_size == 3
+    assert cmd.P.psf_grouper_radius_fwhm == 1.5
+    assert lc.P.psf_grouper_radius_fwhm == 1.5
+    assert cmd.P.psf_forced_match_radius_fwhm == 1.25
+    assert lc.P.psf_forced_match_radius_fwhm == 1.25
+    assert cmd.P.psf_substar_iters == 1
+    assert lc.P.psf_substar_iters == 1
+    assert cmd.P.psf_fitter_max_iter == 6
+    assert lc.P.psf_fitter_max_iter == 6
+    assert cmd.P.psf_postfit_snr_min == 3.0
+    assert cmd.P.psf_fit_shape_fwhm_mult == 2.4
+    assert lc.P.psf_fit_window_mode == "auto"
+    assert cmd.P.psf_fit_encircled_energy == 0.90
+    assert cmd.P.psf_postfit_qfit_max == 3.0
+    assert lc.P.psf_postfit_reduced_chi2_max == 25.0
+    assert lc.P.psf_blend_residual_ratio == 0.3
 
 
 def test_missing_filename_prefix_defaults_to_all_fits(tmp_path):

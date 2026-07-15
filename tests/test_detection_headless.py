@@ -20,7 +20,7 @@ pytest.importorskip("pandas")
 import pandas as pd
 from astropy.io import fits
 
-from apex.analysis.detection import run_detection
+from apex.analysis.detection import _bounded_frame_fwhm, run_detection
 from apex.config.parameters_cmd import read_params
 from apex.pipeline.context import RunContext
 from apex.pipeline.steps.detect import DetectStep
@@ -84,6 +84,38 @@ def _build_params(tmp_path: Path, name: str):
     return params, data_dir, result_dir, cache_dir, fits_path
 
 
+def test_frame_fwhm_rejects_compact_artifacts_and_broad_blends():
+    value, count = _bounded_frame_fwhm(
+        [8.68, 8.67, 21.68, 35.44, 8.58, 16.24, 8.43, 9.19, 8.94,
+         7.71, 16.92, 2.05, 2.26, 1.00, 0.99, 1.99, 1.00, 1.09],
+        minimum_px=3.5,
+        maximum_px=12.0,
+        fallback_px=6.0,
+    )
+
+    assert count == 7
+    assert value == pytest.approx(8.67, abs=0.15)
+
+
+def test_frame_fwhm_keeps_dominant_bad_seeing_mode_above_qc_maximum():
+    value, count = _bounded_frame_fwhm(
+        [
+            1.00, 1.01, 1.99, 2.00,
+            3.998, 4.992, 6.998,
+            10.128, 10.134, 10.200, 10.259, 10.298, 10.321,
+            10.537, 10.726, 10.867, 10.868, 11.090,
+            12.940, 13.044, 14.849, 18.141, 18.662,
+        ],
+        minimum_px=3.0,
+        maximum_px=10.0,
+        fallback_px=6.0,
+    )
+
+    assert value > 10.0
+    assert value == pytest.approx(10.4, abs=0.2)
+    assert count >= 10
+
+
 def test_run_detection_writes_valid_outputs(tmp_path):
     name = "synth_R.fits"
     params, data_dir, result_dir, cache_dir, _ = _build_params(tmp_path, name)
@@ -110,6 +142,10 @@ def test_run_detection_writes_valid_outputs(tmp_path):
     assert meta["detect_engine"] == "segm"
     assert "detect_method" in meta
     assert np.isfinite(meta["fwhm_px"])
+    assert meta["fwhm_estimator"] == "lower_bounded_mad_median"
+    assert "fwhm_within_config" in meta
+    assert meta["fwhm_qc_min_px"] == pytest.approx(params.P.fwhm_px_min)
+    assert meta["fwhm_qc_max_px"] == pytest.approx(params.P.fwhm_px_max)
 
     df = pd.read_csv(csv_path)
     assert len(df) == meta["n_sources"]

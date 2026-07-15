@@ -24,6 +24,28 @@ from apex.gui.tools.registry import iter_tools_for_mode
 _RESOURCES = Path(__file__).resolve().parent.parent / "resources"
 
 
+def _migrate_lc_optional_psf_state(project_state) -> bool:
+    """Insert the optional PSF step without losing legacy LC progress."""
+    step_data = project_state.state.setdefault("step_data", {})
+    migrations = step_data.setdefault("workflow_migrations", {})
+    if migrations.get("lc_optional_psf_v1"):
+        return False
+    completed = [int(value) for value in project_state.state.get("completed_steps", [])]
+    current = int(project_state.state.get("current_step", 0))
+    legacy_downstream = current >= 7 or any(value >= 7 for value in completed)
+    if legacy_downstream:
+        shifted = {value if value < 7 else value + 1 for value in completed}
+        shifted.add(7)
+        project_state.state["completed_steps"] = sorted(shifted)
+        project_state.state["current_step"] = current if current < 7 else current + 1
+        psf_state = step_data.setdefault("psf_photometry", {})
+        psf_state.setdefault("skip_psf", True)
+        psf_state.setdefault("migration_reason", "legacy LC session")
+    migrations["lc_optional_psf_v1"] = True
+    project_state.save()
+    return legacy_downstream
+
+
 def _svg_to_pixmap(svg_path: Path, size: int = 256) -> QPixmap:
     # Rasterize at the display's device-pixel ratio so the vector logo stays
     # crisp under HiDPI scaling instead of being upscaled from 1×.
@@ -259,12 +281,15 @@ class MainWindowWorkflow(AutoFitMixin, QMainWindow):
                 "WCS Plate Solving",        # 4
                 "Master Catalog Build",     # 5
                 "Forced Aperture Phot",     # 6
-                "Target/Comparison Selection",  # 7
-                "Light Curve Builder",      # 8
-                "Detrend & Night Merge",    # 9
-                "Period Analysis",          # 10
+                "PSF Photometry",           # 7  (optional)
+                "Target/Comparison Selection",  # 8
+                "Light Curve Builder",      # 9
+                "Detrend & Night Merge",    # 10
+                "Period Analysis",          # 11
             ]
 
+        if mode == "lc":
+            _migrate_lc_optional_psf_state(self.project_state)
         self.project_state.assign_steps(self.step_names)
         self.step_buttons: List[StepButton] = []
         self.current_step_window = None
@@ -644,10 +669,11 @@ class MainWindowWorkflow(AutoFitMixin, QMainWindow):
         _CMD_PLOT   = 10
         _CMD_ISO    = 11
         # LC-only (after shared steps)
-        _LC_TARGET  = 7
-        _LC_BUILDER = 8
-        _LC_DETREND = 9
-        _LC_PERIOD  = 10
+        _LC_PSF     = 7
+        _LC_TARGET  = 8
+        _LC_BUILDER = 9
+        _LC_DETREND = 10
+        _LC_PERIOD  = 11
 
         # ── Step 0: File selection (mode-specific) ──
         if step_index == _FILE_SEL:
@@ -685,40 +711,39 @@ class MainWindowWorkflow(AutoFitMixin, QMainWindow):
 
         # ── Step 8+: mode-specific ──
         elif step_index == 7:
-            if self.mode == "cmd":
-                from apex.gui.workflow.cmd.step8_psf_photometry import PSFPhotometryWindow
-                return PSFPhotometryWindow(p, fm, ps, self)
-            else:
-                from apex.gui.workflow.lc.step8_target_selection import TargetComparisonSelectionWindow
-                return TargetComparisonSelectionWindow(p, fm, ps, self)
+            from apex.gui.workflow.cmd.step8_psf_photometry import PSFPhotometryWindow
+            return PSFPhotometryWindow(p, fm, ps, self)
 
         elif step_index == 8:
             if self.mode == "cmd":
                 from apex.gui.workflow.cmd.step9_master_id_editor import MasterIdEditorWindow
                 return MasterIdEditorWindow(p, fm, ps, self)
             else:
-                from apex.gui.workflow.lc.step9_lightcurve_builder import LightCurveBuilderWindow
-                return LightCurveBuilderWindow(p, fm, ps, self)
+                from apex.gui.workflow.lc.step8_target_selection import TargetComparisonSelectionWindow
+                return TargetComparisonSelectionWindow(p, fm, ps, self)
 
         elif step_index == 9:
             if self.mode == "cmd":
                 from apex.gui.workflow.cmd.step10_zeropoint_calibration import ZeropointCalibrationWindow
                 return ZeropointCalibrationWindow(p, fm, ps, self)
             else:
-                from apex.gui.workflow.lc.step10_detrend_merge import DetrendNightMergeWindow
-                return DetrendNightMergeWindow(p, fm, ps, self)
+                from apex.gui.workflow.lc.step9_lightcurve_builder import LightCurveBuilderWindow
+                return LightCurveBuilderWindow(p, fm, ps, self)
 
         elif step_index == 10:
             if self.mode == "cmd":
                 from apex.gui.workflow.cmd.step11_cmd_plot import CmdPlotWindow
                 return CmdPlotWindow(p, fm, ps, self)
             else:
-                from apex.gui.workflow.lc.step11_period_analysis import PeriodAnalysisWindow
-                return PeriodAnalysisWindow(p, fm, ps, self)
+                from apex.gui.workflow.lc.step10_detrend_merge import DetrendNightMergeWindow
+                return DetrendNightMergeWindow(p, fm, ps, self)
 
-        elif step_index == 11 and self.mode == "cmd":
-            from apex.gui.workflow.cmd.step12_isochrone_model import IsochroneModelWindow
-            return IsochroneModelWindow(p, fm, ps, self)
+        elif step_index == 11:
+            if self.mode == "cmd":
+                from apex.gui.workflow.cmd.step12_isochrone_model import IsochroneModelWindow
+                return IsochroneModelWindow(p, fm, ps, self)
+            from apex.gui.workflow.lc.step11_period_analysis import PeriodAnalysisWindow
+            return PeriodAnalysisWindow(p, fm, ps, self)
 
         return None
 

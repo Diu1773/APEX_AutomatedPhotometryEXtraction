@@ -131,6 +131,45 @@ def _normalize_detect_mode(value) -> str:
     return "normal"
 
 
+def _bounded_frame_fwhm(
+    values,
+    *,
+    minimum_px: float,
+    maximum_px: float,
+    fallback_px: float,
+) -> tuple[float, int]:
+    """Return a robust frame FWHM and its supporting star count.
+
+    The lower bound rejects compact artifacts before estimating the dominant
+    stellar-width mode. The upper bound remains a fallback/QC limit, not a
+    hard measurement clip: a genuinely poor-seeing frame just above the
+    configured maximum must retain its measured FWHM so downstream QC can
+    reject or flag it explicitly.
+    """
+
+    measured = np.asarray(list(values), dtype=float)
+    measured = measured[np.isfinite(measured) & (measured > 0)]
+    lower = max(0.1, float(minimum_px))
+    upper = max(lower, float(maximum_px))
+    candidates = measured[measured >= lower]
+    if len(candidates) >= 5:
+        median = float(np.median(candidates))
+        mad = float(np.median(np.abs(candidates - median)))
+        if np.isfinite(mad) and mad > 0:
+            robust_sigma = 1.4826 * mad
+            clipped = candidates[
+                np.abs(candidates - median) <= 3.0 * robust_sigma
+            ]
+            if len(clipped) >= 3:
+                candidates = clipped
+    if len(candidates):
+        return float(np.median(candidates)), int(len(candidates))
+    fallback = float(fallback_px)
+    if not np.isfinite(fallback) or fallback <= 0:
+        fallback = 0.5 * (lower + upper)
+    return float(np.clip(fallback, lower, upper)), 0
+
+
 def _get_detect_mode_preset(mode: str) -> dict:
     mode_key = _normalize_detect_mode(mode)
     return dict(_DETECT_MODE_PRESETS.get(mode_key, _DETECT_MODE_PRESETS["normal"]))
@@ -462,6 +501,9 @@ def run_detection(file_list, params, data_dir, cache_dir, use_cropped=False,
                 fwhm_values = []
                 fwhm_seed = float(getattr(P, 'fwhm_seed_px', getattr(P, 'fwhm_pix_guess', 6.0) or 6.0))
                 fwhm_prelim = fwhm_seed
+                fwhm_min_px = float(getattr(P, 'fwhm_px_min', 3.5))
+                fwhm_max_px = float(getattr(P, 'fwhm_px_max', 12.0))
+                fwhm_support_count = 0
                 detect_engine = _normalize_detect_engine(getattr(P, 'detect_engine', 'segm'))
                 detect_method = "segm" if detect_engine == "segm" else detect_engine
                 median_elongation = np.nan
@@ -756,7 +798,12 @@ def run_detection(file_list, params, data_dir, cache_dir, use_cropped=False,
                                 _fwhm_prelim_vals.append(_fpx)
                                 fwhm_by_xy[(float(_xi), float(_yi))] = _fpx
                         if len(_fwhm_prelim_vals) >= 3:
-                            fwhm_prelim = finite_nanmedian(_fwhm_prelim_vals, default=0.0)
+                            fwhm_prelim, _ = _bounded_frame_fwhm(
+                                _fwhm_prelim_vals,
+                                minimum_px=fwhm_min_px,
+                                maximum_px=fwhm_max_px,
+                                fallback_px=fwhm_seed,
+                            )
                             (worker_status_cb(
                                 worker_id, short_name,
                                 f"FWHM={fwhm_prelim:.1f}px", 77
@@ -947,7 +994,12 @@ def run_detection(file_list, params, data_dir, cache_dir, use_cropped=False,
                     n_sources = len(positions)
 
                 # Calculate median FWHM (radial)
-                fwhm_median = finite_nanmedian(fwhm_values, default=0.0) if fwhm_values else 0.0
+                fwhm_median, fwhm_support_count = _bounded_frame_fwhm(
+                    fwhm_values,
+                    minimum_px=fwhm_min_px,
+                    maximum_px=fwhm_max_px,
+                    fallback_px=fwhm_prelim,
+                )
                 fwhm_qc_max = int(getattr(P, 'fwhm_qc_max_sources', 40))
                 fwhm_measure_max = int(getattr(P, 'fwhm_measure_max', 25))
                 fwhm_dr = float(getattr(P, 'fwhm_dr', 0.5))
@@ -992,9 +1044,19 @@ def run_detection(file_list, params, data_dir, cache_dir, use_cropped=False,
                                 fwhm_values.append(fpx)
                                 fwhm_by_xy[xy_key] = fpx
                         if fwhm_values:
-                            fwhm_median = finite_nanmedian(fwhm_values, default=0.0)
+                            fwhm_median, fwhm_support_count = _bounded_frame_fwhm(
+                                fwhm_values,
+                                minimum_px=fwhm_min_px,
+                                maximum_px=fwhm_max_px,
+                                fallback_px=fwhm_prelim,
+                            )
                 except Exception:
-                    fwhm_median = finite_nanmedian(fwhm_values, default=0.0) if fwhm_values else 0.0
+                    fwhm_median, fwhm_support_count = _bounded_frame_fwhm(
+                        fwhm_values,
+                        minimum_px=fwhm_min_px,
+                        maximum_px=fwhm_max_px,
+                        fallback_px=fwhm_prelim,
+                    )
                 try:
                     pixscale = float(getattr(P, 'pixel_scale_arcsec', 0.4))
                 except Exception:
@@ -1002,6 +1064,10 @@ def run_detection(file_list, params, data_dir, cache_dir, use_cropped=False,
                 if not np.isfinite(pixscale) or pixscale <= 0:
                     pixscale = 0.4
                 fwhm_arcsec = fwhm_median * pixscale
+                fwhm_within_config = bool(
+                    np.isfinite(fwhm_median)
+                    and fwhm_min_px <= fwhm_median <= fwhm_max_px
+                )
 
                 result = {
                     'n_sources': n_sources,
@@ -1009,6 +1075,11 @@ def run_detection(file_list, params, data_dir, cache_dir, use_cropped=False,
                     'peak_positions': peak_positions,
                     'fwhm_px': fwhm_median,
                     'fwhm_arcsec': fwhm_arcsec,
+                    'fwhm_n_used': fwhm_support_count,
+                    'fwhm_estimator': 'lower_bounded_mad_median',
+                    'fwhm_qc_min_px': fwhm_min_px,
+                    'fwhm_qc_max_px': fwhm_max_px,
+                    'fwhm_within_config': fwhm_within_config,
                     'bkg_median': bkg_median,
                     'bkg_rms': bkg_rms,
                     'filter': filt,  # Preserve original case
@@ -1033,6 +1104,11 @@ def run_detection(file_list, params, data_dir, cache_dir, use_cropped=False,
                     'n_sources': n_sources,
                     'fwhm_px': fwhm_median,
                     'fwhm_arcsec': fwhm_arcsec,
+                    'fwhm_n_used': fwhm_support_count,
+                    'fwhm_estimator': 'lower_bounded_mad_median',
+                    'fwhm_qc_min_px': fwhm_min_px,
+                    'fwhm_qc_max_px': fwhm_max_px,
+                    'fwhm_within_config': fwhm_within_config,
                     'bkg_median': bkg_median,
                     'bkg_rms': bkg_rms,
                     'filter': filt,
@@ -1122,6 +1198,8 @@ def run_detection(file_list, params, data_dir, cache_dir, use_cropped=False,
                                 record['fwhm_status'] = "saturated"
                             elif near_edge:
                                 record['fwhm_status'] = "edge"
+                            elif not (fwhm_min_px <= record['fwhm_px'] <= fwhm_max_px):
+                                record['fwhm_status'] = "out_of_range"
                             else:
                                 record['fwhm_status'] = "ok"
                         except Exception:

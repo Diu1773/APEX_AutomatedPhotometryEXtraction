@@ -29,6 +29,7 @@ class FrameQCThresholds:
     fwhm_z_fail: float = 4.5
     fwhm_model_ratio_review: float = 1.30
     fwhm_model_ratio_fail: float = 1.60
+    fwhm_config_ratio_fail: float = 1.25
     sky_z_review: float = 4.0
     sky_z_fail: float = 5.5
     sky_noise_ratio_review: float = 2.5
@@ -260,8 +261,13 @@ def evaluate_frame_qc(
                 review.append("fwhm_below_config")
                 score -= 10.0
             if fwhm_px_max > 0 and fwhm[i] > fwhm_px_max:
-                review.append("fwhm_above_config")
-                score -= 15.0
+                config_ratio = fwhm[i] / fwhm_px_max
+                if config_ratio > thr.fwhm_config_ratio_fail:
+                    fail.append("fwhm_far_above_config")
+                    score -= 35.0
+                else:
+                    review.append("fwhm_above_config")
+                    score -= 15.0
 
         high_fwhm_z = np.isfinite(fwhm_z[i]) and fwhm_z[i] > thr.fwhm_z_fail
         high_fwhm_model = np.isfinite(fwhm_model_ratio[i]) and fwhm_model_ratio[i] > thr.fwhm_model_ratio_fail

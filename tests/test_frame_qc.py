@@ -159,3 +159,27 @@ def test_evaluate_frame_qc_uses_custom_z_thresholds():
 
     assert loose.loc[6, "qc_status"] in {PASS, REVIEW}
     assert strict.loc[6, "qc_status"] == FAIL
+
+
+def test_evaluate_frame_qc_fails_fwhm_far_above_configured_limit():
+    class _Params:
+        fwhm_px_min = 3.0
+        fwhm_px_max = 8.0
+
+    df = _base_frames()
+    df.loc[4, "fwhm_med"] = 10.4
+    out = evaluate_frame_qc(
+        df,
+        params=_Params(),
+        thresholds=FrameQCThresholds(
+            fwhm_z_review=99.0,
+            fwhm_z_fail=100.0,
+            fwhm_model_ratio_review=99.0,
+            fwhm_model_ratio_fail=100.0,
+            depth_cost_review=99.0,
+            depth_cost_fail=100.0,
+        ),
+    )
+
+    assert out.loc[4, "qc_status"] == FAIL
+    assert "fwhm_far_above_config" in out.loc[4, "qc_reasons"]

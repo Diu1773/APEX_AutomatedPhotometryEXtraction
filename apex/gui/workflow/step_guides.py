@@ -95,27 +95,32 @@ _CMD: dict[int, str] = {
     ),
 }
 
-# LC-mode steps after the shared ones (index 7–10).
+# LC-mode steps after the shared ones (index 7–11).
 _LC: dict[int, str] = {
     7: (
-        "<b>타겟 / 비교성 선택</b><br>"
-        "• 변광을 측정할 타겟별과, 밝기 기준이 될 비교성을 고릅니다.<br>"
-        "• 비교성은 변광이 없고 타겟과 밝기가 비슷한 별이 좋습니다.<br>"
-        "• 이미지에서 별을 클릭하거나 표에서 역할(Target/Comp)을 지정하세요."
+        "<b>Optional PSF Photometry</b><br>"
+        "Run experimental ePSF photometry or skip this step to retain Step 7 forced aperture results.<br>"
+        "A complete PSF result is used as one whole series; incomplete output falls back to aperture."
     ),
     8: (
+        "<b>타겟 / 비교성 선택</b><br>"
+        "• 타겟을 지정한 뒤 <b>Automate Filter</b>로 카탈로그 검사와 시간축 안정성 분석을 실행합니다.<br>"
+        "• 자동화가 비교성 개수를 결정하고 독립 체크별 한 개를 함께 지정합니다.<br>"
+        "• 이미지나 표에서 Target, Comparison, Check 역할을 직접 조정할 수도 있습니다."
+    ),
+    9: (
         "<b>라이트커브 생성</b><br>"
         "• 선택한 비교성으로 타겟의 차등 등급(differential)을 만듭니다.<br>"
         "• 비교성 QC로 흔들리는 비교성을 자동 제외할 수 있습니다.<br>"
         "• 여러 폴더(밤)를 합쳐서 사용할 수도 있습니다."
     ),
-    9: (
+    10: (
         "<b>디트렌드 & 밤 병합</b><br>"
         "• 밤마다 다른 영점·대기 소광을 보정해 라이트커브를 이어 붙입니다.<br>"
         "• 보정 모드(offset/global)를 고르고 <b>Fit &amp; Apply</b>로 적용하세요.<br>"
         "• RMS 전/후 값으로 보정 효과를 확인합니다."
     ),
-    10: (
+    11: (
         "<b>주기 분석</b><br>"
         "• Lomb-Scargle·PDM·BLS로 변광 주기를 찾습니다.<br>"
         "• 여러 방법의 결과가 일치하면 그 주기가 신뢰도 높습니다.<br>"

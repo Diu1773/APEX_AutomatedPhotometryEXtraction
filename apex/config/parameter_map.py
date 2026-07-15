@@ -340,20 +340,38 @@ CMD_ONLY_TOML_KEY_MAP: tuple[tuple[tuple[str, ...], str], ...] = (
     (('site', 'lon_deg'), 'site_lon_deg'),
     (('site', 'alt_m'), 'site_alt_m'),
     (('site', 'tz_offset_hours'), 'site_tz_offset_hours'),
+)
+
+PSF_TOML_KEY_MAP: tuple[tuple[tuple[str, ...], str], ...] = (
     (('psf', 'epsf_oversampling'), 'psf_epsf_oversampling'),
+    (('psf', 'epsf_maxiters'), 'psf_epsf_maxiters'),
     (('psf', 'epsf_size_px'), 'psf_epsf_size_px'),
     (('psf', 'epsf_size_fwhm_mult'), 'psf_epsf_size_fwhm_mult'),
     (('psf', 'n_stars_max'), 'psf_n_stars_max'),
     (('psf', 'isolation_fwhm_mult'), 'psf_isolation_fwhm_mult'),
+    (('psf', 'epsf_contamination_filter'), 'psf_epsf_contamination_filter'),
+    (('psf', 'flux_scale_correction'), 'psf_flux_scale_correction'),
+    (('psf', 'flux_scale_min_snr'), 'psf_flux_scale_min_snr'),
+    (('psf', 'flux_scale_min_stars'), 'psf_flux_scale_min_stars'),
+    (('psf', 'flux_scale_min_neighbor_fwhm'), 'psf_flux_scale_min_neighbor_fwhm'),
+    (('psf', 'flux_scale_max_scatter_mag'), 'psf_flux_scale_max_scatter_mag'),
     (('psf', 'flux_percentile_lo'), 'psf_flux_percentile_lo'),
     (('psf', 'flux_percentile_hi'), 'psf_flux_percentile_hi'),
     (('psf', 'fit_shape_px'), 'psf_fit_shape_px'),
     (('psf', 'fit_shape_fwhm_mult'), 'psf_fit_shape_fwhm_mult'),
+    (('psf', 'fit_window_mode'), 'psf_fit_window_mode'),
+    (('psf', 'fit_encircled_energy'), 'psf_fit_encircled_energy'),
     (('psf', 'max_iter'), 'psf_max_iter'),
+    (('psf', 'fitter_max_iter'), 'psf_fitter_max_iter'),
+    (('psf', 'fit_mode'), 'psf_fit_mode'),
     (('psf', 'redetect_sigma'), 'psf_redetect_sigma'),
     (('psf', 'redetect_sigma_g'), 'psf_redetect_sigma_g'),
     (('psf', 'redetect_sigma_r'), 'psf_redetect_sigma_r'),
     (('psf', 'redetect_sigma_i'), 'psf_redetect_sigma_i'),
+    (('psf', 'epsf_sharp_lo'), 'psf_epsf_sharp_lo'),
+    (('psf', 'epsf_sharp_hi'), 'psf_epsf_sharp_hi'),
+    (('psf', 'epsf_round_abs_max'), 'psf_epsf_round_abs_max'),
+    (('psf', 'epsf_elong_max'), 'psf_epsf_elong_max'),
     (('psf', 'model_mode'), 'psf_model_mode'),
     (('psf', 'fit_engine'), 'psf_fit_engine'),
     (('psf', 'build_mode'), 'psf_build_mode'),
@@ -374,10 +392,18 @@ CMD_ONLY_TOML_KEY_MAP: tuple[tuple[tuple[str, ...], str], ...] = (
     (('psf', 'core_cut_auto_min_density_ratio'), 'psf_core_cut_auto_min_density_ratio'),
     (('psf', 'core_cut_auto_min_sources'), 'psf_core_cut_auto_min_sources'),
     (('psf', 'core_cut_max_exclude_frac'), 'psf_core_cut_max_exclude_frac'),
+    (('psf', 'substar_iters'), 'psf_substar_iters'),
     (('psf', 'substar_neighbor_r_fwhm_mult'), 'psf_substar_neighbor_r_fwhm_mult'),
     (('psf', 'substar_max_sources'), 'psf_substar_max_sources'),
     (('psf', 'conv_new_frac'), 'psf_conv_new_frac'),
+    (('psf', 'postfit_snr_min'), 'psf_postfit_snr_min'),
+    (('psf', 'postfit_qfit_max'), 'psf_postfit_qfit_max'),
+    (('psf', 'postfit_reduced_chi2_max'), 'psf_postfit_reduced_chi2_max'),
+    (('psf', 'blend_residual_ratio'), 'psf_blend_residual_ratio'),
     (('psf', 'use_grouper'), 'psf_use_grouper'),
+    (('psf', 'grouper_max_size'), 'psf_grouper_max_size'),
+    (('psf', 'grouper_radius_fwhm'), 'psf_grouper_radius_fwhm'),
+    (('psf', 'forced_match_radius_fwhm'), 'psf_forced_match_radius_fwhm'),
     (('psf', 'redetect_sharp_lo'), 'psf_redetect_sharp_lo'),
     (('psf', 'redetect_sharp_hi'), 'psf_redetect_sharp_hi'),
     (('psf', 'redetect_round_abs_max'), 'psf_redetect_round_abs_max'),
@@ -385,6 +411,12 @@ CMD_ONLY_TOML_KEY_MAP: tuple[tuple[tuple[str, ...], str], ...] = (
     (('psf', 'use_error_image'), 'psf_use_error_image'),
     (('psf', 'save_residuals'), 'psf_save_residuals'),
     (('psf', 'save_model_image'), 'psf_save_model_image'),
+    (('psf', 'shared_filter_epsf'), 'psf_shared_filter_epsf'),
+    (('psf', 'save_all_iter_residuals'), 'psf_save_all_iter_residuals'),
+    (('psf', 'min_epsf_stars'), 'psf_min_epsf_stars'),
+)
+
+CMD_ONLY_TOML_KEY_MAP += (
     (('cross_frame', 'ransac_tol_px'), 'cross_frame_ransac_tol_px'),
     (('cross_frame', 'ransac_max_iter'), 'cross_frame_ransac_max_iter'),
     (('cross_frame', 'ransac_min_inliers'), 'cross_frame_ransac_min_inliers'),
@@ -481,8 +513,8 @@ LC_ONLY_TOML_KEY_MAP: tuple[tuple[tuple[str, ...], str], ...] = (
 # ── Canonical composed maps — callers must use these ─────────────────────────
 # (The expanded hand-written literals that lived here were removed in favour of
 #  the authoritative composition below.  Use git blame to recover them.)
-CMD_TOML_KEY_MAP = COMMON_TOML_KEY_MAP + CMD_ONLY_TOML_KEY_MAP
-LC_TOML_KEY_MAP = COMMON_TOML_KEY_MAP + LC_ONLY_TOML_KEY_MAP
+CMD_TOML_KEY_MAP = COMMON_TOML_KEY_MAP + PSF_TOML_KEY_MAP + CMD_ONLY_TOML_KEY_MAP
+LC_TOML_KEY_MAP = COMMON_TOML_KEY_MAP + PSF_TOML_KEY_MAP + LC_ONLY_TOML_KEY_MAP
 
 
 def path_to_dotted(path: Iterable[str]) -> str:

@@ -5,7 +5,7 @@ from pathlib import Path
 from typing import Dict, List, Mapping
 
 
-DETECTION_CACHE_SCHEMA_VERSION = 4
+DETECTION_CACHE_SCHEMA_VERSION = 6
 DETECTION_CACHE_MIN_SIGNATURE_SCHEMA = 2
 
 

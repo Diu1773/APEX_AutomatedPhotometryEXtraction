@@ -1,6 +1,6 @@
 """
 Lightcurve-mode step path helpers.
-Re-exports shared paths (step1-7) and adds LC-specific paths (step8-11).
+Re-exports shared paths and retains the pre-PSF LC helper names as stable APIs.
 
 LC pipeline layout:
   step1_file_selection/   File selection (multi-night)
@@ -10,10 +10,14 @@ LC pipeline layout:
   step5_wcs/              WCS plate solving
   step6_refbuild/         Reference catalog build
   step7_forced_phot/      Forced aperture photometry
-  lc_selection/           Step 8 target/comparison selection
-  lc_lightcurve/          Step 9 light curve builder
-  lc_detrend/             Step 10 detrend & night merge
-  lc_period/              Step 11 period analysis
+  cmd_psf/                Step 8 optional PSF photometry
+  lc_selection/           Step 9 target/comparison selection
+  lc_lightcurve/          Step 10 light curve builder
+  lc_detrend/             Step 11 detrend & night merge
+  lc_period/              Step 12 period analysis
+
+Functions such as step8_selection_dir() keep their historical names so existing
+projects and plugins do not break when the optional PSF step is inserted.
 """
 
 from __future__ import annotations
@@ -71,13 +75,24 @@ def selection_input_dir(result_dir: PathLike) -> Path:
     return first_existing_dir(result_dir, LC_SELECTION_DIRNAME, "step9_selection")
 
 
+def selection_input_dirs(result_dir: PathLike) -> list[Path]:
+    """Return all existing selection input dirs, newest schema first."""
+    root = _as_path(result_dir)
+    candidates = [root / LC_SELECTION_DIRNAME, root / "step9_selection"]
+    existing: list[Path] = []
+    for path in candidates:
+        if path.exists() and path not in existing:
+            existing.append(path)
+    return existing or [candidates[0]]
+
+
 def lightcurve_input_dir(result_dir: PathLike) -> Path:
     """Light-curve dir for READING a (possibly legacy) input workspace."""
     return first_existing_dir(result_dir, LC_LC_DIRNAME, "step10_lightcurve")
 
 
 def step9_selection_dir(result_dir: PathLike) -> Path:
-    """DEPRECATED — step numbers shifted; use step8_selection_dir() directly."""
+    """Deprecated alias; use the stable step8_selection_dir() API."""
     import warnings
     warnings.warn(
         "step9_selection_dir is deprecated; use step8_selection_dir()",
@@ -87,7 +102,7 @@ def step9_selection_dir(result_dir: PathLike) -> Path:
 
 
 def step10_lc_dir(result_dir: PathLike) -> Path:
-    """DEPRECATED — step numbers shifted; use step9_lc_dir() directly."""
+    """Deprecated alias; use the stable step9_lc_dir() API."""
     import warnings
     warnings.warn(
         "step10_lc_dir is deprecated; use step9_lc_dir()",
@@ -97,7 +112,7 @@ def step10_lc_dir(result_dir: PathLike) -> Path:
 
 
 def step11_detrend_dir(result_dir: PathLike) -> Path:
-    """DEPRECATED — step numbers shifted; use step10_detrend_dir() directly."""
+    """Deprecated alias; use the stable step10_detrend_dir() API."""
     import warnings
     warnings.warn(
         "step11_detrend_dir is deprecated; use step10_detrend_dir()",
@@ -107,7 +122,7 @@ def step11_detrend_dir(result_dir: PathLike) -> Path:
 
 
 def step12_period_dir(result_dir: PathLike) -> Path:
-    """DEPRECATED — step numbers shifted; use step11_period_dir() directly."""
+    """Deprecated alias; use the stable step11_period_dir() API."""
     import warnings
     warnings.warn(
         "step12_period_dir is deprecated; use step11_period_dir()",
@@ -151,7 +166,7 @@ def step11_dir(result_dir: PathLike) -> Path:
 
 
 def step10_current_meta_path(result_dir: PathLike, target_id: int) -> Path:
-    """Path to the current detrend result metadata JSON for a target star."""
+    """Path to current Step 11 detrend metadata; name retained for compatibility."""
     return step10_detrend_dir(result_dir) / f"result_ID{int(target_id)}_current.json"
 
 
