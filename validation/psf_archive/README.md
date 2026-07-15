@@ -10,6 +10,8 @@ intermediate FITS/NPY products under `validation/real_gui_run` total about
 
 - `aperture_psf/`: M13 and NGC 6811 same-frame aperture/PSF agreement,
   reported-error diagnostics, matched catalogues, and binned statistics.
+- `parameter_sweep_ngc6811/`: same-frame one-CPU timing sweep for residual
+  passes, fitter iterations, fit-window energy, ePSF count, and grouping.
 - `figures/real_gui_run/`: final and aggregate M3/M13/M5 figures, including
   fit-window A/B, ePSF contamination, artificial-star, repeatability, seeing,
   residual, core-policy, and GUI diagnostic figures. Per-trial duplicates and
@@ -65,6 +67,15 @@ cross-method excess does not identify PSF photometry alone as the cause.
 - M5 good/mid/poor seeing: clean fractions 97.6%, 90.9%, and 90.2%; the PSF
   model remains stable while the adaptive footprint and CPU time grow with
   seeing.
+
+The controlled NGC 6811 sweep identifies the laptop-oriented cost point as
+two residual passes, six fitter iterations, a 90% encircled-energy window,
+automatic ePSF-star count, and grouping off by default. In warmed compact
+runs Step 8 took about 23-25 s; Step 4 adds about 8 s. A third residual pass
+increased 833 good fits to 837 while increasing the measured Step 8 time from
+23.4 s to 29.7 s. Increasing the fitter cap from six to eight produced no
+additional good fits in this frame. Absolute timings varied with concurrent
+laptop load, while source counts and QC metrics were deterministic.
 
 The cross-cluster artificial-star tests found an information limit near
 1.5 FWHM: recovery was effectively zero inside that separation and generally

@@ -66,6 +66,11 @@ def main() -> int:
     parser.add_argument("--core-y", type=float)
     parser.add_argument("--core-radius", type=float)
     parser.add_argument(
+        "--compact-output",
+        action="store_true",
+        help="Keep GUI-default residual products instead of every iteration image.",
+    )
+    parser.add_argument(
         "--skip-step4",
         action="store_true",
         help="Reuse an existing Step4 table in result-dir and run Step8 only.",
@@ -94,7 +99,7 @@ def main() -> int:
     params.P.force_rephot = True
     params.P.psf_save_residuals = True
     params.P.psf_save_model_image = True
-    params.P.psf_save_all_iter_residuals = True
+    params.P.psf_save_all_iter_residuals = not args.compact_output
     params.P.psf_fit_engine = args.fit_engine
     if args.fitter_max_iter is not None:
         params.P.psf_fitter_max_iter = max(1, int(args.fitter_max_iter))
@@ -153,6 +158,7 @@ def main() -> int:
         "result_dir": str(args.result_dir),
         "files": args.files,
         "one_cpu_worker": True,
+        "compact_output": bool(args.compact_output),
         "step4_skipped": bool(args.skip_step4),
         "parameter_file": str(parameter_file),
         "psf_fit_engine": getattr(params.P, "psf_fit_engine", None),
