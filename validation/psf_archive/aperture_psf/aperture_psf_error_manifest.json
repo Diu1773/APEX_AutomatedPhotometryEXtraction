@@ -1,0 +1,18 @@
+[
+  {
+    "cluster": "m13",
+    "psf_result": "C:\\Users\\bmffr\\Desktop\\Result\\Automated_Photometry_EXtraction\\validation\\real_gui_run\\psf_auto_v3\\m13_local_radius_q3\\result",
+    "aperture_result": "E:\\APEX_validation\\reprocess\\M13\\result",
+    "file": "pp_messier13-0003-B.fit",
+    "figure_png": "C:\\Users\\bmffr\\Desktop\\Result\\Automated_Photometry_EXtraction\\validation\\psf_archive\\aperture_psf\\m13_aperture_vs_psf_error.png",
+    "figure_pdf": "C:\\Users\\bmffr\\Desktop\\Result\\Automated_Photometry_EXtraction\\validation\\psf_archive\\aperture_psf\\m13_aperture_vs_psf_error.pdf"
+  },
+  {
+    "cluster": "ngc6811",
+    "psf_result": "C:\\Users\\bmffr\\Desktop\\Result\\Automated_Photometry_EXtraction\\validation\\real_gui_run\\psf_auto_v3\\ngc6811_current_qc\\result",
+    "aperture_result": "E:\\APEX_validation\\reprocess\\NGC6811\\result",
+    "file": "pp_NGC6811-0006-B.fit",
+    "figure_png": "C:\\Users\\bmffr\\Desktop\\Result\\Automated_Photometry_EXtraction\\validation\\psf_archive\\aperture_psf\\ngc6811_aperture_vs_psf_error.png",
+    "figure_pdf": "C:\\Users\\bmffr\\Desktop\\Result\\Automated_Photometry_EXtraction\\validation\\psf_archive\\aperture_psf\\ngc6811_aperture_vs_psf_error.pdf"
+  }
+]

@@ -1,0 +1,28 @@
+{
+  "file": "pp_0003_1_20250308.fit",
+  "status": "CHECK",
+  "warnings": [
+    "low-SNR median bias exceeds 0.10 mag"
+  ],
+  "n_matched": 1302,
+  "high_snr_reference_offset_mag": -0.02412213364907266,
+  "high_snr_reference_threshold": 100.0,
+  "high_snr_reference_n": 191,
+  "low_snr_5_10_n": 49,
+  "low_snr_5_10_median_centered_mag": -0.2653191070530517,
+  "low_snr_5_10_robust_scatter_mag": 0.25402422908553085,
+  "low_snr_5_10_rmse_mag": 0.3337589213387721,
+  "low_snr_5_10_outlier_fraction_0p2mag": 0.673469387755102,
+  "high_snr_n": 445,
+  "high_snr_robust_scatter_mag": 0.030194481509936314,
+  "high_snr_rmse_mag": 0.0633995949627388,
+  "high_snr_outlier_fraction_0p2mag": 0.017977528089887642,
+  "epsf_ellipticity": 0.013960666704397218,
+  "epsf_rotation_asymmetry": 0.03327122884343536,
+  "epsf_reference_n": 74,
+  "core_center_x_px": 2604.0,
+  "core_center_y_px": 1628.0,
+  "core_radius_px": 113.15746141945613,
+  "fwhm_px": 5.657873070972807,
+  "pixel_scale_arcsec": 0.3929852546237649
+}

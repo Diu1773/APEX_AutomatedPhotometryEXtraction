@@ -1,0 +1,29 @@
+{
+  "file": "pp_0009_1_20250308.fit",
+  "status": "CHECK",
+  "warnings": [
+    "low-SNR robust scatter exceeds 0.30 mag",
+    "high-SNR non-Gaussian tail exceeds RMSE/outlier limits"
+  ],
+  "n_matched": 1249,
+  "high_snr_reference_offset_mag": 0.006322704705331504,
+  "high_snr_reference_threshold": 100.0,
+  "high_snr_reference_n": 136,
+  "low_snr_5_10_n": 177,
+  "low_snr_5_10_median_centered_mag": -0.06572780354346891,
+  "low_snr_5_10_robust_scatter_mag": 0.43485176672065473,
+  "low_snr_5_10_rmse_mag": 0.5339134380475041,
+  "low_snr_5_10_outlier_fraction_0p2mag": 0.6892655367231638,
+  "high_snr_n": 293,
+  "high_snr_robust_scatter_mag": 0.05095981413386951,
+  "high_snr_rmse_mag": 0.3789625962723781,
+  "high_snr_outlier_fraction_0p2mag": 0.11945392491467577,
+  "epsf_ellipticity": 0.16176022715261495,
+  "epsf_rotation_asymmetry": 0.07061522664434328,
+  "epsf_reference_n": 13,
+  "core_center_x_px": 2604.0,
+  "core_center_y_px": 1628.0,
+  "core_radius_px": 205.18692211592224,
+  "fwhm_px": 10.259346105796112,
+  "pixel_scale_arcsec": 0.3929852546237648
+}

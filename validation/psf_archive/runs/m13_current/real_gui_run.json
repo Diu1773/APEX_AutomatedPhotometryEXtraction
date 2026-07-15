@@ -1,0 +1,47 @@
+{
+  "data_dir": "E:\\APEX_validation\\reprocess\\M13\\sci",
+  "result_dir": "validation\\real_gui_run\\psf_auto_v3\\m13_local_radius_q3\\result",
+  "files": [
+    "pp_messier13-0003-B.fit"
+  ],
+  "one_cpu_worker": true,
+  "step4_skipped": false,
+  "parameter_file": "E:\\APEX_validation\\reprocess\\M13\\parameters.toml",
+  "psf_fit_engine": "apex_iterative",
+  "psf_model_mode": "per_frame",
+  "psf_max_iter": 2,
+  "psf_fitter_max_iter": 8,
+  "psf_fit_shape_fwhm_mult": 2.4,
+  "psf_fit_window_mode": "auto",
+  "psf_fit_encircled_energy": 0.9,
+  "psf_postfit_qfit_noise_max": 3.0,
+  "psf_n_stars_max": 0,
+  "psf_epsf_contamination_filter": true,
+  "psf_flux_scale_correction": false,
+  "psf_use_grouper": false,
+  "psf_grouper_max_size": 3,
+  "psf_grouper_radius_fwhm": 2.5,
+  "psf_forced_match_radius_fwhm": 1.25,
+  "psf_field_mode": null,
+  "psf_core_cut_enable": false,
+  "psf_core_cut_center_mode": "auto",
+  "psf_core_cut_x_px": 0.0,
+  "psf_core_cut_y_px": 0.0,
+  "psf_core_cut_radius_px": 0.0,
+  "step4_elapsed_s": 6.884915500000034,
+  "step4_summary": {
+    "total_files": 1,
+    "total_sources": 806,
+    "avg_sources": 806.0,
+    "median_fwhm_arcsec": 2.727040121966999,
+    "median_fwhm_px": 6.939293751817241
+  },
+  "step8_elapsed_s": 40.928897200000165,
+  "step8_summary": {
+    "frames": 1,
+    "processed": 1,
+    "no_detect": 0,
+    "no_fits": 0,
+    "stopped": 0
+  }
+}

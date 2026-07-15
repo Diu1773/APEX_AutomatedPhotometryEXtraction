@@ -1,0 +1,21 @@
+{
+  "file": "pp_messier13-0003-B.fit",
+  "status": "OK",
+  "warnings": [],
+  "n_matched": 1367,
+  "high_snr_reference_offset_mag": -0.08688890087134662,
+  "high_snr_reference_threshold": 100.0,
+  "high_snr_reference_n": 56,
+  "low_snr_5_10_n": 286,
+  "low_snr_5_10_median_centered_mag": -0.07742492131042111,
+  "high_snr_n": 169,
+  "high_snr_robust_scatter_mag": 0.045399451302129266,
+  "epsf_ellipticity": 0.05567340796095421,
+  "epsf_rotation_asymmetry": 0.06581578161416379,
+  "epsf_reference_n": 57,
+  "core_center_x_px": 2402.232682569713,
+  "core_center_y_px": 1695.1422217718782,
+  "core_radius_px": 173.55489016753657,
+  "fwhm_px": 6.94,
+  "pixel_scale_arcsec": NaN
+}

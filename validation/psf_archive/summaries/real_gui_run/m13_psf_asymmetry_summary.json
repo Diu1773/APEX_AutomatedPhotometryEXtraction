@@ -1,0 +1,137 @@
+{
+  "file": "pp_messier13-0003-B.fit",
+  "n_matched": 1075,
+  "reference_snr_min": 100,
+  "reference_offset_mag": -0.1157468054396821,
+  "overall_centered": {
+    "n": 1075,
+    "median": -0.028653400876234553,
+    "q05": -0.5247869221165176,
+    "q16": -0.2532126592575568,
+    "q84": 0.12277542163425492,
+    "q95": 0.3220109279718622,
+    "lower_width": 0.22455925838132226,
+    "upper_width": 0.15142882251048947,
+    "quantile_asymmetry": -0.1945020057480908,
+    "skewness": -0.04276088762879736
+  },
+  "core_radius_px": 133.1,
+  "core_radius_arcmin": 0.871772289840385,
+  "n_psf": 1330,
+  "n_goodmag": 1167,
+  "correlations": {
+    "log10_snr": {
+      "rho": 0.38848016390299317,
+      "p_value": 4.750330776650227e-40
+    },
+    "radius_arcmin": {
+      "rho": 0.1796174920658993,
+      "p_value": 3.0183430693417284e-09
+    },
+    "neighbor_fwhm": {
+      "rho": 0.06116844671407988,
+      "p_value": 0.044953841633220894
+    },
+    "qfit": {
+      "rho": -0.09526314287288859,
+      "p_value": 0.0017666553053419102
+    },
+    "reduced_chi2": {
+      "rho": 0.06885886614651406,
+      "p_value": 0.02396171805911528
+    },
+    "sky": {
+      "rho": -0.19163397316484532,
+      "p_value": 2.3791504885423136e-10
+    },
+    "sky_std": {
+      "rho": -0.19409122368440754,
+      "p_value": 1.3859987215097173e-10
+    },
+    "x": {
+      "rho": -0.05850255953533773,
+      "p_value": 0.05516865402045457
+    },
+    "y": {
+      "rho": 0.006499563147520904,
+      "p_value": 0.8314386970786523
+    }
+  },
+  "epsf_metrics": [
+    {
+      "project": "NGC6811",
+      "file": "epsf_model_B_pp_NGC6811-0006-B.fits",
+      "centroid_x_oversampled_px": 27.326319653168966,
+      "centroid_y_oversampled_px": 27.746535689971534,
+      "centroid_offset_native_px": 0.4073696271341263,
+      "ellipticity": 0.042841076870720696,
+      "position_angle_deg": 92.67771061168968,
+      "rotation_asymmetry": 0.04543506066205048,
+      "positive_sum": 3.9708425470361135
+    },
+    {
+      "project": "M67",
+      "file": "epsf_model_r_pp_Messier67-0002-r.fits",
+      "centroid_x_oversampled_px": 27.49239087757676,
+      "centroid_y_oversampled_px": 27.19234425323608,
+      "centroid_offset_native_px": 0.2643128298407764,
+      "ellipticity": 0.03095941313802053,
+      "position_angle_deg": -151.88995755112302,
+      "rotation_asymmetry": 0.031236552466599808,
+      "positive_sum": 3.988780233495646
+    },
+    {
+      "project": "M13",
+      "file": "epsf_model_B_pp_messier13-0003-B.fits",
+      "centroid_x_oversampled_px": 29.916046952745386,
+      "centroid_y_oversampled_px": 29.159020693262093,
+      "centroid_offset_native_px": 0.4648735313285928,
+      "ellipticity": 0.04214807166481782,
+      "position_angle_deg": 74.67863920740383,
+      "rotation_asymmetry": 0.0923151483497456,
+      "positive_sum": 3.9283128655397945
+    }
+  ],
+  "residual_stacks": [
+    {
+      "region": "all",
+      "n_stars": 142,
+      "rotation_asymmetry": 0.5997394196001965,
+      "peak_abs_flux_fraction": 0.0005249949848044026,
+      "sum_abs_flux_fraction": 0.043301660616417215,
+      "sum_signed_flux_fraction": 0.0023929525955822513
+    },
+    {
+      "region": "NE",
+      "n_stars": 41,
+      "rotation_asymmetry": 0.6746076382664434,
+      "peak_abs_flux_fraction": 0.0005652087712264004,
+      "sum_abs_flux_fraction": 0.045594223525462454,
+      "sum_signed_flux_fraction": -0.002387715397352182
+    },
+    {
+      "region": "NW",
+      "n_stars": 41,
+      "rotation_asymmetry": 0.6263594731282933,
+      "peak_abs_flux_fraction": 0.0008676701737938371,
+      "sum_abs_flux_fraction": 0.059722708205174876,
+      "sum_signed_flux_fraction": 0.01606095905941757
+    },
+    {
+      "region": "SW",
+      "n_stars": 35,
+      "rotation_asymmetry": 0.5938449356164259,
+      "peak_abs_flux_fraction": 0.0005917439433597854,
+      "sum_abs_flux_fraction": 0.052121201553796334,
+      "sum_signed_flux_fraction": 0.0037517554077407585
+    },
+    {
+      "region": "SE",
+      "n_stars": 25,
+      "rotation_asymmetry": 0.693266012481099,
+      "peak_abs_flux_fraction": 0.000618358585643074,
+      "sum_abs_flux_fraction": 0.050192751410310515,
+      "sum_signed_flux_fraction": -0.007892134799674901
+    }
+  ]
+}
