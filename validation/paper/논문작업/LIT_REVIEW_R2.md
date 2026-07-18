@@ -56,10 +56,59 @@
 
 **AI 공개 문구 보강 필수**: IOP(PASP) 정책이 "생성형 AI는 원자료·결과·플롯을 생성/조작할 수 없음"을 명시 → 우리 공개문에 **"AI는 코드 작성을 보조했고, 모든 수치·그림은 그 코드가 실데이터에서 산출했으며 저자가 검증했다"**는 인과 구분 문장 추가.
 
-## ★E. 미해결 — 축2 재실행 대기
+## ★E. 축2 결과 — **합성 프레임 주입은 비표준이며 정량적으로 틀린 답을 낸다** (판정: 사용자 우려 정당)
 
-**사용자 최우선 질문**: "합성 프레임에 인공별을 주입해 검증 = 자기참조 순환 아닌가. 표준은 **실제 관측 프레임에 주입**하는 것 아닌가?"
-→ DAOPHOT ADDSTAR 계보·HST·DES가 실프레임 주입인지, 합성 검증의 역할 한정(수치 구현 정확성 vs 최종 정확도) 명문화 사례, referee의 simulation-only 비판 사례를 확인해야 §3.6·§3.10의 운명(실프레임 주입 전환 / 위상 격하 / 실측 앵커 추가)이 결정됨. **재실행 필요.**
+### E1. 표준은 압도적으로 "실제 관측 프레임에 주입" (5개 독립 계보 원문 확인)
+
+| 계보 | 원문 근거 |
+|---|---|
+| **DAOPHOT/ADDSTAR** | STEP III(Ficara+2026, arXiv:2602.12929) §2.3: *"The **only accurate way** to estimate these quantities ... is by repeating the entire process of photometric measures **on the science images** on which artificial stars are injected."* |
+| **HST 분해성단** | Phoenix(Martínez-Delgado+1999, AJ 118,862): 인공별을 *"in the **real frames**"*에 넣고 *"retaining its original crowding characteristics"* — **검증의 목적 자체가 "실제 이미지의 crowding과 관측 효과를 대표하는 것"**으로 정의됨 |
+| **DES Balrog** | Suchyta+2016(MNRAS 457,786): *"embeds fake objects in **real imaging**"* · Everett+2022(ApJS 258,15): *"inject onto the **single-epoch images**"* + *"too difficult to capture with traditional generative models"* · **Anbajagane+2025: *"By injecting into the **real pixel-level CCD images** ... in a way that is **challenging to replicate, at full fidelity, with purely simulated images***"** |
+| **HSC SynPipe** (우리와 목적 동일: 파이프라인 측광 성능 특성화) | Huang+2018(PASJ 70,S6): *"**Instead of using a fully generative approach** to simulate full HSC-like images from the ground up, SynPipe injects synthetic objects **into real HSC images**"* + *"The impact of these features can be important for studies that care about **completeness and the selection function**"* ← §3.6 정조준 |
+| **AutoPhOT (우리 직접 벤치마크)** | Brennan&Fraser 2022 §6: *"artificial sources ... are injected in set positions (default 3×FWHM) **around the target location**"* = **실제 과학 이미지에 주입** |
+
+(+ Kepler: Christiansen+2015 ApJ 810,95 — *"inject ... into the **pixel data** of ~10,000 targets"*)
+**정직한 반례 1건**: Liu+2024(ApJ 967,1)는 LSST DC2 **시뮬 이미지**에 주입 — 단 DC2는 커뮤니티가 수년 검증한 대규모 스위트이지 저자 자작 프레임이 아니며, 실프레임 대비 우위를 주장하지 않음.
+
+### E2. ★결정적: 합성 vs 실프레임 주입이 **0.4–0.5 mag 다른 답**을 낸다
+
+**Haynes et al. 2002, MNRAS 334, 262 (doi:10.1046/j.1365-8711.2002.05204.x)** — 동일 인공천체를 두 방식으로 주입해 직접 비교한 실험. 합성 프레임은 *성의 없이 만든 게 아니라* 실제 필드 배경(밝은 별 주변 상승분까지) 모사:
+> *"there are **significant differences between these two approaches**. Recovery of objects from a noise-only image suffers from a **serious discrepancy of as much as half a magnitude** ... whereas the results of recovery ... from the real field are, on average, much closer to the expected value."*
+> *"using simulations based on recovery from noise-only images ... **significantly overestimates the loss of flux**"* / *"**can be as high as 0.4 magnitudes** for objects with low signal-to-noise"*
+
+**→ "우리 합성 프레임은 잘 만들었다"는 반론이 문헌으로 봉쇄됨.** 원인 = 실필드의 이웃 천체 혼입(confusion), 합성엔 존재 불가.
+
+같은 논문에 **순환논리 직접 경고**:
+> *"because these simulations rely on **prior knowledge** ... there may be a tendency for the results of these simulations to **merely confirm the starting hypothesis**"*
+
+보조: Jang 2022(arXiv:2208.02824) — 측광 코드 자체 보고 오차가 실프레임 AST 측정 오차보다 **25–50% 작음**(실프레임 AST 없이는 발견 불가). 약렌징 쪽도 동일 인식(Huff&Mandelbaum 2017 arXiv:1702.02600; Mandelbaum 2018 ARA&A 56,393; Kannawadi+2019 A&A 624,A92).
+
+### E3. 합성 검증의 정당한 영역 = verification (역할 한정 문구의 모범)
+
+**Aguirre et al. 2022, ApJ 924, 85 (doi:10.3847/1538-4357/ac32cd)** — HERA 파이프라인 검증. 초록 2번째 문장에서 **스스로 범위를 한정**:
+> *"The philosophy of this approach is to validate the software and algorithms ... on **wholly synthetic data satisfying the assumptions of that analysis, not addressing whether the actual data meet these assumptions**."*
+
+→ APEX가 그대로 모방할 문장 구조. 단 **HERA는 실데이터 검증이 불가능한 상황(21cm 미검출)이라 변명이 성립했고, APEX는 실프레임을 보유하므로 같은 변명이 안 통함.**
+개념 어휘: Oberkampf & Trucano 2002(Prog. Aerospace Sci. 38,209) verification(수치해 정확성) vs validation(실측 대조) — ※ **원문 403 차단, 축자 인용 전 PDF 확보 필요.** 무료 대안 = Sandia OSTI 공개 기술보고서.
+※ ZTF/HSC/ASTROPOP/PP의 역할분리 서술은 **확인 실패** — 이들은 애초에 실데이터로 검증해 그런 문구가 불필요했던 것으로 보임.
+
+### E4. 실측 앵커 관례 — 채택할 3단 사다리
+
+**Portillo, Speagle & Finkbeiner 2020, AJ 159, 165 (doi:10.3847/1538-3881/ab76ba)** ★ — 같은 효과를 **3층위 동시 제시**: ①이상화 합성 → ②실프레임 주입(SynPipe) → ③순수 실관측(SDSS Stripe 82). **APEX 최적 구조.**
+기타: 주입 천체 파라미터를 더 깊은 실관측에서 취함(Balrog Y6: DES deep fields) · 합성 사실성을 실데이터 대조로 입증(MacCrann+2022 MNRAS 509,3371) · **축약법을 쓰려면 실프레임 방식과 등가임을 먼저 실증**(Hu+2011 PASP 123,1188: NGC 1818로 *"show that they are equivalent"*).
+
+### E5. → 확정 권고
+
+| 절 | 판정 | 근거 |
+|---|---|---|
+| **§3.6 완전도** | **실프레임 주입 병기(추천) 또는 전환** | Haynes 0.4–0.5mag 실증 + Huang "completeness/selection function에 실데이터 중요" + **AutoPhOT가 이미 실프레임** + 우리가 실프레임(M5/M13/NGC6811) 보유 → 전환비용 낮음 |
+| **§3.10 SEP 교차** | **합성 유지 + 실프레임 병렬 추가** | 동일 픽셀을 두 코드가 보므로 순환 위험 본질적으로 낮음 = **verification 영역**(합성이 정당). 단 합성만 쓰면 crowding·아티팩트 없는 온순한 장면만 시험 → 실프레임 병렬로 보강 |
+| **공통** | **§3 도입부에 V&V 경계 문단 + HERA식 역할 한정 문구** | 리뷰어가 순환성을 지적하기 **전에 저자가 먼저 경계를 긋는** 형태가 방어의 핵심 |
+
+**★부가 기회**: 합성·실프레임을 **나란히 제시**하면 Haynes+2002의 비교 실험을 우리 데이터로 재현하는 셈 → 약점 대응이 아니라 **논문 기여**가 됨.
+
+**규정 차원 정직 표기**: RASTI 사설(Tennyson&Scaife 2022, doi:10.1093/rasti/rzac002)·투고지침에 실측/합성 구분 요구 **없음**. 위험은 규정이 아니라 **리뷰어 관행**(Haynes 결과를 아는 리뷰어).
 
 ## 확인 실패 (정직 표기)
 HOPS refereed·ASCL 부재 / PP·prose의 raw 보정 포함 여부 본문 미확인 / MetroPSF·stellarphot·Afterglow·ASTAP refereed 서지 미확보 / RASTI 심사 익명모델·APC 정확금액 / PASP 이중익명 의무 여부 / Sirianni 2005 성단명·Schechter 1993 그림번호
