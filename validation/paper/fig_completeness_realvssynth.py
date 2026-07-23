@@ -1,19 +1,19 @@
-"""Figure — injection-recovery completeness: controlled synthetic (verification)
-and a real cluster frame (validation), the latter cross-checked against the
-pipeline's own detection-limit rolloff.
+"""Figure — injection-recovery completeness across real frames of differing quality,
+plus the controlled synthetic verification frame.
 
-This is the reference-standard test: artificial stars injected into a REAL frame
-(DAOPHOT ADDSTAR; DES Balrog; HSC SynPipe; AutoPhOT App.D) rather than a smooth
-synthetic frame. The synthetic curve is the controlled known-truth check that the
-recovery machinery is numerically correct (verification); the real-frame curve is
-the on-sky performance (validation). The two frames differ in seeing and sky —
-the synthetic is idealised (FWHM 3.4px, sky 150 ADU), the real M13 V frame is
-shallow (FWHM 7.6px, sky 1315 ADU) — so the depth difference is a property of the
-frames, NOT a generic "synthetic is optimistic" claim.
+Reference-standard artificial-star test (DAOPHOT ADDSTAR; DES Balrog; HSC SynPipe;
+AutoPhOT App.D; Haynes 1994/2002): stars injected into REAL frames. Three real
+cluster frames spanning a range of sky brightness and seeing are each measured by
+the identical injection pipeline, together with the idealised synthetic frame used
+as the numerical-verification rung.
 
-Independent cross-check (the strong result): the recovered 50% limit on the real
-frame coincides with the magnitude where the pipeline's own clean detections roll
-off — two independent methods agree on the depth of the same real frame.
+The point: the recovered 50% depth tracks each frame's sky + seeing, exactly as it
+must — a dark-sky sharp frame (M67 i) reaches the same depth as the synthetic; a
+bright-sky poor-seeing frame (M13 V) is ~3 mag shallower. So no single frame is
+"anomalous", and the synthetic is NOT systematically optimistic (a real good frame
+matches it). The bottom strip shows real injected stars from the shallowest frame
+straddling its transition. The M13 depth was additionally cross-checked against the
+pipeline's own detection roll-off (see COMPLETENESS_REALFRAME_INVESTIGATION.md).
 
     .venv-deploy\\Scripts\\python.exe validation\\paper\\fig_completeness_realvssynth.py
 """
@@ -26,24 +26,27 @@ sys.path.insert(0, str(REPO / "validation" / "paper"))
 
 import numpy as np
 import pandas as pd
-from astropy.io import fits
-import sep
 import matplotlib.pyplot as plt
 
 from apex_paper_style import apply_paper_style, save_fig, C, PALETTE, DOUBLE_COL
 
 apply_paper_style()
 
-SYN = REPO / "validation" / "paper" / "data" / "artificial_star" / "benchmark_run"
-REAL = REPO / "validation" / "paper" / "data_realframe_M13V" / "artificial_star" / "benchmark_run"
-CUTOUTS = REPO / "validation" / "paper" / "data_realframe_M13V" / "injection_cutouts.npz"
-FRAME = Path(r"E:\APEX_validation\reprocess\M13\calibrated\20260515\pp_messier13-0001-V.fit")
-GAIN = 0.689  # e-/ADU (PTC-measured, C3-61000)
+DATA = REPO / "validation" / "paper"
+SYN = DATA / "data" / "artificial_star" / "benchmark_run"
+CUTOUTS = DATA / "data_realframe_M13V" / "injection_cutouts.npz"
+OUTDIR = DATA / "figures"
 ZP = 25.0
-OUTDIR = REPO / "validation" / "paper" / "figures"
+
+# real frames spanning depth — (label, run_dir, color_key, marker, sky_adu, fwhm_px)
+RUNS = [
+    ("M67 i",      DATA / "data_realframe_M67i/artificial_star/benchmark_run",     "data",      "-o", 27,   5.2),
+    ("NGC 6811 R", DATA / "data_realframe_NGC6811R/artificial_star/benchmark_run", "reference", "-s", 1315, 5.3),
+    ("M13 V",      DATA / "data_realframe_M13V/artificial_star/benchmark_run",     "accent",    "-D", 1315, 7.6),
+]
 
 
-def read_off(mag, comp, level):
+def read_off(mag, comp, level=0.5):
     o = np.argsort(mag); mm, cc = mag[o], comp[o]
     for i in range(len(mm) - 1):
         if cc[i] >= level >= cc[i + 1]:
@@ -68,104 +71,82 @@ def curve(run_dir, bw=0.25):
     return np.array(xs), np.array(cs)
 
 
-def empirical_detection_mags():
-    """Instrumental mag (ZP25) of the pipeline's own clean baseline detections on
-    the real M13 frame — an INDEPENDENT probe of the frame depth (no injection)."""
-    det = pd.read_csv(REAL / "baseline" / "step4_detection"
-                      / "detect_pp_messier13-0001-V.fit.csv")
-    data = fits.getdata(FRAME).astype(np.float64)
-    bkg = sep.Background(data)
-    sub = data - bkg.back()
-    fl, _, _ = sep.sum_circle(sub, det["x"].to_numpy(float),
-                              det["y"].to_numpy(float), 6.0, gain=GAIN)
-    fl_e = fl * GAIN
-    fl_e = fl_e[np.isfinite(fl_e) & (fl_e > 0)]
-    return ZP - 2.5 * np.log10(fl_e)
-
-
 def main() -> int:
-    ms, cs = curve(SYN)
-    mr, cr = curve(REAL)
-    m50s, m50r = read_off(ms, cs, 0.5), read_off(mr, cr, 0.5)
-    det_mag = empirical_detection_mags()
-
     cut = np.load(CUTOUTS)
     stamps, cmags = cut["stamps"], cut["mags"]
     clo, chi = float(cut["lo"]), float(cut["hi"])
 
-    fig = plt.figure(figsize=(DOUBLE_COL * 0.74, 4.7))
-    gs = fig.add_gridspec(2, 1, height_ratios=[3.0, 0.95], hspace=0.44)
+    fig = plt.figure(figsize=(DOUBLE_COL * 0.76, 4.9))
+    gs = fig.add_gridspec(2, 1, height_ratios=[3.0, 0.95], hspace=0.48)
     ax = fig.add_subplot(gs[0])
-
-    # ── independent cross-check: pipeline detection-count histogram (right axis) ──
-    axr = ax.twinx()
-    bins = np.arange(11.0, 18.01, 0.35)
-    axr.hist(det_mag, bins=bins, color=PALETTE["grey"], alpha=0.30,
-             zorder=1, label="_nolegend_")
-    axr.set_ylabel("pipeline detections / bin", color="0.55", fontsize=8)
-    axr.tick_params(axis="y", labelsize=7, colors="0.55")
-    axr.set_ylim(0, axr.get_ylim()[1] * 2.5)   # keep histogram in lower third
-
-    # ── completeness curves (left axis) ──
     ax.axhline(0.5, color=PALETTE["grey"], lw=0.7, ls=":", zorder=2)
-    ax.plot(ms, cs, "--o", color=C["reference"], lw=1.4, ms=3.0, zorder=4,
-            mfc="white", mew=1.0,
-            label=f"controlled synthetic — verification ($m_{{50}}${'='}{m50s:.1f})")
-    ax.plot(mr, cr, "-s", color=C["data"], lw=2.0, ms=4.0, zorder=6,
-            label=f"real M13 V frame — validation ($m_{{50}}${'='}{m50r:.1f})")
-    ax.axvline(m50r, color=C["data"], lw=1.0, ls="--", zorder=3)
 
-    # annotate the independent agreement (point to the histogram turnover)
-    ax.annotate("independent cross-check:\npipeline detections (grey)\nturn over at the same mag",
-                xy=(14.75, 0.30), xytext=(12.65, 0.60),
-                fontsize=6.8, color="0.25", va="center", ha="left",
-                arrowprops={"arrowstyle": "->", "color": "0.45", "lw": 0.9})
+    # synthetic verification rung (grey dashed, thin)
+    ms, cs = curve(SYN)
+    m50s = read_off(ms, cs)
+    ax.plot(ms, cs, "--", color=PALETTE["grey"], lw=1.4, zorder=3,
+            label="synthetic (verification)  ·  sky 150, FWHM 3.4px")
+
+    m50r_m13 = None
+    for label, rd, ckey, mk, sky, fwhm in RUNS:
+        x, c = curve(rd)
+        mm = read_off(x, c)
+        col = C[ckey]
+        ax.plot(x, c, mk, color=col, lw=2.0, ms=3.6, mfc=col, zorder=6,
+                label=f"{label}  ·  sky {sky}, FWHM {fwhm}px")
+        ax.axvline(mm, color=col, lw=0.9, ls=":", zorder=2, alpha=0.75)
+        # nudge apart the two close labels (M13 14.9 vs NGC 15.6)
+        ha = "right" if label.startswith("M13") else ("left" if label.startswith("NGC") else "center")
+        dx = -0.08 if ha == "right" else (0.08 if ha == "left" else 0.0)
+        ax.text(mm + dx, 1.02, f"{mm:.1f}", color=col, fontsize=7.2,
+                ha=ha, va="bottom", fontweight="bold")
+        if label.startswith("M13"):
+            m50r_m13 = mm
+    ax.text(12.35, 1.02, "$m_{50}$:", color="0.35", fontsize=7.0,
+            ha="left", va="bottom")
 
     ax.set_xlabel("injected / instrumental magnitude (count-rate, ZP = 25)")
     ax.set_ylabel("recovery completeness")
-    ax.set_xlim(12.5, 19.2)
-    ax.set_ylim(-0.03, 1.06)
-    ax.set_zorder(axr.get_zorder() + 1)   # curves above histogram
-    ax.patch.set_visible(False)
-    ax.legend(loc="center right", bbox_to_anchor=(1.0, 0.62), fontsize=6.9,
-              framealpha=0.92)
-    ax.set_title("real-frame injection recovers to the pipeline's detection limit",
+    ax.set_xlim(12.2, 20.3)
+    ax.set_ylim(-0.03, 1.11)
+    leg = ax.legend(loc="lower left", fontsize=6.9, framealpha=0.93,
+                    title="real frames (+ synthetic), deep → shallow",
+                    title_fontsize=7.0, handlelength=1.8)
+    leg._legend_box.align = "left"
+    ax.set_title("real-frame completeness tracks each frame's sky + seeing",
                  loc="left", fontsize=10.5)
+    # the key point, placed in free space above the M67/synthetic transition
+    ax.annotate("M67 i (dark sky, sharp)\nreaches the synthetic depth\n"
+                "→ synthetic is not optimistic",
+                xy=(17.5, 0.55), xytext=(15.1, 0.80), fontsize=6.6, color="0.25",
+                va="center", ha="left",
+                arrowprops={"arrowstyle": "->", "color": "0.45", "lw": 0.9})
 
-    # frame characterization — explains the depth difference honestly
-    ax.text(15.55, 0.90,
-            "synthetic: FWHM 3.4 px, sky 150 ADU\n"
-            "real M13 V: FWHM 7.6 px, sky 1315 ADU\n"
-            "depth set by frame seeing + sky, not method",
-            va="top", ha="left", fontsize=6.6, color="0.3",
-            bbox={"boxstyle": "round,pad=0.3", "facecolor": "white",
-                  "alpha": .85, "edgecolor": PALETTE["grey"]})
-
-    # ── bottom strip: real injected-star cutouts across the transition ──
+    # ── bottom strip: real injected-star cutouts (M13, the shallowest frame) ──
     gsc = gs[1].subgridspec(1, len(cmags), wspace=0.16)
     for j, (s, m) in enumerate(zip(stamps, cmags)):
         axc = fig.add_subplot(gsc[j])
         axc.imshow(s, cmap="gray", vmin=clo, vmax=chi, origin="lower",
                    interpolation="nearest")
         axc.set_xticks([]); axc.set_yticks([])
-        recovered = m < m50r
+        recovered = m < (m50r_m13 or 14.9)
         mark = "found" if recovered else "lost"
         col = C["data"] if recovered else C["accent"]
         for sp in axc.spines.values():
             sp.set_edgecolor(col); sp.set_linewidth(1.5)
         axc.set_title(f"m = {m:.1f}", fontsize=7.6, pad=2)
         axc.set_xlabel(mark, fontsize=7.8, color=col, labelpad=2)
-    # strip caption
     fig.text(0.012, gs[1].get_position(fig).y1 + 0.016,
-             "real injected stars (M13), shared stretch  —  "
-             "blue border = recovered, orange = lost",
+             "real injected stars — M13 V (the shallowest frame), shared stretch  —  "
+             "blue = recovered, orange = lost",
              fontsize=7.2, color="0.3", va="bottom", ha="left")
 
     paths = save_fig(fig, "fig_completeness_realvssynth", OUTDIR)
     plt.close(fig)
-    print(f"[real vs synth] synth m50={m50s:.2f}  real M13 m50={m50r:.2f}")
-    print(f"  empirical detections: median mag={np.median(det_mag):.2f}  "
-          f"n={len(det_mag)}  (rolloff cross-check)")
+    print(f"[completeness] synthetic m50={m50s:.2f}")
+    for label, rd, *_ in RUNS:
+        x, c = curve(rd)
+        print(f"  {label}: m50={read_off(x, c):.2f}")
     print(f"saved: {paths['png']}")
     return 0
 
