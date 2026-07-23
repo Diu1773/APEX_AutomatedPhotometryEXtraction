@@ -49,6 +49,24 @@
   성능, 경험적 검출한계와 교차확인). 원고의 Oberkampf&Trucano/Portillo 3-rung 사다리와 정확히 매핑.
   Δm50 화살표·"낙관적" 문구 제거.
 
+## 다중프레임 확장 (2026-07-23, 사용자 지적 — "M13 하나면 대표성 없다")
+M13-0001-V(7.64px)는 M13 프레임 중에서도 나쁜 seeing(M13 중앙값 6.94, 최선 5.9). 대표성 우려 →
+좋은-seeing 개방성단 프레임 2개에 동일 주입 추가:
+
+| 프레임 | sky(ADU) | FWHM(px) | m50 | 깊이 |
+|---|---|---|---|---|
+| M67 i (`sci/pp_Messier67-0008-i.fit`) | 27 | 5.2 | **17.65** | 깊음 |
+| NGC6811 R (`sci/pp_NGC6811-0005-R.fit`) | 1315 | 5.3 | **15.64** | 중간 |
+| M13 V (`calibrated/…/pp_messier13-0001-V.fit`) | 1315 | 7.6 | **14.90** | 얕음 |
+| 합성(verification) | 150 | 3.4 | 17.59 | (이상적) |
+
+**결과가 물리와 정확히 일치**: M67→NGC6811 2.0mag차 = 하늘 50배(√ 노이즈 ~1.9mag), NGC6811→M13
+0.74mag차 = seeing 5.3→7.6px. **주입이 프레임 품질(sky+seeing)을 정확히 추적** → M13은 이상치 아님,
+그냥 제일 얕은 프레임. **결정적**: 어두운-하늘 샤프 프레임(M67 i, m50 17.65) = 합성 깊이(17.59)에 도달
+→ "합성이 낙관적"이란 우려는 **확정적으로 반증**(실측 좋은 프레임이 합성을 따라잡음). 데이터:
+`data_realframe_{M67i,NGC6811R,M13V}/`. 실측 주입별 컷아웃 사다리(M13, `injection_cutouts.npz`)를
+그림 하단에 병기(`make_injection_cutouts.py`, inject_flux_catalog 정규경로).
+
 ## 산출물
-- `fig_completeness_realvssynth.py` → 정직한 verification/validation 사다리로 재작성(이 노트 기준).
-- 데이터: `validation/paper/data_realframe_M13V/` (실측), `validation/paper/data/artificial_star/` (합성).
+- `fig_completeness_realvssynth.py` → 4곡선(실측 3 + 합성) 다중프레임 사다리 + 컷아웃 하단 스트립.
+- 데이터: `validation/paper/data_realframe_{M67i,NGC6811R,M13V}/` (실측 3), `data/artificial_star/` (합성).
