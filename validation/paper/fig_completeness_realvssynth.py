@@ -36,6 +36,7 @@ apply_paper_style()
 
 SYN = REPO / "validation" / "paper" / "data" / "artificial_star" / "benchmark_run"
 REAL = REPO / "validation" / "paper" / "data_realframe_M13V" / "artificial_star" / "benchmark_run"
+CUTOUTS = REPO / "validation" / "paper" / "data_realframe_M13V" / "injection_cutouts.npz"
 FRAME = Path(r"E:\APEX_validation\reprocess\M13\calibrated\20260515\pp_messier13-0001-V.fit")
 GAIN = 0.689  # e-/ADU (PTC-measured, C3-61000)
 ZP = 25.0
@@ -88,7 +89,13 @@ def main() -> int:
     m50s, m50r = read_off(ms, cs, 0.5), read_off(mr, cr, 0.5)
     det_mag = empirical_detection_mags()
 
-    fig, ax = plt.subplots(1, 1, figsize=(DOUBLE_COL * 0.74, 3.8))
+    cut = np.load(CUTOUTS)
+    stamps, cmags = cut["stamps"], cut["mags"]
+    clo, chi = float(cut["lo"]), float(cut["hi"])
+
+    fig = plt.figure(figsize=(DOUBLE_COL * 0.74, 4.7))
+    gs = fig.add_gridspec(2, 1, height_ratios=[3.0, 0.95], hspace=0.44)
+    ax = fig.add_subplot(gs[0])
 
     # ── independent cross-check: pipeline detection-count histogram (right axis) ──
     axr = ax.twinx()
@@ -133,6 +140,26 @@ def main() -> int:
             va="top", ha="left", fontsize=6.6, color="0.3",
             bbox={"boxstyle": "round,pad=0.3", "facecolor": "white",
                   "alpha": .85, "edgecolor": PALETTE["grey"]})
+
+    # ── bottom strip: real injected-star cutouts across the transition ──
+    gsc = gs[1].subgridspec(1, len(cmags), wspace=0.16)
+    for j, (s, m) in enumerate(zip(stamps, cmags)):
+        axc = fig.add_subplot(gsc[j])
+        axc.imshow(s, cmap="gray", vmin=clo, vmax=chi, origin="lower",
+                   interpolation="nearest")
+        axc.set_xticks([]); axc.set_yticks([])
+        recovered = m < m50r
+        mark = "found" if recovered else "lost"
+        col = C["data"] if recovered else C["accent"]
+        for sp in axc.spines.values():
+            sp.set_edgecolor(col); sp.set_linewidth(1.5)
+        axc.set_title(f"m = {m:.1f}", fontsize=7.6, pad=2)
+        axc.set_xlabel(mark, fontsize=7.8, color=col, labelpad=2)
+    # strip caption
+    fig.text(0.012, gs[1].get_position(fig).y1 + 0.016,
+             "real injected stars (M13), shared stretch  —  "
+             "blue border = recovered, orange = lost",
+             fontsize=7.2, color="0.3", va="bottom", ha="left")
 
     paths = save_fig(fig, "fig_completeness_realvssynth", OUTDIR)
     plt.close(fig)
