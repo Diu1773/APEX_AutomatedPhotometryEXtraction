@@ -142,7 +142,7 @@ def main() -> int:
     # ── layout: (a) mag space | (b) S/N collapse ; bottom cutouts ──
     fig = plt.figure(figsize=(DOUBLE_COL, 4.9))
     gs = fig.add_gridspec(2, 1, height_ratios=[3.0, 0.95], hspace=0.46)
-    gst = gs[0].subgridspec(1, 2, width_ratios=[1.5, 1.0], wspace=0.24)
+    gst = gs[0].subgridspec(1, 2, width_ratios=[1.25, 1.0], wspace=0.24)
     ax = fig.add_subplot(gst[0])
     axb = fig.add_subplot(gst[1])
 
@@ -204,13 +204,10 @@ def main() -> int:
     axb.set_xlabel("expected peak S/N")
     axb.set_title("(b) all seven frames, one law", loc="left", fontsize=9.5)
     axb.legend(loc="lower right", fontsize=6.8, framealpha=0.93)
-    axb.text(0.97, 0.60,
-             f"7 single frames (60–480 s)\n$\\sigma$ 5–58 e$^-$ · FWHM 5.2–9.0 px\n"
-             f"per-frame S/N$_{{50}}$ = {s50s.mean():.1f} ± {s50s.std():.1f}\n"
-             "3.4 mag of depth →\none curve",
-             transform=axb.transAxes, fontsize=6.6, color="0.3", va="top", ha="right",
-             bbox={"boxstyle": "round,pad=0.3", "facecolor": "white",
-                   "alpha": .85, "edgecolor": PALETTE["grey"]})
+    axb.text(0.045, 0.965,
+             f"per-frame S/N$_{{50}}$ = {s50s.mean():.1f} ± {s50s.std():.1f}",
+             transform=axb.transAxes, fontsize=7.2, color="0.25",
+             va="top", ha="left")
 
     fig.suptitle("real-frame injection: per-frame depths are one detection law in S/N",
                  x=0.01, ha="left", fontsize=11)
