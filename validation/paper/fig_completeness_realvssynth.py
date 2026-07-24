@@ -1,19 +1,22 @@
-"""Figure — injection-recovery completeness across real frames of differing quality,
-and the background-limited detection law they obey.
+"""Figure — injection-recovery completeness: per-frame depths in magnitude space,
+and their collapse onto a single universal curve in peak-S/N space.
 
 Reference-standard artificial-star test (DAOPHOT ADDSTAR; DES Balrog; HSC SynPipe;
-AutoPhOT App.D; Haynes 1994/2002): stars injected into REAL frames. Real cluster
-frames spanning a wide range of sky brightness and seeing are each measured by the
-identical injection pipeline, together with the idealised synthetic verification frame.
+AutoPhOT App.D; Haynes 1994/2002): stars injected into REAL frames. Seven real
+cluster frames spanning a wide range of sky brightness (sigma 5-58 e-/px) and
+seeing (FWHM 5.2-9.0 px) are each measured by the identical injection pipeline.
 
-Main panel: three representative real frames (deep/medium/shallow) + the synthetic
-verification rung, with the real injected-star cutout ladder beneath. Inset: the
-instrument-independent result — every frame's 50% depth obeys the background-limited,
-peak-detection law  m50 = C - 2.5 log10(sigma_sky) - 5 log10(FWHM)  with the exponents
-FIXED by theory (only the constant C, which absorbs the hardware, is fit). This is what
-"reproducing" the reference validation means here: not matching anyone's absolute mmag
-(different telescopes/detectors — CCD vs this Sony IMX455 CMOS), but showing APEX obeys
-the same universal law on its own instrument.
+Panel (a), magnitude space: each frame has its own 50% depth — depth is a frame
+property (sky + seeing), spanning 3.4 mag across the seven frames. Three
+representative curves shown; real injected-star cutouts beneath.
+
+Panel (b), the point of the figure: re-express every injected star by its peak
+pixel S/N (expected peak = flux x kernel-peak-fraction, divided by that frame's
+background noise) and ALL SEVEN frames collapse onto one curve with S/N_50 = 4.0
++/- 0.2 — the instrument-independent detection law (completeness is erf-like in
+S/N: Masci 2011; AutoPhOT App.D), consistent with the 3.2-sigma matched-filter
+threshold. Magnitude-space depths are this one curve shifted by each frame's
+sigma x FWHM^2.
 
     .venv-deploy\\Scripts\\python.exe validation\\paper\\fig_completeness_realvssynth.py
 """
@@ -27,6 +30,8 @@ sys.path.insert(0, str(REPO / "validation" / "paper"))
 import numpy as np
 import pandas as pd
 from astropy.io import fits
+from scipy.special import erf as _erf
+from scipy.optimize import curve_fit
 import sep
 import matplotlib.pyplot as plt
 
@@ -39,72 +44,54 @@ SYN = DATA / "data" / "artificial_star" / "benchmark_run"
 CUTOUTS = DATA / "data_realframe_M13V" / "injection_cutouts.npz"
 OUTDIR = DATA / "figures"
 REPRO = Path(r"E:\APEX_validation\reprocess")
+GAIN = 0.689  # e-/ADU (PTC-measured, C3-61000)
 
-# All real-frame injections. hero=True → drawn as a completeness curve in the main
-# panel; every entry (hero or not) is a point in the law inset.
-# (label, run_subdir, injected_fits, fs_target, fs_file, color_key, marker, hero)
+# All real-frame injections. hero=True → completeness curve in panel (a);
+# every frame contributes to the S/N collapse in panel (b).
 FRAMES = [
-    ("M67 i",     "data_realframe_M67i",          REPRO/"M67/sci/pp_Messier67-0008-i.fit",         "M67",     "pp_Messier67-0008-i.fit", "data",      "-o", True),
-    ("NGC 6811 R","data_realframe_NGC6811R",       REPRO/"NGC6811/sci/pp_NGC6811-0005-R.fit",       "NGC6811", "pp_NGC6811-0005-R.fit",   "reference", "-s", True),
-    ("M13 V",     "data_realframe_M13V",           REPRO/"M13/calibrated/20260515/pp_messier13-0001-V.fit","M13","pp_messier13-0001-V.fit","accent","-D", True),
-    ("M67 r",     "data_realframe_M67r_mid",       REPRO/"M67/sci/pp_Messier67-0003-r.fit",         "M67",     "pp_Messier67-0003-r.fit", None,        None, False),
-    ("M67 g",     "data_realframe_M67g_broad",     REPRO/"M67/sci/pp_Messier67-0004-g.fit",         "M67",     "pp_Messier67-0004-g.fit", None,        None, False),
-    ("NGC 6811 R (soft)","data_realframe_NGC6811R_broad", REPRO/"NGC6811/sci/pp_NGC6811-0008-R.fit","NGC6811", "pp_NGC6811-0008-R.fit",   None,        None, False),
-    ("M13 R",     "data_realframe_M13R_sharp",     REPRO/"M13/sci/pp_messier13-0004-R.fit",         "M13",     "pp_messier13-0004-R.fit", None,        None, False),
+    ("M67 i",      "data_realframe_M67i",           REPRO/"M67/sci/pp_Messier67-0008-i.fit",          "data",      "-o", True),
+    ("NGC 6811 R", "data_realframe_NGC6811R",        REPRO/"NGC6811/sci/pp_NGC6811-0005-R.fit",        "reference", "-s", True),
+    ("M13 V",      "data_realframe_M13V",            REPRO/"M13/calibrated/20260515/pp_messier13-0001-V.fit", "accent", "-D", True),
+    ("M67 r",      "data_realframe_M67r_mid",        REPRO/"M67/sci/pp_Messier67-0003-r.fit",          None, None, False),
+    ("M67 g",      "data_realframe_M67g_broad",      REPRO/"M67/sci/pp_Messier67-0004-g.fit",          None, None, False),
+    ("NGC 6811 R (soft)", "data_realframe_NGC6811R_broad", REPRO/"NGC6811/sci/pp_NGC6811-0008-R.fit",  None, None, False),
+    ("M13 R",      "data_realframe_M13R_sharp",      REPRO/"M13/sci/pp_messier13-0004-R.fit",          None, None, False),
 ]
 
 
-def read_off(mag, comp, level=0.5):
+def read_off(mag, comp, level=0.5, increasing=False):
     o = np.argsort(mag); mm, cc = mag[o], comp[o]
     for i in range(len(mm) - 1):
-        if cc[i] >= level >= cc[i + 1]:
-            den = cc[i] - cc[i + 1]
-            f = (cc[i] - level) / den if den else 0.0
+        hit = (cc[i] <= level <= cc[i + 1]) if increasing else (cc[i] >= level >= cc[i + 1])
+        if hit:
+            den = cc[i + 1] - cc[i]
+            f = (level - cc[i]) / den if den else 0.0
             return float(mm[i] + f * (mm[i + 1] - mm[i]))
     return float("nan")
 
 
-def curve(run_subdir, bw=0.25):
-    s = pd.read_csv(DATA / run_subdir / "artificial_star/benchmark_run/stars.csv")
-    s = s[~s["baseline_confounded"].astype(bool)]
-    m = s["magnitude_true"].to_numpy(float)
-    r = s["recovered"].to_numpy(bool)
-    lo0 = np.floor(m.min() / bw) * bw
-    edges = np.arange(lo0, m.max() + bw, bw)
+def binned(x, rec, edges, nmin=15):
     xs, cs = [], []
     for lo, hi in zip(edges[:-1], edges[1:]):
-        msk = (m >= lo) & (m < hi)
-        if msk.sum() >= 15:
-            xs.append(0.5 * (lo + hi)); cs.append(r[msk].mean())
+        m = (x >= lo) & (x < hi)
+        if m.sum() >= nmin:
+            xs.append(0.5 * (lo + hi)); cs.append(rec[m].mean())
     return np.array(xs), np.array(cs)
 
 
-def curve_syn(bw=0.25):
-    s = pd.read_csv(SYN / "stars.csv")
+def load_run(sub, frame_fits):
+    rd = DATA / sub / "artificial_star/benchmark_run"
+    s = pd.read_csv(rd / "stars.csv")
     s = s[~s["baseline_confounded"].astype(bool)]
-    m = s["magnitude_true"].to_numpy(float); r = s["recovered"].to_numpy(bool)
-    edges = np.arange(np.floor(m.min() / bw) * bw, m.max() + bw, bw)
-    xs, cs = [], []
-    for lo, hi in zip(edges[:-1], edges[1:]):
-        k = (m >= lo) & (m < hi)
-        if k.sum() >= 15:
-            xs.append(0.5 * (lo + hi)); cs.append(r[k].mean())
-    return np.array(xs), np.array(cs)
-
-
-def fwhm_of(run_subdir):
-    """FWHM of the empirical PSF kernel the suite actually injected (half-max area).
-    Self-consistent for the law: injected-star completeness depends on this kernel,
-    not on frame_stats' bright-star FWHM (they diverge on soft frames)."""
-    k = fits.getdata(DATA / run_subdir / "artificial_star/benchmark_run/empirical_psf.fits").astype(float)
+    k = fits.getdata(rd / "empirical_psf.fits").astype(float)
     k = k / k.sum()
-    area = (k >= k.max() / 2).sum()
-    return float(2 * np.sqrt(area / np.pi))
-
-
-def sigma_of(fits_path):
-    d = fits.getdata(str(fits_path)).astype(np.float64)
-    return float(np.median(sep.Background(d).rms()))
+    d = fits.getdata(str(frame_fits)).astype(np.float64)
+    sigma_e = float(np.median(sep.Background(d).rms())) * GAIN
+    mag = s["magnitude_true"].to_numpy(float)
+    rec = s["recovered"].to_numpy(bool)
+    peak_snr = s["flux_expected_e"].to_numpy(float) * float(k.max()) / sigma_e
+    return dict(mag=mag, rec=rec, snr=peak_snr, sigma_e=sigma_e,
+                fwhm=float(2 * np.sqrt((k >= k.max() / 2).sum() / np.pi)))
 
 
 def main() -> int:
@@ -112,44 +99,60 @@ def main() -> int:
     stamps, cmags = cut["stamps"], cut["mags"]
     clo, chi = float(cut["lo"]), float(cut["hi"])
 
-    # gather every frame's (sigma, FWHM, m50)
-    recs = []
-    for label, sub, fp, tgt, fn, ckey, mk, hero in FRAMES:
-        run = DATA / sub / "artificial_star/benchmark_run/stars.csv"
-        if not run.exists():
-            print(f"  [skip] {label}: {sub} not found")
-            continue
-        x, c = curve(sub)
-        recs.append(dict(label=label, sub=sub, sigma=sigma_of(fp),
-                         fwhm=fwhm_of(sub), m50=read_off(x, c),
-                         ckey=ckey, mk=mk, hero=hero, x=x, c=c))
+    runs = []
+    for label, sub, fp, ckey, mk, hero in FRAMES:
+        if not (DATA / sub / "artificial_star/benchmark_run/stars.csv").exists():
+            print(f"  [skip] {label}"); continue
+        r = load_run(sub, fp)
+        r.update(label=label, ckey=ckey, mk=mk, hero=hero)
+        e = np.arange(np.floor(r["mag"].min() / .25) * .25, r["mag"].max() + .25, .25)
+        r["mx"], r["mc"] = binned(r["mag"], r["rec"], e)
+        r["m50"] = read_off(r["mx"], r["mc"])
+        le = np.arange(np.log10(r["snr"]).min(), np.log10(r["snr"]).max() + .12, .12)
+        r["sx"], r["sc"] = binned(np.log10(r["snr"]), r["rec"], le)
+        r["s50"] = 10 ** read_off(r["sx"], r["sc"], increasing=True)
+        runs.append(r)
 
-    # background-limited peak-detection law: m50 = C - 2.5 log10(sigma) - 5 log10(FWHM)
-    sig = np.array([r["sigma"] for r in recs])
-    fwh = np.array([r["fwhm"] for r in recs])
-    obs = np.array([r["m50"] for r in recs])
-    base = -2.5 * np.log10(sig) - 5 * np.log10(fwh)
-    Cfit = float(np.mean(obs - base))
-    pred = Cfit + base
-    resid_rms = float(np.std(obs - pred))
+    s50s = np.array([r["s50"] for r in runs])
+    print(f"[collapse] S/N50 per frame: " +
+          " ".join(f"{r['s50']:.2f}" for r in runs) +
+          f"  → {s50s.mean():.2f} ± {s50s.std():.2f}")
 
-    fig = plt.figure(figsize=(DOUBLE_COL * 0.80, 4.9))
-    gs = fig.add_gridspec(2, 1, height_ratios=[3.0, 0.95], hspace=0.48)
-    ax = fig.add_subplot(gs[0])
+    # pooled erf fit in log10(S/N):  p = A/2 * (1 + erf((x-mu)/(sqrt2*w)))
+    allx = np.concatenate([np.log10(r["snr"]) for r in runs])
+    allr = np.concatenate([r["rec"] for r in runs])
+    pe = np.arange(allx.min(), allx.max() + .08, .08)
+    px, pc = binned(allx, allr, pe, nmin=40)
+    def model(x, A, mu, w):
+        return A / 2 * (1 + _erf((x - mu) / (np.sqrt(2) * w)))
+    popt, _ = curve_fit(model, px, pc, p0=[0.97, np.log10(4.0), 0.1])
+    A_f, mu_f, w_f = popt
+    s50_fit = 10 ** float(mu_f)
+
+    # ── layout: (a) mag space | (b) S/N collapse ; bottom cutouts ──
+    fig = plt.figure(figsize=(DOUBLE_COL, 4.9))
+    gs = fig.add_gridspec(2, 1, height_ratios=[3.0, 0.95], hspace=0.46)
+    gst = gs[0].subgridspec(1, 2, width_ratios=[1.5, 1.0], wspace=0.24)
+    ax = fig.add_subplot(gst[0])
+    axb = fig.add_subplot(gst[1])
+
+    # (a) magnitude space — heroes + synthetic
     ax.axhline(0.5, color=PALETTE["grey"], lw=0.7, ls=":", zorder=2)
-
-    # synthetic verification rung
-    ms, cs = curve_syn(); m50s = read_off(ms, cs)
-    ax.plot(ms, cs, "--", color=PALETTE["grey"], lw=1.4, zorder=3,
-            label="synthetic (verification)  ·  sky 150, FWHM 3.4px")
-
-    m50_m13 = None
-    for r in recs:
+    syn = pd.read_csv(SYN / "stars.csv")
+    syn = syn[~syn["baseline_confounded"].astype(bool)]
+    se = np.arange(np.floor(syn.magnitude_true.min() / .25) * .25,
+                   syn.magnitude_true.max() + .25, .25)
+    sx_, sc_ = binned(syn.magnitude_true.to_numpy(float),
+                      syn.recovered.to_numpy(bool), se)
+    ax.plot(sx_, sc_, "--", color=PALETTE["grey"], lw=1.3, zorder=3,
+            label="synthetic (verification)")
+    m50_m13 = 14.9
+    for r in runs:
         if not r["hero"]:
             continue
         col = C[r["ckey"]]
-        ax.plot(r["x"], r["c"], r["mk"], color=col, lw=2.0, ms=3.6, mfc=col, zorder=6,
-                label=f"{r['label']}  ·  sky-noise {r['sigma']:.0f}, FWHM {r['fwhm']:.1f}px")
+        ax.plot(r["mx"], r["mc"], r["mk"], color=col, lw=2.0, ms=3.4, mfc=col,
+                zorder=6, label=f"{r['label']}")
         ax.axvline(r["m50"], color=col, lw=0.9, ls=":", zorder=2, alpha=0.75)
         ha = "right" if r["label"].startswith("M13") else ("left" if r["label"].startswith("NGC") else "center")
         dx = -0.08 if ha == "right" else (0.08 if ha == "left" else 0.0)
@@ -157,52 +160,55 @@ def main() -> int:
                 ha=ha, va="bottom", fontweight="bold")
         if r["label"].startswith("M13"):
             m50_m13 = r["m50"]
-    ax.text(12.35, 1.02, "$m_{50}$:", color="0.35", fontsize=7.0, ha="left", va="bottom")
-
-    ax.set_xlabel("injected / instrumental magnitude (count-rate, ZP = 25)")
+    ax.text(12.45, 1.02, "$m_{50}$:", color="0.35", fontsize=7.0, ha="left", va="bottom")
+    ax.set_xlabel("injected magnitude (count-rate, ZP = 25)")
     ax.set_ylabel("recovery completeness")
-    ax.set_xlim(12.2, 20.3)
+    ax.set_xlim(12.3, 20.2)
     ax.set_ylim(-0.03, 1.11)
-    leg = ax.legend(loc="lower left", fontsize=6.8, framealpha=0.93,
-                    title="representative real frames (+ synthetic)",
-                    title_fontsize=7.0, handlelength=1.8)
-    leg._legend_box.align = "left"
-    ax.set_title("real-frame depth obeys the background-limited detection law",
-                 loc="left", fontsize=10.5)
+    ax.legend(loc="lower left", fontsize=6.9, framealpha=0.93)
+    ax.set_title("(a) depth is a frame property (sky + seeing)", loc="left", fontsize=9.5)
 
-    # ── inset: the instrument-independent scaling law (all frames) ──
-    axi = ax.inset_axes([0.745, 0.17, 0.245, 0.47])
-    lo = min(obs.min(), pred.min()) - 0.25
-    hi = max(obs.max(), pred.max()) + 0.25
-    axi.plot([lo, hi], [lo, hi], "-", color=PALETTE["grey"], lw=1.0, zorder=1)
-    for r, p in zip(recs, pred):
-        col = C[r["ckey"]] if r["hero"] else "0.45"
-        mk = "o" if not r["hero"] else r["mk"].lstrip("-")
-        axi.plot(r["m50"], p, mk, color=col, ms=5.5 if r["hero"] else 4.5,
-                 mfc=col, mew=0, zorder=3)
-    axi.set_xlim(lo, hi); axi.set_ylim(lo, hi)
-    axi.set_xlabel("observed $m_{50}$", fontsize=6.8, labelpad=1)
-    axi.set_ylabel("law $m_{50}$", fontsize=6.8, labelpad=1)
-    axi.tick_params(labelsize=6.0)
-    axi.set_title(f"$m_{{50}}=C-2.5\\log\\sigma-5\\log$FWHM\n"
-                  f"exponents fixed · N={len(recs)} · resid {1000*resid_rms:.0f} mmag",
-                  fontsize=6.2, pad=2)
-    axi.set_aspect("equal", adjustable="box")
+    # (b) the collapse — all seven frames in peak-S/N space
+    axb.axhline(0.5, color=PALETTE["grey"], lw=0.7, ls=":", zorder=2)
+    for r in runs:
+        col = C[r["ckey"]] if r["hero"] else "0.55"
+        lw = 1.7 if r["hero"] else 1.0
+        axb.plot(10 ** r["sx"], r["sc"], "-", color=col, lw=lw,
+                 alpha=0.9 if r["hero"] else 0.55, zorder=4 if r["hero"] else 3)
+    xf = np.linspace(allx.min(), allx.max(), 300)
+    axb.plot(10 ** xf, model(xf, *popt), "-", color="k", lw=1.1, ls="--", zorder=6,
+             label=f"erf fit — S/N$_{{50}}$ = {s50_fit:.1f}")
+    axb.axvline(s50_fit, color="k", lw=0.8, ls=":", zorder=2, alpha=0.7)
+    axb.set_xscale("log")
+    axb.set_xlim(0.7, 300)
+    axb.set_ylim(-0.03, 1.11)
+    axb.set_xlabel("expected peak S/N")
+    axb.set_title("(b) all seven frames, one law", loc="left", fontsize=9.5)
+    axb.legend(loc="lower right", fontsize=6.8, framealpha=0.93)
+    axb.text(0.97, 0.60,
+             f"7 frames · $\\sigma$ 5–58 e$^-$\nFWHM 5.2–9.0 px\n"
+             f"S/N$_{{50}}$ = {s50s.mean():.1f} ± {s50s.std():.1f}\n"
+             "3.4 mag of depth →\none curve",
+             transform=axb.transAxes, fontsize=6.6, color="0.3", va="top", ha="right",
+             bbox={"boxstyle": "round,pad=0.3", "facecolor": "white",
+                   "alpha": .85, "edgecolor": PALETTE["grey"]})
 
-    # ── bottom strip: real injected-star cutouts (M13, the shallowest frame) ──
+    fig.suptitle("real-frame injection: per-frame depths are one detection law in S/N",
+                 x=0.01, ha="left", fontsize=11)
+
+    # bottom strip: real injected-star cutouts (M13, the shallowest frame)
     gsc = gs[1].subgridspec(1, len(cmags), wspace=0.16)
-    for j, (s, m) in enumerate(zip(stamps, cmags)):
+    for j, (s_, m_) in enumerate(zip(stamps, cmags)):
         axc = fig.add_subplot(gsc[j])
-        axc.imshow(s, cmap="gray", vmin=clo, vmax=chi, origin="lower",
+        axc.imshow(s_, cmap="gray", vmin=clo, vmax=chi, origin="lower",
                    interpolation="nearest")
         axc.set_xticks([]); axc.set_yticks([])
-        recovered = m < (m50_m13 or 14.9)
-        mark = "found" if recovered else "lost"
+        recovered = m_ < m50_m13
         col = C["data"] if recovered else C["accent"]
         for sp in axc.spines.values():
             sp.set_edgecolor(col); sp.set_linewidth(1.5)
-        axc.set_title(f"m = {m:.1f}", fontsize=7.6, pad=2)
-        axc.set_xlabel(mark, fontsize=7.8, color=col, labelpad=2)
+        axc.set_title(f"m = {m_:.1f}", fontsize=7.4, pad=2)
+        axc.set_xlabel("found" if recovered else "lost", fontsize=7.6, color=col, labelpad=2)
     fig.text(0.012, gs[1].get_position(fig).y1 + 0.016,
              "real injected stars — M13 V (the shallowest frame), shared stretch  —  "
              "blue = recovered, orange = lost",
@@ -210,11 +216,10 @@ def main() -> int:
 
     paths = save_fig(fig, "fig_completeness_realvssynth", OUTDIR)
     plt.close(fig)
-    print(f"[completeness] synthetic m50={m50s:.2f}   law C={Cfit:.3f}  "
-          f"resid RMS={1000*resid_rms:.1f} mmag  N={len(recs)}")
-    for r, p in zip(recs, pred):
-        print(f"  {r['label']:18s} σ={r['sigma']:6.2f} FWHM={r['fwhm']:.2f} "
-              f"obs={r['m50']:.2f} law={p:.2f} Δ={r['m50']-p:+.3f}")
+    print(f"[fit] A={A_f:.3f} S/N50={s50_fit:.2f} w(log)={w_f:.3f}")
+    for r in runs:
+        print(f"  {r['label']:20s} σ_e={r['sigma_e']:5.1f} FWHM={r['fwhm']:.2f} "
+              f"m50={r['m50']:.2f}  S/N50={r['s50']:.2f}")
     print(f"saved: {paths['png']}")
     return 0
 
