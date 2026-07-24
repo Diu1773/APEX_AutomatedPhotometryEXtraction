@@ -92,3 +92,17 @@ TSV flux_e는 apcorr 반영 총전자 확인.)
   전이구간(14.6)에서 실별 회수율이 높게 보이는 건 **측정등급 binning의 Eddington 편향**
   (검출된 별은 위로 요동한 것들) — 적분은 bin 이동이 상쇄돼 강건.
 - 논문 활용: "주입 완전도가 실별 검출수를 6% 이내로 예측" = (b) 붕괴와 독립적인 3번째 검증축.
+
+## C안 확정 + 실현깊이 66프레임 추출 (2026-07-24)
+사용자 fig(a) 배치 **C안 확정** (Kessler/ATLAS식 "예측 vs 실현 깊이" QC 그림). 예측기는 병렬
+세션(task_5bb4af3e, predict-m50 QC 게이트)이 구현 중 — 중복구현 회피(GUI-코어 동일경로).
+- **실현 깊이 추출 완료**: `extract_realized_depth.py` → `data_qc_depth/realized_m50.csv`.
+  66/66프레임. 실별 "참 등급" = 동일필터 전 프레임 중앙값 count-rate mag (Eddington 편향 제거,
+  count-rate는 노출 불변) → 주입 스케일 −2.5log10(t) 변환 → detected_flag 50% 교차 판독.
+- **새 순환 모드 발견·차단**: 필터의 최심급 프레임은 master faint 꼬리가 "자기가 검출한 별"로만
+  구성돼 실현 깊이가 순환으로 부풂 (M13 R: 실현 17.26 vs 주입 15.81, +1.45). 플래그 =
+  master 90분위 한계 대비 margin ≤0.7 mag → depth_valid=False (9/66 배제: M13 R 전부·M13 V
+  일부·NGC6811 최심 V). M13은 전 필터 60s뿐이라 master가 얕아 특히 취약.
+- **검증**: depth_valid 주입 프레임 6개에서 실현−주입 = 평균 +0.11, RMS 0.15 mag. 남은 +0.1
+  편향은 혼잡 블렌드 매칭(실별은 이웃 검출에 매칭될 수 있음) — QC 그림 캡션에 명시할 것.
+- 다음: QC 게이트 머지 후 predicted vs realized 산점(57 valid 프레임) 조립.

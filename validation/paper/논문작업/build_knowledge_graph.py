@@ -177,11 +177,14 @@ CC/Kovács 귀속 제거 → Honeycutt 단독 + "single-night N=10 예비" 라�
 apcorr_summary는 프레임당 단일값뿐 — 다중구경 재실행 필요."""),
     N("pend_bouguer", "소광 Bouguer", 6, """# zp vs airmass (Hardie 1962)
 frame_zeropoint.csv에 airmass 있음. 단 ZP 레퍼런스 얽힘 + airmass span 미확인."""),
-    N("pend_fig_a_layout", "fig(a) 배치 미결", 6, """# fig (a) 등급공간 완전도의 논문 배치 — 사용자 판단 대기
-관행 4계열 조사 완료 → `FIG_A_PRESENTATION_SURVEY.md`. 옵션: A=현상유지(도구논문식 예시),
-B=66프레임 예측 m50 분포 추가(Balrog식), **C★=predicted-m50 QC 게이트 구현 후 '예측 vs 실현
-깊이' 운영검증 그림(Kessler/ATLAS식, 백로그 task_5bb4af3e 선행)**. 실별 6% 예측실증도 C에 포함.
-사용자: "좀 더 생각해봐야" — A/B/C 미결."""),
+    N("pend_fig_a_layout", "fig(a)=C안 진행중", 6, """# fig(a) 배치 — **C안 확정**(2026-07-24, "C로 하던가")
+Kessler/ATLAS식 "예측 vs 실현 깊이" QC 그림. 조사=`FIG_A_PRESENTATION_SURVEY.md`.
+- 예측 절반: 병렬 세션 task_5bb4af3e(predict-m50 QC 게이트)가 구현 중 — 머지 대기
+- 실현 절반: **완료** — `extract_realized_depth.py` → `data_qc_depth/realized_m50.csv`,
+  66프레임(유효 57). 실별 참등급=동일필터 중앙값 count-rate mag(Eddington 제거).
+- **순환 차단**: 필터 최심 프레임은 master 꼬리가 자기검출로 구성→깊이 부풂(M13 R +1.45 사례).
+  master 한계 margin ≤0.7mag → depth_valid=False. 유효 주입프레임 6개 대조: RMS 0.15 mag.
+- 남은 일: 머지 후 predicted vs realized 산점 조립(+블렌드 매칭 +0.1 편향 캡션 명시)"""),
     N("pend_manuscript", "원고 §3.6 갱신", 6, """# 원고 반영 대기
 §3.6을 다중프레임 실측주입+법칙으로 갱신 · §3.7(측성)·§3.15(시계열) 스텁 채우기 ·
 [[dec_citation_fixes|인용 6건]] 반영 · Data Availability 그림번호 깨짐 수정."""),
