@@ -46,16 +46,16 @@ OUTDIR = DATA / "figures"
 REPRO = Path(r"E:\APEX_validation\reprocess")
 GAIN = 0.689  # e-/ADU (PTC-measured, C3-61000)
 
-# All real-frame injections. hero=True → completeness curve in panel (a);
-# every frame contributes to the S/N collapse in panel (b).
+# All real-frame injections — every entry is ONE single exposure (no stacks).
+# hero=True → completeness curve in panel (a); all frames enter panel (b).
 FRAMES = [
-    ("M67 i",      "data_realframe_M67i",           REPRO/"M67/sci/pp_Messier67-0008-i.fit",          "data",      "-o", True),
-    ("NGC 6811 R", "data_realframe_NGC6811R",        REPRO/"NGC6811/sci/pp_NGC6811-0005-R.fit",        "reference", "-s", True),
-    ("M13 V",      "data_realframe_M13V",            REPRO/"M13/calibrated/20260515/pp_messier13-0001-V.fit", "accent", "-D", True),
-    ("M67 r",      "data_realframe_M67r_mid",        REPRO/"M67/sci/pp_Messier67-0003-r.fit",          None, None, False),
-    ("M67 g",      "data_realframe_M67g_broad",      REPRO/"M67/sci/pp_Messier67-0004-g.fit",          None, None, False),
-    ("NGC 6811 R (soft)", "data_realframe_NGC6811R_broad", REPRO/"NGC6811/sci/pp_NGC6811-0008-R.fit",  None, None, False),
-    ("M13 R",      "data_realframe_M13R_sharp",      REPRO/"M13/sci/pp_messier13-0004-R.fit",          None, None, False),
+    ("M67 i",      "60 s",  "data_realframe_M67i",           REPRO/"M67/sci/pp_Messier67-0008-i.fit",          "data",      "-o", True),
+    ("NGC 6811 R", "120 s", "data_realframe_NGC6811R",        REPRO/"NGC6811/sci/pp_NGC6811-0005-R.fit",        "reference", "-s", True),
+    ("M13 V",      "60 s",  "data_realframe_M13V",            REPRO/"M13/calibrated/20260515/pp_messier13-0001-V.fit", "accent", "-D", True),
+    ("M67 r",      "60 s",  "data_realframe_M67r_mid",        REPRO/"M67/sci/pp_Messier67-0003-r.fit",          None, None, False),
+    ("M67 g",      "60 s",  "data_realframe_M67g_broad",      REPRO/"M67/sci/pp_Messier67-0004-g.fit",          None, None, False),
+    ("NGC 6811 R (soft)", "480 s", "data_realframe_NGC6811R_broad", REPRO/"NGC6811/sci/pp_NGC6811-0008-R.fit",  None, None, False),
+    ("M13 R",      "60 s",  "data_realframe_M13R_sharp",      REPRO/"M13/sci/pp_messier13-0004-R.fit",          None, None, False),
 ]
 
 
@@ -100,11 +100,11 @@ def main() -> int:
     clo, chi = float(cut["lo"]), float(cut["hi"])
 
     runs = []
-    for label, sub, fp, ckey, mk, hero in FRAMES:
+    for label, expt, sub, fp, ckey, mk, hero in FRAMES:
         if not (DATA / sub / "artificial_star/benchmark_run/stars.csv").exists():
             print(f"  [skip] {label}"); continue
         r = load_run(sub, fp)
-        r.update(label=label, ckey=ckey, mk=mk, hero=hero)
+        r.update(label=label, expt=expt, ckey=ckey, mk=mk, hero=hero)
         e = np.arange(np.floor(r["mag"].min() / .25) * .25, r["mag"].max() + .25, .25)
         r["mx"], r["mc"] = binned(r["mag"], r["rec"], e)
         r["m50"] = read_off(r["mx"], r["mc"])
@@ -152,7 +152,7 @@ def main() -> int:
             continue
         col = C[r["ckey"]]
         ax.plot(r["mx"], r["mc"], r["mk"], color=col, lw=2.0, ms=3.4, mfc=col,
-                zorder=6, label=f"{r['label']}")
+                zorder=6, label=f"{r['label']} — single {r['expt']} frame")
         ax.axvline(r["m50"], color=col, lw=0.9, ls=":", zorder=2, alpha=0.75)
         ha = "right" if r["label"].startswith("M13") else ("left" if r["label"].startswith("NGC") else "center")
         dx = -0.08 if ha == "right" else (0.08 if ha == "left" else 0.0)
@@ -168,16 +168,22 @@ def main() -> int:
     ax.legend(loc="lower left", fontsize=6.9, framealpha=0.93)
     ax.set_title("(a) depth is a frame property (sky + seeing)", loc="left", fontsize=9.5)
 
-    # (b) the collapse — all seven frames in peak-S/N space
+    # (b) the collapse — all seven frames in peak-S/N space.
+    # Data are POINTS (binned recovered fractions, one symbol set per frame);
+    # the only curve is the pooled erf fit — AutoPhOT App.D / Masci 2011 style.
     axb.axhline(0.5, color=PALETTE["grey"], lw=0.7, ls=":", zorder=2)
     for r in runs:
-        col = C[r["ckey"]] if r["hero"] else "0.55"
-        lw = 1.7 if r["hero"] else 1.0
-        axb.plot(10 ** r["sx"], r["sc"], "-", color=col, lw=lw,
-                 alpha=0.9 if r["hero"] else 0.55, zorder=4 if r["hero"] else 3)
+        if r["hero"]:
+            col, mk, ms, al = C[r["ckey"]], r["mk"].lstrip("-"), 4.0, 0.95
+        else:
+            col, mk, ms, al = "0.55", "o", 2.9, 0.6
+        axb.plot(10 ** r["sx"], r["sc"], mk, color=col, ms=ms, mfc=col, mew=0,
+                 alpha=al, ls="none", zorder=4 if r["hero"] else 3)
+    axb.plot([], [], "o", color="0.55", ms=2.9, ls="none",
+             label="binned recovery (7 single frames)")
     xf = np.linspace(allx.min(), allx.max(), 300)
-    axb.plot(10 ** xf, model(xf, *popt), "-", color="k", lw=1.1, ls="--", zorder=6,
-             label=f"erf fit — S/N$_{{50}}$ = {s50_fit:.1f}")
+    axb.plot(10 ** xf, model(xf, *popt), "-", color="k", lw=1.2, ls="--", zorder=6,
+             label=f"pooled erf fit — S/N$_{{50}}$ = {s50_fit:.1f}")
     axb.axvline(s50_fit, color="k", lw=0.8, ls=":", zorder=2, alpha=0.7)
     axb.set_xscale("log")
     axb.set_xlim(0.7, 300)
@@ -186,8 +192,8 @@ def main() -> int:
     axb.set_title("(b) all seven frames, one law", loc="left", fontsize=9.5)
     axb.legend(loc="lower right", fontsize=6.8, framealpha=0.93)
     axb.text(0.97, 0.60,
-             f"7 frames · $\\sigma$ 5–58 e$^-$\nFWHM 5.2–9.0 px\n"
-             f"S/N$_{{50}}$ = {s50s.mean():.1f} ± {s50s.std():.1f}\n"
+             f"7 single frames (60–480 s)\n$\\sigma$ 5–58 e$^-$ · FWHM 5.2–9.0 px\n"
+             f"per-frame S/N$_{{50}}$ = {s50s.mean():.1f} ± {s50s.std():.1f}\n"
              "3.4 mag of depth →\none curve",
              transform=axb.transAxes, fontsize=6.6, color="0.3", va="top", ha="right",
              bbox={"boxstyle": "round,pad=0.3", "facecolor": "white",
