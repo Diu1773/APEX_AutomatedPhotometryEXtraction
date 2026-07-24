@@ -1,9 +1,11 @@
-"""Figure — photometric precision floor (per-star RMS vs magnitude).
+"""Figure — photometric precision floor (per-star RMS vs magnitude). PRELIMINARY:
+single night, N=10 epochs.
 
-Reproduces the canonical time-series-pipeline validation diagram (Honeycutt 1992
-ensemble photometry, PASP 104,435; Collier Cameron+2006 SuperWASP, MNRAS 373,799;
-Kovacs+2005 TFA, MNRAS 356,557): the per-star scatter across many frames, after an
-ensemble zeropoint correction, plotted against magnitude. Two things are checked
+Reproduces the ensemble-photometry method validation of Honeycutt 1992 (PASP
+104,435): the per-star scatter across frames, after a differential-ensemble
+zeropoint correction, plotted against magnitude. (Collier Cameron+2006 / Kovacs+
+2005 are NOT claimed here — their point is the before/after-detrending floor drop
+on thousands of epochs; that reproduction is deferred to the LC re-run with SYSREM.) Two things are checked
 at once — (i) the empirical scatter follows the pipeline's OWN reported photon-noise
 error bar (error model validated), and (ii) at the bright end the scatter hits a
 systematic floor set by flat-field / PSF / scintillation residuals.
@@ -109,7 +111,7 @@ def main() -> int:
     ax.text(0.97, 0.05,
             f"M67 {FILT} · {nfr} frames · {k.sum()} stars\n"
             f"floors: g {1000*floors['g']:.0f} · r {1000*floors['r']:.0f} · "
-            f"i {1000*floors['i']:.0f} mmag",
+            f"i {1000*floors['i']:.0f} mmag (preliminary)",
             transform=ax.transAxes, va="bottom", ha="right", fontsize=6.6,
             color="0.3",
             bbox={"boxstyle": "round,pad=0.3", "facecolor": "white",

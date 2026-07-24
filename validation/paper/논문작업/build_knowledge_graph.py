@@ -66,7 +66,7 @@ RASTI/PASP급. 원고 `validation/paper/MANUSCRIPT_ko.md`(+영문). 구조 v4 = 
 - 실측 M67 r 10프레임 1073별, Honeycutt 앙상블 ZP: **floor g/r/i = 5.4/5.2/6.7 mmag**
 - 경험RMS = 보고 mag_err (photon영역 일치 = 에러모델 정직) + bright end 계통 floor 노출
 - ⚠️ **10에폭 = under-powered**: 단일밤·binning 불가. floor값 자체는 에폭수 무감(5ep 5.18±0.33)
-- ⚠️ [[pend_precision_fix|CC/Kovács 귀속 정정 필요]] — 원문 의도=detrending 전후 비교(SYSREM/TFA), 미재현"""),
+- 귀속 정정 완료([[pend_precision_fix|Honeycutt 단독+예비 라벨]]) — CC/Kovács는 LC 재현으로 이관"""),
 
     # ── 레퍼런스 (cat2) ──
     N("ref_haynes", "Haynes 2002", 2, """# Haynes 2002 (MNRAS 334,262)
@@ -93,7 +93,7 @@ PP(Mommert 2017) 0.3″을 참조선으로 병기."""),
     N("ref_cc_kovacs", "CC 2006 · Kovács 2005", 2, """# Collier Cameron 2006 (WASP) · Kovács 2005 (TFA)
 **detrending 논문** — 의도는 SYSREM/TFA 전후 floor 하강 비교(수천 에폭, 트랜짓 감도).
 10에폭 단일밤으론 재현 불가 → [[pend_lc_period|LC 재현]]에서 SYSREM 전후로 제대로.
-현 floor 그림에서 귀속 제거 예정([[pend_precision_fix|정정 미결]])."""),
+floor 그림에서 귀속 제거 완료([[pend_precision_fix|정정 기록]])."""),
     N("ref_period", "Stellingwerf · Graham", 2, """# Stellingwerf 1978 (PDM) · Graham 2013 (주기복원 비교)
 주기 복원 검증 준거. AE UMa(P=0.086017d)·YZ Boo(P=0.104092d) 문헌 확정값 보유.
 LC 전처리 deferred라 보류: [[pend_lc_period|LC 주기복원]]."""),
@@ -164,9 +164,10 @@ m50 = C − 2.5logσ − 5logFWHM, **지수 이론고정·C만 fit: 잔차 RMS 1
 - **교훈**: FWHM은 frame_stats(밝은별)가 아니라 **각 런의 주입커널**(empirical_psf.fits 반높이면적)로
   — soft 프레임에서 9.30 vs 7.23px 괴리가 0.4mag 이탈 일으켰음(추적해 해소)
 - 이 법칙이 [[dec_repro_def|기기무관 재현]]의 실체 — 절대 깊이가 아니라 법칙이 검증 대상"""),
-    N("pend_precision_fix", "floor 귀속 정정", 6, """# 정밀도 floor 그림 정정 (미승인 제안)
-CC/Kovács 귀속 제거 → Honeycutt 단독 + "single-night N=10 예비" 라벨.
-확정판은 [[pend_lc_period|LC]]에서 SYSREM 전후 비교로. **사용자 승인 대기.**"""),
+    N("pend_precision_fix", "floor 귀속 정정(완료)", 5, """# 정밀도 floor 귀속 정정 — 완료 (2026-07-24 "알아서 하쇼")
+CC/Kovács 귀속 제거(둘은 detrending 논문 — 수천 에폭 전후비교, 10에폭으론 재현 불가) →
+**Honeycutt 1992 단독** + "single night · preliminary" 라벨을 그림·docstring에 명기.
+확정판은 [[pend_lc_period|LC]]에서 SYSREM 전후 비교로."""),
     N("pend_lc_period", "LC 주기복원", 6, """# LC 재현 (Stellingwerf/Graham + CC/Kovács 진짜 재현)
 선결: 사용자 observed_Analysis 수동삭제 → LC 전처리(100GB) → step1-11.
 목표: AE UMa·YZ Boo 주기 문헌 대조 + SYSREM 전후 RMS-vs-mag(수백 에폭)."""),

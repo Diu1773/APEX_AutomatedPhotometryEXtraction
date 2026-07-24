@@ -30,7 +30,7 @@ Kovács(HATNet)=CCD, Ofek/Masci(ZTF)=대형 CCD 모자이크. APEX=Sony IMX455 *
 | **완전도(F5)** | Haynes 2002 / DES Balrog / DAOPHOT ADDSTAR / AutoPhOT App.D | 실측 3프레임(M67i·NGC6811R·M13V) 주입-회수 + 합성 verification | m50 17.7/15.6/14.9 (sky+seeing 추적), M67실측=합성깊이, 컷아웃 사다리 | `fig_completeness_realvssynth.py` |
 | **측성(F6)** | Ofek 2019 / Masci 2019 (ZTF) | 실측 66프레임 3성단 WCS QC | Gaia 잔차 중앙값 0.26″, 66/66 solved | `fig_astrometry.py` |
 | **독립엔진 교차(F10)** | Schechter 1993 (DoPHOT vs DAOPHOT) / AutoPhOT Fig14 | NGC6811 V, APEX vs IRAF phot, 499별 고정좌표 | MAD 9.7 mmag, r=0.99989, faint까지 평평 | `fig_iraf_crosscheck.py` |
-| **정밀도 floor** | Honeycutt 1992 / Collier Cameron 2006 (WASP) / Kovács 2005 (TFA) | 실측 M67 10프레임 r, 1073별 | floor g/r/i = 5.4/5.2/6.7 mmag, 에러모델 일치 | `fig_precision_floor.py` |
+| **정밀도 floor(예비)** | Honeycutt 1992 단독 (CC/Kovács는 detrending 논문 — LC 재현으로 이관) | 실측 M67 10프레임 r, 1073별 | floor g/r/i = 5.4/5.2/6.7 mmag, 에러모델 일치 | `fig_precision_floor.py` |
 
 각 그림의 정직성 포인트:
 - **완전도**: 합성 vs 실측 2.7 mag 격차를 끝까지 추적 → M13 프레임의 넓은 seeing(7.6px)+높은
@@ -58,5 +58,5 @@ Kovács(HATNet)=CCD, Ofek/Masci(ZTF)=대형 CCD 모자이크. APEX=Sony IMX455 *
 ## 사용자 판단 필요
 1. **보류 항목 중 진행할 것**: (a) 광도보정 잔차 그림(논란 영역 — 진행하려면 어느 레퍼런스로
    보정할지 결정 필요), (b) LC 주기복원(전처리 재개 필요), (c) 소광 Bouguer, (d) curve-of-growth 재실행.
-2. **원고 §3.6 반영**: 완전도를 실측-프레임 주입으로 전환(리뷰 권고 해소) — 프로즈 갱신할지.
-3. **정밀도 floor 그림**을 §3 어느 절에 넣을지(신규 절 vs 기존 시계열 절).
+2. ~~원고 §3.6 반영~~ — **완료(2026-07-24)**: 국·영 §3.6을 실측 7프레임 주입+S/N 붕괴로 재작성
+   (SEP 인용 barbary2016으로 정정 포함). floor 그림 §3 배치는 여전히 미결(신규 절 vs 시계열 절).
