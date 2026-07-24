@@ -177,6 +177,11 @@ CC/Kovács 귀속 제거 → Honeycutt 단독 + "single-night N=10 예비" 라�
 apcorr_summary는 프레임당 단일값뿐 — 다중구경 재실행 필요."""),
     N("pend_bouguer", "소광 Bouguer", 6, """# zp vs airmass (Hardie 1962)
 frame_zeropoint.csv에 airmass 있음. 단 ZP 레퍼런스 얽힘 + airmass span 미확인."""),
+    N("pend_fig_a_layout", "fig(a) 배치 미결", 6, """# fig (a) 등급공간 완전도의 논문 배치 — 사용자 판단 대기
+관행 4계열 조사 완료 → `FIG_A_PRESENTATION_SURVEY.md`. 옵션: A=현상유지(도구논문식 예시),
+B=66프레임 예측 m50 분포 추가(Balrog식), **C★=predicted-m50 QC 게이트 구현 후 '예측 vs 실현
+깊이' 운영검증 그림(Kessler/ATLAS식, 백로그 task_5bb4af3e 선행)**. 실별 6% 예측실증도 C에 포함.
+사용자: "좀 더 생각해봐야" — A/B/C 미결."""),
     N("pend_manuscript", "원고 §3.6 갱신", 6, """# 원고 반영 대기
 §3.6을 다중프레임 실측주입+법칙으로 갱신 · §3.7(측성)·§3.15(시계열) 스텁 채우기 ·
 [[dec_citation_fixes|인용 6건]] 반영 · Data Availability 그림번호 깨짐 수정."""),
@@ -213,7 +218,7 @@ EDGES = [
     ("pend_zp_resid", "inv_bfilter"),
     ("done_lawtest", "data_injections"), ("pend_manuscript", "dec_citation_fixes"),
     ("hub_repro", "pend_zp_resid"), ("hub_repro", "pend_cog"), ("hub_repro", "pend_bouguer"),
-    ("hub_repro", "pend_lc_period"),
+    ("hub_repro", "pend_lc_period"), ("fig_completeness", "pend_fig_a_layout"),
 ]
 
 
