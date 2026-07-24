@@ -49,7 +49,7 @@ RASTI/PASP급. 원고 `validation/paper/MANUSCRIPT_ko.md`(+영문). 구조 v4 = 
 - 실측 3+4프레임: M67 i **m50 17.65** / NGC6811 R **15.64** / M13 V **14.90** (+법칙검증용 4프레임 추가)
 - (b) S/N 붕괴 패널: 7프레임 전부 peak-S/N축에서 단일 erf로 붕괴, **S/N50=4.05±0.18** (3.2σ 매치드필터와 일치) — [[dec_m13_ok|M13 이상치 아님]]
 - 하단: 실주입별 컷아웃 사다리 m13→16 (`make_injection_cutouts.npz`, inject_flux_catalog 정규경로)
-- 합성은 verification rung으로만: [[dec_synth_ok|합성 낙관 아님(반증됨)]] · 조사: [[inv_completeness|완전도 조사노트]]"""),
+- 합성은 verification rung: S/N 기준 약간 보수적([[dec_synth_ok|2차 정정]]) · 조사: [[inv_completeness|완전도 조사노트]]"""),
     N("fig_astrometry", "F6 측성(Gaia잔차)", 1, """# F6 — 측성 검증
 `fig_astrometry.py` · 재현: [[ref_ofek_masci|Ofek 2019 / Masci 2019(ZTF)]]
 - 실측 66프레임(M13 15·M67 30·NGC6811 21) `step5_wcs/frame_wcs_qc.csv`
@@ -71,8 +71,8 @@ RASTI/PASP급. 원고 `validation/paper/MANUSCRIPT_ko.md`(+영문). 구조 v4 = 
     # ── 레퍼런스 (cat2) ──
     N("ref_haynes", "Haynes 2002", 2, """# Haynes 2002 (MNRAS 334,262)
 합성 vs 실측 프레임 주입 **0.4–0.5 mag 계통 차** + 순환성 경고("merely confirm the starting hypothesis").
-→ §3.6을 실측-프레임 주입으로 전환시킨 근거. 단 APEX에선 좋은 실측프레임(M67 i)=합성 깊이
-→ [[dec_synth_ok|일반화된 '합성 낙관'은 반증]]."""),
+→ §3.6을 실측-프레임 주입으로 전환시킨 근거. APEX 합성은 S/N 기준 오히려 약간 보수적
+([[dec_synth_ok|2차 정정]] — m50 우연 일치 철회, FWHM 트렌드로 설명)."""),
     N("ref_balrog", "DES Balrog", 2, """# Suchyta+ (DES Balrog)
 "real pixel-level CCD images"에 소스 주입 — 실측 주입의 서베이 표준. 컷아웃 예시 그림 관행의 출처 중 하나.
 HSC SynPipe도 동일 계열."""),
