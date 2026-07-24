@@ -31,6 +31,26 @@ MAD_TO_SIGMA = 1.4826                 # MAD -> Gaussian sigma conversion factor
 # this — the IRAF cross-check and CMD viewer must agree on the same value.
 INSTRUMENTAL_ZMAG = 25.0
 
+# Peak-pixel S/N at 50% detection completeness, measured by artificial-star
+# injection into 7 real cluster frames (M67 g/r/i, NGC 6811 R x2, M13 V/R;
+# sky sigma 5-58 e-/px, FWHM 5.2-9.0 px). All seven frames collapse onto a
+# single erf curve in peak-S/N space with S/N_50 = 4.05 +/- 0.18, consistent
+# with the 3.2-sigma matched-filter detection threshold. There is a weak
+# monotonic dependence on kernel FWHM (Spearman rho = -0.98: ~4.3 at 5.3 px,
+# ~3.85 at 7-9 px) driven by the minimum-pixel-area requirement; the constant
+# below is the 7-frame mean and predicts per-frame m50 with residual RMS
+# ~0.05 mag over the calibration set. Derivation:
+# validation/paper/논문작업/COMPLETENESS_REALFRAME_INVESTIGATION.md
+PEAK_SN50_DETECTION = 4.05
+PEAK_SN50_DETECTION_STD = 0.18
+
+# Default |predicted - observed| m50 tolerance for the per-frame depth QC
+# gate (Step 7). A frame whose observed detection rolloff sits more than
+# this far from the sky-noise + PSF prediction is flagged for inspection
+# (focus drift, clouds, tracking, calibration defects). Override per run
+# with the `depth_qc_tolerance_mag` parameter.
+DEPTH_QC_TOLERANCE_MAG = 0.5
+
 
 # =============================================================================
 # Photometry Constants

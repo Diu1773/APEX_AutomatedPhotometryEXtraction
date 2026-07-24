@@ -48,8 +48,10 @@ from apex.utils.constants import (
     MAD_TO_SIGMA,
     INSTRUMENTAL_ZMAG,
     EXPTIME_HEADER_KEYS,
+    DEPTH_QC_TOLERANCE_MAG,
 )
 from apex.utils.noise_params import resolve_effective_noise_params
+from apex.analysis.detection_limit import frame_depth_qc
 
 _GC_N_STEPS = 14   # number of radii in the growth curve
 
@@ -1248,6 +1250,55 @@ def run_forced_photometry(
             if col in master_df.columns and col not in out.columns:
                 out[col] = master_df[col].reset_index(drop=True)
 
+        # --- Depth QC: predicted m50 (sky noise + PSF peak fraction) vs the
+        # observed detection rolloff over the master catalog. Never fatal.
+        _status("Depth QC", 88)
+        try:
+            depth_min_snr = _to_float(getattr(P, "depth_qc_min_snr", 40.0), 40.0)
+            peak_candidates = (
+                detected_flag & step4_quality_ok & ~is_sat_arr & ~is_nl_arr
+                & np.isfinite(flux_corr) & (flux_corr > 0)
+                & np.isfinite(snr_arr) & (snr_arr >= depth_min_snr)
+                & np.isfinite(x_fit) & np.isfinite(y_fit)
+            )
+            # Background-subtracted peak-pixel signal (e-): 3x3 max around the
+            # fitted center minus the local annulus sky — the same sky model
+            # as the photometry, independent of the detection engine.
+            peak_e = np.full(n, np.nan)
+            for i in np.flatnonzero(peak_candidates):
+                ix, iy = int(round(x_fit[i])), int(round(y_fit[i]))
+                if 1 <= ix < w - 1 and 1 <= iy < h - 1:
+                    win = img[iy - 1:iy + 2, ix - 1:ix + 2]
+                    sky_i = sky_arr[i] if np.isfinite(sky_arr[i]) else 0.0
+                    peak_e[i] = (float(np.nanmax(win)) - sky_i) * gain
+            depth_qc = frame_depth_qc(
+                sky_sigma_adu=sky_sigma_frame,
+                gain_e_per_adu=gain,
+                exptime_s=exptime,
+                peak_e=peak_e,
+                flux_e=flux_corr,
+                peak_star_mask=peak_candidates,
+                mag_inst=mag_inst,
+                detected=detected_flag,
+                rolloff_mask=~off_frame,
+                tolerance_mag=_to_float(
+                    getattr(P, "depth_qc_tolerance_mag", DEPTH_QC_TOLERANCE_MAG),
+                    DEPTH_QC_TOLERANCE_MAG,
+                ),
+            )
+            if depth_qc.get("depth_qc_flag") not in ("", "ok"):
+                _log(
+                    f"[FORCED][{fname}] DEPTH QC {depth_qc['depth_qc_flag']}: "
+                    f"predicted m50={depth_qc['predicted_m50']:.2f} vs observed "
+                    f"rolloff={depth_qc['observed_m50']:.2f} "
+                    f"(Δ={depth_qc['depth_delta_mag']:+.2f} mag) — inspect frame "
+                    f"(focus/clouds/tracking/defect)."
+                )
+        except Exception as exc:
+            _log(f"[FORCED][{fname}] depth QC failed (non-fatal): {exc}")
+            depth_qc = {}
+        growth_curve_data["depth_qc"] = depth_qc
+
         return out, apcorr, growth_curve_data
 
     # ── Main run ──────────────────────────────────────────────────────────────
@@ -1389,6 +1440,7 @@ def run_forced_photometry(
                     {"wcs_ok": wcs is not None, "fwhm_px": fwhm_px,
                      "n_master": len(master_df), "out_path": str(out_path),
                      "noise": gc_data.get("noise", {}) if isinstance(gc_data, dict) else {},
+                     "depth_qc": gc_data.get("depth_qc", {}) if isinstance(gc_data, dict) else {},
                      "center_stats": center_stats,
                      "elapsed_s": t_save - t0,
                      "timing": {
@@ -1506,6 +1558,9 @@ def run_forced_photometry(
                 noise_info = info.get("noise") or {}
                 if noise_info:
                     index_row.update(noise_info)
+                depth_info = info.get("depth_qc") or {}
+                if depth_info:
+                    index_row.update(depth_info)
                 for key, value in center_stats.items():
                     if key not in index_row:
                         index_row[key] = value

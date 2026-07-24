@@ -191,6 +191,8 @@ COMMON_TOML_KEY_MAP: tuple[tuple[tuple[str, ...], str], ...] = (
     (('photometry', 'apcorr', 'scale_max'), 'apcorr_scale_max'),
     (('photometry', 'apcorr', 'min_snr'), 'apcorr_min_snr'),
     (('photometry', 'apcorr', 'isolation_factor'), 'apcorr_isolation_factor'),
+    (('photometry', 'depth_qc', 'tolerance_mag'), 'depth_qc_tolerance_mag'),
+    (('photometry', 'depth_qc', 'min_snr'), 'depth_qc_min_snr'),
     (('source_quality', 'fwhm_ratio_lo'), 'source_quality_fwhm_ratio_lo'),
     (('source_quality', 'fwhm_ratio_hi'), 'source_quality_fwhm_ratio_hi'),
     (('source_quality', 'anchor_neighbor_fwhm_mult'), 'source_quality_anchor_neighbor_fwhm_mult'),

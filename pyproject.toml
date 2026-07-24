@@ -116,3 +116,6 @@ apex = ["resources/*.svg", "resources/*.ico", "resources/*.png"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+markers = [
+    "slow: long-running validation tests against site-local real data (deselect with '-m \"not slow\"')",
+]

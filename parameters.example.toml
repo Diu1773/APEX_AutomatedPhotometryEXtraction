@@ -189,6 +189,16 @@ min_gap_fwhm = 1.0
 max_pairs = 24
 max_sources = 250
 
+# Step 7 per-frame depth QC gate: predicted m50 (from sky noise + PSF peak
+# fraction, S/N50 detection law) vs the observed detection rolloff.
+# A frame deviating by more than tolerance_mag is flagged in frame_stats.csv
+# (depth_qc_flag = depth_shallow / depth_deep) — focus, clouds, tracking,
+# or calibration defect suspects. min_snr selects the bright clean stars
+# used to measure the frame's PSF peak fraction.
+[photometry.depth_qc]
+tolerance_mag = 0.5
+min_snr = 40.0
+
 [tools.iraf.filters.default]
 seeing = 2.5
 sigma = 50.0
