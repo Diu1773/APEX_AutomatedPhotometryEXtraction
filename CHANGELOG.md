@@ -23,7 +23,12 @@ to follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   real catalog stars to ~6%, grounding the predicted-vs-observed comparison
   (see `validation/paper/논문작업/COMPLETENESS_REALFRAME_INVESTIGATION.md`).
   Tests: `tests/test_detection_limit.py` (unit + 7-run calibration
-  reproduction, residual RMS 0.048 mag).
+  reproduction, residual RMS 0.048 mag). The gate is configurable via
+  `[photometry.depth_qc] tolerance_mag / min_snr` (both modes), included in
+  the Step 7 cache signature so changing them triggers recomputation.
+  Validated on real data (M67 9 frames g/r/i: |predicted − observed| ≤ 0.073
+  mag; NGC 6811 3 frames) and end-to-end in the CMD GUI (identical numbers,
+  flag + log warning fire when the tolerance is exceeded).
 - **MIT license** (`LICENSE`) — the project is now openly licensed.
 - **pip-installable packaging** (`pyproject.toml`) with console entry points
   `apex` (headless CLI) and `apex-gui` (desktop launcher), and a dynamic version

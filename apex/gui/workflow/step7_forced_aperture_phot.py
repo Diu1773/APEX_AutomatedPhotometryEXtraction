@@ -119,6 +119,8 @@ _FORCED_SIGNATURE_PARAMS = (
     "ref_cat_sharp_min",
     "ref_cat_sharp_max",
     "ref_cat_min_peak_adu",
+    "depth_qc_tolerance_mag",
+    "depth_qc_min_snr",
 )
 
 

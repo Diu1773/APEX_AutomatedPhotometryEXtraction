@@ -24,6 +24,7 @@ from apex.config.parameter_map import (
     read_schema_version,
     toml_value_for_runtime_attr,
 )
+from apex.utils.constants import DEPTH_QC_TOLERANCE_MAG
 
 
 def _as_bool(v, default=False):
@@ -672,6 +673,8 @@ class Parameters:
             apcorr_max_sources=_geti(raw, "apcorr_max_sources", 250),
             apcorr_min_snr=_getf(raw, "apcorr_min_snr", 40.0),
             apcorr_isolation_factor=_getf(raw, "apcorr_isolation_factor", 2.5),
+            depth_qc_tolerance_mag=_getf(raw, "depth_qc_tolerance_mag", DEPTH_QC_TOLERANCE_MAG),
+            depth_qc_min_snr=_getf(raw, "depth_qc_min_snr", 40.0),
             phot_use_qc_pass_only=_as_bool(raw.get("phot_use_qc_pass_only", "false"), False),
             phot_ref_require_apcorr_candidate=_as_bool(raw.get("phot_ref_require_apcorr_candidate", "true"), True),
             phot_ref_apcorr_min_keep=_geti(raw, "phot_ref_apcorr_min_keep", 8),
