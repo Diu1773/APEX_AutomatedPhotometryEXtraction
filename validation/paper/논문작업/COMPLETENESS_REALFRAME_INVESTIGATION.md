@@ -70,6 +70,14 @@ M13-0001-V(7.64px)는 M13 프레임 중에서도 나쁜 seeing(M13 중앙값 6.9
 ## 산출물
 - `fig_completeness_realvssynth.py` → 4곡선(실측 3 + 합성) 다중프레임 사다리 + 컷아웃 하단 스트립.
 - 데이터: `validation/paper/data_realframe_{M67i,NGC6811R,M13V}/` (실측 3), `data/artificial_star/` (합성).
+- **파이프라인 반영 (2026-07-24)**: S/N50 법칙을 APEX 본체의 프레임별 depth QC 게이트로 구현.
+  `apex/analysis/detection_limit.py` (`predict_frame_m50` 등, Qt-free) + step7 `frame_stats.csv`에
+  `predicted_m50`/`observed_m50`(마스터카탈로그 검출률 50% 롤오프)/`depth_delta_mag`/`depth_qc_flag`
+  (기본 허용 0.5 mag, `depth_qc_tolerance_mag`). 상수 `PEAK_SN50_DETECTION=4.05`는
+  `apex/utils/constants.py`, gain은 런타임 config. 검증: `tests/test_detection_limit.py` —
+  7런 재예측 잔차 RMS 0.048 mag; 실 NGC6811 3프레임 step7 재실행에서 predicted vs 주입 실측
+  −0.008/+0.109 mag, observed 롤오프와도 전부 |Δ|<0.17 (모두 "ok"). '예측력 실증' 절(실별
+  검출수 6% 일치)이 predicted↔observed 비교의 근거.
 
 ## 후속 정정 (2026-07-24, 사용자 의심 "어떻게 M67이 딱 맞지?" 적중)
 - 합성 프레임의 S/N50을 직접 계산: **5.19** — 실측 7프레임 법칙(4.05±0.18) 위에 **없음**.

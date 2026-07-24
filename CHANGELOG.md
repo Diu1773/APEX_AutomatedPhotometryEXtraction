@@ -7,6 +7,23 @@ to follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 ## [Unreleased]
 
 ### Added
+- **Per-frame predicted detection limit + depth QC gate (Step 7).** New
+  Qt-free module `apex/analysis/detection_limit.py`: the 50%-completeness
+  magnitude of a frame is predicted from its background noise and PSF peak
+  fraction alone via `m50 = ZP − 2.5·log10(S/N₅₀·σ_e/p_peak)`, with
+  `S/N₅₀ = 4.05 ± 0.18` calibrated by artificial-star injection into 7 real
+  cluster frames (residual RMS ≈ 0.05 mag; constant in
+  `apex/utils/constants.py`, gain from the runtime config). Step 7 now writes
+  `sky_sigma_e`, `p_peak_frame`, `predicted_m50`, `observed_m50` (empirical
+  detection-fraction rolloff over the master catalog), `depth_delta_mag`, and
+  `depth_qc_flag` to `frame_stats.csv`, flagging frames whose observed depth
+  deviates from the prediction by more than `depth_qc_tolerance_mag`
+  (default 0.5 mag — focus / clouds / tracking / defect suspects). The same
+  injection-calibrated completeness also predicts the number of detected
+  real catalog stars to ~6%, grounding the predicted-vs-observed comparison
+  (see `validation/paper/논문작업/COMPLETENESS_REALFRAME_INVESTIGATION.md`).
+  Tests: `tests/test_detection_limit.py` (unit + 7-run calibration
+  reproduction, residual RMS 0.048 mag).
 - **MIT license** (`LICENSE`) — the project is now openly licensed.
 - **pip-installable packaging** (`pyproject.toml`) with console entry points
   `apex` (headless CLI) and `apex-gui` (desktop launcher), and a dynamic version
