@@ -568,6 +568,8 @@ class ForcedPhotWindow(StepWindowBase):
         self._run_started_ts: Optional[float] = None
         self._current_forced_signature: dict | None = None
         self._current_forced_files: list[str] = []
+        self._reuse_initial_cache_status = True
+        self._initial_cache_status: tuple[bool, str] | None = None
 
         super().__init__(
             step_index=6,
@@ -579,6 +581,8 @@ class ForcedPhotWindow(StepWindowBase):
 
         self.setup_step_ui()
         self.restore_state()
+        self._reuse_initial_cache_status = False
+        self._initial_cache_status = None
 
     def setup_step_ui(self):
         info = QLabel(
@@ -1457,9 +1461,9 @@ class ForcedPhotWindow(StepWindowBase):
     def _first_existing(candidates: list[Path]) -> Path | None:
         for path in candidates:
             try:
-                if path.exists() and path.stat().st_size > 0:
+                if path.stat().st_size > 0:
                     return path
-            except Exception:
+            except OSError:
                 continue
         return None
 
@@ -1626,12 +1630,21 @@ class ForcedPhotWindow(StepWindowBase):
         return True, "ok"
 
     def _current_forced_cache_status(self) -> tuple[bool, str]:
+        if self._reuse_initial_cache_status and self._initial_cache_status is not None:
+            return self._initial_cache_status
+
+        def _finish(valid: bool, reason: str) -> tuple[bool, str]:
+            result = (valid, reason)
+            if self._reuse_initial_cache_status:
+                self._initial_cache_status = result
+            return result
+
         try:
             files = list(self.file_manager.get_file_list())
         except Exception as exc:
-            return False, f"file list unavailable: {exc}"
+            return _finish(False, f"file list unavailable: {exc}")
         if not files:
-            return False, "no current frames"
+            return _finish(False, "no current frames")
         use_qc = should_use_frame_quality_qc(
             Path(self.params.P.result_dir),
             self.params.P,
@@ -1644,9 +1657,10 @@ class ForcedPhotWindow(StepWindowBase):
             require_qc=use_qc,
         )
         if not files:
-            return False, "no current frames after QC"
+            return _finish(False, "no current frames after QC")
         signature = self._build_forced_output_signature(list(files))
-        return self._existing_output_covers(list(files), signature)
+        valid, reason = self._existing_output_covers(list(files), signature)
+        return _finish(valid, reason)
 
     def _on_progress(self, current: int, total: int, fname: str):
         self.progress_bar.setMaximum(total)
