@@ -12,11 +12,14 @@ exposure, not a stack or a per-target average**: a dark-sky, sharp 60 s frame (M
 $i$, background noise $\sigma = 5\,e^-$ px$^{-1}$, FWHM 5.2 px), a bright-sky, sharp
 120 s frame (NGC 6811 $R$, $\sigma = 30\,e^-$, 5.3 px), and a bright-sky, soft 60 s
 frame (M13 $V$, $\sigma = 30\,e^-$, 7.4 px); the count-rate magnitude system makes
-depths of different exposure times directly comparable. Stars are injected with the empirical PSF measured from
-each frame, with source Poisson noise, through the identical detection path as the
-science reduction; injections confounded by a pre-existing source are excluded.
-Vertical dotted lines mark the 50% completeness depths, read off where each binned
-curve crosses 0.5 (no functional fit in magnitude space): $m_{50} = 17.65$, $15.64$,
+depths of different exposure times directly comparable. Binned recovered fractions
+are plotted as points with Wilson 95% binomial intervals; **no curve is drawn through
+the data** (AutoPhOT Fig. 12 presentation) — the only curve in the panel is the grey
+dashed synthetic verification frame. Stars are injected with the empirical PSF
+measured from each frame, with source Poisson noise, through the identical detection
+path as the science reduction; injections confounded by a pre-existing source are
+excluded. Vertical dotted lines mark the 50% completeness depths, read off where the
+binned fractions cross 0.5 (no functional fit in magnitude space): $m_{50} = 17.65$, $15.64$,
 and $14.90$, respectively. The 50% depth is a property of the frame — set by sky
 brightness and seeing — not of the method; the grey dashed curve shows the synthetic
 verification frame (known truth; $\sigma \simeq 8\,e^-$, FWHM 3.4 px, $m_{50}=17.59$),
@@ -68,9 +71,12 @@ family, 3,000 per frame), seeds fixed for reproducibility. Per-frame numbers:
 **(a)** 관측 조건 범위를 대표하는 세 실측 프레임 — **각각 스택이 아닌 단일 노출 1장**:
 어두운 하늘·양호한 시상(M67 $i$, 60초), 밝은 하늘·양호한 시상(NGC 6811 $R$, 120초),
 밝은 하늘·불량 시상(M13 $V$, 60초) — 의 주입 등급 대비 회수율(count-rate 기기등급,
-ZP = 25; 0.25등급 bin). count-rate 등급계라 노출시간이 달라도 깊이가 직접 비교된다. 각 프레임에서 측정한 경험적
-PSF로 광자 잡음을 포함해 주입하며, 과학 리덕션과 동일한 검출 경로를 통과한다. 점선은
-50% 완전도 깊이로, 등급 공간의 함수 피팅 없이 곡선이 0.5를 지나는 지점을 읽은 값이다:
+ZP = 25; 0.25등급 bin). count-rate 등급계라 노출시간이 달라도 깊이가 직접 비교된다.
+bin별 회수율은 **Wilson 95% 이항 구간을 단 점**으로 표시하며 **데이터 위에 곡선을 긋지
+않는다**(AutoPhOT Fig. 12 표현) — 패널의 유일한 곡선은 회색 파선의 합성 verification
+프레임이다. 각 프레임에서 측정한 경험적 PSF로 광자 잡음을 포함해 주입하며, 과학
+리덕션과 동일한 검출 경로를 통과한다. 점선은 50% 완전도 깊이로, 등급 공간의 함수 피팅
+없이 bin 점들이 0.5를 지나는 지점을 읽은 값이다:
 각각 $m_{50}=17.65,\ 15.64,\ 14.90$. **깊이는 하늘 밝기와 시상이 정하는 프레임 속성**
 이며, 가장 좋은 실측 프레임은 합성 verification 프레임(회색 파선, $m_{50}=17.59$)과
 같은 깊이에 도달한다. 하단 스트립: 가장 얕은 프레임(M13 $V$)에 실제로 주입된 별 6개

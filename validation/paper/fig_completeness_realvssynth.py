@@ -71,12 +71,22 @@ def read_off(mag, comp, level=0.5, increasing=False):
 
 
 def binned(x, rec, edges, nmin=15):
-    xs, cs = [], []
+    xs, cs, ns = [], [], []
     for lo, hi in zip(edges[:-1], edges[1:]):
         m = (x >= lo) & (x < hi)
         if m.sum() >= nmin:
-            xs.append(0.5 * (lo + hi)); cs.append(rec[m].mean())
-    return np.array(xs), np.array(cs)
+            xs.append(0.5 * (lo + hi)); cs.append(rec[m].mean()); ns.append(m.sum())
+    return np.array(xs), np.array(cs), np.array(ns)
+
+
+def wilson95(p, n):
+    """Wilson 95% binomial interval half-widths (lo, hi) for fraction p of n."""
+    z = 1.96
+    den = 1 + z * z / n
+    cen = (p + z * z / (2 * n)) / den
+    hw = z * np.sqrt(p * (1 - p) / n + z * z / (4 * n * n)) / den
+    return (np.maximum(p - np.clip(cen - hw, 0, 1), 0),
+            np.maximum(np.clip(cen + hw, 0, 1) - p, 0))
 
 
 def load_run(sub, frame_fits):
@@ -106,10 +116,10 @@ def main() -> int:
         r = load_run(sub, fp)
         r.update(label=label, expt=expt, ckey=ckey, mk=mk, hero=hero)
         e = np.arange(np.floor(r["mag"].min() / .25) * .25, r["mag"].max() + .25, .25)
-        r["mx"], r["mc"] = binned(r["mag"], r["rec"], e)
+        r["mx"], r["mc"], r["mn"] = binned(r["mag"], r["rec"], e)
         r["m50"] = read_off(r["mx"], r["mc"])
         le = np.arange(np.log10(r["snr"]).min(), np.log10(r["snr"]).max() + .12, .12)
-        r["sx"], r["sc"] = binned(np.log10(r["snr"]), r["rec"], le)
+        r["sx"], r["sc"], r["sn"] = binned(np.log10(r["snr"]), r["rec"], le)
         r["s50"] = 10 ** read_off(r["sx"], r["sc"], increasing=True)
         runs.append(r)
 
@@ -122,7 +132,7 @@ def main() -> int:
     allx = np.concatenate([np.log10(r["snr"]) for r in runs])
     allr = np.concatenate([r["rec"] for r in runs])
     pe = np.arange(allx.min(), allx.max() + .08, .08)
-    px, pc = binned(allx, allr, pe, nmin=40)
+    px, pc, pn = binned(allx, allr, pe, nmin=40)
     def model(x, A, mu, w):
         return A / 2 * (1 + _erf((x - mu) / (np.sqrt(2) * w)))
     popt, _ = curve_fit(model, px, pc, p0=[0.97, np.log10(4.0), 0.1])
@@ -142,8 +152,8 @@ def main() -> int:
     syn = syn[~syn["baseline_confounded"].astype(bool)]
     se = np.arange(np.floor(syn.magnitude_true.min() / .25) * .25,
                    syn.magnitude_true.max() + .25, .25)
-    sx_, sc_ = binned(syn.magnitude_true.to_numpy(float),
-                      syn.recovered.to_numpy(bool), se)
+    sx_, sc_, _ = binned(syn.magnitude_true.to_numpy(float),
+                         syn.recovered.to_numpy(bool), se)
     ax.plot(sx_, sc_, "--", color=PALETTE["grey"], lw=1.3, zorder=3,
             label="synthetic (verification)")
     m50_m13 = 14.9
@@ -151,8 +161,11 @@ def main() -> int:
         if not r["hero"]:
             continue
         col = C[r["ckey"]]
-        ax.plot(r["mx"], r["mc"], r["mk"], color=col, lw=2.0, ms=3.4, mfc=col,
-                zorder=6, label=f"{r['label']} — single {r['expt']} frame")
+        elo, ehi = wilson95(r["mc"], r["mn"])
+        ax.errorbar(r["mx"], r["mc"], yerr=[elo, ehi], fmt=r["mk"].lstrip("-"),
+                    color=col, ms=3.6, mfc=col, mew=0,
+                    elinewidth=0.8, capsize=0, zorder=6,
+                    label=f"{r['label']} — single {r['expt']} frame")
         ax.axvline(r["m50"], color=col, lw=0.9, ls=":", zorder=2, alpha=0.75)
         ha = "right" if r["label"].startswith("M13") else ("left" if r["label"].startswith("NGC") else "center")
         dx = -0.08 if ha == "right" else (0.08 if ha == "left" else 0.0)
