@@ -42,3 +42,20 @@ Sources (원고 인용 전 재검증):
 - https://iopscience.iop.org/article/10.1088/1538-3873/aabadf (Tonry 2018 ATLAS)
 - Kessler+2015 DiffImg (DES-SN fakes 상시주입 모니터링)
 - https://iopscience.iop.org/article/10.3847/1538-4365/ad2600 (JWST ERS DOLPHOT)
+
+## 원문 그림 확인 (2026-07-24, reffigs/에 사본)
+Kessler+2015 (arXiv:1507.05137, ar5iv 렌더)에서 **우리 설계의 1:1 선례 3장** 확인:
+- **Fig 6** (`kessler2015_fig6_perepoch_maghist.png`): 에폭 1개의 fake 등급분포 + 검출된 것
+  음영 + m_eff=1/2 점선 — **우리 (a)의 프레임당 판독과 동일 논리** (deep/shallow 필드 병렬).
+- **Fig 7** (`..._fig7_m50_distribution.png`): "각 항목 = 에폭 1개"인 **m_eff(0.5)의 분포
+  히스토그램**(밴드×deep/shallow) — **우리 realized_m50.csv 66프레임의 정확한 선례.**
+  C 그림의 실현-깊이 축은 이 형식(분포)으로 제시 가능. 단 Kessler는 예측 없이 모니터만 —
+  **우리의 법칙 기반 predicted-vs-realized는 Kessler를 넘어서는 기여점.**
+- **Fig 8** (`..._fig8_eff_vs_SN_splits.png`): 검출효율 ε vs **계산 S/N** + ZP/PSF/σ_sky
+  절반 분할 곡선 — **우리 (b) S/N 붕괴의 직접 선례.** PSF 분할에서 곡선이 살짝 갈라짐 =
+  우리 FWHM 트렌드와 동일 현상 (부호는 축 정의 차이: Kessler는 총-flux S/N이라 broad가
+  오른쪽, 우리는 peak S/N이라 sharp가 오른쪽 — 같은 물리).
+- **Balrog Y6 Fig 3** (`balrog_y6_fig3_detrate_griz.png`): 서베이 전체 집계 검출률 vs mag,
+  90% 수직선. 전이가 우리보다 완만한 건 전 footprint 조건 분산이 합쳐진 것 — 집계형의 특징.
+→ 결론: C 그림 = (i) per-frame m50 분포(Kessler Fig7 형식) + (ii) predicted vs realized 산점
+  (우리 추가 기여) 2패널이 관행과 기여를 모두 만족. (b)에 FWHM-분할 곡선 옵션(Kessler Fig8 방식).
