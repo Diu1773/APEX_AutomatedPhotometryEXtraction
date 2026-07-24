@@ -30,6 +30,7 @@ Kovács(HATNet)=CCD, Ofek/Masci(ZTF)=대형 CCD 모자이크. APEX=Sony IMX455 *
 | **완전도(F5)** | Haynes 2002 / DES Balrog / DAOPHOT ADDSTAR / AutoPhOT App.D | 실측 3프레임(M67i·NGC6811R·M13V) 주입-회수 + 합성 verification | m50 17.7/15.6/14.9 (sky+seeing 추적), M67실측=합성깊이, 컷아웃 사다리 | `fig_completeness_realvssynth.py` |
 | **측성(F6)** | Ofek 2019 / Masci 2019 (ZTF) | 실측 66프레임 3성단 WCS QC | Gaia 잔차 중앙값 0.26″, 66/66 solved | `fig_astrometry.py` |
 | **독립엔진 교차(F10)** | Schechter 1993 (DoPHOT vs DAOPHOT) / AutoPhOT Fig14 | NGC6811 V, APEX vs IRAF phot, 499별 고정좌표 | MAD 9.7 mmag, r=0.99989, faint까지 평평 | `fig_iraf_crosscheck.py` |
+| **QC 깊이(신규 기여)** | Kessler 2015 Fig7(형식) + 우리 예측기 | 실측 66프레임(유효 57), predicted vs realized | **RMS 78 mmag**, 순환가드 9배제, step7 QC게이트 동일경로 | `fig_qc_depth.py` |
 | **정밀도 floor(예비)** | Honeycutt 1992 단독 (CC/Kovács는 detrending 논문 — LC 재현으로 이관) | 실측 M67 10프레임 r, 1073별 | floor g/r/i = 5.4/5.2/6.7 mmag, 에러모델 일치 | `fig_precision_floor.py` |
 
 각 그림의 정직성 포인트:

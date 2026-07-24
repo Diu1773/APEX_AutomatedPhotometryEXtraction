@@ -178,14 +178,14 @@ CC/Kovács 귀속 제거(둘은 detrending 논문 — 수천 에폭 전후비교
 apcorr_summary는 프레임당 단일값뿐 — 다중구경 재실행 필요."""),
     N("pend_bouguer", "소광 Bouguer", 6, """# zp vs airmass (Hardie 1962)
 frame_zeropoint.csv에 airmass 있음. 단 ZP 레퍼런스 얽힘 + airmass span 미확인."""),
-    N("pend_fig_a_layout", "fig(a)=C안 진행중", 6, """# fig(a) 배치 — **C안 확정**(2026-07-24, "C로 하던가")
-Kessler/ATLAS식 "예측 vs 실현 깊이" QC 그림. 조사=`FIG_A_PRESENTATION_SURVEY.md`.
-- 예측 절반: 병렬 세션 task_5bb4af3e(predict-m50 QC 게이트)가 구현 중 — 머지 대기
-- 실현 절반: **완료** — `extract_realized_depth.py` → `data_qc_depth/realized_m50.csv`,
-  66프레임(유효 57). 실별 참등급=동일필터 중앙값 count-rate mag(Eddington 제거).
-- **순환 차단**: 필터 최심 프레임은 master 꼬리가 자기검출로 구성→깊이 부풂(M13 R +1.45 사례).
-  master 한계 margin ≤0.7mag → depth_valid=False. 유효 주입프레임 6개 대조: RMS 0.15 mag.
-- 남은 일: 머지 후 predicted vs realized 산점 조립(+블렌드 매칭 +0.1 편향 캡션 명시)"""),
+    N("fig_qc_depth", "QC깊이 그림(완성)", 1, """# fig_qc_depth — 예측 vs 실현 깊이 (C안 완성, 2026-07-24)
+`fig_qc_depth.py` → `figures/fig_qc_depth.png` · Kessler Fig7(분포)+우리 기여(예측) 2패널
+- (a) 유효 57 단일노출의 실현 m50 분포(타깃별 스택) — 에폭별 깊이 모니터링
+- (b) **predicted(노이즈+PSF만, 검출 전) vs realized(실별): RMS 78 mmag**, ±0.5 QC밴드,
+  주입보정 7프레임 검은테, 배제 9프레임([[done_lawtest|법칙]]의 순환가드) 회색 공백원
+- 예측기 = 머지된 `apex/analysis/detection_limit.py` (PEAK_SN50=4.05, step7 QC게이트와 동일경로)
+- 실현 = `extract_realized_depth.py`(Eddington-safe 중앙값등급, master-한계 순환가드)
+- 조사 이력: `FIG_A_PRESENTATION_SURVEY.md` (Kessler 형식귀속 한정 포함)"""),
     N("pend_manuscript", "원고 §3.6 갱신", 6, """# 원고 반영 대기
 §3.6을 다중프레임 실측주입+법칙으로 갱신 · §3.7(측성)·§3.15(시계열) 스텁 채우기 ·
 [[dec_citation_fixes|인용 6건]] 반영 · Data Availability 그림번호 깨짐 수정."""),
@@ -222,7 +222,7 @@ EDGES = [
     ("pend_zp_resid", "inv_bfilter"),
     ("done_lawtest", "data_injections"), ("pend_manuscript", "dec_citation_fixes"),
     ("hub_repro", "pend_zp_resid"), ("hub_repro", "pend_cog"), ("hub_repro", "pend_bouguer"),
-    ("hub_repro", "pend_lc_period"), ("fig_completeness", "pend_fig_a_layout"),
+    ("hub_repro", "pend_lc_period"), ("fig_completeness", "fig_qc_depth"), ("fig_qc_depth", "data_injections"),
 ]
 
 
