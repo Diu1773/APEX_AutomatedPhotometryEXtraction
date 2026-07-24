@@ -47,7 +47,7 @@ RASTI/PASP급. 원고 `validation/paper/MANUSCRIPT_ko.md`(+영문). 구조 v4 = 
 `fig_completeness_realvssynth.py` → `figures/fig_completeness_realvssynth.png`
 - 재현: [[ref_haynes|Haynes 2002]] · [[ref_balrog|DES Balrog]] · [[ref_daophot|DAOPHOT ADDSTAR]] · [[ref_autophot|AutoPhOT App.D]]
 - 실측 3+4프레임: M67 i **m50 17.65** / NGC6811 R **15.64** / M13 V **14.90** (+법칙검증용 4프레임 추가)
-- 인셋: m50 = C − 2.5·log σ − 5·log FWHM (지수 이론고정, C만 fit) — [[dec_m13_ok|M13 이상치 아님]]
+- (b) S/N 붕괴 패널: 7프레임 전부 peak-S/N축에서 단일 erf로 붕괴, **S/N50=4.05±0.18** (3.2σ 매치드필터와 일치) — [[dec_m13_ok|M13 이상치 아님]]
 - 하단: 실주입별 컷아웃 사다리 m13→16 (`make_injection_cutouts.npz`, inject_flux_catalog 정규경로)
 - 합성은 verification rung으로만: [[dec_synth_ok|합성 낙관 아님(반증됨)]] · 조사: [[inv_completeness|완전도 조사노트]]"""),
     N("fig_astrometry", "F6 측성(Gaia잔차)", 1, """# F6 — 측성 검증
