@@ -66,3 +66,17 @@ Kessler는 **차감 이미지**(노이즈 2배·정렬잔상 지배)에 가짜 �
 → 원고에선 Kessler를 **표현·운영 형식의 선례로만** 인용(에폭별 깊이 분포 Fig7 + 효율 vs S/N
 Fig8 + 상시 QC 운영). 측정 방법의 귀속은 DAOPHOT ADDSTAR·성단 AST·Balrog 계열로.
 "we follow the fake-monitoring presentation of DES-SN" 수준의 문구로 한정.
+
+## DAOPHOT 원문(Stetson 1987, PASP 99,191) 그림 전수 확인 (2026-07-24, reffigs/에 PDF)
+**반전: DAOPHOT 논문 자체에는 완전도 그림이 없다.** ADDSTAR 본문(p.194)이 "등급별 발견확률
+결정 가능"이라며 **McClure+1985 §IV.B로 위임** — 완전도-곡선 그림 관행은 후속 성단 논문들
+(McClure 1985, Stetson&Harris 1988 계열)에서 확립된 것. 원고에서 "ADDSTAR 계보"는 **방법
+귀속**으로만, 그림 형식 귀속은 성단 AST 전통/AutoPhOT/Balrog로.
+- Fig 1: FIND = 낮춘-가우시안 컨볼루션(매치드필터) 1D 시연 — 별/은하/CR/불량픽셀 구분.
+  SEP filtered-detect의 조상. **p.197에 "H_min ... a five-sigma detection, say"** — 임계값이
+  관례("say")임을 원조가 자인 → 우리 3.2σ 방어(§3.9 스윕)와 정합.
+- Fig 2: sharp·round vs Δmag 산점 + 컷(0.2≤sharp≤1.0 등) — **APEX step4 CSV의
+  sharpness/roundness1/roundness2 컬럼의 직계 조상.**
+- Fig 3/4 + Table I/II: 검증 = M12·47Tuc **CMD 주계열 폭**(sky-fitting 방법별 |Δ| 비교) —
+  "과학 산출물의 타이트함"으로 검증하는 전통 = 우리 CMD 재현 그림(Fig8 구판)의 계보.
+  방법-파라미터 스윕 표 = 우리 §3.9 강건성 스윕의 조상.
