@@ -59,3 +59,10 @@ Kessler+2015 (arXiv:1507.05137, ar5iv 렌더)에서 **우리 설계의 1:1 선�
   90% 수직선. 전이가 우리보다 완만한 건 전 footprint 조건 분산이 합쳐진 것 — 집계형의 특징.
 → 결론: C 그림 = (i) per-frame m50 분포(Kessler Fig7 형식) + (ii) predicted vs realized 산점
   (우리 추가 기여) 2패널이 관행과 기여를 모두 만족. (b)에 FWHM-분할 곡선 옵션(Kessler Fig8 방식).
+
+## ⚠ Kessler 인용 한정 (2026-07-24, 사용자 지적 "초신성이랑 다르지 않냐")
+Kessler는 **차감 이미지**(노이즈 2배·정렬잔상 지배)에 가짜 초신성을 **은하 위에** 심는 것 —
+우리(직접 프레임에 인공별)와 측정 자체가 다름. S/N50 ~5(차감) vs 4.05(직접)는 비교 불가.
+→ 원고에선 Kessler를 **표현·운영 형식의 선례로만** 인용(에폭별 깊이 분포 Fig7 + 효율 vs S/N
+Fig8 + 상시 QC 운영). 측정 방법의 귀속은 DAOPHOT ADDSTAR·성단 AST·Balrog 계열로.
+"we follow the fake-monitoring presentation of DES-SN" 수준의 문구로 한정.
