@@ -106,7 +106,7 @@ NGC6811 21fr(BVR). M5는 step7 없음. WCS QC 66프레임 전부 solved.
     N("data_injections", "실측주입 7런", 3, """# validation/paper/data_realframe_*
 run_artificial_star_suite(reference_frame=실측) 60trial×50별. stars.csv는 git 추적.
 - 대표3: M67i(m50 17.65) · NGC6811R(15.64) · M13V(14.90)
-- 법칙용4(2026-07-24): M67r_mid · M67g_broad · NGC6811R_broad · M13R_sharp — [[pend_lawtest|인셋 렌더 대기]]
+- 법칙용4(2026-07-24): M67r_mid · M67g_broad · NGC6811R_broad · M13R_sharp — [[done_lawtest|법칙 검증 완료]]
 - 컷아웃: `data_realframe_M13V/injection_cutouts.npz`"""),
     N("data_iraf", "IRAF 교차 런", 3, """# benchmark/runs/
 `ngc6811_iraf_allapex_v1`(499별, 본검증) · `ngc457_iraf_crosscheck_g0016_v1`(278별, 구버전).
@@ -155,9 +155,12 @@ Gaia BP faint 감광 유죄(ref +0.022), APEX 무죄(vs PS1 +0.008 평평).
 교훈: faint 검증에 BP기반 참조 금지 — [[pend_zp_resid|광도보정 잔차]] 설계 시 필수 반영."""),
 
     # ── 보류·미결 (cat6) ──
-    N("pend_lawtest", "법칙 인셋(진행중)", 6, """# 4프레임 추가주입 → 7점 법칙 인셋
-M67r_mid·M67g_broad·NGC6811R_broad·M13R_sharp 주입 진행중(60tr×50).
-완료되면 `fig_completeness_realvssynth.py` 재실행 → 인셋 N=7로 렌더+커밋. (2026-07-24)"""),
+    N("done_lawtest", "법칙 검증(완료)", 5, """# 7프레임 검출법칙 검증 — 완료 (2026-07-24)
+m50 = C − 2.5logσ − 5logFWHM, **지수 이론고정·C만 fit: 잔차 RMS 103 mmag** (동적범위 3.4mag, N=7).
+- 추가 4런: M67r_mid·M67g_broad·NGC6811R_broad·M13R_sharp (off-diagonal로 σ·FWHM 항 분리)
+- **교훈**: FWHM은 frame_stats(밝은별)가 아니라 **각 런의 주입커널**(empirical_psf.fits 반높이면적)로
+  — soft 프레임에서 9.30 vs 7.23px 괴리가 0.4mag 이탈 일으켰음(추적해 해소)
+- 이 법칙이 [[dec_repro_def|기기무관 재현]]의 실체 — 절대 깊이가 아니라 법칙이 검증 대상"""),
     N("pend_precision_fix", "floor 귀속 정정", 6, """# 정밀도 floor 그림 정정 (미승인 제안)
 CC/Kovács 귀속 제거 → Honeycutt 단독 + "single-night N=10 예비" 라벨.
 확정판은 [[pend_lc_period|LC]]에서 SYSREM 전후 비교로. **사용자 승인 대기.**"""),
@@ -189,7 +192,7 @@ EDGES = [
     ("fig_completeness", "ref_daophot"), ("fig_completeness", "ref_autophot"),
     ("fig_completeness", "data_injections"), ("fig_completeness", "data_synth"),
     ("fig_completeness", "inv_completeness"), ("fig_completeness", "dec_synth_ok"),
-    ("fig_completeness", "dec_m13_ok"), ("fig_completeness", "pend_lawtest"),
+    ("fig_completeness", "dec_m13_ok"), ("fig_completeness", "done_lawtest"),
     # F6
     ("fig_astrometry", "ref_ofek_masci"), ("fig_astrometry", "data_reprocess"),
     # F10
@@ -205,7 +208,7 @@ EDGES = [
     ("pend_lc_period", "ref_cc_kovacs"), ("pend_lc_period", "ref_period"),
     ("pend_lc_period", "data_lc"), ("pend_precision_fix", "ref_cc_kovacs"),
     ("pend_zp_resid", "inv_bfilter"),
-    ("pend_lawtest", "data_injections"), ("pend_manuscript", "dec_citation_fixes"),
+    ("done_lawtest", "data_injections"), ("pend_manuscript", "dec_citation_fixes"),
     ("hub_repro", "pend_zp_resid"), ("hub_repro", "pend_cog"), ("hub_repro", "pend_bouguer"),
     ("hub_repro", "pend_lc_period"),
 ]
