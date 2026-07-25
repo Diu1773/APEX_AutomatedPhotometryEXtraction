@@ -662,7 +662,11 @@ class FITSViewerWidget(QWidget):
     def __init__(self, parent=None):
         super().__init__(parent)
         self.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
-        self.setMinimumHeight(360)
+        # A floor, not a target: the Expanding policy above already claims the
+        # spare room. 360 was more than a 1280x704 laptop screen could give
+        # Step 4 once the plot and table below took their share, which pushed
+        # the whole window past the monitor.
+        self.setMinimumHeight(240)
 
         # data range cache (raw pixel units) — updated in set_data()
         self._data_min: float = 0.0

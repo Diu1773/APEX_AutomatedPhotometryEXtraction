@@ -14,7 +14,7 @@ from PyQt5.QtWidgets import (
 )
 from PyQt5.QtCore import Qt, QThread, pyqtSignal, QTimer
 from PyQt5.QtGui import QColor
-from apex.gui.layout_rules import FittedDialog, tame_canvas
+from apex.gui.layout_rules import FittedDialog, scroll_wrap, tame_canvas
 from apex.gui.widgets.fits_viewer import FITSViewerWidget, OverlayMarker
 from pathlib import Path
 from typing import Optional
@@ -2123,7 +2123,9 @@ class SourceDetectionWindow(StepWindowBase):
         self.qc_tab = QWidget()
         self.qc_layout = QVBoxLayout(self.qc_tab)
         self.tabs.addTab(self.detect_tab, "Detection")
-        self.tabs.addTab(self.qc_tab, "QC")
+        # Tallest page (1280 px): scroll it so it does not set the window's
+        # minimum height — see layout_rules.scroll_wrap.
+        self.tabs.addTab(scroll_wrap(self.qc_tab), "QC")
         self.content_layout.addWidget(self.tabs)
 
         # === Info Label ===

@@ -137,7 +137,7 @@ from PyQt5.QtWidgets import (
 )
 from PyQt5.QtCore import Qt, QThread, pyqtSignal
 
-from apex.gui.layout_rules import prevent_collapse, tame_canvas
+from apex.gui.layout_rules import prevent_collapse, scroll_wrap, tame_canvas
 from apex.gui.theme import Tokens, style_button
 from apex.gui.tools.tool_window_base import ToolWindowBase
 from apex.gui.workflow.lc.step11_period_analysis import PeriodAnalysisWorker
@@ -543,7 +543,12 @@ class TransitToolWindow(ToolWindowBase):
         left.setMaximumWidth(340)
         ll = QVBoxLayout(left)
         ll.setContentsMargins(4, 4, 4, 4)
-        splitter.addWidget(left)
+        # The control stack is 1345 px tall — taller than a laptop screen — so
+        # it, not the plots, was setting the window's minimum height. Scroll it
+        # (see layout_rules.scroll_wrap); +20 px for the scrollbar.
+        left_scroll = scroll_wrap(left)
+        left_scroll.setMaximumWidth(360)
+        splitter.addWidget(left_scroll)
 
         # Target + parameter fetch
         tgt_group = QGroupBox("Target && Prior Parameters")  # && — a bare & renders as a mnemonic underline

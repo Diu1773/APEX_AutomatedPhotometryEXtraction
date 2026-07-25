@@ -169,7 +169,7 @@ def _resolve_check_filter(filters) -> str | None:
     unique_filters = sorted({str(f) for f in filters if str(f).strip() and str(f).lower() != "nan"})
     return unique_filters[0] if len(unique_filters) == 1 else None
 
-from apex.gui.layout_rules import FittedDialog
+from apex.gui.layout_rules import FittedDialog, scroll_wrap
 from apex.gui.theme import Tokens, style_button
 from apex.gui.tools.tool_window_base import ToolWindowBase
 from apex.gui.workflow.lc.step11_period_analysis import PeriodAnalysisWorker
@@ -258,7 +258,12 @@ class EclipsingBinaryToolWindow(ToolWindowBase):
         left.setMaximumWidth(400)
         ll = QVBoxLayout(left)
         ll.setContentsMargins(4, 4, 4, 4)
-        splitter.addWidget(left)
+        # The control stack is 1063 px tall — taller than a laptop screen — so
+        # it, not the plots, was setting the window's minimum height. Scroll it
+        # (see layout_rules.scroll_wrap); +20 px for the scrollbar.
+        left_scroll = scroll_wrap(left)
+        left_scroll.setMaximumWidth(420)
+        splitter.addWidget(left_scroll)
 
         # Light curve
         lc_group = QGroupBox("Light Curve")
