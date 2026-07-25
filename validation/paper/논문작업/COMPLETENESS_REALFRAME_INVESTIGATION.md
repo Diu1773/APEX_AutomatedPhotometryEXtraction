@@ -121,3 +121,16 @@ TSV flux_e는 apcorr 반영 총전자 확인.)
 - **검증**: depth_valid 주입 프레임 6개에서 실현−주입 = 평균 +0.11, RMS 0.15 mag. 남은 +0.1
   편향은 혼잡 블렌드 매칭(실별은 이웃 검출에 매칭될 수 있음) — QC 그림 캡션에 명시할 것.
 - 다음: QC 게이트 머지 후 predicted vs realized 산점(57 valid 프레임) 조립.
+
+## C안 완결 — 그림·캡션 (2026-07-25)
+- **그림 완성**(d107606): `fig_qc_depth.py` → (a) 실현 m50 분포 66프레임, (b) 예측 vs 실현
+  산점 57프레임. **RMS 78 mmag, 평균 +38 mmag, 최악 206 mmag, 57/57이 ±0.5 허용대역 내.**
+- **동일경로 확인**: 그림이 `apex.analysis.detection_limit`의 `predict_frame_m50`·
+  `estimate_peak_fraction_from_stars`를 직접 import — Step 7 QC 게이트와 같은 함수라
+  그림과 배포 게이트가 어긋날 수 없음. 예측은 픽셀 재독 없음(TSV bkg_std + det_uid 조인).
+- **캡션 작성 완료**: `captions/fig_qc_depth.md` (EN+KO). 조사노트가 요구했던 **+38 mmag
+  블렌드 매칭 편향을 "알려진 편향"으로 명시**했고, 순환 guard(margin ≤0.7 mag, 9/66 제외)와
+  M13 R 사례(실현 17.26 vs 예측 15.59, +1.45 순환 부풀림)를 guard의 실증으로 서술.
+- 데이터 범위: 66프레임 30–480s, 6필터(B V R g r i), valid 57(M67 30·NGC6811 20·M13 7),
+  FWHM 5.2–9.3px, 프레임당 별 1139–2001.
+- **남은 것**: 원고 §(운영 QC) 본문 반영 — 아직 MANUSCRIPT에 fig_qc_depth 언급 없음.
