@@ -547,6 +547,11 @@ class TransitToolWindow(ToolWindowBase):
         # it, not the plots, was setting the window's minimum height. Scroll it
         # (see layout_rules.scroll_wrap); +20 px for the scrollbar.
         left_scroll = scroll_wrap(left)
+        # Width must stay pinned: scroll_wrap turns the horizontal scrollbar
+        # off, so anything narrower than the 340 px column would clip the
+        # "fix" checkboxes with no way to scroll to them. Only the HEIGHT
+        # minimum is meant to disappear here. +20 for the vertical scrollbar.
+        left_scroll.setMinimumWidth(360)
         left_scroll.setMaximumWidth(360)
         splitter.addWidget(left_scroll)
 

@@ -187,9 +187,16 @@ def scroll_wrap(widget: QWidget, *, horizontal: bool = False) -> QScrollArea:
     Measured on the 1280x704 laptop box: Step 7 1156 -> 698 px, Step 6
     727 -> 647, the variable-star tool 1157 -> 605.
 
-    Do **not** wrap a page that already contains a ``QScrollArea`` — nested
-    scrolling leaves the user unsure which surface they are scrolling. Thin
-    that page out (collapse groups, move rarely-used controls) instead.
+    Two traps:
+
+    * The wrap hides the *width* minimum as well, and the horizontal scrollbar
+      is off by default — so a wrapped fixed-width column can be squeezed by
+      its splitter and clip its own controls with no way to scroll sideways.
+      Pin the width yourself (``setMinimumWidth``) whenever the content has a
+      fixed or capped width; only the height minimum is meant to vanish.
+    * Do **not** wrap a page that already contains a ``QScrollArea`` — nested
+      scrolling leaves the user unsure which surface they are scrolling. Thin
+      that page out (collapse groups, move rarely-used controls) instead.
     """
     scroll = QScrollArea()
     scroll.setWidgetResizable(True)
