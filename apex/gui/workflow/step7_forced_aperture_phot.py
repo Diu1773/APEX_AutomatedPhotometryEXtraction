@@ -78,6 +78,7 @@ from apex.utils.constants import (
     EXPTIME_HEADER_KEYS,
 )
 from apex.utils.noise_params import resolve_effective_noise_params
+from apex.gui.layout_rules import scroll_wrap
 
 _GC_N_STEPS = 14   # number of radii in the growth curve
 _FORCED_SIGNATURE_FILE = "forced_phot_signature.json"
@@ -837,7 +838,9 @@ class ForcedPhotWindow(StepWindowBase):
         ap_layout.addWidget(self.apcorr_table)
         tab0_layout.addWidget(ap_group)
 
-        self._apcorr_tab_index = self.tabs.addTab(tab0, "Apcorr")
+        # Tallest page (547 px): scroll it so it does not set the window's
+        # minimum height — see layout_rules.scroll_wrap.
+        self._apcorr_tab_index = self.tabs.addTab(scroll_wrap(tab0), "Apcorr")
 
         # ── Tab 2: Photometry Results ──────────────────────────────────────────
         tab1 = QWidget()

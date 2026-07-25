@@ -26,9 +26,9 @@ windows follow.
 
 from __future__ import annotations
 
-from PyQt5.QtCore import QSize
+from PyQt5.QtCore import QSize, Qt
 from PyQt5.QtWidgets import (
-    QApplication, QDialog, QSizePolicy, QSplitter, QWidget,
+    QApplication, QDialog, QFrame, QScrollArea, QSizePolicy, QSplitter, QWidget,
 )
 
 # ── Tunables (the whole policy in one place) ─────────────────────────────────
@@ -171,6 +171,33 @@ def tame_canvas(canvas: QWidget, *, min_w: int = CANVAS_MIN_W,
     if expanding:
         canvas.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
     return canvas
+
+
+def scroll_wrap(widget: QWidget, *, horizontal: bool = False) -> QScrollArea:
+    """Put *widget* in a scroll area so it stops driving the window minimum.
+
+    A ``QScrollArea`` reports a small fixed ``minimumSizeHint`` (~69 px)
+    whatever it contains, because scrolling is how it copes with overflow.
+    That property is the cure for root cause #1: a ``QTabWidget`` takes the
+    *maximum* minimum over its pages, so a single tall page drags the whole
+    window past the screen and pushes the nav row out of reach. Wrapping only
+    that page drops the window's minimum to the next-tallest page; the page
+    scrolls instead of the window growing.
+
+    Measured on the 1280x704 laptop box: Step 7 1156 -> 698 px, Step 6
+    727 -> 647, the variable-star tool 1157 -> 605.
+
+    Do **not** wrap a page that already contains a ``QScrollArea`` — nested
+    scrolling leaves the user unsure which surface they are scrolling. Thin
+    that page out (collapse groups, move rarely-used controls) instead.
+    """
+    scroll = QScrollArea()
+    scroll.setWidgetResizable(True)
+    scroll.setFrameShape(QFrame.NoFrame)
+    if not horizontal:
+        scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+    scroll.setWidget(widget)
+    return scroll
 
 
 def prevent_collapse(splitter: QSplitter, *, min_panes: int | None = None) -> QSplitter:

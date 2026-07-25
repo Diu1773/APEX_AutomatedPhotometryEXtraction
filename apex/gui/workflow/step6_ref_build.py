@@ -55,6 +55,7 @@ from apex.utils.step_paths import (
 )
 from apex.utils.common_helpers import normalize_filter_key, safe_float as _safe_float
 from apex.utils.io_utils import coerce_int64_source_id
+from apex.gui.layout_rules import scroll_wrap
 from apex.utils.qc_utils import filter_files_by_qc, should_use_frame_quality_qc
 from apex.utils.cache_utils import (
     norm_path_key,
@@ -1431,7 +1432,9 @@ class RefBuildWindow(StepWindowBase):
         self.plot_canvas = FigureCanvas(Figure(figsize=(8, 4)))
         self.plot_canvas.setMinimumHeight(260)
         plot_layout.addWidget(self.plot_canvas, 1)
-        self.tabs.addTab(plot_tab, "Plot")
+        # Tallest page (318 px): scroll it so it does not set the window's
+        # minimum height — see layout_rules.scroll_wrap.
+        self.tabs.addTab(scroll_wrap(plot_tab), "Plot")
 
         self.content_layout.addWidget(self.tabs)
 
