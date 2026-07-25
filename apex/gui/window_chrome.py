@@ -72,7 +72,10 @@ class WindowChromeMixin:
         btn = QPushButton(label)
         style_button(btn, height=Tokens.H_COMPACT)
         if min_width:
-            btn.setFixedWidth(int(min_width))
+            # A floor, never a cap: a fixed width clips any label wider than the
+            # number (which was measured on one font/scale and does not survive
+            # a different one — "Controls" needs 166px, not the 86 it was given).
+            btn.setMinimumWidth(int(min_width))
         if tooltip:
             btn.setToolTip(tooltip)
         if callable(on_click):
