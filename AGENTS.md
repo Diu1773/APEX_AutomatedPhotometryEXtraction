@@ -25,3 +25,49 @@ There is no committed test suite yet. For new logic, add focused pytest tests un
 ## Commit & Pull Request Guidelines
 
 Recent history uses concise lowercase prefixes such as `feat:`, `fix:`, and `remove:`. Keep commits scoped and imperative, for example `fix: preserve lc parameter cache path`. Pull requests should summarize the mode affected, list validation commands, note dependency or `parameters.toml` changes, and include screenshots for visible GUI updates.
+
+---
+
+# 하네스 프로토콜 (research-os)
+
+> 제어층: `C:\Users\bmffr\Desktop\Main` — `NOW.md`, `PORTFOLIO.yaml`, `dashboard.html`
+
+## 세션을 시작할 때
+
+**TRACK.md (개발) · TRACK_PAPER.md (논문) 를 먼저 읽는다.** 이 트랙의 상태에 대한 유일한 진실이다.
+사용자에게 "전에 뭘 했었죠"를 묻지 않는다. 파일에 다 있다.
+
+## 세션을 끝내기 전에 (필수)
+
+1. **오라클 실행**
+   ```bash
+   .venv-deploy/Scripts/python.exe -m pytest tests/ -q
+   ```
+   통과 기준: 614 passed, 0 failed (약 7분). 실패하면 완료가 아니다 — 롤백하거나 원인을 TRACK.md에 남긴다.
+2. **커밋 + 푸쉬.** 미푸쉬 커밋을 남기고 끝내지 않는다.
+3. **TRACK.md 갱신** — `## 지금` / `## 다음 3개` / `## 함정` 세 절을 다시 쓴다.
+   판단이 필요한 건 `## 사용자 판단 필요`에. 채팅에만 쓰면 세션과 함께 사라진다.
+
+Stop hook (`Main/scripts/hook_track_freshness.py`) 이 이걸 검사한다. 차단하지는 않지만 경고한다.
+
+## Codex 역할 — 검토자
+
+이 하네스에서 Codex는 **구현자가 아니라 검토자**다. Claude가 만든 변경을 독립적으로 본다.
+작성자와 검토자가 다른 공급자면 같은 오류를 공유할 확률이 줄고, Claude 사용 한도도 아낀다.
+
+검토할 때 보는 것:
+
+- 오라클이 실제로 돌았는가, 통과 기준을 만족했는가
+- 회귀 — 기존 동작이 조용히 바뀌지 않았는가
+- 수치 · 단위 · 시간대 · 좌표계 일관성
+- 시계열 데이터라면 **미래 정보 누수**
+- 하드코딩된 가변 값 (기기명 · 필터 · 경로 · 스텝값)
+
+검토 결과는 PR 코멘트 또는 TRACK.md의 `## 함정`에 남긴다. **구현하지 말고 문제만 보고한다.**
+
+## 이 레포의 함정
+
+- `validation/` 은 20 GB다. 절대 커밋하지 않는다.
+- 실행은 `run.bat` 또는 `.venv-deploy\Scripts\python`. 시스템 python 아님.
+- `step10_zeropoint_calibration.py` 의 pandas `DataFrameGroupBy.apply` 는 폐기 예정이다.
+  pandas를 올리면 영점보정 결과가 조용히 달라질 수 있다.
