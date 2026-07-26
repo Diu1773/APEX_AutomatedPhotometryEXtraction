@@ -36,6 +36,13 @@ class FrameQCThresholds:
     sky_noise_ratio_fail: float = 6.0
     nsrc_z_review: float = 3.0
     nsrc_z_fail: float = 4.5
+    # Excess-detection gate, as a ratio to the filter group's median count.
+    # Measured envelope over 194 real frames in 24 filter groups: max 1.53x,
+    # 99th percentile 1.49x (see the excess-detection block below). Review at
+    # 1.8x leaves headroom above everything observed; fail at 2.5x is well
+    # clear of it, so only a genuine noise blow-up trips it.
+    nsrc_excess_review: float = 1.8
+    nsrc_excess_fail: float = 2.5
     elong_review: float = 1.22
     elong_fail: float = 1.35
     quality_score_review: float = 70.0
@@ -171,6 +178,11 @@ def evaluate_frame_qc(
     sky = _num(out, "sky_med").to_numpy(float)
     sky_sigma = _num(out, "sky_sigma").to_numpy(float)
     nsrc = _num(out, "n_sources", 0.0).to_numpy(float)
+    # Pre-filter extractor yield when Step 4 recorded it (added alongside this
+    # gate). The shape filter and keep-max cap run before n_sources is stored,
+    # so the raw count is what shows over-detection; fall back to n_sources on
+    # products written before that field existed.
+    nsrc_raw = _num(out, "n_raw_detections").to_numpy(float)
     elong = _num(out, "elong_med").to_numpy(float)
     quality = _num(out, "quality_score_median").to_numpy(float)
     sat = _num(out, "sat_star_count", 0.0).to_numpy(float)
@@ -191,6 +203,7 @@ def evaluate_frame_qc(
     sky_high_cut = np.full(n, np.nan, dtype=float)
     nsrc_trend = np.full(n, np.nan, dtype=float)
     nsrc_low_cut = np.full(n, np.nan, dtype=float)
+    nsrc_excess = np.full(n, np.nan, dtype=float)
     depth_ref = np.full(n, np.nan, dtype=float)  # group-median sigma_sky_e * FWHM
 
     for _, idx in _filter_groups(out):
@@ -304,6 +317,33 @@ def evaluate_frame_qc(
             review.append("n_sources_warning")
             score -= 12.0
 
+        # Excess detections. The low side above (cf. Dragonfly's NOBJ gate,
+        # danieli2020 S3.3.4) has no counterpart on the high side, yet a frame
+        # extracting noise peaks is the failure that pollutes the master
+        # catalogue: APEX unions single-frame detections, so a spurious source
+        # needs to appear once to be catalogued for good, where ALLFRAME's
+        # median stack would have removed it first (stetson1994).
+        # Thresholds are the measured normal envelope, not a guess: over 194
+        # frames in 24 filter groups (M5/M13/M37/M67/NGC 6811, both the
+        # working and the reprocessed reductions) n_sources/group-median tops
+        # out at 1.53x, with the 99th percentile at 1.49x — and 1.53 is itself
+        # a mixed-exposure group. Above 2x is outside anything real observing
+        # conditions produced here.
+        n_ref = nsrc_raw[i] if np.isfinite(nsrc_raw[i]) and nsrc_raw[i] > 0 else nsrc[i]
+        high_nsrc_ratio = (
+            n_ref / nsrc_trend[i]
+            if np.isfinite(n_ref) and np.isfinite(nsrc_trend[i]) and nsrc_trend[i] >= 20
+            else np.nan
+        )
+        nsrc_excess[i] = high_nsrc_ratio
+        if np.isfinite(high_nsrc_ratio):
+            if high_nsrc_ratio > thr.nsrc_excess_fail:
+                fail.append("excess_detections")
+                score -= 25.0
+            elif high_nsrc_ratio > thr.nsrc_excess_review:
+                review.append("excess_detections_warning")
+                score -= 10.0
+
         sky_fail = (
             np.isfinite(sky_z[i])
             and sky_z[i] > thr.sky_z_fail
@@ -374,6 +414,7 @@ def evaluate_frame_qc(
     out["sky_sigma_expected_e"] = sky_sigma_expected_e
     out["sky_noise_ratio"] = sky_noise_ratio
     out["n_sources_trend"] = nsrc_trend
+    out["n_sources_excess_ratio"] = nsrc_excess
     out["n_sources_low_cut"] = nsrc_low_cut
     out["sat_star_rate"] = sat_rate
     out["depth_cost_mag"] = depth_cost
