@@ -363,3 +363,53 @@
   year    = {2014}, volume = {31}, pages = {e037},
   note    = {arXiv:1407.6586}
 }
+
+% ============ Per-frame depth prediction and detection-count QC ============
+% Added 2026-07-26 (ars-lit-review). Bibliographic records verified against
+% IOPscience/Rubin docs; see COMPLETENESS_REALFRAME_INVESTIGATION.md for how
+% each is used and what was NOT found.
+
+@ARTICLE{stetson1994,
+  author  = {Stetson, P. B.},
+  title   = {{The Center of the Core-Cusp Globular Cluster M15: CFHT and HST Observations, ALLFRAME Reductions}},
+  journal = {Publications of the Astronomical Society of the Pacific},
+  year    = {1994}, volume = {106}, pages = {250},
+  doi     = {10.1086/133378},
+  adsurl  = {https://ui.adsabs.harvard.edu/abs/1994PASP..106..250S},
+  note    = {First detailed description of ALLFRAME: master star list from a
+             median-combined image, then simultaneous profile fitting on the
+             individual frames, accepting only objects that appear in a
+             significant fraction of the frames}
+}
+
+@ARTICLE{danieli2020,
+  author  = {Danieli, S. and Lokhorst, D. and Zhang, J. and Merritt, A. and
+             van Dokkum, P. and Abraham, R. and Conroy, C. and Gilhuly, C. and
+             Greco, J. and Janssens, S. and others},
+  title   = {{The Dragonfly Wide Field Survey. I. Telescope, Survey Design, and Data Characterization}},
+  journal = {The Astrophysical Journal},
+  year    = {2020}, volume = {894}, number = {2}, pages = {119},
+  doi     = {10.3847/1538-4357/ab88a8},
+  adsurl  = {https://ui.adsabs.harvard.edu/abs/2020ApJ...894..119D},
+  note    = {Frame-quality gates (\S3.3.4): NOBJ < 1000, MEDFWHM > 5.5 px,
+             MEDELLIP > 0.3; 40--60\% of frames rejected, most at the
+             minimum-detected-objects gate (\S5.1). Lower bound only --- no
+             upper bound on detection count, and no comparison to an expected
+             count}
+}
+
+@MISC{smtn002,
+  author       = {{Rubin Observatory}},
+  title        = {{SMTN-002: Calculating LSST Limiting Magnitudes and SNR}},
+  year         = {2026},
+  howpublished = {\url{https://smtn-002.lsst.io/}},
+  note         = {Analytic single-visit depth
+                  $m_5 = C_m + dC_m + 0.50(m_{\rm sky} - 21.0)
+                  + 2.5\log_{10}(0.7/{\rm FWHM_{eff}})
+                  + 1.25\log_{10}(t/30) - k_{\rm atm}(X-1)$,
+                  i.e. limiting flux $\propto \sigma_{\rm sky}\,$FWHM.
+                  Implemented in \texttt{rubin\_sim.phot\_utils}. The note
+                  attributes the formula to the internal document LSE-40 and
+                  warns that LSE-40's numerical values are outdated; no
+                  journal-article attribution is given}
+}
