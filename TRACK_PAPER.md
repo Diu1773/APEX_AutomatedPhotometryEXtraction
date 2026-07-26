@@ -20,7 +20,8 @@ RASTI(또는 PASP)에 투고 완료.
 
 ## 지금
 
-- 마지막 관련 커밋: `ec2645e` 2026-07-26 — docs: iPTF도 후보 수 상한 없음 확인
+- 마지막 커밋: `95af5b2` 2026-07-27 — docs(harness): add harness protocol section to AGENTS.md
+- 하네스 설치됨 (2026-07-27): AGENTS.md에 세션 종료 프로토콜, Stop hook이 이 파일 갱신을 검사
 - 진행 중: **§3만 비어 있음.** 그림·캡션·문헌·실증 수치가 전부 준비된 상태
 - 막힌 것: 없음
 
