@@ -26,6 +26,13 @@ validation/reports/
 # Validation harness output (apex validate). docs/validation.md stays tracked.
 validation/report/
 validation/_scratch/
+validation/real_gui_run/
+validation/psf_archive/
+
+# Paper figure inputs: intermediate CSV stays on disk, out of git (~627 MB).
+# figures/, captions/, 논문작업/ and fig*.py remain tracked.
+validation/paper/data/
+validation/paper/data_realframe_*/
 
 # Scratch: workflow design specs and pipeline temp run dirs
 .wf_specs/
