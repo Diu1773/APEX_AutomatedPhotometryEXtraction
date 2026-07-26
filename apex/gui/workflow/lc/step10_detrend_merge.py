@@ -1,5 +1,5 @@
 """
-Step 10: Detrend & Night Merge
+Step 11: Detrend & Night Merge
 """
 
 from __future__ import annotations
@@ -48,13 +48,17 @@ from PyQt5.QtWidgets import (
     QProgressBar,
     QScrollArea,
 )
-from PyQt5.QtCore import Qt, QSignalBlocker
+from PyQt5.QtCore import Qt, QSignalBlocker, QThread, QTimer, pyqtSignal
 from PyQt5.QtGui import QColor, QFont
 
-from apex.gui.layout_rules import FittedDialog
+from apex.gui.layout_rules import FittedDialog, scroll_wrap
 from apex.gui.theme import Tokens, refresh, style_button
 from apex.gui.workflow.step_window_base import StepWindowBase
 from apex.analysis.light_curve.global_ensemble import solve_global_ensemble
+from apex.analysis.light_curve.photometry_source_service import (
+    load_lightcurve_frame_photometry,
+    resolve_lightcurve_photometry_source,
+)
 from apex.analysis.light_curve.detrend_output_service import (
     annotate_step10_output,
     build_detrend_summary_report_text,
@@ -63,7 +67,6 @@ from apex.analysis.light_curve.detrend_output_service import (
 )
 from apex.utils.step_paths_lc import (
     step1_dir,
-    step7_forced_phot_dir,
     step8_selection_dir,
     step9_lc_dir,
     step10_detrend_dir,
@@ -79,24 +82,52 @@ from apex.utils.step_paths_lc import (
     load_detrend_preference,
     list_lightcurve_csvs,
 )
+from apex.utils.step_paths import forced_phot_input_dir
 from apex.utils.common_helpers import safe_float as _safe_float, normalize_filter_key as _normalize_filter_key, parse_jd as _parse_jd
+from apex.utils.photometry_provenance import (
+    build_photometry_provenance,
+    format_photometry_provenance,
+    summarize_photometry_table,
+)
 from apex.utils.io_utils import (
     read_csv_int64_source_id,
     coerce_int64_source_id,
     load_night_assignments as _load_night_assignments_util,
     load_headers_table as _load_headers_table_util,
 )
-from apex.utils.photometry_loader import load_frame_photometry
 from apex.utils.qc_utils import (
     filter_frame_df_by_qc,
     load_frame_excludes,
     should_use_frame_quality_qc,
 )
 from apex.utils.astro_utils import (
+    compute_airmass_from_jd_array,
     compute_airmass_from_header,
     compute_bjd_tdb_array,
     is_reasonable_airmass,
 )
+
+
+class _DetrendTaskWorker(QThread):
+    result_ready = pyqtSignal(str, object)
+    error = pyqtSignal(str, str)
+
+    def __init__(self, owner, kind: str, fn):
+        super().__init__(owner)
+        self.kind = str(kind)
+        self._fn = fn
+
+    def stop(self):
+        self.requestInterruption()
+
+    def run(self):
+        try:
+            result = self._fn()
+            if not self.isInterruptionRequested():
+                self.result_ready.emit(self.kind, result)
+        except Exception as exc:
+            if not self.isInterruptionRequested():
+                self.error.emit(self.kind, str(exc))
 
 
 def _load_night_assignments_from_disk(result_dir: Path) -> dict[str, int]:
@@ -110,13 +141,12 @@ def _wrap_scroll(widget: QWidget) -> QScrollArea:
     QTabWidget's minimum height is its tallest page's — the mode/options
     stacks alone pushed the whole window past small screens. Wrapped pages
     scroll instead of dictating window height.
+
+    Horizontal scrolling stays enabled: these pages sit in a 384 px column but
+    their option rows want ~455 px, and with the horizontal bar switched off
+    that overflow was clipped with no way to reach it.
     """
-    scroll = QScrollArea()
-    scroll.setWidgetResizable(True)
-    scroll.setFrameShape(QFrame.NoFrame)
-    scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
-    scroll.setWidget(widget)
-    return scroll
+    return scroll_wrap(widget, horizontal=True)
 
 
 def _fmt_float(value, default: str = "") -> str:
@@ -166,7 +196,7 @@ def _load_check_star_for_plot(result_dir: Path, filt: str | None = None):
 
 
 def _load_step8_source_to_id_map(result_dir: Path, flt: str | None = None) -> dict[int, int]:
-    """Load source_id -> final ID map from Step 8 outputs."""
+    """Load source_id -> final ID map from Step 9 outputs."""
     step9_out = step8_selection_dir(result_dir)
     if not step9_out.exists():
         return {}
@@ -249,8 +279,50 @@ def _load_step9_selection_ids(result_dir: Path) -> tuple[int | None, list[int]]:
     return None, sorted(comp_ids)
 
 
+def _load_step9_comparison_ids_by_filter(result_dir: Path) -> dict[str, set[int]]:
+    """Load authoritative comparison IDs for each Step 9 filter selection."""
+    selection_dir = step8_selection_dir(result_dir)
+    if not selection_dir.exists():
+        return {}
+
+    output: dict[str, set[int]] = {}
+    for selection_path in sorted(selection_dir.glob("selection_*.json")):
+        try:
+            data = json.loads(selection_path.read_text(encoding="utf-8"))
+        except Exception:
+            continue
+        filter_key = _normalize_filter_key(
+            data.get("filter") or selection_path.stem.replace("selection_", "")
+        )
+        if not filter_key:
+            continue
+        comp_ids = {
+            int(value)
+            for value in data.get("comparison_ids", [])
+            if value is not None
+        }
+        comp_source_ids = [
+            int(value)
+            for value in data.get("comparison_source_ids", [])
+            if value is not None
+        ]
+        if comp_source_ids:
+            source_to_id = _load_step8_source_to_id_map(result_dir, filter_key)
+            resolved_ids = {
+                int(source_to_id[source_id])
+                for source_id in comp_source_ids
+                if source_id in source_to_id
+            }
+            if resolved_ids:
+                comp_ids = resolved_ids
+        output[filter_key] = comp_ids
+    return output
+
+
 class DetrendNightMergeWindow(StepWindowBase):
-    """Step 10: Nightly detrend + merge"""
+    """Step 11: Nightly detrend + merge"""
+
+    background_log = pyqtSignal(str)
 
     def __init__(self, params, file_manager, project_state, main_window, runtime_mode: bool = False):
         self.file_manager = file_manager
@@ -265,6 +337,8 @@ class DetrendNightMergeWindow(StepWindowBase):
         self._busy_active = False
         self._busy_log_buffer: list[str] | None = None
         self._busy_message = ""
+        self._detrend_worker: _DetrendTaskWorker | None = None
+        self._pending_fit_request: dict | None = None
 
         self.comp_active_ids: list[int] = []
         self.comp_candidate_ids: list[int] = []
@@ -298,9 +372,11 @@ class DetrendNightMergeWindow(StepWindowBase):
         self.global_interp_missing = False
         self.global_normalize = False
         self.global_rescale_errors = True
+        self.sysrem_iter = 5
+        self.sysrem_apply = 3
 
         super().__init__(
-            step_index=9,
+            step_index=10,
             step_name="Detrend & Night Merge",
             params=params,
             project_state=project_state,
@@ -313,7 +389,14 @@ class DetrendNightMergeWindow(StepWindowBase):
             self.setup_step_ui()
             self.restore_state()
             self._auto_load_ids()
-            self.load_raw_data(silent=True)
+            self.load_raw_data(
+                silent=True,
+                rebuild_missing=False,
+                allow_fits_airmass=False,
+            )
+        self.background_log.connect(self._append_background_log)
+        if not self.runtime_mode:
+            QTimer.singleShot(0, self._start_airmass_backfill_if_needed)
 
     def _setup_runtime_ui(self):
         """Build a lightweight runtime-only UI for merger inline execution."""
@@ -384,6 +467,9 @@ class DetrendNightMergeWindow(StepWindowBase):
         self.spin_global_rms_pct.setRange(0.0, 80.0)
         self.spin_global_rms_pct.setDecimals(1)
         self.spin_global_rms_pct.setValue(self.global_rms_pct)
+        self.spin_global_rms_pct.setToolTip(
+            "Maximum fraction of statistically high-RMS comparison stars removed per iteration."
+        )
         self.spin_global_rms_thr = QDoubleSpinBox()
         self.spin_global_rms_thr.setRange(0.0, 1.0)
         self.spin_global_rms_thr.setDecimals(4)
@@ -452,11 +538,21 @@ class DetrendNightMergeWindow(StepWindowBase):
         rd = Path(self.params.P.result_dir)
         self.datasets = [(rd.name, rd)]
 
-        # Read-only info bar (auto-loaded from Step 10 / Step 8)
+        # Read-only info bar (auto-loaded from Step 10 / Step 9)
         self.id_info_label = QLabel("Target / Comp: (loading...)")
         self.id_info_label.setProperty("banner", "warn")
         self.id_info_label.setWordWrap(True)
         data_layout.addWidget(self.id_info_label)
+
+        source_info = resolve_lightcurve_photometry_source(
+            rd, self.project_state
+        )
+        self.photometry_source_label = QLabel(
+            format_photometry_provenance(source_info)
+        )
+        self.photometry_source_label.setProperty("role", "caption")
+        self.photometry_source_label.setToolTip(str(source_info.get("reason", "")))
+        data_layout.addWidget(self.photometry_source_label)
 
         # Date & Filter selection
         selection_row = QHBoxLayout()
@@ -501,7 +597,7 @@ class DetrendNightMergeWindow(StepWindowBase):
         analysis_layout = QVBoxLayout(self.analysis_panel)
         analysis_layout.setSpacing(4)
 
-        self.analysis_text = QLabel("Step 9 결과가 있으면 자동 로드되어 분석 결과가 표시됩니다.")
+        self.analysis_text = QLabel("Step 10 결과가 있으면 자동 로드되어 분석 결과가 표시됩니다.")
         self.analysis_text.setWordWrap(True)
         self.analysis_text.setStyleSheet(
             "QLabel { background-color: #FAFAFA; padding: 8px; border-radius: 4px; font-size: 9pt; }"
@@ -769,6 +865,9 @@ class DetrendNightMergeWindow(StepWindowBase):
         self.spin_global_rms_pct.setRange(0.0, 80.0)
         self.spin_global_rms_pct.setDecimals(1)
         self.spin_global_rms_pct.setValue(self.global_rms_pct)
+        self.spin_global_rms_pct.setToolTip(
+            "Maximum fraction of statistically high-RMS comparison stars removed per iteration."
+        )
         global_layout.addRow("RMS 상위% 제거:", self.spin_global_rms_pct)
 
         self.spin_global_rms_thr = QDoubleSpinBox()
@@ -958,7 +1057,16 @@ class DetrendNightMergeWindow(StepWindowBase):
         if self._busy_log_buffer is not None:
             self._busy_log_buffer.append(str(msg))
             return
-        self.log_text.append(msg)
+        if QThread.currentThread() != self.thread():
+            self.background_log.emit(str(msg))
+            return
+        self._append_background_log(str(msg))
+
+    def _append_background_log(self, msg: str) -> None:
+        try:
+            self.log_text.append(str(msg))
+        except RuntimeError:
+            pass
 
     def _flush_busy_log_buffer(self) -> None:
         if not self._busy_log_buffer:
@@ -1025,9 +1133,170 @@ class DetrendNightMergeWindow(StepWindowBase):
         self.busy_status_label.setText(self._busy_message)
         QApplication.processEvents()
 
+    def _launch_detrend_worker(self, kind: str, fn) -> None:
+        worker = _DetrendTaskWorker(self, kind, fn)
+        self._detrend_worker = worker
+        worker.result_ready.connect(self._on_detrend_task_ready)
+        worker.error.connect(self._on_detrend_task_error)
+        worker.finished.connect(
+            lambda current=worker: self._on_detrend_task_finished(current)
+        )
+        worker.start()
+
+    def _start_airmass_backfill_if_needed(self) -> None:
+        if self.raw_df.empty or "airmass" not in self.raw_df.columns:
+            return
+        airmass = pd.to_numeric(self.raw_df["airmass"], errors="coerce")
+        missing_before = int(
+            (airmass.isna() | ~airmass.map(is_reasonable_airmass)).sum()
+        )
+        if missing_before == 0 or (
+            self._detrend_worker is not None and self._detrend_worker.isRunning()
+        ):
+            return
+
+        def _backfill():
+            self._fill_airmass_from_headers(allow_fits_fallback=True)
+            updated = pd.to_numeric(self.raw_df["airmass"], errors="coerce")
+            missing_after = int(
+                (updated.isna() | ~updated.map(is_reasonable_airmass)).sum()
+            )
+            return {
+                "filled": max(0, missing_before - missing_after),
+                "remaining": missing_after,
+            }
+
+        self.log(f"[LOAD] Background airmass backfill: {missing_before} points")
+        self._set_busy_state(True, "Completing airmass metadata...")
+        self._launch_detrend_worker("airmass", _backfill)
+
+    def _queue_background_fit(
+        self,
+        *,
+        save_outputs: bool,
+        selected_dates: set[str] | None,
+        use_global_k2: bool | None,
+        target_id_override: int | None,
+        comp_ids_override: list[int] | None,
+        sync_controls: bool,
+    ) -> None:
+        if sync_controls:
+            self._sync_state_from_controls()
+        if self.raw_df.empty:
+            QMessageBox.information(self, "Detrend", "Raw data is not loaded.")
+            return
+        target_text = self.target_edit.text().strip()
+        if target_id_override is None and not target_text:
+            QMessageBox.information(self, "Detrend", "Target ID is required.")
+            return
+        target_id = (
+            int(target_id_override)
+            if target_id_override is not None
+            else int(target_text)
+        )
+        comp_ids = (
+            [int(value) for value in comp_ids_override]
+            if comp_ids_override is not None
+            else [
+                int(value)
+                for value in (self.comp_active_ids or self.comp_candidate_ids)
+            ]
+        )
+        dates = set(selected_dates or self._selected_dates())
+        global_k2 = (
+            bool(use_global_k2)
+            if use_global_k2 is not None
+            else bool(self.chk_global_k2.isChecked())
+        )
+        self._pending_fit_request = {
+            "save_outputs": bool(save_outputs),
+            "selected_dates": dates,
+            "use_global_k2": global_k2,
+            "target_id": target_id,
+            "comp_ids": comp_ids,
+        }
+        running = self._detrend_worker
+        self._set_busy_state(
+            True,
+            "Waiting for data loading..."
+            if running is not None and running.isRunning()
+            else "Preparing fit...",
+        )
+        if running is None or not running.isRunning():
+            self._start_pending_background_fit()
+
+    def _start_pending_background_fit(self) -> None:
+        request = self._pending_fit_request
+        if request is None:
+            return
+        self._pending_fit_request = None
+
+        def _fit():
+            self.fit_and_apply(
+                update_ui=False,
+                save_outputs=False,
+                selected_dates=request["selected_dates"],
+                use_global_k2=request["use_global_k2"],
+                target_id_override=request["target_id"],
+                comp_ids_override=request["comp_ids"],
+                sync_controls=False,
+            )
+            return {
+                "mode": self.mode,
+                "save_outputs": request["save_outputs"],
+            }
+
+        self._set_busy_message("Computing correction...")
+        self._launch_detrend_worker("fit", _fit)
+
+    def _on_detrend_task_ready(self, kind: str, payload: object) -> None:
+        if kind == "airmass":
+            result = payload if isinstance(payload, dict) else {}
+            self.log(
+                f"[LOAD] Background airmass complete: "
+                f"filled={result.get('filled', 0)}, remaining={result.get('remaining', 0)}"
+            )
+            return
+        result = payload if isinstance(payload, dict) else {}
+        try:
+            self._sync_mode_controls_from_state()
+            if self.mode == "global":
+                self._populate_date_list()
+                self._refresh_filter_combo(
+                    self.raw_df.get("filter", pd.Series([], dtype=str))
+                    .astype(str)
+                    .tolist()
+                )
+            self._update_results_table()
+            self._update_plots()
+            self._update_analysis_panel()
+            if self.mode not in {"global", "sysrem"}:
+                self._log_fit_summary()
+            if bool(result.get("save_outputs", True)):
+                self._set_busy_message("Saving outputs...")
+                self._save_comprehensive_results()
+        finally:
+            self._set_busy_state(False)
+
+    def _on_detrend_task_error(self, kind: str, message: str) -> None:
+        if kind == "fit":
+            self._set_busy_state(False)
+            QMessageBox.warning(self, "Detrend", message)
+        else:
+            self.log(f"[LOAD] Background airmass failed: {message}")
+
+    def _on_detrend_task_finished(self, worker: _DetrendTaskWorker) -> None:
+        if self._detrend_worker is worker:
+            self._detrend_worker = None
+        worker.deleteLater()
+        if self._pending_fit_request is not None:
+            self._start_pending_background_fit()
+        elif self._busy_active:
+            self._set_busy_state(False)
+
     def _show_mode_help_dialog(self):
         dialog = FittedDialog(self)
-        dialog.setWindowTitle("Step 10 보정 모드 도움말")
+        dialog.setWindowTitle("Step 11 보정 모드 도움말")
         dialog.resize(780, 680)
 
         layout = QVBoxLayout(dialog)
@@ -1057,10 +1326,10 @@ class DetrendNightMergeWindow(StepWindowBase):
         return """
 <html>
 <body style="font-family:'Malgun Gothic'; font-size:9pt; line-height:1.45;">
-<h3 style="margin-top:0;">Step 10 도움말: 보정 모드 설명</h3>
+<h3 style="margin-top:0;">Step 11 도움말: 보정 모드 설명</h3>
 <p>
-Step 10은 여러 밤의 관측을 합칠 때 기준선을 맞추는 단계입니다.
-모드에 따라 <b>Step 9 차등측광 결과</b>를 그대로 후처리하거나,
+Step 11은 여러 밤의 관측을 합칠 때 기준선을 맞추는 단계입니다.
+모드에 따라 <b>Step 10 차등측광 결과</b>를 그대로 후처리하거나,
 <b>Step 7 forced photometry</b>을 다시 읽어 전역 ensemble 해를 구합니다.
 </p>
 
@@ -1117,7 +1386,7 @@ Step 10은 여러 밤의 관측을 합칠 때 기준선을 맞추는 단계입�
 <p><b>입력 데이터</b></p>
 <ul>
   <li><code>step7_forced_phot/photometry_index.csv</code>와 각 프레임의 <code>photometry_*.tsv</code></li>
-  <li>사용 별: Step 8/9에서 선택한 target + comparison ensemble</li>
+  <li>사용 별: Step 9/10에서 선택한 target + comparison ensemble</li>
   <li>solver는 comparison stars만으로 frame-wise zero-point를 풉니다. target은 기준선 해를 구할 때 제외됩니다.</li>
 </ul>
 <p><b>무엇을 하나</b></p>
@@ -1155,7 +1424,7 @@ Step 10은 여러 밤의 관측을 합칠 때 기준선을 맞추는 단계입�
     def _update_analysis_panel(self):
         """Update analysis panel with data statistics and recommendations."""
         if self.raw_df.empty:
-            self.analysis_text.setText("Step 9 결과가 있으면 자동 로드되어 분석 결과가 표시됩니다.")
+            self.analysis_text.setText("Step 10 결과가 있으면 자동 로드되어 분석 결과가 표시됩니다.")
             self.recommendation_label.setText("")
             self.recommendation_label.setVisible(False)
             return
@@ -1298,9 +1567,9 @@ Step 10은 여러 밤의 관측을 합칠 때 기준선을 맞추는 단계입�
         return f"{mode_text}<br>{'<br>'.join('• ' + r for r in reasons)}"
 
     def _auto_load_ids(self):
-        """Step 9 comp_selection.json → Step 8 merged selection 순서로 자동 로드."""
+        """Step 10 comp_selection.json → Step 9 merged selection 순서로 자동 로드."""
         rd = Path(self.params.P.result_dir)
-        # 1) Step 9 output (comp_selection.json)
+        # 1) Step 10 output (comp_selection.json)
         sel_path = step9_lc_dir(rd) / "comp_selection.json"
         if sel_path.exists():
             try:
@@ -1314,7 +1583,7 @@ Step 10은 여러 밤의 관측을 합칠 때 기준선을 맞추는 단계입�
                 return
             except Exception:
                 pass
-        # 2) Step 8 merged selection
+        # 2) Step 9 merged selection
         tid, cids = _load_step9_selection_ids(rd)
         if tid is not None:
             self.target_edit.setText(str(int(tid)))
@@ -1388,10 +1657,10 @@ Step 10은 여러 밤의 관측을 합칠 때 기준선을 맞추는 단계입�
         comp_ids = self.comp_active_ids or self.comp_candidate_ids
         comp_ids = [int(x) for x in comp_ids if str(x).strip()]
         if not comp_ids:
-            self.log("[LOAD] Step 9 raw rebuild skipped: comparison IDs not found")
+            self.log("[LOAD] Step 10 raw rebuild skipped: comparison IDs not found")
             return False
 
-        self.log(f"[LOAD] Step 9 raw CSV missing. Rebuilding for target ID {target_id}...")
+        self.log(f"[LOAD] Step 10 raw CSV missing. Rebuilding for target ID {target_id}...")
         try:
             from .step9_lightcurve_builder import LightCurveBuilderWindow
 
@@ -1412,7 +1681,7 @@ Step 10은 여러 밤의 관측을 합칠 때 기준선을 맞추는 단계입�
             builder.close()
             builder.deleteLater()
         except Exception as e:
-            self.log(f"[LOAD] Step 9 raw rebuild failed: {e}")
+            self.log(f"[LOAD] Step 10 raw rebuild failed: {e}")
             return False
 
         for _label, result_dir in self.datasets:
@@ -1421,7 +1690,13 @@ Step 10은 여러 밤의 관측을 합칠 때 기준선을 맞추는 단계입�
                 return True
         return False
 
-    def load_raw_data(self, silent: bool = False) -> bool:
+    def load_raw_data(
+        self,
+        silent: bool = False,
+        *,
+        rebuild_missing: bool = True,
+        allow_fits_airmass: bool = True,
+    ) -> bool:
         if not self.datasets:
             if not silent:
                 QMessageBox.information(self, "Detrend", "데이터셋이 없습니다.")
@@ -1474,18 +1749,27 @@ Step 10은 여러 밤의 관측을 합칠 때 기준선을 맞추는 단계입�
             return frames
 
         raw_frames = _collect_raw_frames()
-        if not raw_frames and self._rebuild_step10_raw_outputs(target_id):
+        if (
+            not raw_frames
+            and rebuild_missing
+            and self._rebuild_step10_raw_outputs(target_id)
+        ):
             raw_frames = _collect_raw_frames()
 
         if not raw_frames:
             step10_path = step9_lc_dir(self.params.P.result_dir)
-            msg = f"Raw 데이터를 찾지 못했습니다.\n\n경로: {step10_path}\n\nStep 9에서 먼저 'Build Light Curve'를 실행하세요."
+            msg = f"Raw 데이터를 찾지 못했습니다.\n\n경로: {step10_path}\n\nStep 10에서 먼저 'Build Light Curve'를 실행하세요."
             self.log(f"[LOAD] {msg.replace(chr(10), ' ')}")
             if not silent:
                 QMessageBox.information(self, "Detrend", msg)
             return False
 
         self.raw_df = pd.concat(raw_frames, ignore_index=True)
+        self.photometry_source_label.setText(
+            format_photometry_provenance(
+                summarize_photometry_table(self.raw_df)
+            )
+        )
         if "diff_mag_raw" not in self.raw_df.columns and "diff_mag" in self.raw_df.columns:
             self.raw_df["diff_mag_raw"] = self.raw_df["diff_mag"]
         if "diff_mag_raw" not in self.raw_df.columns:
@@ -1505,7 +1789,9 @@ Step 10은 여러 밤의 관측을 합칠 때 기준선을 맞추는 단계입�
             self.raw_df["date"] = "unknown"
         self._fill_date_from_jd()
         self._fill_night_id()
-        self._fill_airmass_from_headers()
+        self._fill_airmass_from_headers(
+            allow_fits_fallback=allow_fits_airmass
+        )
 
         self._load_comp_selection()
         self._populate_date_list()
@@ -1769,10 +2055,46 @@ Step 10은 여러 밤의 관측을 합칠 때 기준선을 맞추는 단계입�
         if not comp_ids:
             raise RuntimeError("Comparison IDs not found")
 
+        current_root = Path(self.params.P.result_dir).resolve()
+        source_by_root: dict[str, dict] = {}
+        for _, dataset_root in self.datasets:
+            resolved = Path(dataset_root).resolve()
+            state = self.project_state if resolved == current_root else None
+            source_by_root[str(resolved)] = resolve_lightcurve_photometry_source(
+                resolved, state
+            )
+        use_psf = bool(source_by_root) and all(
+            info["source"] == "psf" for info in source_by_root.values()
+        )
+        if not use_psf:
+            for root_key in source_by_root:
+                root = Path(root_key)
+                aperture_dir = forced_phot_input_dir(root)
+                source_by_root[root_key] = {
+                    **build_photometry_provenance("aperture", "mag", "mag_err"),
+                    "directory": aperture_dir,
+                    "index_path": aperture_dir / "photometry_index.csv",
+                    "reason": "Using one aperture source across all datasets",
+                }
+        self.active_photometry_source = "psf" if use_psf else "aperture"
+        if source_by_root:
+            first_source = next(iter(source_by_root.values()))
+            self.photometry_source_label.setText(
+                format_photometry_provenance(first_source)
+            )
+            self.photometry_source_label.setToolTip(
+                str(first_source.get("reason", ""))
+            )
+        self.log(
+            f"[GLOBAL] Photometry source: {self.active_photometry_source.upper()}"
+        )
+
         rows = []
         for label, result_dir in self.datasets:
             result_dir = Path(result_dir)
-            idx_path = step7_forced_phot_dir(result_dir) / "photometry_index.csv"
+            source_info = source_by_root[str(result_dir.resolve())]
+            filter_comp_ids = _load_step9_comparison_ids_by_filter(result_dir)
+            idx_path = Path(source_info["index_path"])
             if not idx_path.exists():
                 self.log(f"[GLOBAL] photometry_index.csv missing: {result_dir}")
                 continue
@@ -1785,6 +2107,11 @@ Step 10은 여러 밤의 관측을 합칠 때 기준선을 맞추는 단계입�
             if "file" not in idx.columns:
                 self.log("[GLOBAL] photometry_index.csv missing 'file'")
                 continue
+            if source_info["source"] == "psf":
+                allowed = set(source_info.get("frames", []))
+                idx = idx[
+                    idx["file"].astype(str).map(lambda value: Path(value).name).isin(allowed)
+                ].reset_index(drop=True)
 
             # Apply step4 QC pass filter (frame_quality.csv) if the parameter is enabled
             use_qc = should_use_frame_quality_qc(
@@ -1834,7 +2161,12 @@ Step 10은 여러 밤의 관측을 합칠 때 기준선을 맞추는 단계입�
                 fname = str(row.get("file", "")).strip()
                 if not fname:
                     continue
-                phot = load_frame_photometry(result_dir, fname, str(row.get("filter", "") or ""))
+                phot = load_lightcurve_frame_photometry(
+                    result_dir,
+                    fname,
+                    source_info,
+                    str(row.get("filter", "") or ""),
+                )
                 if phot is None or phot.empty:
                     continue
 
@@ -1849,12 +2181,6 @@ Step 10은 여러 밤의 관측을 합칠 때 기준선을 맞추는 단계입�
                     phot = phot.rename(columns={"det_uid": "ID"})
                     id_col = "ID"
 
-                phot[id_col] = pd.to_numeric(phot[id_col], errors="coerce").astype("Int64")
-                wanted = [target_id] + comp_ids
-                phot = phot[phot[id_col].isin(wanted)].copy()
-                if phot.empty:
-                    continue
-
                 filt_val = ""
                 if "FILTER" in phot.columns:
                     filt_val = str(phot["FILTER"].iloc[0]).strip()
@@ -1863,6 +2189,18 @@ Step 10은 여러 밤의 관측을 합칠 때 기준선을 맞추는 단계입�
                 if not filt_val and fname in filt_map:
                     filt_val = str(filt_map.get(fname, "") or "")
                 filt_key = _normalize_filter_key(filt_val)
+
+                phot[id_col] = pd.to_numeric(phot[id_col], errors="coerce").astype("Int64")
+                frame_comp_ids = comp_ids
+                if filt_key in filter_comp_ids:
+                    selected_ids = filter_comp_ids[filt_key]
+                    frame_comp_ids = [
+                        comp_id for comp_id in comp_ids if comp_id in selected_ids
+                    ]
+                wanted = [target_id] + frame_comp_ids
+                phot = phot[phot[id_col].isin(wanted)].copy()
+                if phot.empty:
+                    continue
 
                 date_obs = jd_map.get(fname)
                 jd_val = _safe_float(date_obs)
@@ -1888,6 +2226,9 @@ Step 10은 여러 밤의 관측을 합칠 때 기준선을 맞추는 단계입�
                             err=err,
                             file=fname,
                             dataset=label,
+                            photometry_source=source_info["source"],
+                            mag_input_column=source_info["mag_column"],
+                            mag_error_input_column=source_info["mag_error_column"],
                         )
                     )
 
@@ -1992,7 +2333,9 @@ Step 10은 여러 밤의 관측을 합칠 때 기준선을 맞추는 단계입�
         self.log(f"[NIGHT] 파일명 매칭: {n_matched}/{len(nids)} (샘플 file: {Path(files[0]).name if files else '-'})")
         _apply_night_labels(nids)
 
-    def _fill_airmass_from_headers(self) -> None:
+    def _fill_airmass_from_headers(
+        self, *, allow_fits_fallback: bool = True
+    ) -> None:
         if self.raw_df.empty or "file" not in self.raw_df.columns:
             return
         airmass_series = pd.to_numeric(self.raw_df.get("airmass", np.nan), errors="coerce")
@@ -2001,8 +2344,31 @@ Step 10은 여러 밤의 관측을 합칠 때 기준선을 맞추는 단계입�
             return
         dataset_map = {label: Path(path) for label, path in self.datasets} if self.datasets else {}
         filled_from_headers = 0
+        filled_from_header_times = 0
         filled_from_fits = 0
         total_missing = int(refill_mask.sum())
+        site_lat = _safe_float(getattr(self.params.P, "site_lat_deg", np.nan), np.nan)
+        site_lon = _safe_float(getattr(self.params.P, "site_lon_deg", np.nan), np.nan)
+        site_alt = _safe_float(getattr(self.params.P, "site_alt_m", 0.0), 0.0)
+        site_tz = _safe_float(getattr(self.params.P, "site_tz_offset_hours", 0.0), 0.0)
+        target_ra = _safe_float(getattr(self.params.P, "target_ra_deg", np.nan), np.nan)
+        target_dec = _safe_float(getattr(self.params.P, "target_dec_deg", np.nan), np.nan)
+        formula = getattr(self.params.P, "airmass_formula", None)
+
+        def _filename_map(names: pd.Series, values: pd.Series) -> dict[str, float]:
+            mapped: dict[str, float] = {}
+            for fname, value in zip(names.astype(str), values):
+                if not np.isfinite(value):
+                    continue
+                mapped[str(fname)] = float(value)
+                mapped[Path(str(fname)).name] = float(value)
+            return mapped
+
+        def _map_rows(files: pd.Series, mapping: dict[str, float]) -> pd.Series:
+            return files.astype(str).map(
+                lambda value: mapping.get(value, mapping.get(Path(value).name, np.nan))
+            )
+
         if not dataset_map:
             dataset_map = {"": Path(self.params.P.result_dir)}
             self.raw_df["dataset"] = self.raw_df.get("dataset", "")
@@ -2029,36 +2395,91 @@ Step 10은 여러 밤의 관측을 합칠 때 기준선을 맞추는 단계입�
                 if cand in hdf.columns:
                     col_air = cand
                     break
-            if col_air is None:
+            if col_air is not None:
+                header_airmass = pd.to_numeric(hdf[col_air], errors="coerce")
+                valid_header = header_airmass.map(is_reasonable_airmass)
+                amap = _filename_map(
+                    hdf.loc[valid_header, "Filename"],
+                    header_airmass.loc[valid_header],
+                )
+                vals = _map_rows(self.raw_df.loc[sel, "file"], amap)
+                n_fill = int(vals.notna().sum())
+                if n_fill > 0:
+                    self.raw_df.loc[sel, "airmass"] = vals
+                    filled_from_headers += n_fill
+
+            current_airmass = pd.to_numeric(self.raw_df.get("airmass", np.nan), errors="coerce")
+            remaining = sel & (
+                current_airmass.isna()
+                | ~current_airmass.map(is_reasonable_airmass)
+            )
+            can_compute = all(
+                np.isfinite(value)
+                for value in (site_lat, site_lon, target_ra, target_dec)
+            )
+            if not np.any(remaining) or not can_compute:
                 continue
-            amap = {}
-            for fname, aval in zip(hdf["Filename"].astype(str), pd.to_numeric(hdf[col_air], errors="coerce")):
-                if is_reasonable_airmass(aval):
-                    amap[str(fname)] = float(aval)
-            files = self.raw_df.loc[sel, "file"].astype(str)
-            vals = files.map(amap)
+
+            jd_values = pd.Series(np.nan, index=hdf.index, dtype=float)
+            if "JD" in hdf.columns:
+                jd_values = pd.to_numeric(hdf["JD"], errors="coerce")
+            if jd_values.notna().sum() == 0 and "DATE-OBS" in hdf.columns:
+                date_mask = hdf["DATE-OBS"].notna()
+                try:
+                    jd_values.loc[date_mask] = Time(
+                        hdf.loc[date_mask, "DATE-OBS"].astype(str).tolist(),
+                        scale="utc",
+                    ).jd
+                except Exception:
+                    pass
+            computed = compute_airmass_from_jd_array(
+                jd_values.to_numpy(dtype=float),
+                target_ra,
+                target_dec,
+                site_lat,
+                site_lon,
+                site_alt,
+                formula=formula,
+            )
+            valid_computed = np.array(
+                [is_reasonable_airmass(value, max_airmass=12.0) for value in computed],
+                dtype=bool,
+            )
+            cmap = _filename_map(
+                hdf.loc[valid_computed, "Filename"],
+                pd.Series(computed[valid_computed], index=hdf.index[valid_computed]),
+            )
+            vals = _map_rows(self.raw_df.loc[remaining, "file"], cmap)
             n_fill = int(vals.notna().sum())
-            if n_fill == 0:
-                continue
-            self.raw_df.loc[sel, "airmass"] = vals
-            filled_from_headers += n_fill
+            if n_fill > 0:
+                self.raw_df.loc[remaining, "airmass"] = vals
+                filled_from_header_times += n_fill
 
         airmass_series = pd.to_numeric(self.raw_df.get("airmass", np.nan), errors="coerce")
         refill_mask = airmass_series.isna() | ~airmass_series.map(is_reasonable_airmass)
-        if np.any(refill_mask):
-            site_lat = float(getattr(self.params.P, "site_lat_deg", np.nan))
-            site_lon = float(getattr(self.params.P, "site_lon_deg", np.nan))
-            site_alt = float(getattr(self.params.P, "site_alt_m", 0.0))
-            site_tz = float(getattr(self.params.P, "site_tz_offset_hours", 0.0))
-            formula = getattr(self.params.P, "airmass_formula", None)
+        if allow_fits_fallback and np.any(refill_mask):
             if np.isfinite(site_lat) and np.isfinite(site_lon):
+                fits_cache: dict[str, float | None] = {}
                 for row_idx in self.raw_df.index[refill_mask]:
                     fname = str(self.raw_df.at[row_idx, "file"])
+                    dataset_key = (
+                        str(self.raw_df.at[row_idx, "dataset"])
+                        if "dataset" in self.raw_df.columns
+                        else ""
+                    )
+                    cache_key = f"{dataset_key}:{Path(fname).name}"
+                    if cache_key in fits_cache:
+                        cached_airmass = fits_cache[cache_key]
+                        if cached_airmass is not None:
+                            self.raw_df.at[row_idx, "airmass"] = cached_airmass
+                            filled_from_fits += 1
+                        continue
                     try:
                         src_path = Path(self.params.get_file_path(fname))
                     except Exception:
                         src_path = None
                     if src_path is None or not src_path.exists():
+                        fits_cache[cache_key] = None
                         continue
                     try:
                         with fits.open(src_path) as hdul:
@@ -2072,22 +2493,28 @@ Step 10은 여러 밤의 관측을 합칠 때 기준선을 맞추는 단계입�
                             formula=formula,
                         )
                     except Exception:
+                        fits_cache[cache_key] = None
                         continue
                     airmass_val = float(info.get("airmass", np.nan))
                     airmass_source = str(info.get("airmass_source", "") or "")
                     if not is_reasonable_airmass(airmass_val, max_airmass=12.0):
+                        fits_cache[cache_key] = None
                         continue
                     if airmass_source == "header_suspicious":
+                        fits_cache[cache_key] = None
                         continue
+                    fits_cache[cache_key] = airmass_val
                     self.raw_df.at[row_idx, "airmass"] = airmass_val
                     filled_from_fits += 1
 
-        filled = filled_from_headers + filled_from_fits
+        filled = filled_from_headers + filled_from_header_times + filled_from_fits
         if filled > 0:
             msg = f"[LOAD] Filled airmass: {filled}/{total_missing}"
             details = []
             if filled_from_headers > 0:
                 details.append(f"headers={filled_from_headers}")
+            if filled_from_header_times > 0:
+                details.append(f"header_times={filled_from_header_times}")
             if filled_from_fits > 0:
                 details.append(f"computed={filled_from_fits}")
             if details:
@@ -2576,6 +3003,10 @@ Step 10은 여러 밤의 관측을 합칠 때 기준선을 맞추는 단계입�
         if hasattr(self, "spin_sysrem_apply") and hasattr(self, "spin_sysrem_iter"):
             if self.spin_sysrem_apply.value() > self.spin_sysrem_iter.value():
                 self.spin_sysrem_apply.setValue(self.spin_sysrem_iter.value())
+            self.sysrem_iter = int(self.spin_sysrem_iter.value())
+            self.sysrem_apply = min(
+                int(self.spin_sysrem_apply.value()), self.sysrem_iter
+            )
 
     def _auto_set_t0(self):
         """Set T0 to min(JD) from loaded data."""
@@ -2606,6 +3037,16 @@ Step 10은 여러 밤의 관측을 합칠 때 기준선을 맞추는 단계입�
         comp_ids_override: list[int] | None = None,
         sync_controls: bool = True,
     ):
+        if update_ui and not self.runtime_mode:
+            self._queue_background_fit(
+                save_outputs=save_outputs,
+                selected_dates=selected_dates,
+                use_global_k2=use_global_k2,
+                target_id_override=target_id_override,
+                comp_ids_override=comp_ids_override,
+                sync_controls=sync_controls,
+            )
+            return
         if sync_controls:
             self._sync_state_from_controls()
         if self.mode == "global":
@@ -2648,7 +3089,7 @@ Step 10은 여러 밤의 관측을 합칠 때 기준선을 맞추는 단계입�
                     "Color mode를 사용하려면 ΔC (색지수 차이)가 필요합니다.\n\n"
                     "해결방법:\n"
                     "• Color Index 설정에서 필터별 색지수 조합 선택\n"
-                    "• Step 9에서 color_index 컬럼이 있는 데이터 생성\n\n"
+                    "• Step 10에서 color_index 컬럼이 있는 데이터 생성\n\n"
                     "현재는 Offset 모드로 진행합니다."
                 )
                 if update_ui:
@@ -2945,8 +3386,8 @@ Step 10은 여러 밤의 관측을 합칠 때 기준선을 맞추는 단계입�
                 QMessageBox.warning(self, "SYSREM", "비교성 ID가 없습니다.")
             return
 
-        n_iter  = int(self.spin_sysrem_iter.value())
-        n_apply = min(int(self.spin_sysrem_apply.value()), n_iter)
+        n_iter = int(self.sysrem_iter)
+        n_apply = min(int(self.sysrem_apply), n_iter)
 
         filters = sorted(df_all["filter"].astype(str).map(_normalize_filter_key).unique())
         if not filters:
@@ -3207,6 +3648,15 @@ Step 10은 여러 밤의 관측을 합칠 때 기준선을 맞추는 단계입�
                     lc=len(lc_df),
                 )
             )
+            for fkey, diag in diagnostics.get("filters", {}).items():
+                network = diag.get("network", {})
+                self.log(
+                    f"[GLOBAL] filter={fkey}: connected={network.get('connected', False)}, "
+                    f"components={network.get('n_components', 0)}, "
+                    f"active_comps={diag.get('n_comp_final', 0)}, "
+                    f"removed_comps={len(diag.get('removed_comps', []))}, "
+                    f"imputed_errors={diag.get('n_errors_imputed', 0)}"
+                )
             if zp_df.empty:
                 msg = (
                     "Global ensemble produced no zeropoint rows.\n"
@@ -4287,8 +4737,11 @@ Step 10은 여러 밤의 관측을 합칠 때 기준선을 맞추는 단계입�
                 target_id = int(text)
         except (TypeError, ValueError, AttributeError):
             pass
+        detrend_dir = step10_detrend_dir(self.params.P.result_dir).resolve()
         for path in list_lightcurve_csvs(self.params.P.result_dir, target_id):
             try:
+                if path.resolve().parent != detrend_dir:
+                    continue
                 if not pd.read_csv(path, nrows=1).empty:
                     return True
             except Exception:

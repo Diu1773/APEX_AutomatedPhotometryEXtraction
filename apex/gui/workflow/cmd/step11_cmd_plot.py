@@ -17,9 +17,16 @@ from PyQt5.QtWidgets import (
 )
 
 from apex.gui.workflow.step_window_base import StepWindowBase
-from .step10_zeropoint_calibration import CmdViewerWindow
+from .step10_zeropoint_calibration import (
+    CmdViewerWindow,
+    resolve_cmd_photometry_provenance,
+)
 from apex.utils.step_paths import step7_forced_phot_dir
-from apex.utils.step_paths_cmd import step10_zp_dir, step11_cmd_dir
+from apex.utils.step_paths_cmd import step8_psf_dir, step10_zp_dir, step11_cmd_dir
+from apex.utils.photometry_provenance import (
+    format_photometry_provenance,
+    summarize_photometry_table,
+)
 
 
 class CmdPlotWindow(StepWindowBase):
@@ -43,6 +50,16 @@ class CmdPlotWindow(StepWindowBase):
         info = QLabel("Open CMD viewer using calibrated ZP products.")
         info.setStyleSheet("QLabel { background-color: #E3F2FD; padding: 10px; border-radius: 5px; }")
         self.content_layout.addWidget(info)
+
+        self.photometry_source_label = QLabel(
+            format_photometry_provenance(
+                resolve_cmd_photometry_provenance(self.params.P.result_dir)
+            )
+        )
+        self.photometry_source_label.setStyleSheet(
+            "QLabel { color: #455A64; font-weight: bold; padding: 2px 4px; }"
+        )
+        self.content_layout.addWidget(self.photometry_source_label)
 
         self.viewer_group = QGroupBox("CMD Viewer")
         self.viewer_layout = QVBoxLayout(self.viewer_group)
@@ -104,6 +121,7 @@ class CmdPlotWindow(StepWindowBase):
 
         idx_candidates = [
             step7_forced_phot_dir(self.params.P.result_dir) / "photometry_index.csv",
+            step8_psf_dir(self.params.P.result_dir) / "photometry_index.csv",
             self.params.P.result_dir / "photometry_index.csv",
             self.params.P.result_dir / "phot_index.csv",
             self.params.P.result_dir / "phot" / "photometry_index.csv",
@@ -114,6 +132,9 @@ class CmdPlotWindow(StepWindowBase):
             self.log(f"WARNING: {wide_path.name} is older than {idx_path.name}; rerun ZP calibration.")
 
         df = pd.read_csv(wide_path, dtype={"source_id": str, "gaia_source_id": str})
+        self.photometry_source_label.setText(
+            format_photometry_provenance(summarize_photometry_table(df))
+        )
         self._reset_viewer()
         viewer = CmdViewerWindow(df, self.params.P.result_dir, self, embedded=True, params=self.params)
         # Wrap in a scroll area so cramped windows can still reach the

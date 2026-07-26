@@ -1,10 +1,10 @@
 """
-Step 8: Target/Comparison Selection (Filter-based)
+Step 9: Target/Comparison Selection (Filter-based)
 
 완전 리팩토링:
 - Master Catalog Build 출력물(step6_refbuild/)을 입력으로 사용
 - 필터별 타겟/비교성 선택
-- Step 8에서 최종 master catalog 저장 (lc_selection/master_catalog_{filter}.tsv)
+- Step 9에서 최종 master catalog 저장 (lc_selection/master_catalog_{filter}.tsv)
 - 출력: lc_selection/ 폴더
 """
 
@@ -20,7 +20,7 @@ import urllib.parse
 import io
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
-from typing import Dict, Set, Optional
+from typing import Callable, Dict, Set, Optional
 
 import numpy as np
 import pandas as pd
@@ -34,32 +34,378 @@ from matplotlib.figure import Figure
 import sip
 
 from apex.gui.widgets.fits_viewer import FITSViewerWidget, OverlayMarker
+from apex.gui.widgets.comparison_automation_dialog import ComparisonAutomationDialog
+from apex.gui.widgets.comparison_lightcurve_preview import ComparisonLightCurvePreview
+from apex.analysis.light_curve.comparison_stability_service import (
+    ComparisonSelectionConfig,
+    build_target_difference,
+    compute_leave_one_out_residuals,
+    compute_stability_metrics,
+    recommend_check_candidate,
+    score_stability_metrics,
+    select_adaptive_ensemble,
+    select_stable_comparisons,
+)
+from apex.analysis.light_curve.photometry_source_service import (
+    load_filter_photometry_timeseries,
+    resolve_lightcurve_photometry_source,
+)
+from apex.utils.photometry_provenance import format_photometry_provenance
 from apex.utils.common_helpers import normalize_filter_key
 
 from PyQt5.QtWidgets import (
     QVBoxLayout, QHBoxLayout, QPushButton, QLabel, QGroupBox, QMessageBox,
-    QTextEdit, QDialog, QFormLayout, QDialogButtonBox, QCheckBox, QSpinBox,
+    QTextEdit, QDialog, QFormLayout, QDialogButtonBox, QCheckBox,
     QDoubleSpinBox, QTableWidget, QTableWidgetItem, QHeaderView,
     QAbstractItemView, QWidget, QComboBox, QSlider, QTabWidget, QShortcut,
-    QColorDialog, QGridLayout, QScrollArea, QMenu, QAction
+    QColorDialog, QGridLayout, QScrollArea, QMenu, QAction, QApplication,
 )
 from PyQt5.QtGui import QKeySequence, QColor
-from PyQt5.QtCore import Qt, QTimer, pyqtSignal
+from PyQt5.QtCore import Qt, QThread, QTimer, pyqtSignal
 
 from apex.gui.layout_rules import FittedDialog, tame_canvas
 from apex.gui.theme import Tokens, style_button
 from apex.gui.workflow.step_window_base import StepWindowBase
 from apex.utils.step_paths_lc import (
     step2_cropped_dir,
-    step5_wcs_dir,
-    step6_refbuild_dir,
-    step7_forced_phot_dir,
     step8_selection_dir,
+    selection_input_dirs,
+    forced_phot_input_dir,
+    idmatch_input_dir,
+    refbuild_input_dir,
+    wcs_input_dir,
 )
 from apex.utils.io_utils import read_csv_int64_source_id, coerce_int64_source_id
+from apex.utils.photometry_loader import load_frame_photometry
 
 
 _DATE_RE = re.compile(r"(20\d{6})")
+
+
+def _simbad_type_is_variable(value: str) -> bool:
+    text = str(value or "").strip().upper()
+    if not text:
+        return False
+    markers = (
+        "V*", "EB*", "RR*", "CEP", "PULSV", "LPV", "MIRA",
+        "DSCT", "ECL", "BYDRA", "RSCVN", "ROTATION",
+    )
+    return any(marker in text for marker in markers)
+
+
+def _build_comparison_preview_payload(
+    measurements: pd.DataFrame,
+    source_info: dict,
+    *,
+    source_id: int,
+    display_id: Optional[int],
+    filter_name: str,
+    target_id: Optional[int],
+    reference_ids: list[int],
+    cached_metrics: Optional[dict] = None,
+    is_comparison: bool = False,
+    is_rejected: bool = False,
+) -> dict:
+    """Build the selected-source preview without touching Qt widgets."""
+    source_id = int(source_id)
+    target_id = int(target_id) if target_id is not None else None
+    candidate = measurements[measurements["star_id"] == source_id].copy()
+    if candidate.empty:
+        raise ValueError("No usable measurements for this source.")
+
+    excluded = {source_id}
+    if target_id is not None:
+        excluded.add(target_id)
+    references: list[int] = []
+    for value in reference_ids:
+        star_id = int(value)
+        if star_id in excluded or star_id in references:
+            continue
+        references.append(star_id)
+        if len(references) >= 30:
+            break
+
+    loo_all = pd.DataFrame()
+    loo = pd.DataFrame()
+    if source_id != target_id and len(references) >= 2:
+        loo_all = compute_leave_one_out_residuals(
+            measurements,
+            [source_id, *references],
+            min_ensemble=2,
+        )
+        loo = loo_all[loo_all["star_id"] == source_id].copy()
+
+    metrics = dict(cached_metrics or {})
+    if not metrics and not loo_all.empty:
+        metric_frame = compute_stability_metrics(
+            loo_all,
+            total_frames=int(measurements["frame"].nunique()),
+        )
+        metric_frame = score_stability_metrics(metric_frame)
+        rows = metric_frame[metric_frame["star_id"].astype("int64") == source_id]
+        if not rows.empty:
+            metrics = rows.iloc[0].to_dict()
+    if source_id == target_id:
+        metrics = {
+            "status": "target",
+            "n": len(candidate),
+            "reasons": "raw target series",
+        }
+
+    target_delta = (
+        build_target_difference(measurements, target_id, source_id)
+        if target_id is not None and target_id != source_id
+        else pd.DataFrame()
+    )
+    if not loo.empty:
+        default_mode = "loo"
+    elif not target_delta.empty:
+        default_mode = "target"
+    else:
+        default_mode = "mag"
+    return {
+        "source_id": source_id,
+        "display_id": display_id,
+        "filter_name": str(filter_name),
+        "photometry_source": str(source_info.get("source", "aperture")),
+        "candidate": candidate,
+        "loo": loo,
+        "target_delta": target_delta,
+        "metrics": metrics,
+        "is_comparison": bool(is_comparison),
+        "is_rejected": bool(is_rejected),
+        "can_assign": source_id != target_id,
+        "default_mode": default_mode,
+    }
+
+
+class _ComparisonPreviewWorker(QThread):
+    result_ready = pyqtSignal(int, object)
+    error = pyqtSignal(int, str)
+
+    def __init__(
+        self,
+        owner,
+        *,
+        token: int,
+        result_dir: Path,
+        project_state,
+        filter_name: str,
+        source_id: int,
+        display_id: Optional[int],
+        target_id: Optional[int],
+        reference_ids: list[int],
+        cached_metrics: Optional[dict],
+        is_comparison: bool,
+        is_rejected: bool,
+        cached_timeseries: Optional[tuple[pd.DataFrame, dict]],
+    ):
+        super().__init__(owner)
+        self.token = int(token)
+        self.result_dir = Path(result_dir)
+        self.project_state = project_state
+        self.filter_name = str(filter_name)
+        self.source_id = int(source_id)
+        self.display_id = display_id
+        self.target_id = int(target_id) if target_id is not None else None
+        self.reference_ids = [int(value) for value in reference_ids]
+        self.cached_metrics = dict(cached_metrics or {})
+        self.is_comparison = bool(is_comparison)
+        self.is_rejected = bool(is_rejected)
+        self.cached_timeseries = cached_timeseries
+
+    def run(self):
+        try:
+            loaded_timeseries = self.cached_timeseries is None
+            if loaded_timeseries:
+                measurements, source_info = load_filter_photometry_timeseries(
+                    self.result_dir,
+                    self.filter_name,
+                    self.project_state,
+                    should_stop=self.isInterruptionRequested,
+                )
+            else:
+                measurements, source_info = self.cached_timeseries
+            if self.isInterruptionRequested():
+                return
+            if measurements.empty:
+                raise ValueError(
+                    f"No usable photometry time series for filter {self.filter_name}."
+                )
+            payload = _build_comparison_preview_payload(
+                measurements,
+                source_info,
+                source_id=self.source_id,
+                display_id=self.display_id,
+                filter_name=self.filter_name,
+                target_id=self.target_id,
+                reference_ids=self.reference_ids,
+                cached_metrics=self.cached_metrics,
+                is_comparison=self.is_comparison,
+                is_rejected=self.is_rejected,
+            )
+            if self.isInterruptionRequested():
+                return
+            if loaded_timeseries:
+                payload["timeseries_cache"] = (measurements, source_info)
+            self.result_ready.emit(self.token, payload)
+        except Exception as exc:
+            if not self.isInterruptionRequested():
+                self.error.emit(self.token, str(exc))
+
+
+class _CheckRecommendationWorker(QThread):
+    result_ready = pyqtSignal(str, int, object)
+    error = pyqtSignal(str)
+
+    def __init__(self, owner, filter_name: str, target_id: int):
+        super().__init__(owner)
+        self.owner = owner
+        self.filter_name = str(filter_name)
+        self.target_id = int(target_id)
+
+    def run(self):
+        try:
+            result = self.owner._analyze_filter_comparisons(
+                self.filter_name,
+                self.target_id,
+                refresh=True,
+                should_stop=self.isInterruptionRequested,
+            )
+            if not self.isInterruptionRequested():
+                self.result_ready.emit(self.filter_name, self.target_id, result)
+        except Exception as exc:
+            if not self.isInterruptionRequested():
+                self.error.emit(str(exc))
+
+
+class _ComparisonAutomationWorker(QThread):
+    progress = pyqtSignal(int, int, str, str)
+    result_ready = pyqtSignal(dict)
+
+    def __init__(self, owner, filters: list[str], targets: dict[str, int]):
+        super().__init__(owner)
+        self.owner = owner
+        self.filters = list(filters)
+        self.targets = {str(key): int(value) for key, value in targets.items()}
+
+    def run(self):
+        total = max(1, len(self.filters) * 6)
+        payload = {
+            "results": {},
+            "errors": {},
+            "simbad_updates": {},
+            "warnings": [],
+            "canceled": False,
+            "total": total,
+            "filters": list(self.filters),
+        }
+        simbad_query_attempted = False
+        shared_simbad_results: Optional[pd.DataFrame] = None
+        for index, flt in enumerate(self.filters):
+            if self.isInterruptionRequested():
+                payload["canceled"] = True
+                break
+            base = index * 6
+            target_id = self.targets.get(flt)
+            try:
+                self.progress.emit(base + 1, total, f"{flt}: Photometry", "Loading time series")
+                measurements, source_info = self.owner._comparison_timeseries(
+                    flt,
+                    refresh=True,
+                    should_stop=self.isInterruptionRequested,
+                )
+                if measurements.empty:
+                    raise ValueError("no usable photometry")
+                available = set(measurements["star_id"].astype("int64"))
+                if target_id is None or int(target_id) not in available:
+                    raise ValueError("target is not available in the photometry")
+
+                gaia_variable_ids = {
+                    int(value)
+                    for value in available
+                    if self.owner._is_gaia_variable_candidate(int(value))
+                }
+                self.progress.emit(
+                    base + 2,
+                    total,
+                    f"{flt}: Gaia screening",
+                    f"{len(gaia_variable_ids)} catalog variable flags",
+                )
+
+                self.progress.emit(
+                    base + 3, total, f"{flt}: SIMBAD", "Querying object types"
+                )
+                source_radec = self.owner._collect_simbad_source_radec(flt)
+                simbad_updates: dict[str, str] = {}
+                if source_radec and not self.isInterruptionRequested():
+                    region = self.owner._compute_simbad_query_region(source_radec)
+                    if region is not None:
+                        if not simbad_query_attempted:
+                            simbad_query_attempted = True
+                            try:
+                                shared_simbad_results = self.owner._query_simbad_tap(*region)
+                            except Exception as exc:
+                                payload["warnings"].append(
+                                    f"{flt}: SIMBAD unavailable ({exc})"
+                                )
+                        simbad_updates = self.owner._match_simbad_types(
+                            source_radec, shared_simbad_results, flt
+                        )
+                payload["simbad_updates"].update(simbad_updates)
+                simbad_variable_ids = {
+                    int(source_id)
+                    for source_id in available
+                    if _simbad_type_is_variable(
+                        simbad_updates.get(
+                            self.owner._simbad_cache_key(int(source_id), flt=flt),
+                            self.owner._get_simbad_type_for_source(int(source_id), flt=flt),
+                        )
+                    )
+                }
+                self.progress.emit(
+                    base + 3,
+                    total,
+                    f"{flt}: SIMBAD",
+                    f"{len(simbad_updates)} matched, {len(simbad_variable_ids)} variable types",
+                )
+
+                if self.isInterruptionRequested():
+                    payload["canceled"] = True
+                    break
+                self.progress.emit(
+                    base + 4,
+                    total,
+                    f"{flt}: Stability",
+                    "Computing leave-one-out time-series diagnostics",
+                )
+                result = self.owner._analyze_filter_comparisons(
+                    flt,
+                    int(target_id),
+                    refresh=False,
+                    catalog_reject_ids=simbad_variable_ids,
+                    prefer_current=False,
+                )
+                selected = [int(value) for value in result.get("selected_ids", [])]
+                check_id = result.get("recommended_check_id")
+                if len(selected) < 3 or check_id is None:
+                    raise ValueError(
+                        str(result.get("adaptive_reason") or "no complete ensemble and check star")
+                    )
+                payload["results"][flt] = result
+                source_name = str(source_info.get("source", "aperture")).upper()
+                self.progress.emit(
+                    base + 5,
+                    total,
+                    f"{flt}: Selection",
+                    f"{len(selected)} comparisons + 1 check | {source_name}",
+                )
+            except Exception as exc:
+                payload["errors"][flt] = str(exc)
+                self.progress.emit(
+                    base + 5, total, f"{flt}: Failed", str(exc)
+                )
+        self.result_ready.emit(payload)
 
 
 def _extract_date_key(filename: str) -> str:
@@ -67,34 +413,62 @@ def _extract_date_key(filename: str) -> str:
     return match.group(1) if match else ""
 
 
-def _resolve_idmatch_path(step7_dir: Path, filename: str) -> Path:
+def _resolve_idmatch_path(result_dir: Path, filename: str) -> Path:
     fname = Path(str(filename)).name
-    # Forced phot TSV is now the per-frame identity table; keep legacy
-    # idmatch fallbacks so older result folders still open.
+    root = Path(result_dir)
+    forced_dir = forced_phot_input_dir(root)
+    identity_dir = idmatch_input_dir(root)
+    forced_candidates = []
     for forced_name in (f"photometry_{fname}.tsv", f"{fname}_photometry.tsv"):
-        forced = step7_dir / forced_name
-        if forced.exists():
-            return forced
+        forced_candidates.append(forced_dir / forced_name)
     date_key = _extract_date_key(fname)
+    legacy_candidates = []
     if date_key:
-        dated = step7_dir / date_key / f"idmatch_{fname}.csv"
-        if dated.exists():
-            return dated
-    direct = step7_dir / f"idmatch_{fname}.csv"
-    if direct.exists():
-        return direct
-    matches = list(step7_dir.glob(f"*/idmatch_{fname}.csv"))
-    return matches[0] if matches else direct
+        legacy_candidates.append(identity_dir / date_key / f"idmatch_{fname}.csv")
+    legacy_candidates.append(identity_dir / f"idmatch_{fname}.csv")
+
+    # Current Step 7 tables include source_id. Legacy Step 5 tables do not, so
+    # prefer the separate Step 8 identity table in an old workspace.
+    candidates = (
+        forced_candidates + legacy_candidates
+        if forced_dir.name == "step7_forced_phot"
+        else legacy_candidates + forced_candidates
+    )
+    for path in candidates:
+        if path.exists():
+            return path
+    matches = list(identity_dir.glob(f"*/idmatch_{fname}.csv"))
+    return matches[0] if matches else candidates[0]
 
 
 def _table_sep(path: Path) -> str:
     return "\t" if path.suffix.lower() == ".tsv" else ","
 
 
+def _read_idmatch_table(result_dir: Path, filename: str) -> tuple[pd.DataFrame, Path]:
+    path = _resolve_idmatch_path(result_dir, filename)
+    if not path.exists():
+        return pd.DataFrame(columns=["x", "y", "source_id"]), path
+    try:
+        frame = read_csv_int64_source_id(path, sep=_table_sep(path))
+        if {"x_fit", "y_fit"} <= set(frame.columns) and not {"x", "y"} <= set(
+            frame.columns
+        ):
+            frame = frame.rename(columns={"x_fit": "x", "y_fit": "y"})
+        if not {"x", "y", "source_id"} <= set(frame.columns):
+            raise ValueError("identity columns are missing")
+        frame["source_id"] = coerce_int64_source_id(frame["source_id"])
+        return frame, path
+    except Exception:
+        return pd.DataFrame(columns=["x", "y", "source_id"]), path
+
+
 class TargetComparisonSelectionWindow(StepWindowBase):
-    """Step 8: Target/Comparison Selection (Filter-based)"""
+    """Step 9: Target/Comparison Selection (Filter-based)"""
     simbad_log = pyqtSignal(str)
     simbad_fetch_done = pyqtSignal(dict)
+    fits_load_ready = pyqtSignal(int, object)
+    fits_load_failed = pyqtSignal(int, str)
 
     def __init__(self, params, file_manager, project_state, main_window):
         self.file_manager = file_manager
@@ -112,7 +486,7 @@ class TargetComparisonSelectionWindow(StepWindowBase):
         self.filter_catalogs: Dict[str, pd.DataFrame] = {}  # filter -> reference catalog
         self.filter_targets: Dict[str, Optional[int]] = {}  # filter -> target source_id
         self.filter_comparisons: Dict[str, Set[int]] = {}  # filter -> comparison source_ids
-        self.filter_master_ids: Dict[str, Set[int]] = {}  # filter -> final master source_ids (Step 8)
+        self.filter_master_ids: Dict[str, Set[int]] = {}  # filter -> final master source_ids (Step 9)
         self.catalog_ids: Set[int] = set()  # current filter reference catalog source_ids
         self._filter_all_source_ids: Dict[str, Set[int]] = {}
         self.step6_master_df: Optional[pd.DataFrame] = None
@@ -125,6 +499,17 @@ class TargetComparisonSelectionWindow(StepWindowBase):
         self._gaia_bp_map: Dict[int, float] = {}
         self._gaia_rp_map: Dict[int, float] = {}
         self._gaia_variable_flag_map: Dict[int, str] = {}
+        self._instrumental_mag_cache: Dict[str, Dict[int, float]] = {}
+        self.filter_rejected_sources: Dict[str, Set[int]] = {}
+        self._filter_timeseries_cache: Dict[str, tuple[pd.DataFrame, dict]] = {}
+        self._filter_stability_cache: Dict[str, dict] = {}
+        self._comparison_preview: Optional[ComparisonLightCurvePreview] = None
+        self._comparison_preview_worker: Optional[_ComparisonPreviewWorker] = None
+        self._comparison_preview_request_token = 0
+        self._pending_comparison_preview_request: Optional[dict] = None
+        self._check_recommendation_worker: Optional[_CheckRecommendationWorker] = None
+        self._automation_dialog: Optional[ComparisonAutomationDialog] = None
+        self._automation_worker: Optional[_ComparisonAutomationWorker] = None
 
         self.master_ids: Set[int] = set()
         self.target_source_id: Optional[int] = None
@@ -157,7 +542,8 @@ class TargetComparisonSelectionWindow(StepWindowBase):
         self._file_path_cache: Dict[str, Path] = {}
         self._prefetch_lock = threading.Lock()
         self._prefetch_pending: Set[str] = set()
-        self._prefetch_executor = ThreadPoolExecutor(max_workers=1)
+        self._prefetch_executor = ThreadPoolExecutor(max_workers=2)
+        self._fits_load_token = 0
         # Check star support
         self.filter_check_stars: Dict[str, Optional[int]] = {}  # filter -> check star source_id
         # Image flip state
@@ -199,12 +585,23 @@ class TargetComparisonSelectionWindow(StepWindowBase):
         self._stretch_marker_max_line = None
 
         super().__init__(
-            step_index=7,
+            step_index=8,
             step_name="Target/Comparison Selection",
             params=params,
             project_state=project_state,
             main_window=main_window
         )
+
+        self._selection_save_timer = QTimer(self)
+        self._selection_save_timer.setSingleShot(True)
+        self._selection_save_timer.setInterval(180)
+        self._selection_save_timer.timeout.connect(self.save_selection)
+        self._overlay_refresh_timer = QTimer(self)
+        self._overlay_refresh_timer.setSingleShot(True)
+        self._overlay_refresh_timer.setInterval(30)
+        self._overlay_refresh_timer.timeout.connect(self.update_overlay)
+        self.fits_load_ready.connect(self._on_fits_load_ready)
+        self.fits_load_failed.connect(self._on_fits_load_failed)
 
         self.setup_step_ui()
         self.simbad_log.connect(self.log)
@@ -228,6 +625,10 @@ class TargetComparisonSelectionWindow(StepWindowBase):
         sc_next.setContext(Qt.ApplicationShortcut)
         sc_next.activated.connect(lambda: self.step_frame(1))
         self._shortcuts.append(sc_next)
+        sc_preview = QShortcut(QKeySequence("P"), self)
+        sc_preview.setContext(Qt.ApplicationShortcut)
+        sc_preview.activated.connect(self.show_selected_lightcurve_preview)
+        self._shortcuts.append(sc_preview)
 
     def setup_step_ui(self):
         # ── Row 0: Filter + Frame + Status (한 줄) ──
@@ -244,6 +645,16 @@ class TargetComparisonSelectionWindow(StepWindowBase):
         self.step7_status_label.setProperty("role", "caption")
         top_bar.addWidget(self.step7_status_label)
 
+        source_info = resolve_lightcurve_photometry_source(
+            self.params.P.result_dir, self.project_state
+        )
+        self.photometry_source_label = QLabel(
+            format_photometry_provenance(source_info)
+        )
+        self.photometry_source_label.setProperty("role", "caption")
+        self.photometry_source_label.setToolTip(str(source_info.get("reason", "")))
+        top_bar.addWidget(self.photometry_source_label)
+
         sep1 = QLabel("|")
         sep1.setProperty("role", "caption")
         top_bar.addWidget(sep1)
@@ -255,22 +666,9 @@ class TargetComparisonSelectionWindow(StepWindowBase):
 
         top_bar.addStretch()
 
-        info_label = QLabel("T=target C=comp A=add D=remove .=filter [/]=frame")
-        info_label.setProperty("role", "caption")
-        info_label.setToolTip(
-            "ID: 고정 번호 (1,2,3...) | Gaia ID: Gaia DR3 source_id\n"
-            "Shift+D: box remove | G: profile"
-        )
-        top_bar.addWidget(info_label)
-
-        btn_log = QPushButton("Log")
-        style_button(btn_log, "ghost", height=Tokens.H_COMPACT)
-        btn_log.clicked.connect(self.show_log_window)
-        top_bar.addWidget(btn_log)
-
         self.content_layout.addLayout(top_bar)
 
-        # ── Row 1: Target/Comp 상태 + 주요 액션 ──
+        # ── Row 1: role summary + direct role assignment ──
         action_row1 = QHBoxLayout()
         action_row1.setSpacing(8)
 
@@ -283,37 +681,29 @@ class TargetComparisonSelectionWindow(StepWindowBase):
         action_row1.addWidget(self.comparison_label)
 
         self.check_label = QLabel("Check: (none)")
-        self.check_label.setStyleSheet("font-weight: bold; color: #FFD700;")
+        self.check_label.setStyleSheet("font-weight: bold; color: #8A6A00;")
         action_row1.addWidget(self.check_label)
 
         action_row1.addStretch()
 
-        btn_set_target = QPushButton("Target (T)")
+        btn_set_target = QPushButton("Target")
+        btn_set_target.setToolTip("Assign the selected source as target")
         btn_set_target.clicked.connect(self.set_target_selected)
         action_row1.addWidget(btn_set_target)
 
-        btn_toggle_comp = QPushButton("Comp (C)")
+        btn_toggle_comp = QPushButton("Comparison")
+        btn_toggle_comp.setToolTip("Add or remove the selected source from the ensemble")
         btn_toggle_comp.clicked.connect(self.toggle_comparison_selected)
         action_row1.addWidget(btn_toggle_comp)
 
-        btn_set_check = QPushButton("Check (K)")
-        btn_set_check.setToolTip("선택한 별을 check star로 지정 (K키)")
+        btn_set_check = QPushButton("Check")
+        btn_set_check.setToolTip("Assign the selected source as the independent check star")
         btn_set_check.clicked.connect(self.set_check_selected)
         action_row1.addWidget(btn_set_check)
 
-        btn_simbad = QPushButton("Aladin")
-        btn_simbad.setToolTip("현재 화각을 Aladin Lite와 SIMBAD field query로 열기 (브라우저)")
-        btn_simbad.clicked.connect(self.open_aladin_fov)
-        action_row1.addWidget(btn_simbad)
-
-        btn_find_tgt = QPushButton("Find Tgt")
-        btn_find_tgt.setToolTip("SIMBAD 좌표로 타겟 선택 (Step 1 좌표 사용)")
-        btn_find_tgt.clicked.connect(self.select_target_from_simbad)
-        action_row1.addWidget(btn_find_tgt)
-
         self.content_layout.addLayout(action_row1)
 
-        # ── Row 2: Selected 정보 + 보조 액션 ──
+        # ── Row 2: selected source + comparison analysis ──
         action_row2 = QHBoxLayout()
         action_row2.setSpacing(8)
 
@@ -323,44 +713,45 @@ class TargetComparisonSelectionWindow(StepWindowBase):
 
         action_row2.addStretch()
 
-        action_row2.addWidget(QLabel("Recs:"))
-        self.comp_reco_count = QSpinBox()
-        self.comp_reco_count.setRange(1, 20)
-        self.comp_reco_count.setValue(5)
-        self.comp_reco_count.setFixedWidth(50)
-        action_row2.addWidget(self.comp_reco_count)
+        self.btn_auto_comp = QPushButton("Automate Filter")
+        style_button(self.btn_auto_comp, "primary", height=Tokens.H_BUTTON)
+        self.btn_auto_comp.setToolTip(
+            "Run catalog screening, stability analysis, ensemble selection, and check-star selection"
+        )
+        self.btn_auto_comp.clicked.connect(self.auto_select_comparisons)
+        action_row2.addWidget(self.btn_auto_comp)
 
-        btn_auto_comp = QPushButton("Auto Select")
-        btn_auto_comp.setToolTip("현재 선택을 유지한 채 비교성을 자동으로 추가 선택")
-        btn_auto_comp.clicked.connect(self.auto_select_comparisons)
-        action_row2.addWidget(btn_auto_comp)
+        more_menu = QMenu(self)
+        act_auto_all = more_menu.addAction("Automate All Filters")
+        act_auto_all.setToolTip("Apply comparison selection to every filter with a target")
+        act_auto_all.triggered.connect(self.auto_select_all_filters)
+        act_check = more_menu.addAction("Recommend Check Star")
+        act_check.triggered.connect(self.recommend_check_star)
+        self._act_recommend_check = act_check
+        act_preview = more_menu.addAction("Preview Selected Light Curve")
+        act_preview.triggered.connect(self.show_selected_lightcurve_preview)
 
-        btn_clear_comp = QPushButton("Clear All")
-        btn_clear_comp.setToolTip("현재 필터의 Target / Comp / Check 역할을 모두 해제")
-        btn_clear_comp.clicked.connect(self.clear_all_roles)
-        action_row2.addWidget(btn_clear_comp)
+        more_menu.addSeparator()
+        act_find_target = more_menu.addAction("Find Target from Coordinates")
+        act_find_target.triggered.connect(self.select_target_from_simbad)
+        act_aladin = more_menu.addAction("Open Field in Aladin")
+        act_aladin.triggered.connect(self.open_aladin_fov)
+        self.btn_simbad_types = more_menu.addAction("Refresh SIMBAD Types")
+        self.btn_simbad_types.triggered.connect(self.fetch_simbad_types)
 
-        btn_copy_to_all = QPushButton("Copy All")
-        btn_copy_to_all.setToolTip("현재 타겟/비교성 선택을 모든 필터에 복사")
-        btn_copy_to_all.clicked.connect(self.copy_selection_to_all_filters)
-        action_row2.addWidget(btn_copy_to_all)
+        more_menu.addSeparator()
+        act_copy = more_menu.addAction("Copy Roles to All Filters")
+        act_copy.triggered.connect(self.copy_selection_to_all_filters)
+        act_clear = more_menu.addAction("Clear Current Roles")
+        act_clear.triggered.connect(self.clear_all_roles)
+        more_menu.addSeparator()
+        act_log = more_menu.addAction("Show Log")
+        act_log.triggered.connect(self.show_log_window)
 
-        self.btn_simbad_types = QPushButton("SIMBAD Types")
-        self.btn_simbad_types.setToolTip("현재 필터의 Gaia 매치 소스에 대해 SIMBAD 오브젝트 타입 가져오기 (인터넷 필요)")
-        self.btn_simbad_types.clicked.connect(self.fetch_simbad_types)
-        action_row2.addWidget(self.btn_simbad_types)
-
-        self.show_selected_only = QCheckBox("Selected only")
-        self.show_selected_only.setToolTip("타겟/비교성만 오버레이에 표시")
-        self.show_selected_only.stateChanged.connect(self.update_overlay)
-        action_row2.addWidget(self.show_selected_only)
-
-        self.show_gaia_id = QCheckBox("Gaia ID")
-        self.show_gaia_id.setToolTip("Gaia DR3 source_id 컬럼 표시")
-        self.show_gaia_id.setChecked(False)
-        self.show_gaia_id.stateChanged.connect(self._toggle_gaia_id_column)
-        self.show_gaia_id.setVisible(False)
-        action_row2.addWidget(self.show_gaia_id)
+        btn_more = QPushButton("More")
+        btn_more.setToolTip("More selection actions")
+        btn_more.setMenu(more_menu)
+        action_row2.addWidget(btn_more)
 
         self.content_layout.addLayout(action_row2)
 
@@ -416,28 +807,35 @@ class TargetComparisonSelectionWindow(StepWindowBase):
         viewer_group = QGroupBox("Preview")
         viewer_layout = QVBoxLayout(viewer_group)
 
-        # Top bar: 2D Plot + Flip buttons
+        # Viewer options stay available without occupying the image toolbar.
         ctrl_layout = QHBoxLayout()
-
-        btn_2d_plot = QPushButton("2D Plot")  # utility dialog opener — neutral
-        btn_2d_plot.clicked.connect(self.open_stretch_plot)
-        ctrl_layout.addWidget(btn_2d_plot)
-
-        # No setFixedWidth: 55px clipped the labels to "lip" under the themed
-        # button padding — let sizeHint decide.
-        self.btn_flip_x = QPushButton("Flip X")
-        self.btn_flip_x.setCheckable(True)
-        self.btn_flip_x.setToolTip("이미지 좌우 반전 (X축)")
-        self.btn_flip_x.clicked.connect(self._toggle_flip_x)
-        ctrl_layout.addWidget(self.btn_flip_x)
-
-        self.btn_flip_y = QPushButton("Flip Y")
-        self.btn_flip_y.setCheckable(True)
-        self.btn_flip_y.setToolTip("이미지 상하 반전 (Y축)")
-        self.btn_flip_y.clicked.connect(self._toggle_flip_y)
-        ctrl_layout.addWidget(self.btn_flip_y)
-
         ctrl_layout.addStretch()
+
+        view_menu = QMenu(self)
+        act_stretch = view_menu.addAction("Stretch Control")
+        act_stretch.triggered.connect(self.open_stretch_plot)
+        view_menu.addSeparator()
+        self.btn_flip_x = view_menu.addAction("Flip Horizontally")
+        self.btn_flip_x.setCheckable(True)
+        self.btn_flip_x.triggered.connect(self._toggle_flip_x)
+        self.btn_flip_y = view_menu.addAction("Flip Vertically")
+        self.btn_flip_y.setCheckable(True)
+        self.btn_flip_y.triggered.connect(self._toggle_flip_y)
+        view_menu.addSeparator()
+        self.show_selected_only = view_menu.addAction("Selected Sources Only")
+        self.show_selected_only.setCheckable(True)
+        self.show_selected_only.toggled.connect(self.update_overlay)
+        self.show_gaia_id = view_menu.addAction("Show Gaia Source IDs")
+        self.show_gaia_id.setCheckable(True)
+        self.show_gaia_id.toggled.connect(self._toggle_gaia_id_column)
+        view_menu.addSeparator()
+        act_colors = view_menu.addAction("Overlay Colors...")
+        act_colors.triggered.connect(self._open_color_dialog)
+
+        btn_view = QPushButton("View")
+        btn_view.setToolTip("Image and overlay options")
+        btn_view.setMenu(view_menu)
+        ctrl_layout.addWidget(btn_view)
         viewer_layout.addLayout(ctrl_layout)
 
         # GPU-accelerated FITS viewer
@@ -655,8 +1053,8 @@ class TargetComparisonSelectionWindow(StepWindowBase):
 
     def check_step7_status(self):
         """Forced-photometry output 확인 및 필터 로드."""
-        forced_out = step7_forced_phot_dir(self.params.P.result_dir)
-        refbuild_out = step6_refbuild_dir(self.params.P.result_dir)
+        forced_out = forced_phot_input_dir(self.params.P.result_dir)
+        refbuild_out = refbuild_input_dir(self.params.P.result_dir)
 
         filter_frames_path = next(
             (
@@ -768,13 +1166,20 @@ class TargetComparisonSelectionWindow(StepWindowBase):
 
     def load_selections(self):
         """기존 선택 데이터 로드"""
-        step9_out = step8_selection_dir(self.params.P.result_dir)
-        if not step9_out.exists():
+        selection_dirs = selection_input_dirs(self.params.P.result_dir)
+        if not any(path.exists() for path in selection_dirs):
             return
 
         # filter_frames 기준으로 선택 로드 (filter_catalogs 의존성 제거)
         for flt in self.filter_frames.keys():
-            selection_path = step9_out / f"selection_{flt}.json"
+            selection_path = next(
+                (
+                    directory / f"selection_{flt}.json"
+                    for directory in selection_dirs
+                    if (directory / f"selection_{flt}.json").exists()
+                ),
+                selection_dirs[0] / f"selection_{flt}.json",
+            )
             if selection_path.exists():
                 try:
                     with open(selection_path, "r", encoding="utf-8") as f:
@@ -791,13 +1196,19 @@ class TargetComparisonSelectionWindow(StepWindowBase):
                     if check_sid is not None:
                         self.filter_check_stars[flt] = int(check_sid)
 
+                    rejected_sids = data.get("rejected_source_ids", [])
+                    if isinstance(rejected_sids, list):
+                        self.filter_rejected_sources[flt] = {
+                            int(value) for value in rejected_sids if value is not None
+                        }
+
                 except Exception as e:
                     self.log(f"Error loading selection for {flt}: {e}")
 
     def load_gaia_catalog(self):
         """Gaia 카탈로그 로드"""
         from astropy.table import Table
-        gaia_path = step5_wcs_dir(self.params.P.result_dir) / "gaia_fov.ecsv"
+        gaia_path = wcs_input_dir(self.params.P.result_dir) / "gaia_fov.ecsv"
         if gaia_path.exists():
             try:
                 tab = Table.read(str(gaia_path), format="ascii.ecsv")
@@ -854,12 +1265,14 @@ class TargetComparisonSelectionWindow(StepWindowBase):
 
     def load_step6_master_sources(self):
         """Forced-photometry master source list (ra/dec, Gaia mags)."""
-        forced_dir = step7_forced_phot_dir(self.params.P.result_dir)
+        forced_dir = forced_phot_input_dir(self.params.P.result_dir)
+        identity_dir = idmatch_input_dir(self.params.P.result_dir)
         master_path = next(
             (
                 p for p in (
                     forced_dir / "master_sources.csv",
                     forced_dir / "step8_master_sources.csv",  # legacy
+                    identity_dir / "step8_master_sources.csv",
                 )
                 if p.exists()
             ),
@@ -1067,13 +1480,20 @@ class TargetComparisonSelectionWindow(StepWindowBase):
             self.log(f"Gaia G matched to ref sources: {matched}")
 
     def load_master_catalogs(self):
-        """Load Step 8 master catalogs if they already exist."""
+        """Load Step 9 master catalogs if they already exist."""
         self.filter_master_ids.clear()
-        step9_out = step8_selection_dir(self.params.P.result_dir)
-        if not step9_out.exists():
+        selection_dirs = selection_input_dirs(self.params.P.result_dir)
+        if not any(path.exists() for path in selection_dirs):
             return
         for flt in self.filter_frames.keys():
-            path = step9_out / f"master_catalog_{flt}.tsv"
+            path = next(
+                (
+                    directory / f"master_catalog_{flt}.tsv"
+                    for directory in selection_dirs
+                    if (directory / f"master_catalog_{flt}.tsv").exists()
+                ),
+                selection_dirs[0] / f"master_catalog_{flt}.tsv",
+            )
             if not path.exists():
                 continue
             try:
@@ -1110,7 +1530,7 @@ class TargetComparisonSelectionWindow(StepWindowBase):
         return known
 
     def _sanitize_master_catalog_source_ids(self, flt: str, df: pd.DataFrame) -> Set[int]:
-        """Repair stale/corrupted source_id values in saved Step 8 catalogs."""
+        """Repair stale/corrupted source_id values in saved Step 9 catalogs."""
         sid_series = coerce_int64_source_id(df.get("source_id")).dropna().astype("int64")
         raw_ids = [int(v) for v in sid_series.tolist()]
         if not raw_ids:
@@ -1211,7 +1631,7 @@ class TargetComparisonSelectionWindow(StepWindowBase):
 
     def _load_global_id_map(self, flt: Optional[str] = None) -> None:
         """Load global ID map (source_id -> ID) from Step 6 reference build."""
-        refbuild_out = step6_refbuild_dir(self.params.P.result_dir)
+        refbuild_out = refbuild_input_dir(self.params.P.result_dir)
         global_path = refbuild_out / "sourceid_to_ID.csv"
 
         path = None
@@ -1274,7 +1694,11 @@ class TargetComparisonSelectionWindow(StepWindowBase):
                 pass
 
         # Migration: try to load from an existing master_catalog.
-        catalog_path = step9_out / f"master_catalog_{flt}.tsv"
+        catalog_candidates = [step9_out / f"master_catalog_{flt}.tsv"]
+        legacy_catalog = Path(self.params.P.result_dir) / "step9_selection" / f"master_catalog_{flt}.tsv"
+        if legacy_catalog not in catalog_candidates:
+            catalog_candidates.append(legacy_catalog)
+        catalog_path = next((path for path in catalog_candidates if path.exists()), catalog_candidates[0])
         if catalog_path.exists():
             try:
                 df = read_csv_int64_source_id(catalog_path, sep="\t")
@@ -1367,8 +1791,12 @@ class TargetComparisonSelectionWindow(StepWindowBase):
 
         all_sids: Set[int] = set()
 
-        # From all frames' idmatch files
-        all_sids.update(self._collect_filter_source_ids(flt))
+        # Preserve every ID already assigned by an earlier session even when
+        # the saved master catalog contains only the currently selected set.
+        all_sids.update(
+            int(value)
+            for value in getattr(self, "_id_registry", {}).get(flt, {}).keys()
+        )
 
         # From reference catalog
         if flt in self.filter_catalogs:
@@ -1379,6 +1807,11 @@ class TargetComparisonSelectionWindow(StepWindowBase):
 
         # From master_ids
         all_sids.update(self.filter_master_ids.get(flt, set()))
+
+        # Legacy projects may not have either aggregate. Avoid reopening every
+        # per-frame table when Step 6/7 already supplied the complete ID set.
+        if not all_sids:
+            all_sids.update(self._collect_filter_source_ids(flt))
 
         # Assign stable IDs for every source
         self.sid_to_id = {}
@@ -1410,12 +1843,12 @@ class TargetComparisonSelectionWindow(StepWindowBase):
         if flt in self._filter_all_source_ids:
             return set(self._filter_all_source_ids[flt])
 
-        forced_out = step7_forced_phot_dir(self.params.P.result_dir)
+        result_dir = Path(self.params.P.result_dir)
         frames = self.filter_frames.get(flt, [])
         sids: Set[int] = set()
 
         for fname in frames:
-            p = _resolve_idmatch_path(forced_out, fname)
+            p = _resolve_idmatch_path(result_dir, fname)
             if not p.exists():
                 continue
             try:
@@ -1444,7 +1877,7 @@ class TargetComparisonSelectionWindow(StepWindowBase):
         if cached is not None:
             return set(cached)
 
-        forced_out = step7_forced_phot_dir(self.params.P.result_dir)
+        result_dir = Path(self.params.P.result_dir)
         frames = self.filter_frames.get(flt, [])
         if not frames:
             return set()
@@ -1454,7 +1887,7 @@ class TargetComparisonSelectionWindow(StepWindowBase):
         n_frames = 0
 
         for fname in frames:
-            p = _resolve_idmatch_path(forced_out, fname)
+            p = _resolve_idmatch_path(result_dir, fname)
             if not p.exists():
                 continue
             try:
@@ -1468,7 +1901,7 @@ class TargetComparisonSelectionWindow(StepWindowBase):
         if n_frames == 0:
             return set()
 
-        threshold = max(1, int(n_frames * min_ratio))
+        threshold = max(1, int(np.ceil(n_frames * min_ratio)))
         common = {sid for sid, cnt in sid_counts.items() if cnt >= threshold}
 
         if not hasattr(self, "_common_sid_cache"):
@@ -1505,12 +1938,47 @@ class TargetComparisonSelectionWindow(StepWindowBase):
                                 return float(val)
         return float("nan")
 
-    def _get_color_for_source(self, source_id: int) -> float:
+    def _get_instrumental_mag_map(self, flt: str) -> Dict[int, float]:
+        """Return robust Step 7 median magnitudes for every source in a filter."""
+        key = normalize_filter_key(flt)
+        if key in self._instrumental_mag_cache:
+            return dict(self._instrumental_mag_cache[key])
+
+        values: Dict[int, list[float]] = {}
+        result_dir = Path(self.params.P.result_dir)
+        for fname in self.filter_frames.get(flt, []):
+            frame = load_frame_photometry(result_dir, fname, flt, sid_map={})
+            if frame is None or frame.empty or "source_id" not in frame.columns:
+                continue
+            mag_column = "mag" if "mag" in frame.columns else "mag_inst"
+            if mag_column not in frame.columns:
+                continue
+            source_ids = coerce_int64_source_id(frame["source_id"])
+            magnitudes = pd.to_numeric(frame[mag_column], errors="coerce")
+            usable = source_ids.notna() & np.isfinite(magnitudes)
+            if "bad_phot_flag" in frame.columns:
+                bad = frame["bad_phot_flag"].astype(str).str.lower().isin(
+                    {"true", "1", "yes"}
+                )
+                usable &= ~bad
+            for source_id, magnitude in zip(source_ids[usable], magnitudes[usable]):
+                values.setdefault(int(source_id), []).append(float(magnitude))
+
+        medians = {
+            source_id: float(np.nanmedian(magnitudes))
+            for source_id, magnitudes in values.items()
+            if magnitudes
+        }
+        self._instrumental_mag_cache[key] = medians
+        return dict(medians)
+
+    def _get_color_for_source(self, source_id: int, flt: Optional[str] = None) -> float:
         """Get BP-RP color index for a source"""
         sid = int(source_id)
+        filter_key = flt or self.current_filter
         # Check filter catalog first
-        if self.current_filter and self.current_filter in self.filter_catalogs:
-            cat = self.filter_catalogs[self.current_filter]
+        if filter_key and filter_key in self.filter_catalogs:
+            cat = self.filter_catalogs[filter_key]
             if "source_id" in cat.columns:
                 row = cat[cat["source_id"] == sid]
                 if not row.empty:
@@ -1574,14 +2042,17 @@ class TargetComparisonSelectionWindow(StepWindowBase):
 
         return float("nan")
 
-    def _get_radec_for_source(self, source_id: int) -> tuple:
+    def _get_radec_for_source(
+        self, source_id: int, flt: Optional[str] = None
+    ) -> tuple:
         sid = int(source_id)
         if sid in self._step6_radec_map:
             return self._step6_radec_map[sid]
         if sid in self._gaia_radec_map:
             return self._gaia_radec_map[sid]
-        if self.current_filter and self.current_filter in self.filter_catalogs:
-            cat = self.filter_catalogs[self.current_filter]
+        filter_key = flt or self.current_filter
+        if filter_key and filter_key in self.filter_catalogs:
+            cat = self.filter_catalogs[filter_key]
             if "source_id" in cat.columns:
                 sub = cat[cat["source_id"] == sid]
                 if len(sub):
@@ -1752,11 +2223,14 @@ class TargetComparisonSelectionWindow(StepWindowBase):
         # Role 컬럼 추가 (Target/Comparison)
         target_sid = self.filter_targets.get(flt)
         comp_sids = self.filter_comparisons.get(flt, set())
+        check_sid = self.filter_check_stars.get(flt)
 
         def get_role(sid):
             sid = int(sid)
             if target_sid is not None and sid == target_sid:
                 return "T"
+            elif check_sid is not None and sid == int(check_sid):
+                return "K"
             elif sid in comp_sids:
                 return "C"
             return ""
@@ -1825,7 +2299,7 @@ class TargetComparisonSelectionWindow(StepWindowBase):
     def _load_ref_header(self) -> None:
         if self.ref_header is not None:
             return
-        meta_path = step6_refbuild_dir(self.params.P.result_dir) / "ref_build_meta.json"
+        meta_path = refbuild_input_dir(self.params.P.result_dir) / "ref_build_meta.json"
         if not meta_path.exists():
             return
         try:
@@ -1875,7 +2349,7 @@ class TargetComparisonSelectionWindow(StepWindowBase):
             cat = self.filter_catalogs[self.current_filter]
             self.catalog_ids = set(coerce_int64_source_id(cat["source_id"]).dropna().astype("int64").tolist())
 
-        # Step 8 master (final) load/init
+        # Step 9 master (final) load/init
         self._ensure_master_ids_for_filter(self.current_filter)
 
         # 모든 프레임의 source_id에 대해 안정적인 ID 사전 할당
@@ -1887,7 +2361,8 @@ class TargetComparisonSelectionWindow(StepWindowBase):
 
         # 파일 목록 업데이트
         self.populate_file_list()
-        self.update_master_table()
+        if not self.file_list:
+            self.update_master_table()
         self.update_target_labels()
         self._update_check_label()
 
@@ -1986,18 +2461,40 @@ class TargetComparisonSelectionWindow(StepWindowBase):
 
             if file_path is None or not file_path.exists():
                 raise FileNotFoundError(f"Cannot find {filename}")
+            key = str(file_path)
+            with self._prefetch_lock:
+                cached_fits = self._fits_cache.get(key)
+            cached_identity = self._idmatch_cache.get(filename)
+            if cached_fits is not None and cached_identity is not None:
+                self._apply_loaded_frame(
+                    filename,
+                    cached_fits[0],
+                    cached_fits[1],
+                    cached_identity,
+                    _resolve_idmatch_path(Path(self.params.P.result_dir), filename),
+                    quick_switch,
+                )
+                return
 
-            data, header = self._load_fits_cached(file_path)
-            self.image_data = data
-            self.header = header
-            self.current_filename = filename
-            self._stretch_vmin = None
-            self._stretch_vmax = None
-            self.load_idmatch_for_file(filename)
-            self._update_viewer_image(keep_view=quick_switch)
-            self.update_overlay()
-            self.update_master_table()
-            self._schedule_prefetch_neighbors()
+            self._fits_load_token += 1
+            token = self._fits_load_token
+            future = self._prefetch_executor.submit(
+                self._load_frame_bundle,
+                filename,
+                file_path,
+                cached_identity,
+                quick_switch,
+            )
+
+            def _finished(completed):
+                if self._closing:
+                    return
+                try:
+                    self.fits_load_ready.emit(token, completed.result())
+                except Exception as exc:
+                    self.fits_load_failed.emit(token, str(exc))
+
+            future.add_done_callback(_finished)
         except Exception as e:
             import traceback
             self.log(f"[ERROR] Failed to load {filename}: {e}\n{traceback.format_exc()}")
@@ -2010,6 +2507,76 @@ class TargetComparisonSelectionWindow(StepWindowBase):
                 # spins a nested event loop and hard-crashes the app
                 # (0xC0000409). Defer the dialog until the window is up.
                 QTimer.singleShot(0, lambda: QMessageBox.critical(self, "Error", msg))
+
+    def _load_frame_bundle(
+        self,
+        filename: str,
+        file_path: Path,
+        cached_identity: Optional[pd.DataFrame],
+        quick_switch: bool,
+    ) -> dict:
+        data, header = self._load_fits_cached(file_path)
+        if cached_identity is None:
+            identity, identity_path = _read_idmatch_table(
+                Path(self.params.P.result_dir), filename
+            )
+        else:
+            identity = cached_identity
+            identity_path = _resolve_idmatch_path(
+                Path(self.params.P.result_dir), filename
+            )
+        return {
+            "filename": filename,
+            "data": data,
+            "header": header,
+            "identity": identity,
+            "identity_path": identity_path,
+            "quick_switch": bool(quick_switch),
+        }
+
+    def _on_fits_load_ready(self, token: int, payload: object) -> None:
+        if (
+            self._closing
+            or token != self._fits_load_token
+            or not isinstance(payload, dict)
+            or payload.get("filename") != self.file_combo.currentText()
+        ):
+            return
+        self._apply_loaded_frame(
+            str(payload["filename"]),
+            payload["data"],
+            payload["header"],
+            payload["identity"],
+            Path(payload["identity_path"]),
+            bool(payload["quick_switch"]),
+        )
+
+    def _on_fits_load_failed(self, token: int, message: str) -> None:
+        if self._closing or token != self._fits_load_token:
+            return
+        self.log(f"[ERROR] Failed to load frame: {message}")
+        if self.isVisible():
+            QMessageBox.critical(self, "Error", f"Failed to load frame:\n{message}")
+
+    def _apply_loaded_frame(
+        self,
+        filename: str,
+        data: np.ndarray,
+        header,
+        identity: pd.DataFrame,
+        identity_path: Path,
+        quick_switch: bool,
+    ) -> None:
+        self.image_data = data
+        self.header = header
+        self.current_filename = filename
+        self._stretch_vmin = None
+        self._stretch_vmax = None
+        self._apply_idmatch_table(filename, identity, identity_path)
+        self._update_viewer_image(keep_view=quick_switch)
+        self.update_overlay()
+        self.update_master_table()
+        self._schedule_prefetch_neighbors()
 
     def _load_fits_cached(self, file_path: Path):
         """Load FITS data/header with LRU cache to avoid repeated disk I/O."""
@@ -2104,37 +2671,29 @@ class TargetComparisonSelectionWindow(StepWindowBase):
         if filename in self._idmatch_cache:
             self.idmatch_df = self._idmatch_cache[filename]
             return
+        frame, path = _read_idmatch_table(
+            Path(self.params.P.result_dir), filename
+        )
+        self._apply_idmatch_table(filename, frame, path)
 
-        forced_out = step7_forced_phot_dir(self.params.P.result_dir)
-        idmatch_path = _resolve_idmatch_path(forced_out, filename)
-
-        if idmatch_path.exists():
-            try:
-                df = read_csv_int64_source_id(idmatch_path, sep=_table_sep(idmatch_path))
-                if {"x_fit", "y_fit"} <= set(df.columns) and not {"x", "y"} <= set(df.columns):
-                    df = df.rename(columns={"x_fit": "x", "y_fit": "y"})
-                if {"x", "y", "source_id"} <= set(df.columns):
-                    df["source_id"] = coerce_int64_source_id(df["source_id"])
-                    self.idmatch_df = df
-                    self._idmatch_cache[filename] = df
-                    try:
-                        sids = df["source_id"].dropna().astype("int64")
-                        n_total = len(df)
-                        n_gaia = int((sids > 0).sum())
-                        n_local = int((sids < 0).sum())
-                        self.log(
-                            f"Forced photometry loaded: {idmatch_path} "
-                            f"(total {n_total}, Gaia {n_gaia}, local {n_local})"
-                        )
-                    except Exception:
-                        self.log(f"Forced photometry loaded: {idmatch_path}")
-                    return
-            except Exception:
-                pass
-
-        self.log(f"Forced photometry table missing or invalid: {idmatch_path}")
-        self.idmatch_df = pd.DataFrame(columns=["x", "y", "source_id"])
-        self._idmatch_cache[filename] = self.idmatch_df
+    def _apply_idmatch_table(
+        self, filename: str, frame: pd.DataFrame, path: Path
+    ) -> None:
+        self.idmatch_df = frame
+        self._idmatch_cache[filename] = frame
+        if frame.empty:
+            self.log(f"Forced photometry table missing or invalid: {path}")
+            return
+        try:
+            source_ids = frame["source_id"].dropna().astype("int64")
+            n_gaia = int((source_ids > 0).sum())
+            n_local = int((source_ids < 0).sum())
+            self.log(
+                f"Forced photometry loaded: {path} "
+                f"(total {len(frame)}, Gaia {n_gaia}, local {n_local})"
+            )
+        except Exception:
+            self.log(f"Forced photometry loaded: {path}")
 
     def _update_viewer_image(self, keep_view=False):
         if self._closing or self._viewer is None or self.image_data is None:
@@ -2514,8 +3073,7 @@ class TargetComparisonSelectionWindow(StepWindowBase):
                         flags.append("C")
                     flag_text = f" [{','.join(flags)}]" if flags else ""
                     self.selected_label.setText(
-                        f"Selected: ID {display_id} ({src_type}){flag_text} - "
-                        "Press T=target, C=comp, A/D=master"
+                        f"Selected: ID {display_id} ({src_type}){flag_text}"
                     )
                     self._select_table_row_by_sid(self.selected_source_id)
                     self.update_overlay()
@@ -2585,6 +3143,7 @@ class TargetComparisonSelectionWindow(StepWindowBase):
                 self._load_global_id_map(self.current_filter)
                 display_id = self._global_id_map.get(int(sid), "?")
             self.selected_label.setText(f"Selected: ID {display_id}")
+            self._schedule_comparison_preview_refresh()
             return
 
         id_item = self.master_table.item(row_idx, 0)
@@ -2602,19 +3161,72 @@ class TargetComparisonSelectionWindow(StepWindowBase):
         self.selected_label.setText(
             f"Selected: ID {internal_id}{role_str} G={g_str} BP-RP={bp_rp} ({status})"
         )
+        self._schedule_comparison_preview_refresh()
 
-    def _refresh_role_ui(self, *, preserve_selection: bool = True):
+    def _schedule_comparison_preview_refresh(self) -> None:
+        if self._comparison_preview is not None and self._comparison_preview.isVisible():
+            QTimer.singleShot(0, self._load_selected_lightcurve_preview)
+
+    def _update_table_role_cells(self) -> None:
+        if not hasattr(self, "master_table"):
+            return
+        self.master_table.blockSignals(True)
+        try:
+            check_id = self.filter_check_stars.get(self.current_filter)
+            for source_id, row in getattr(self, "_sid_to_row", {}).items():
+                if self.target_source_id is not None and source_id == self.target_source_id:
+                    role = "T"
+                elif check_id is not None and source_id == int(check_id):
+                    role = "K"
+                elif source_id in self.comparison_ids:
+                    role = "C"
+                else:
+                    role = ""
+                item = self.master_table.item(int(row), 7)
+                if item is None:
+                    self.master_table.setItem(int(row), 7, QTableWidgetItem(role))
+                elif item.text() != role:
+                    item.setText(role)
+        finally:
+            self.master_table.blockSignals(False)
+
+    def _refresh_role_ui(
+        self,
+        *,
+        preserve_selection: bool = True,
+        rebuild_table: bool = True,
+    ):
         keep_sid = int(self.selected_source_id) if (preserve_selection and self.selected_source_id is not None) else None
         self.update_target_labels()
         self._update_check_label()
-        self.update_master_table()
+        if rebuild_table:
+            self.update_master_table()
+        else:
+            self._update_table_role_cells()
         if keep_sid is not None:
             self.selected_source_id = keep_sid
             self._select_table_row_by_sid(keep_sid)
             self._update_selected_label_for_sid(keep_sid)
         else:
             self._update_selected_label_for_sid(None)
-        self.update_overlay()
+        if rebuild_table:
+            self.update_overlay()
+        else:
+            self._queue_overlay_refresh()
+
+    def _queue_overlay_refresh(self) -> None:
+        timer = getattr(self, "_overlay_refresh_timer", None)
+        if timer is None:
+            self.update_overlay()
+            return
+        timer.start()
+
+    def _queue_selection_save(self) -> None:
+        timer = getattr(self, "_selection_save_timer", None)
+        if timer is None:
+            self.save_selection()
+            return
+        timer.start()
 
     def _drop_from_selection(self, sids: Set[int]):
         if not sids:
@@ -2630,7 +3242,7 @@ class TargetComparisonSelectionWindow(StepWindowBase):
             changed = True
         if changed:
             self.update_target_labels()
-            self.save_selection()
+            self._queue_selection_save()
 
     def _add_to_master(
         self,
@@ -2735,11 +3347,15 @@ class TargetComparisonSelectionWindow(StepWindowBase):
         else:
             self.target_source_id = sid
             self.filter_targets[self.current_filter] = sid
+            self.filter_rejected_sources.setdefault(self.current_filter, set()).discard(sid)
             self.comparison_ids.discard(sid)
             self.filter_comparisons[self.current_filter] = self.comparison_ids.copy()
+            if self.filter_check_stars.get(self.current_filter) == sid:
+                self.filter_check_stars[self.current_filter] = None
 
-        self.save_selection()
-        self._refresh_role_ui()
+        self._filter_stability_cache.pop(self.current_filter, None)
+        self._refresh_role_ui(rebuild_table=False)
+        self._queue_selection_save()
         self.log(f"Target set: {self.target_source_id}")
 
     def toggle_comparison_selected(self):
@@ -2765,6 +3381,8 @@ class TargetComparisonSelectionWindow(StepWindowBase):
         else:
             self.comparison_ids.add(sid)
             action = "added"
+            if flt:
+                self.filter_rejected_sources.setdefault(flt, set()).discard(sid)
             # K였으면 K 해제 (C로 전환)
             if is_check:
                 self.filter_check_stars[flt] = None
@@ -2772,8 +3390,9 @@ class TargetComparisonSelectionWindow(StepWindowBase):
 
         if flt:
             self.filter_comparisons[flt] = self.comparison_ids.copy()
-        self.save_selection()
-        self._refresh_role_ui()
+            self._filter_stability_cache.pop(flt, None)
+        self._refresh_role_ui(rebuild_table=False)
+        self._queue_selection_save()
         self.log(f"Comparison {action}: {sid}")
 
     def set_check_selected(self):
@@ -2781,6 +3400,11 @@ class TargetComparisonSelectionWindow(StepWindowBase):
             return
         flt = self.current_filter
         if flt is None:
+            return
+        if int(self.selected_source_id) == self.target_source_id:
+            QMessageBox.information(
+                self, "Check Star", "Target cannot be the independent check star."
+            )
             return
         prev = self.filter_check_stars.get(flt)
         if prev == self.selected_source_id:
@@ -2791,12 +3415,14 @@ class TargetComparisonSelectionWindow(StepWindowBase):
             if sid not in self.master_ids:
                 self._add_to_master({sid}, reason="auto_add_check", refresh=False, persist=False)
             self.filter_check_stars[flt] = sid
+            self.filter_rejected_sources.setdefault(flt, set()).discard(sid)
             # Check star는 comp ensemble에서 제외
             self.comparison_ids.discard(sid)
             if flt in self.filter_comparisons:
                 self.filter_comparisons[flt].discard(sid)
-        self.save_selection()
-        self._refresh_role_ui()
+        self._filter_stability_cache.pop(flt, None)
+        self._refresh_role_ui(rebuild_table=False)
+        self._queue_selection_save()
         self.log(f"Check star set: {self.filter_check_stars.get(flt)}")
 
     def _update_check_label(self):
@@ -2889,207 +3515,807 @@ class TargetComparisonSelectionWindow(StepWindowBase):
 
         dlg.show()
 
+    def _comparison_timeseries(
+        self,
+        flt: str,
+        *,
+        refresh: bool = False,
+        should_stop: Optional[Callable[[], bool]] = None,
+    ) -> tuple[pd.DataFrame, dict]:
+        key = str(flt)
+        if not refresh and key in self._filter_timeseries_cache:
+            return self._filter_timeseries_cache[key]
+        measurements, source_info = load_filter_photometry_timeseries(
+            Path(self.params.P.result_dir),
+            key,
+            self.project_state,
+            should_stop=should_stop,
+        )
+        if should_stop is None or not should_stop():
+            self._filter_timeseries_cache[key] = (measurements, source_info)
+        return measurements, source_info
+
+    def _comparison_candidate_pool(
+        self,
+        flt: str,
+        measurements: pd.DataFrame,
+        target_id: int,
+        target_count: int,
+        *,
+        catalog_reject_ids: Optional[Set[int]] = None,
+        prefer_current: bool = True,
+    ) -> tuple[list[int], pd.DataFrame, float]:
+        total_frames = int(measurements["frame"].nunique())
+        summary = (
+            measurements.groupby("star_id")
+            .agg(
+                n=("frame", "nunique"),
+                mean_mag=("mag", "median"),
+                median_error=("mag_err", "median"),
+            )
+            .reset_index()
+        )
+        summary["star_id"] = pd.to_numeric(
+            summary["star_id"], errors="coerce"
+        ).astype("Int64")
+        summary = summary[summary["star_id"].notna()].copy()
+        summary["star_id"] = summary["star_id"].astype("int64")
+        summary["coverage"] = summary["n"] / max(total_frames, 1)
+        target_rows = summary[summary["star_id"] == int(target_id)]
+        target_mag = (
+            float(target_rows.iloc[0]["mean_mag"])
+            if not target_rows.empty
+            else float("nan")
+        )
+        summary["d_mag"] = (
+            np.abs(summary["mean_mag"] - target_mag)
+            if np.isfinite(target_mag)
+            else 0.0
+        )
+
+        manual_rejects = self.filter_rejected_sources.get(flt, set())
+        summary["eligible"] = summary["coverage"] >= 0.90
+        summary["basic_reason"] = ""
+        summary.loc[summary["coverage"] < 0.90, "basic_reason"] = "low_coverage"
+        summary.loc[summary["star_id"] == int(target_id), ["eligible", "basic_reason"]] = [
+            False,
+            "target",
+        ]
+        if manual_rejects:
+            summary.loc[
+                summary["star_id"].isin(manual_rejects), ["eligible", "basic_reason"]
+            ] = [False, "manual_reject"]
+
+        variable_ids = {
+            int(star_id)
+            for star_id in summary.loc[summary["eligible"], "star_id"]
+            if self._is_gaia_variable_candidate(int(star_id))
+        }
+        if variable_ids:
+            summary.loc[
+                summary["star_id"].isin(variable_ids), ["eligible", "basic_reason"]
+            ] = [False, "gaia_variable"]
+
+        external_rejects = {int(value) for value in (catalog_reject_ids or set())}
+        if external_rejects:
+            summary.loc[
+                summary["star_id"].isin(external_rejects),
+                ["eligible", "basic_reason"],
+            ] = [False, "simbad_variable"]
+
+        eligible = summary[summary["eligible"]].copy()
+        eligible = eligible.sort_values(
+            ["d_mag", "median_error", "coverage", "star_id"],
+            ascending=[True, True, False, True],
+            na_position="last",
+        )
+        configured_cap = int(getattr(self.params.P, "comparison_auto_pool_max", 30))
+        pool_cap = max(3, configured_cap, int(target_count))
+        eligible_ids = set(eligible["star_id"].astype("int64"))
+        current = (
+            [
+                int(star_id)
+                for star_id in sorted(self.filter_comparisons.get(flt, set()))
+                if int(star_id) in eligible_ids
+            ]
+            if prefer_current
+            else []
+        )
+        ranked = [int(value) for value in eligible["star_id"].tolist()]
+        pool = current + [value for value in ranked if value not in current]
+        return pool[:pool_cap], summary, target_mag
+
+    def _analyze_filter_comparisons(
+        self,
+        flt: str,
+        target_id: int,
+        *,
+        target_count: Optional[int] = None,
+        refresh: bool = False,
+        catalog_reject_ids: Optional[Set[int]] = None,
+        prefer_current: bool = True,
+        should_stop: Optional[Callable[[], bool]] = None,
+    ) -> dict:
+        desired_count = int(
+            target_count
+            or getattr(self.params.P, "comparison_auto_ensemble_max", 12)
+        )
+        external_rejects = tuple(sorted(int(value) for value in (catalog_reject_ids or set())))
+        signature = (
+            int(target_id),
+            desired_count,
+            tuple(sorted(self.filter_rejected_sources.get(flt, set()))),
+            external_rejects,
+            bool(prefer_current),
+        )
+        cached = self._filter_stability_cache.get(flt)
+        if not refresh and cached is not None and cached.get("signature") == signature:
+            return cached
+
+        measurements, source_info = self._comparison_timeseries(
+            flt,
+            refresh=refresh,
+            should_stop=should_stop,
+        )
+        if should_stop is not None and should_stop():
+            raise RuntimeError("Comparison analysis canceled.")
+        if measurements.empty:
+            raise ValueError(f"No usable photometry time series for filter {flt}.")
+        available = set(measurements["star_id"].astype("int64"))
+        if int(target_id) not in available:
+            raise ValueError(f"Target source {target_id} has no usable measurements in {flt}.")
+
+        pool, basic_report, target_mag = self._comparison_candidate_pool(
+            flt,
+            measurements,
+            int(target_id),
+            desired_count,
+            catalog_reject_ids=set(external_rejects),
+            prefer_current=prefer_current,
+        )
+        if len(pool) < 4:
+            raise ValueError(
+                f"Only {len(pool)} candidates pass the 90% coverage and exclusion checks in {flt}; "
+                "at least 3 comparisons plus one check star are required."
+            )
+        target_color = self._get_color_for_source(int(target_id), flt)
+        colors = {star_id: self._get_color_for_source(star_id, flt) for star_id in pool}
+        config = ComparisonSelectionConfig(
+            target_count=max(4, len(pool)),
+            min_comparisons=3,
+        )
+        result = select_stable_comparisons(
+            measurements,
+            pool,
+            target_mag=target_mag,
+            target_color=target_color,
+            color_by_id=colors,
+            config=config,
+        )
+        if should_stop is not None and should_stop():
+            raise RuntimeError("Comparison analysis canceled.")
+        adaptive = select_adaptive_ensemble(
+            measurements,
+            result.get("metrics", pd.DataFrame()),
+            min_comparisons=3,
+            max_comparisons=max(3, desired_count),
+        )
+        result["selected_ids"] = [
+            int(value) for value in adaptive.get("selected_ids", [])
+        ]
+        result["recommended_check_id"] = adaptive.get("check_id")
+        result["check_metrics"] = dict(adaptive.get("check_metrics", {}))
+        result["ensemble_trials"] = adaptive.get("ensemble_trials", pd.DataFrame())
+        result["adaptive_reason"] = str(adaptive.get("reason", ""))
+        result.update(
+            {
+                "signature": signature,
+                "measurements": measurements,
+                "source_info": source_info,
+                "basic_report": basic_report,
+                "candidate_ids": pool,
+                "target_id": int(target_id),
+                "target_mag": target_mag,
+                "target_color": target_color,
+            }
+        )
+        if should_stop is None or not should_stop():
+            self._filter_stability_cache[flt] = result
+        return result
+
+    def _write_comparison_stability_report(self, flt: str, result: dict) -> None:
+        output_dir = step8_selection_dir(self.params.P.result_dir)
+        output_dir.mkdir(parents=True, exist_ok=True)
+        safe_filter = re.sub(r"[^A-Za-z0-9_.-]+", "_", str(flt))
+        metrics = result.get("metrics", pd.DataFrame()).copy()
+        source_info = result.get("source_info", {})
+        selected_ids = set(int(value) for value in result.get("selected_ids", []))
+        check_id = result.get("recommended_check_id")
+        if not metrics.empty:
+            metrics.insert(0, "filter", flt)
+            metrics.insert(1, "photometry_source", source_info.get("source", ""))
+            metrics.insert(2, "mag_input_column", source_info.get("mag_column", ""))
+            metrics.insert(3, "mag_error_input_column", source_info.get("mag_error_column", ""))
+            metrics["selected"] = metrics["star_id"].astype("int64").isin(selected_ids)
+            metrics["check_star"] = (
+                metrics["star_id"].astype("int64") == int(check_id)
+                if check_id is not None
+                else False
+            )
+            metrics.to_csv(
+                output_dir / f"comparison_stability_{safe_filter}.csv", index=False
+            )
+        basic = result.get("basic_report", pd.DataFrame()).copy()
+        if not basic.empty:
+            basic.insert(0, "filter", flt)
+            basic.insert(1, "photometry_source", source_info.get("source", ""))
+            basic.insert(2, "mag_input_column", source_info.get("mag_column", ""))
+            basic.insert(3, "mag_error_input_column", source_info.get("mag_error_column", ""))
+            basic.to_csv(
+                output_dir / f"comparison_screening_{safe_filter}.csv", index=False
+            )
+        trials = result.get("ensemble_trials", pd.DataFrame()).copy()
+        if not trials.empty:
+            trials = trials.drop(columns=["comparison_source_ids"], errors="ignore")
+            trials.insert(0, "filter", flt)
+            trials.insert(1, "photometry_source", source_info.get("source", ""))
+            trials.insert(2, "mag_input_column", source_info.get("mag_column", ""))
+            trials.insert(3, "mag_error_input_column", source_info.get("mag_error_column", ""))
+            trials.to_csv(
+                output_dir / f"comparison_ensemble_trials_{safe_filter}.csv",
+                index=False,
+            )
+        summary = {
+            "filter": flt,
+            "target_source_id": int(result["target_id"]),
+            "photometry_source": result.get("source_info", {}).get("source", ""),
+            "mag_input_column": result.get("source_info", {}).get("mag_column", ""),
+            "mag_error_input_column": result.get("source_info", {}).get("mag_error_column", ""),
+            "candidate_pool_source_ids": [int(value) for value in result.get("candidate_ids", [])],
+            "selected_source_ids": sorted(selected_ids),
+            "check_source_id": int(check_id) if check_id is not None else None,
+            "check_metrics": result.get("check_metrics", {}),
+            "removed_source_ids": [int(value) for value in result.get("removed_ids", [])],
+            "manual_rejected_source_ids": sorted(self.filter_rejected_sources.get(flt, set())),
+            "timestamp": time.strftime("%Y-%m-%d %H:%M:%S"),
+        }
+        with open(
+            output_dir / f"comparison_stability_{safe_filter}.json",
+            "w",
+            encoding="utf-8",
+        ) as handle:
+            json.dump(summary, handle, indent=2, ensure_ascii=False)
+
+    def _review_comparison_recommendations(
+        self,
+        candidates: pd.DataFrame,
+        n_pick: int,
+        preselected_ids: Optional[Set[int]] = None,
+    ) -> tuple[set[int], bool] | None:
+        dialog = FittedDialog(self)
+        dialog.setWindowTitle("Review Comparison Recommendations")
+        layout = QVBoxLayout(dialog)
+
+        summary = QLabel(
+            "Ranking uses candidate-minus-leave-one-out-ensemble residuals. "
+            "Coverage, excess scatter, time correlation, night shifts, and observing-condition "
+            "correlations are evaluated before brightness and color proximity."
+        )
+        summary.setWordWrap(True)
+        layout.addWidget(summary)
+
+        table = QTableWidget()
+        table.setColumnCount(11)
+        table.setHorizontalHeaderLabels(
+            [
+                "Use", "ID", "Current", "Status", "Coverage", "Mag", "dMag",
+                "BP-RP", "dColor", "Score", "Reason",
+            ]
+        )
+        display = candidates.head(100).copy().reset_index(drop=True)
+        selected_by_default = set(int(value) for value in (preselected_ids or set()))
+        table.setRowCount(len(display))
+        for row_index, row in display.iterrows():
+            source_id = int(row.get("source_id", row.get("star_id")))
+            use_item = QTableWidgetItem()
+            use_item.setFlags(
+                Qt.ItemIsEnabled | Qt.ItemIsSelectable | Qt.ItemIsUserCheckable
+            )
+            if selected_by_default:
+                checked = source_id in selected_by_default
+            else:
+                checked = row_index < int(n_pick) and str(row.get("status", "stable")) != "reject"
+            use_item.setCheckState(Qt.Checked if checked else Qt.Unchecked)
+            table.setItem(row_index, 0, use_item)
+            table.setItem(row_index, 1, QTableWidgetItem(str(source_id)))
+            table.setItem(
+                row_index,
+                2,
+                QTableWidgetItem("yes" if source_id in self.comparison_ids else ""),
+            )
+            table.setItem(row_index, 3, QTableWidgetItem(str(row.get("status", "unscored"))))
+            coverage = float(row.get("coverage", np.nan))
+            table.setItem(
+                row_index,
+                4,
+                QTableWidgetItem(f"{100.0 * coverage:.1f}%" if np.isfinite(coverage) else "-"),
+            )
+            g_mag = float(row.get("g_mag", row.get("mean_mag", np.nan)))
+            d_mag = float(row.get("d_mag", np.nan))
+            color = float(row.get("color", np.nan))
+            d_color = float(row.get("d_color", np.nan))
+            score = float(row.get("score", row.get("selection_score", np.nan)))
+            values = [g_mag, d_mag, color, d_color, score]
+            for column, value in zip(range(5, 10), values):
+                table.setItem(
+                    row_index,
+                    column,
+                    QTableWidgetItem(f"{value:.3f}" if np.isfinite(value) else "-"),
+                )
+            reason = str(row.get("reasons", "") or "stable")
+            table.setItem(row_index, 10, QTableWidgetItem(reason))
+        table.setSelectionBehavior(QAbstractItemView.SelectRows)
+        table.setEditTriggers(QAbstractItemView.NoEditTriggers)
+        table.setAlternatingRowColors(True)
+        table.setSortingEnabled(True)
+        table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeToContents)
+        table.horizontalHeader().setStretchLastSection(True)
+        table.setMinimumSize(1040, 380)
+        layout.addWidget(table)
+
+        replace_check = QCheckBox("Replace the current comparison list")
+        replace_check.setChecked(True)
+        layout.addWidget(replace_check)
+
+        buttons = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
+        buttons.button(QDialogButtonBox.Ok).setText("Apply Selection")
+        buttons.accepted.connect(dialog.accept)
+        buttons.rejected.connect(dialog.reject)
+        layout.addWidget(buttons)
+        if dialog.exec_() != QDialog.Accepted:
+            return None
+
+        selected: set[int] = set()
+        for row_index in range(table.rowCount()):
+            use_item = table.item(row_index, 0)
+            id_item = table.item(row_index, 1)
+            if (
+                use_item is not None
+                and id_item is not None
+                and use_item.checkState() == Qt.Checked
+            ):
+                selected.add(int(id_item.text()))
+        return selected, replace_check.isChecked()
+
+    def _apply_filter_comparison_selection(
+        self,
+        flt: str,
+        target_id: int,
+        selected_ids: Set[int],
+        result: dict,
+    ) -> None:
+        selected = {int(value) for value in selected_ids}
+        selected.discard(int(target_id))
+        check_id = result.get("recommended_check_id")
+        if check_id is None:
+            check_id = self.filter_check_stars.get(flt)
+        if check_id is not None:
+            check_id = int(check_id)
+            if check_id == int(target_id):
+                raise ValueError("Target cannot be used as the check star.")
+            selected.discard(int(check_id))
+            self.filter_check_stars[flt] = int(check_id)
+        self.filter_rejected_sources.setdefault(flt, set()).difference_update(selected)
+        self.filter_targets[flt] = int(target_id)
+        self.filter_comparisons[flt] = selected
+        role_ids = selected | {int(target_id)}
+        if check_id is not None:
+            role_ids.add(int(check_id))
+        self.filter_master_ids.setdefault(flt, set()).update(role_ids)
+
+        saved_result = dict(result)
+        saved_result["selected_ids"] = sorted(selected)
+        self._write_comparison_stability_report(flt, saved_result)
+        self._save_selection_for_filter(flt, int(target_id), selected)
+
+        if flt == self.current_filter:
+            self.target_source_id = int(target_id)
+            self.comparison_ids = selected.copy()
+            self.master_ids = self.filter_master_ids[flt]
+            self._refresh_role_ui(rebuild_table=False)
+
     def auto_select_comparisons(self):
-        """비교성 자동 선택: 모든 프레임 공통 소스 중 밝은 등급 + 비슷한 색지수 우선"""
-        if self.target_source_id is None:
-            QMessageBox.information(self, "Comparison", "Set a target first.")
+        self.start_comparison_automation(all_filters=False)
+
+    def start_comparison_automation(self, *, all_filters: bool) -> None:
+        worker = self._automation_worker
+        if worker is not None and worker.isRunning():
+            if self._automation_dialog is not None:
+                self._automation_dialog.show()
+                self._automation_dialog.raise_()
+                self._automation_dialog.activateWindow()
             return
 
-        # 모든 프레임에 공통으로 잡히는 source_id만 후보로 사용
-        common_sids = self._collect_common_source_ids(self.current_filter, min_ratio=0.9)
-        if not common_sids:
-            QMessageBox.information(self, "Comparison",
-                                    "No sources detected in >=90% of frames.")
+        filters = (
+            list(self.filter_frames.keys())
+            if all_filters
+            else ([self.current_filter] if self.current_filter else [])
+        )
+        if not filters:
+            QMessageBox.information(self, "Automation", "No filters are available.")
             return
 
-        # Get target info
-        target_mag = self._get_gmag_for_source(self.target_source_id)
-        target_color = self._get_color_for_source(self.target_source_id)
+        origin_target = (
+            int(self.target_source_id)
+            if self.target_source_id is not None
+            else None
+        )
+        targets: dict[str, int] = {}
+        for flt in filters:
+            target_id = self.filter_targets.get(flt)
+            if target_id is None and origin_target is not None:
+                target_id = origin_target
+            if target_id is not None:
+                targets[flt] = int(target_id)
+        if not all_filters and filters[0] not in targets:
+            QMessageBox.information(self, "Automation", "Set a target first.")
+            return
 
-        # Reference catalog이 있는 경우 더 많은 후보 확보
-        cat = None
-        if self.current_filter and self.current_filter in self.filter_catalogs:
-            cat = self.filter_catalogs[self.current_filter].copy()
+        total_steps = len(filters) * 6
+        dialog = ComparisonAutomationDialog(filters, total_steps, self)
+        worker = _ComparisonAutomationWorker(self, filters, targets)
+        self._automation_dialog = dialog
+        self._automation_worker = worker
+        dialog.cancel_requested.connect(worker.requestInterruption)
+        worker.progress.connect(dialog.set_progress)
+        worker.result_ready.connect(self._on_comparison_automation_result)
+        worker.finished.connect(self._on_comparison_automation_finished)
+        self.btn_auto_comp.setEnabled(False)
+        dialog.show()
+        worker.start()
 
-        # 후보 수집: 공통 source_id에 해당하는 것만
-        candidates = []
-        seen_sids = set()
-        excluded_variable_sids: Set[int] = set()
-        # check star는 comp ensemble에서 제외
-        _check_sid = self.filter_check_stars.get(self.current_filter) if self.current_filter else None
+    def _on_comparison_automation_result(self, payload: dict) -> None:
+        dialog = self._automation_dialog
+        updates = payload.get("simbad_updates", {})
+        if isinstance(updates, dict):
+            for key, value in updates.items():
+                if isinstance(key, str) and str(value or "").strip():
+                    self._simbad_type_cache[key] = str(value).strip()
 
-        # idmatch_df에서 후보 수집 (공통 소스만)
-        if self.idmatch_df is not None and not self.idmatch_df.empty:
-            for _, row in self.idmatch_df.iterrows():
-                sid_val = pd.to_numeric(row.get("source_id"), errors="coerce")
-                if not np.isfinite(sid_val):
-                    continue
-                sid = int(sid_val)
-                if sid == self.target_source_id or sid in seen_sids or sid in self.comparison_ids:
-                    continue
-                if _check_sid is not None and sid == _check_sid:
-                    continue
-                if sid not in common_sids:
-                    continue
-                if self._is_gaia_variable_candidate(sid):
-                    excluded_variable_sids.add(sid)
-                    continue
-                seen_sids.add(sid)
+        errors = dict(payload.get("errors", {}))
+        completed: list[str] = []
+        results = payload.get("results", {})
+        filter_order = [str(value) for value in payload.get("filters", results.keys())]
+        filter_positions = {flt: index for index, flt in enumerate(filter_order)}
+        total = int(payload.get("total", max(1, len(filter_order) * 6)))
+        for flt, result in results.items():
+            if dialog is not None:
+                dialog.set_progress(
+                    min(total, filter_positions.get(flt, 0) * 6 + 6),
+                    total,
+                    f"{flt}: Saving",
+                    "Writing roles and diagnostic reports",
+                )
+                QApplication.processEvents()
+            try:
+                target_id = int(result["target_id"])
+                selected = set(int(value) for value in result.get("selected_ids", []))
+                self._apply_filter_comparison_selection(
+                    flt, target_id, selected, result
+                )
+                check_id = int(result["recommended_check_id"])
+                completed.append(
+                    f"{flt}: {len(selected)} comparisons + check {check_id}"
+                )
+                self.log(
+                    f"Automation {flt}: {len(selected)} comparisons, check={check_id}, "
+                    f"source={result.get('source_info', {}).get('source', 'aperture')}"
+                )
+            except Exception as exc:
+                errors[flt] = str(exc)
 
-                g_mag = self._get_gmag_for_source(sid)
-                color_val = self._get_color_for_source(sid)
+        self.save_state()
+        if self.current_filter:
+            self.target_source_id = self.filter_targets.get(self.current_filter)
+            self.comparison_ids = self.filter_comparisons.get(
+                self.current_filter, set()
+            ).copy()
+            self._refresh_role_ui(rebuild_table=False)
+            self._apply_simbad_types_to_table()
 
-                if np.isfinite(g_mag):
-                    candidates.append({
-                        "source_id": sid,
-                        "g_mag": g_mag,
-                        "color": color_val,
-                        "x": row.get("x", np.nan),
-                        "y": row.get("y", np.nan),
-                    })
+        warnings = [str(value) for value in payload.get("warnings", [])]
+        canceled = bool(payload.get("canceled"))
+        lines = []
+        if completed:
+            lines.append("Completed: " + "; ".join(completed))
+        if errors:
+            lines.append(
+                "Failed: " + "; ".join(f"{key}: {value}" for key, value in errors.items())
+            )
+        if warnings:
+            lines.append("Warnings: " + "; ".join(warnings))
+        if canceled:
+            lines.append("Canceled before all filters completed.")
+        if not lines:
+            lines.append("No filters were processed.")
+        if dialog is not None:
+            for warning in warnings:
+                dialog.append_log(warning)
+            dialog.finish(
+                "\n".join(lines),
+                success=bool(completed) and not errors and not canceled,
+            )
 
-        # catalog에서 추가 후보 수집 (공통 소스만)
-        if cat is not None and "source_id" in cat.columns:
-            g_col = None
-            for col in ("gaia_G", "gaia_g", "phot_g_mean_mag"):
-                if col in cat.columns:
-                    g_col = col
-                    break
-            c_col = None
-            for col in ("color_gr", "bp_rp", "BP_RP"):
-                if col in cat.columns:
-                    c_col = col
-                    break
+    def _on_comparison_automation_finished(self) -> None:
+        self.btn_auto_comp.setEnabled(True)
+        worker = self._automation_worker
+        if worker is not None:
+            worker.deleteLater()
+        self._automation_worker = None
 
-            for _, row in cat.iterrows():
-                sid_val = pd.to_numeric(row.get("source_id"), errors="coerce")
-                if not np.isfinite(sid_val):
-                    continue
-                sid = int(sid_val)
-                if sid == self.target_source_id or sid in seen_sids or sid in self.comparison_ids:
-                    continue
-                if _check_sid is not None and sid == _check_sid:
-                    continue
-                if sid not in common_sids:
-                    continue
-                if self._is_gaia_variable_candidate(sid):
-                    excluded_variable_sids.add(sid)
-                    continue
-                seen_sids.add(sid)
-
-                g_mag = row[g_col] if g_col and g_col in row else np.nan
-                g_mag = pd.to_numeric(g_mag, errors="coerce")
-                if not np.isfinite(g_mag):
-                    g_mag = self._get_gmag_for_source(sid)
-
-                color_val = row[c_col] if c_col and c_col in row else np.nan
-                color_val = pd.to_numeric(color_val, errors="coerce")
-                if not np.isfinite(color_val):
-                    color_val = self._get_color_for_source(sid)
-
-                if np.isfinite(g_mag):
-                    candidates.append({
-                        "source_id": sid,
-                        "g_mag": g_mag,
-                        "color": color_val,
-                        "x": row.get("x_mean", row.get("x", np.nan)),
-                        "y": row.get("y_mean", row.get("y", np.nan)),
-                    })
-
-        if len(candidates) == 0:
-            n_common = len(common_sids)
-            n_frames = len(self.filter_frames.get(self.current_filter, []))
+    def recommend_check_star(self):
+        """Propose a stable source that is independent of the comparison ensemble."""
+        if not self.current_filter or self.target_source_id is None:
+            QMessageBox.information(self, "Check Star", "Set a target first.")
+            return
+        if (
+            self._check_recommendation_worker is not None
+            and self._check_recommendation_worker.isRunning()
+        ):
+            return
+        if self._automation_worker is not None and self._automation_worker.isRunning():
             QMessageBox.information(
-                self, "Comparison",
-                f"No valid candidates.\n"
-                f"Common sources (>=90% frames): {n_common}\n"
-                f"Total frames: {n_frames}")
+                self, "Check Star", "Wait for comparison automation to finish."
+            )
             return
 
-        self.log(f"Auto-select: {len(candidates)} candidates from "
-                 f"{len(common_sids)} common sources")
-        if excluded_variable_sids:
-            self.log(f"Auto-select: excluded {len(excluded_variable_sids)} Gaia variable candidates")
+        worker = _CheckRecommendationWorker(
+            self,
+            self.current_filter,
+            int(self.target_source_id),
+        )
+        self._check_recommendation_worker = worker
+        self._act_recommend_check.setEnabled(False)
+        worker.result_ready.connect(self._on_check_recommendation_ready)
+        worker.error.connect(self._on_check_recommendation_error)
+        worker.finished.connect(self._on_check_recommendation_finished)
+        self.log(f"Check-star analysis started: {self.current_filter}")
+        worker.start()
 
-        cand_df = pd.DataFrame(candidates)
+    def _on_check_recommendation_ready(
+        self, filter_name: str, target_id: int, result: object
+    ) -> None:
+        if (
+            self._closing
+            or filter_name != self.current_filter
+            or self.target_source_id is None
+            or int(target_id) != int(self.target_source_id)
+            or not isinstance(result, dict)
+        ):
+            return
 
-        # 추천 전략: 밝은 등급 + 비슷한 색지수 우선
-        # 1. 색지수가 있는 타겟인 경우: 색지수가 비슷한 것 중 밝은 별
-        # 2. 색지수가 없는 타겟인 경우: 밝은 별 우선
+        ensemble_ids = set(int(value) for value in self.comparison_ids)
+        ensemble_ids.update(int(value) for value in result.get("selected_ids", []))
+        excluded = ensemble_ids | {int(target_id)}
+        candidate = recommend_check_candidate(
+            result.get("metrics", pd.DataFrame()), excluded_ids=excluded
+        )
+        if candidate is None:
+            QMessageBox.information(
+                self,
+                "Check Star",
+                "No independent stable candidate remains after excluding the target "
+                "and comparison ensemble.",
+            )
+            return
 
-        color_tol = 0.5  # BP-RP 허용 차이 (mag)
-        n_pick = int(self.comp_reco_count.value())
+        source_id = int(candidate["star_id"])
+        display_id = self.sid_to_id.get(
+            source_id, self._global_id_map.get(source_id, "-")
+        )
+        coverage = float(candidate.get("coverage", np.nan))
+        robust_sigma = float(candidate.get("robust_sigma", np.nan))
+        d_mag = float(candidate.get("d_mag", np.nan))
+        d_color = float(candidate.get("d_color", np.nan))
 
-        if np.isfinite(target_color):
-            # 색지수 차이 계산
-            cand_df["d_color"] = np.abs(cand_df["color"] - target_color)
-            # 색지수가 비슷한 것 중 밝은 별 (낮은 g_mag)
-            cand_df["has_similar_color"] = cand_df["d_color"] <= color_tol
-            # 점수: 색지수가 비슷하면 0, 아니면 100, 그 다음 밝기 순
-            cand_df["score"] = (~cand_df["has_similar_color"]).astype(int) * 100 + cand_df["g_mag"]
-            cand_df = cand_df.sort_values("score")
+        def _format(value: float, digits: int = 3) -> str:
+            return f"{value:.{digits}f}" if np.isfinite(value) else "-"
 
-            # 결과 로깅
-            similar_color_count = cand_df["has_similar_color"].sum()
-            self.log(f"Target: G={target_mag:.2f}, BP-RP={target_color:.2f}")
-            self.log(f"Found {similar_color_count} candidates with similar color (|d| <= {color_tol})")
-        else:
-            # 색지수 없는 경우: 밝은 별 우선
-            cand_df = cand_df.sort_values("g_mag")
-            self.log(f"Target: G={target_mag:.2f}, color unavailable - selecting brightest stars")
+        self.selected_source_id = source_id
+        self._select_table_row_by_sid(source_id)
+        self._update_selected_label_for_sid(source_id)
 
-        # 상위 N개 선택
-        picked = cand_df.head(n_pick)
+        dialog = QMessageBox(self)
+        dialog.setWindowTitle("Check Star Candidate")
+        dialog.setIcon(QMessageBox.Information)
+        dialog.setText(f"ID {display_id} is the best independent stable candidate.")
+        dialog.setInformativeText(
+            f"Coverage: {_format(100.0 * coverage, 1)}%\n"
+            f"LOO robust sigma: {_format(1000.0 * robust_sigma, 2)} mmag\n"
+            f"Magnitude difference: {_format(d_mag)}\n"
+            f"Color difference: {_format(d_color)}\n\n"
+            "It is excluded from the comparison ensemble when assigned as Check."
+        )
+        apply_button = dialog.addButton("Use as Check", QMessageBox.AcceptRole)
+        preview_button = dialog.addButton("Preview Light Curve", QMessageBox.ActionRole)
+        dialog.addButton(QMessageBox.Cancel)
+        dialog.exec_()
+        if dialog.clickedButton() is apply_button:
+            self.set_check_selected()
+            self.log(
+                f"Recommended check star applied: {source_id} "
+                f"(filter={self.current_filter})"
+            )
+        elif dialog.clickedButton() is preview_button:
+            self.show_selected_lightcurve_preview()
 
-        # 결과 출력
-        self.log("Recommended comparisons:")
-        for _, row in picked.iterrows():
-            sid = int(row["source_id"])
-            g = row["g_mag"]
-            c = row["color"]
-            if np.isfinite(target_color) and np.isfinite(c):
-                d_c = abs(c - target_color)
-                self.log(f"  ID={sid}: G={g:.2f}, BP-RP={c:.2f}, dColor={d_c:.2f}")
-            elif np.isfinite(c):
-                self.log(f"  ID={sid}: G={g:.2f}, BP-RP={c:.2f}")
-            else:
-                self.log(f"  ID={sid}: G={g:.2f}, BP-RP=-")
+    def _on_check_recommendation_error(self, message: str) -> None:
+        if not self._closing:
+            QMessageBox.warning(self, "Check Star", message)
 
-        # 선택 적용
-        picked_sids = set(int(sid) for sid in picked["source_id"])
-        # Safety: ensure target is never included
-        if self.target_source_id is not None and self.target_source_id in picked_sids:
-            picked_sids.discard(self.target_source_id)
-        # If count dropped, top-up from remaining candidates
-        if len(picked_sids) < n_pick:
-            remaining = cand_df[~cand_df["source_id"].astype(int).isin(picked_sids)]
-            if self.target_source_id is not None:
-                remaining = remaining[remaining["source_id"].astype(int) != int(self.target_source_id)]
-            need = max(n_pick - len(picked_sids), 0)
-            if need > 0 and not remaining.empty:
-                extra = remaining.head(need)["source_id"].astype(int).tolist()
-                picked_sids.update(extra)
-        self.comparison_ids.update(picked_sids)
-        if self.target_source_id is not None:
-            self.comparison_ids.discard(self.target_source_id)
-        self._add_to_master(picked_sids, reason="auto_add_comp", refresh=False, persist=False)
+    def _on_check_recommendation_finished(self) -> None:
+        worker = self._check_recommendation_worker
+        if worker is not None:
+            worker.deleteLater()
+        self._check_recommendation_worker = None
+        if self._qt_alive(getattr(self, "_act_recommend_check", None)):
+            self._act_recommend_check.setEnabled(True)
 
+    def auto_select_all_filters(self):
+        self.start_comparison_automation(all_filters=True)
+
+    def show_selected_lightcurve_preview(self):
+        if self.selected_source_id is None or not self.current_filter:
+            QMessageBox.information(self, "Light Curve", "Select a source first.")
+            return
+        if self._comparison_preview is None:
+            self._comparison_preview = ComparisonLightCurvePreview(self)
+            self._comparison_preview.use_as_comparison.connect(
+                self._preview_toggle_comparison
+            )
+            self._comparison_preview.reject_source.connect(self._preview_reject_source)
+        self._comparison_preview.show()
+        self._comparison_preview.raise_()
+        self._comparison_preview.activateWindow()
+        self._load_selected_lightcurve_preview()
+
+    def _load_selected_lightcurve_preview(self) -> None:
+        if (
+            self._comparison_preview is None
+            or self.selected_source_id is None
+            or not self.current_filter
+        ):
+            return
+        source_id = int(self.selected_source_id)
+        flt = self.current_filter
+        display_id = self.sid_to_id.get(source_id, self._global_id_map.get(source_id))
+        self._comparison_preview.set_loading(source_id, display_id, flt)
+        target_id = self.filter_targets.get(flt)
+        cached_result = self._filter_stability_cache.get(flt)
+        signature = cached_result.get("signature", ()) if cached_result else ()
+        try:
+            cached_target_id = int(signature[0])
+        except (IndexError, TypeError, ValueError):
+            cached_target_id = None
+        if target_id is None or cached_target_id != int(target_id):
+            cached_result = None
+
+        reference_ids = sorted(self.filter_comparisons.get(flt, set()))
+        cached_metrics: dict = {}
+        if cached_result is not None:
+            reference_ids.extend(
+                int(value) for value in cached_result.get("selected_ids", [])
+            )
+            reference_ids.extend(
+                int(value) for value in cached_result.get("active_ids", [])
+            )
+            metrics = cached_result.get("metrics", pd.DataFrame())
+            if isinstance(metrics, pd.DataFrame) and not metrics.empty:
+                rows = metrics[metrics["star_id"].astype("int64") == source_id]
+                if not rows.empty:
+                    cached_metrics = rows.iloc[0].to_dict()
+
+        self._comparison_preview_request_token += 1
+        request = {
+            "token": self._comparison_preview_request_token,
+            "result_dir": Path(self.params.P.result_dir),
+            "project_state": self.project_state,
+            "filter_name": flt,
+            "source_id": source_id,
+            "display_id": display_id,
+            "target_id": target_id,
+            "reference_ids": reference_ids,
+            "cached_metrics": cached_metrics,
+            "is_comparison": source_id in self.comparison_ids,
+            "is_rejected": source_id in self.filter_rejected_sources.get(flt, set()),
+            "cached_timeseries": self._filter_timeseries_cache.get(flt),
+        }
+        self._pending_comparison_preview_request = request
+        worker = self._comparison_preview_worker
+        if worker is not None and worker.isRunning():
+            worker.requestInterruption()
+            return
+        self._start_comparison_preview_worker()
+
+    def _start_comparison_preview_worker(self) -> None:
+        request = self._pending_comparison_preview_request
+        if request is None or self._closing:
+            return
+        self._pending_comparison_preview_request = None
+        worker = _ComparisonPreviewWorker(self, **request)
+        self._comparison_preview_worker = worker
+        worker.result_ready.connect(self._on_comparison_preview_ready)
+        worker.error.connect(self._on_comparison_preview_error)
+        worker.finished.connect(
+            lambda current=worker: self._on_comparison_preview_finished(current)
+        )
+        worker.start()
+
+    def _on_comparison_preview_ready(self, token: int, payload: object) -> None:
+        if not isinstance(payload, dict):
+            return
+        cache_value = payload.get("timeseries_cache")
+        filter_name = str(payload.get("filter_name", ""))
+        if cache_value is not None and filter_name:
+            self._filter_timeseries_cache[filter_name] = cache_value
+        if token != self._comparison_preview_request_token or self._closing:
+            return
+        preview = self._comparison_preview
+        if not self._qt_alive(preview) or not preview.isVisible():
+            return
+        values = dict(payload)
+        values.pop("timeseries_cache", None)
+        default_mode = str(values.pop("default_mode", "loo"))
+        mode_button = preview.mode_buttons.get(default_mode)
+        if mode_button is not None:
+            mode_button.setChecked(True)
+        preview.set_payload(**values)
+
+    def _on_comparison_preview_error(self, token: int, message: str) -> None:
+        if token != self._comparison_preview_request_token or self._closing:
+            return
+        preview = self._comparison_preview
+        if self._qt_alive(preview) and preview.isVisible():
+            preview.set_error(message)
+
+    def _on_comparison_preview_finished(
+        self, worker: _ComparisonPreviewWorker
+    ) -> None:
+        if self._comparison_preview_worker is worker:
+            self._comparison_preview_worker = None
+        worker.deleteLater()
+        if not self._closing and self._pending_comparison_preview_request is not None:
+            self._start_comparison_preview_worker()
+
+    def _preview_toggle_comparison(self, source_id: int) -> None:
+        self.selected_source_id = int(source_id)
+        if self.current_filter and source_id not in self.comparison_ids:
+            self.filter_rejected_sources.setdefault(self.current_filter, set()).discard(
+                int(source_id)
+            )
+        self.toggle_comparison_selected()
+        if self.current_filter:
+            self._filter_stability_cache.pop(self.current_filter, None)
+        self._load_selected_lightcurve_preview()
+
+    def _preview_reject_source(self, source_id: int) -> None:
+        if not self.current_filter or int(source_id) == self.target_source_id:
+            return
+        if self.filter_check_stars.get(self.current_filter) == int(source_id):
+            QMessageBox.information(
+                self, "Reject Source", "Remove the check-star role before rejecting this source."
+            )
+            return
+        self.filter_rejected_sources.setdefault(self.current_filter, set()).add(
+            int(source_id)
+        )
+        self.comparison_ids.discard(int(source_id))
         self.filter_comparisons[self.current_filter] = self.comparison_ids.copy()
-        self.save_selection()
-        self._refresh_role_ui()
-
-        # 결과 메시지
-        msg = f"Added {len(picked)} comparison stars:\n\n"
-        for _, row in picked.iterrows():
-            sid = int(row["source_id"])
-            g = row["g_mag"]
-            c = row["color"]
-            if np.isfinite(c):
-                msg += f"  ID {sid}: G={g:.2f}, BP-RP={c:.2f}\n"
-            else:
-                msg += f"  ID {sid}: G={g:.2f}\n"
-
-        QMessageBox.information(self, "Comparison", msg)
+        self._filter_stability_cache.pop(self.current_filter, None)
+        self._refresh_role_ui(rebuild_table=False)
+        self._queue_selection_save()
+        self.log(f"Comparison candidate manually rejected: {source_id}")
+        self._load_selected_lightcurve_preview()
 
     def clear_all_roles(self):
         if not self.current_filter:
@@ -3108,8 +4334,8 @@ class TargetComparisonSelectionWindow(StepWindowBase):
             changed = True
         if not changed:
             return
-        self.save_selection()
-        self._refresh_role_ui()
+        self._refresh_role_ui(rebuild_table=False)
+        self._queue_selection_save()
         self.log(f"Roles cleared: {self.current_filter}")
 
     def copy_selection_to_all_filters(self):
@@ -3175,11 +4401,16 @@ class TargetComparisonSelectionWindow(StepWindowBase):
 
         # Map source_ids to final IDs
         target_id = source_to_id.get(int(target_sid)) if target_sid is not None else None
-        comp_ids = sorted([
-            int(source_to_id[int(sid)])
+        comp_pairs = sorted(
+            (
+                int(sid),
+                int(source_to_id[int(sid)]),
+            )
             for sid in comp_sids
             if sid is not None and int(sid) in source_to_id
-        ])
+        )
+        comp_source_ids = [source_id for source_id, _ in comp_pairs]
+        comp_ids = [resolved_id for _, resolved_id in comp_pairs]
 
         # Check star
         check_sid = self.filter_check_stars.get(flt)
@@ -3190,9 +4421,10 @@ class TargetComparisonSelectionWindow(StepWindowBase):
             "target_id": target_id,
             "target_source_id": int(target_sid) if target_sid is not None else None,
             "comparison_ids": comp_ids,
-            "comparison_source_ids": sorted([int(sid) for sid in comp_sids if sid is not None]),
+            "comparison_source_ids": comp_source_ids,
             "check_id": check_id_val,
             "check_source_id": int(check_sid) if check_sid is not None else None,
+            "rejected_source_ids": sorted(self.filter_rejected_sources.get(flt, set())),
             "timestamp": time.strftime("%Y-%m-%d %H:%M:%S")
         }
 
@@ -3203,7 +4435,7 @@ class TargetComparisonSelectionWindow(StepWindowBase):
         self.log(f"  Saved selection for {flt}: target={target_sid}, {len(comp_sids)} comps, check={check_sid}")
 
     def _load_source_to_id_map(self, flt: str) -> Dict[int, int]:
-        """Load final source_id -> ID mapping for a filter from Step 8 outputs."""
+        """Load final source_id -> ID mapping for a filter from Step 9 outputs."""
         step9_out = step8_selection_dir(self.params.P.result_dir)
         source_to_id: Dict[int, int] = {}
         candidates = [
@@ -3231,26 +4463,39 @@ class TargetComparisonSelectionWindow(StepWindowBase):
 
     # ── SIMBAD type query ──────────────────────────────────────────────────────
 
-    def _collect_simbad_source_radec(self) -> Dict[int, tuple]:
+    def _collect_simbad_source_radec(
+        self, flt: Optional[str] = None
+    ) -> Dict[int, tuple]:
         """Collect Gaia-matched source coordinates for the current filter."""
+        filter_key = str(flt or self.current_filter or "")
         sids: Set[int] = set()
 
-        if self.current_filter and self.current_filter in self.filter_catalogs:
-            cat = self.filter_catalogs[self.current_filter]
+        if filter_key and filter_key in self.filter_catalogs:
+            cat = self.filter_catalogs[filter_key]
             if "source_id" in cat.columns:
                 sid_vals = coerce_int64_source_id(cat["source_id"]).dropna().astype("int64")
                 sids.update(int(sid) for sid in sid_vals.tolist() if int(sid) > 0)
 
-        if not sids and self.current_filter:
-            sids.update(int(sid) for sid in self.filter_master_ids.get(self.current_filter, set()) if int(sid) > 0)
+        if not sids and filter_key:
+            sids.update(
+                int(sid)
+                for sid in self.filter_master_ids.get(filter_key, set())
+                if int(sid) > 0
+            )
 
-        if not sids and self.idmatch_df is not None and not self.idmatch_df.empty and "source_id" in self.idmatch_df.columns:
+        if (
+            not sids
+            and filter_key == self.current_filter
+            and self.idmatch_df is not None
+            and not self.idmatch_df.empty
+            and "source_id" in self.idmatch_df.columns
+        ):
             sid_vals = coerce_int64_source_id(self.idmatch_df["source_id"]).dropna().astype("int64")
             sids.update(int(sid) for sid in sid_vals.tolist() if int(sid) > 0)
 
         src_radec: Dict[int, tuple] = {}
         for sid in sorted(sids):
-            ra_deg, dec_deg = self._get_radec_for_source(int(sid))
+            ra_deg, dec_deg = self._get_radec_for_source(int(sid), flt=filter_key)
             if np.isfinite(ra_deg) and np.isfinite(dec_deg):
                 src_radec[int(sid)] = (float(ra_deg), float(dec_deg))
         return src_radec
@@ -3290,7 +4535,7 @@ class TargetComparisonSelectionWindow(StepWindowBase):
         ra_c, dec_c, radius_deg = query_region
 
         self.btn_simbad_types.setEnabled(False)
-        self.btn_simbad_types.setText("조회 중...")
+        self.btn_simbad_types.setText("Fetching SIMBAD Types...")
         self.log(
             f"[SIMBAD] filter={self.current_filter or '-'} "
             f"Gaia sources={len(src_radec)} cone r={radius_deg*60:.1f}′ 조회 시작..."
@@ -3350,7 +4595,7 @@ class TargetComparisonSelectionWindow(StepWindowBase):
         if self._closing or not self._qt_alive(getattr(self, "btn_simbad_types", None)):
             return
         self.btn_simbad_types.setEnabled(True)
-        self.btn_simbad_types.setText("SIMBAD Types")
+        self.btn_simbad_types.setText("Refresh SIMBAD Types")
         if updates:
             self._apply_simbad_types_to_table()
 
@@ -3379,6 +4624,32 @@ class TargetComparisonSelectionWindow(StepWindowBase):
                 df[col] = pd.to_numeric(df[col], errors="coerce")
         df = df.dropna(subset=["ra", "dec"])
         return df
+
+    def _match_simbad_types(
+        self,
+        source_radec: Dict[int, tuple],
+        results: Optional[pd.DataFrame],
+        flt: str,
+    ) -> dict[str, str]:
+        if results is None or results.empty or not source_radec:
+            return {}
+        simbad_coords = SkyCoord(
+            results["ra"].to_numpy(float) * u.deg,
+            results["dec"].to_numpy(float) * u.deg,
+            frame="icrs",
+        )
+        updates: dict[str, str] = {}
+        for source_id, (ra_deg, dec_deg) in source_radec.items():
+            source_coord = SkyCoord(ra_deg * u.deg, dec_deg * u.deg, frame="icrs")
+            index, separation, _ = source_coord.match_to_catalog_sky(simbad_coords)
+            if float(separation.arcsec) > 5.0:
+                continue
+            object_type = str(results.iloc[int(index)].get("otype", "")).strip()
+            if object_type:
+                updates[
+                    self._simbad_cache_key(int(source_id), flt=flt)
+                ] = object_type
+        return updates
 
     def _apply_simbad_types_to_table(self):
         """테이블 SIMBAD 컬럼(col 9) 업데이트."""
@@ -3544,8 +4815,8 @@ class TargetComparisonSelectionWindow(StepWindowBase):
             self.filter_check_stars[flt] = None
             changed = True
         if changed:
-            self.save_selection()
-            self._refresh_role_ui()
+            self._refresh_role_ui(rebuild_table=False)
+            self._queue_selection_save()
             self.log(f"역할 제거: ID {self.sid_to_id.get(sid, sid)}")
 
     def _on_table_double_click(self, index):
@@ -3654,8 +4925,8 @@ class TargetComparisonSelectionWindow(StepWindowBase):
             self.comparison_ids.discard(sid)
             self.filter_comparisons[self.current_filter] = self.comparison_ids.copy()
 
-            self.save_selection()
-            self._refresh_role_ui()
+            self._refresh_role_ui(rebuild_table=False)
+            self._queue_selection_save()
 
             # 대상 이름 가져오기
             target_name = getattr(self.params.P, "target_name", "Unknown")
@@ -3695,11 +4966,16 @@ class TargetComparisonSelectionWindow(StepWindowBase):
 
         # Map source_ids to final IDs
         target_id = source_to_id.get(int(self.target_source_id)) if self.target_source_id is not None else None
-        comp_ids = sorted([
-            int(source_to_id[int(sid)])
+        comp_pairs = sorted(
+            (
+                int(sid),
+                int(source_to_id[int(sid)]),
+            )
             for sid in self.comparison_ids
             if sid is not None and int(sid) in source_to_id
-        ])
+        )
+        comp_source_ids = [source_id for source_id, _ in comp_pairs]
+        comp_ids = [resolved_id for _, resolved_id in comp_pairs]
 
         # Check star
         check_sid = self.filter_check_stars.get(self.current_filter)
@@ -3711,9 +4987,12 @@ class TargetComparisonSelectionWindow(StepWindowBase):
             "target_id": target_id,
             "target_source_id": int(self.target_source_id) if self.target_source_id is not None else None,
             "comparison_ids": comp_ids,
-            "comparison_source_ids": sorted([int(sid) for sid in self.comparison_ids]),
+            "comparison_source_ids": comp_source_ids,
             "check_id": check_id_val,
             "check_source_id": int(check_sid) if check_sid is not None else None,
+            "rejected_source_ids": sorted(
+                self.filter_rejected_sources.get(self.current_filter, set())
+            ),
             "timestamp": time.strftime("%Y-%m-%d %H:%M:%S")
         }
 
@@ -3744,25 +5023,43 @@ class TargetComparisonSelectionWindow(StepWindowBase):
         if not step9_out.exists():
             return False
 
-        # 적어도 하나의 필터에 타겟이 설정되어야 함 (filter_frames 기준)
+        complete_filter_found = False
         for flt in self.filter_frames.keys():
             selection_path = step9_out / f"selection_{flt}.json"
             if selection_path.exists():
                 try:
                     with open(selection_path, "r", encoding="utf-8") as f:
                         data = json.load(f)
-                    if data.get("target_source_id") is not None:
-                        return True
+                    target_id = data.get("target_source_id")
+                    if target_id is None:
+                        continue
+                    comparison_ids = {
+                        int(value)
+                        for value in data.get("comparison_source_ids", [])
+                    }
+                    check_id = data.get("check_source_id")
+                    if (
+                        len(comparison_ids) < 3
+                        or check_id is None
+                        or int(check_id) == int(target_id)
+                        or int(check_id) in comparison_ids
+                        or int(target_id) in comparison_ids
+                    ):
+                        return False
+                    complete_filter_found = True
                 except Exception:
-                    pass
+                    return False
 
-        return False
+        return complete_filter_found
 
     def save_state(self):
         state_data = {
             "current_filter": self.current_filter,
             "filter_targets": {k: v for k, v in self.filter_targets.items() if v is not None},
             "filter_comparisons": {k: sorted(v) for k, v in self.filter_comparisons.items() if v},
+            "filter_rejected_sources": {
+                k: sorted(v) for k, v in self.filter_rejected_sources.items() if v
+            },
             "filter_check_stars": {k: v for k, v in self.filter_check_stars.items() if v is not None},
             "show_selected_only": self.show_selected_only.isChecked(),
             "overlay_colors": dict(self._overlay_colors),
@@ -3788,6 +5085,14 @@ class TargetComparisonSelectionWindow(StepWindowBase):
             for k, v in saved_checks.items():
                 if v is not None:
                     self.filter_check_stars[k] = int(v)
+
+            saved_rejects = state_data.get("filter_rejected_sources", {})
+            if isinstance(saved_rejects, dict):
+                for key, values in saved_rejects.items():
+                    if isinstance(values, (list, tuple, set)):
+                        self.filter_rejected_sources[key] = {
+                            int(value) for value in values if value is not None
+                        }
 
             # Overlay colors 복원 (merge)
             saved_colors = state_data.get("overlay_colors", {})
@@ -4055,6 +5360,25 @@ class TargetComparisonSelectionWindow(StepWindowBase):
 
     def closeEvent(self, event):
         self._closing = True
+        self._fits_load_token += 1
+        self._pending_comparison_preview_request = None
+        self._comparison_preview_request_token += 1
+        preview_worker = getattr(self, "_comparison_preview_worker", None)
+        if preview_worker is not None and preview_worker.isRunning():
+            preview_worker.requestInterruption()
+        save_timer = getattr(self, "_selection_save_timer", None)
+        if save_timer is not None and save_timer.isActive():
+            save_timer.stop()
+            try:
+                self.save_selection()
+            except Exception:
+                pass
+        worker = getattr(self, "_automation_worker", None)
+        if worker is not None and worker.isRunning():
+            worker.requestInterruption()
+        check_worker = getattr(self, "_check_recommendation_worker", None)
+        if check_worker is not None and check_worker.isRunning():
+            check_worker.requestInterruption()
         try:
             self._prefetch_executor.shutdown(wait=False, cancel_futures=True)
         except Exception:
@@ -4062,6 +5386,11 @@ class TargetComparisonSelectionWindow(StepWindowBase):
         try:
             if self.stretch_plot_dialog is not None and self._qt_alive(self.stretch_plot_dialog):
                 self.stretch_plot_dialog.close()
+        except Exception:
+            pass
+        try:
+            if self._qt_alive(self._comparison_preview):
+                self._comparison_preview.close()
         except Exception:
             pass
         super().closeEvent(event)

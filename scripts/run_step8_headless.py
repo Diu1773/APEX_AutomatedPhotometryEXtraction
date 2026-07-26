@@ -21,6 +21,11 @@ if str(REPO) not in sys.path:
     sys.path.insert(0, str(REPO))
 
 
+def _console_text(value) -> str:
+    encoding = getattr(sys.stdout, "encoding", None) or "utf-8"
+    return str(value).encode(encoding, errors="backslashreplace").decode(encoding)
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--params", default=str(REPO / "parameters.toml"))
@@ -28,10 +33,14 @@ def main() -> int:
 
     from PyQt5.QtCore import QCoreApplication
 
-    QCoreApplication(sys.argv)
+    app = QCoreApplication.instance() or QCoreApplication(sys.argv)
 
     from apex.config.parameters_cmd import read_params
-    from apex.gui.workflow.cmd.step8_psf_photometry import Step6PSFWorker
+    from apex.gui.workflow.cmd.step8_psf_photometry import (
+        Step6PSFWorker,
+        build_psf_output_signature,
+        write_psf_output_signature,
+    )
 
     params = read_params(args.params)
     P = params.P
@@ -49,17 +58,44 @@ def main() -> int:
         cache_dir=Path(P.cache_dir) if Path(P.cache_dir).is_absolute() else result_dir / P.cache_dir,
         use_cropped=False,
     )
-    worker.log.connect(lambda m: print(f"[LOG] {m}", flush=True) if any(
+    worker._log = lambda m: print(f"[LOG] {_console_text(m)}", flush=True) if any(
         k in str(m).lower() for k in ("error", "fail", "complete", "saved", "[")
-    ) else None)
-    worker.error.connect(lambda m: print(f"[ERROR] {m}", flush=True))
+    ) else None
+    worker.error.connect(lambda m: print(f"[ERROR] {_console_text(m)}", flush=True))
     done: dict = {}
     worker.finished.connect(lambda d: done.update(d if isinstance(d, dict) else {"_": d}))
 
     t0 = time.perf_counter()
     worker.run()
-    print(f"[done] elapsed {time.perf_counter() - t0:.1f}s  keys={sorted(done)[:8]}")
-    return 0
+    elapsed = time.perf_counter() - t0
+    complete = (
+        len(file_list) > 0
+        and int(done.get("processed", 0)) == len(file_list)
+        and int(done.get("stopped", 0)) == 0
+    )
+    if complete:
+        signature = build_psf_output_signature(
+            params,
+            file_list,
+            use_cropped=False,
+            cache_dir=(
+                Path(P.cache_dir)
+                if Path(P.cache_dir).is_absolute()
+                else result_dir / P.cache_dir
+            ),
+        )
+        signature_path = write_psf_output_signature(result_dir, signature)
+        print(f"[signature] {signature_path}")
+    else:
+        signature_path = result_dir / "cmd_psf" / "psf_output_signature.json"
+        signature_path.unlink(missing_ok=True)
+        print(
+            "[signature] not written: "
+            f"processed={done.get('processed', 0)}/{len(file_list)} "
+            f"stopped={done.get('stopped', 0)}"
+        )
+    print(f"[done] elapsed {elapsed:.1f}s  keys={sorted(done)[:8]}")
+    return 0 if complete else 1
 
 
 if __name__ == "__main__":

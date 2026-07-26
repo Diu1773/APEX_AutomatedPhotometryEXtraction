@@ -227,6 +227,7 @@ class MultiNightMergerWindow(AutoFitMixin, QMainWindow):
         "WCS",
         "Master Catalog Build",
         "Forced Phot",
+        "PSF Photometry",
         "Selection",
         "Light Curve",
         "Detrend",
@@ -961,6 +962,10 @@ class MultiNightMergerWindow(AutoFitMixin, QMainWindow):
         self.merged_runtime_project_state.state["project_name"] = out_dir.name
         self.merged_runtime_project_state.state["completed_steps"] = sorted(set(range(9)))
         self.merged_runtime_project_state.state["current_step"] = 8
+        self.merged_runtime_project_state.store_step_data(
+            "psf_photometry",
+            {"skip_psf": True, "runtime_reason": "merged aperture workspace"},
+        )
         self.merged_runtime_project_state.store_step_data(
             "file_selection",
             {

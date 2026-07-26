@@ -4,6 +4,7 @@ APEX file manager.
 """
 
 from __future__ import annotations
+import json
 import os
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
@@ -163,7 +164,95 @@ class FileManager:
         log.info(f"Found {len(self.filenames)} files -> {target_list_path}")
         return self.filenames
 
-    def read_headers(self) -> pd.DataFrame:
+    def _header_cache_manifest(self) -> dict:
+        files = {}
+        for filename in self.filenames:
+            try:
+                path = Path(self.get_file_path(filename))
+                stat = path.stat()
+                files[str(filename)] = {
+                    "path": str(path.resolve()),
+                    "size": int(stat.st_size),
+                    "mtime_ns": int(stat.st_mtime_ns),
+                }
+            except OSError:
+                return {}
+        return {"version": 1, "files": files}
+
+    def _load_cached_headers(self) -> pd.DataFrame | None:
+        """Return headers.csv when it still describes the current FITS set."""
+        output_dir = step1_dir(self.params.P.result_dir)
+        headers_path = output_dir / "headers.csv"
+        if not headers_path.exists():
+            return None
+        try:
+            cached = pd.read_csv(headers_path)
+        except Exception:
+            return None
+        if "Filename" not in cached.columns or cached["Filename"].duplicated().any():
+            return None
+        cached_names = cached["Filename"].astype(str).tolist()
+        if set(cached_names) != set(self.filenames) or len(cached_names) != len(self.filenames):
+            return None
+
+        current_manifest = self._header_cache_manifest()
+        if not current_manifest:
+            return None
+        manifest_path = output_dir / "headers_cache_manifest.json"
+        try:
+            saved_manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+        except Exception:
+            saved_manifest = None
+        trusted = saved_manifest == current_manifest
+
+        if not trusted:
+            # Upgrade legacy Step 1 output only when its recorded path map or
+            # its conventional data_dir/RESULT_* location proves provenance.
+            path_map_path = output_dir / "file_path_map.json"
+            try:
+                saved_paths = json.loads(path_map_path.read_text(encoding="utf-8"))
+            except Exception:
+                saved_paths = {}
+            current_files = current_manifest["files"]
+            map_matches = bool(saved_paths) and all(
+                str(Path(saved_paths.get(name, "")).resolve()) == meta["path"]
+                for name, meta in current_files.items()
+            )
+            try:
+                conventional_output = (
+                    not self.selected_dirs
+                    and Path(self.params.P.result_dir).resolve().parent
+                    == Path(self.params.P.data_dir).resolve()
+                )
+            except Exception:
+                conventional_output = False
+            if not map_matches and not conventional_output:
+                return None
+            try:
+                cache_mtime = headers_path.stat().st_mtime_ns
+            except OSError:
+                return None
+            if any(
+                int(meta["mtime_ns"]) > cache_mtime
+                for meta in current_files.values()
+            ):
+                return None
+            try:
+                manifest_path.write_text(
+                    json.dumps(current_manifest, indent=2), encoding="utf-8"
+                )
+            except OSError:
+                pass
+
+        order = {name: index for index, name in enumerate(self.filenames)}
+        cached = cached.assign(
+            _order=cached["Filename"].astype(str).map(order)
+        ).sort_values("_order").drop(columns="_order").reset_index(drop=True)
+        self.df_headers = cached
+        log.info(f"Loaded cached headers: {headers_path} | rows: {len(cached)}")
+        return cached
+
+    def read_headers(self, *, force: bool = False) -> pd.DataFrame:
         """
         Read FITS headers from all files and create summary DataFrame
 
@@ -172,6 +261,10 @@ class FileManager:
         """
         if not self.filenames:
             self.scan_files()
+        if not force:
+            cached = self._load_cached_headers()
+            if cached is not None:
+                return cached
 
         lat = float(getattr(self.params.P, "site_lat_deg", 0.0))
         lon = float(getattr(self.params.P, "site_lon_deg", 0.0))
@@ -251,6 +344,14 @@ class FileManager:
         step1_out.mkdir(parents=True, exist_ok=True)
         headers_path = step1_out / "headers.csv"
         self.df_headers.to_csv(headers_path, index=False, encoding="utf-8")
+        manifest = self._header_cache_manifest()
+        if manifest:
+            try:
+                (step1_out / "headers_cache_manifest.json").write_text(
+                    json.dumps(manifest, indent=2), encoding="utf-8"
+                )
+            except OSError:
+                pass
         log.info(f"Saved: {headers_path} | rows: {len(self.df_headers)}")
 
         return self.df_headers

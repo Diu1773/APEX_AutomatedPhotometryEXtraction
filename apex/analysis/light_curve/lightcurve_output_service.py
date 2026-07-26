@@ -85,6 +85,67 @@ def annotate_raw_lightcurve(
     return out
 
 
+def _clear_check_raw_outputs(out_dir: Path) -> None:
+    """Remove check-star CSVs owned by the current raw-lightcurve build."""
+    for path in out_dir.glob("lightcurve_check*_raw.csv"):
+        try:
+            path.unlink()
+        except FileNotFoundError:
+            continue
+
+
+def _save_check_raw_outputs(
+    out_dir: Path,
+    check_ids_by_filter: dict[str, int] | None,
+    check_df: pd.DataFrame | None,
+    logger: Callable[[str], None] | None = None,
+) -> None:
+    _clear_check_raw_outputs(out_dir)
+    if check_df is None or check_df.empty:
+        return
+
+    output = check_df.copy()
+    if "JD" in output.columns:
+        output = output.sort_values("JD").reset_index(drop=True)
+    output.to_csv(out_dir / "lightcurve_check_combined_raw.csv", index=False)
+
+    check_ids_by_filter = check_ids_by_filter or {}
+    for filt_key, check_id in sorted(check_ids_by_filter.items()):
+        if "filter" not in output.columns:
+            continue
+        part = output[
+            output["filter"].astype(str).map(normalize_filter_key) == filt_key
+        ].copy()
+        if "check_id" in part.columns:
+            matching_id = pd.to_numeric(part["check_id"], errors="coerce") == int(check_id)
+            if matching_id.any():
+                part = part[matching_id].copy()
+        if part.empty:
+            continue
+        part_path = out_dir / f"lightcurve_check_{filt_key}_ID{int(check_id)}_raw.csv"
+        part.to_csv(part_path, index=False)
+        if logger is not None:
+            logger(f"  Check star saved: {part_path.name}")
+
+    if "check_id" not in output.columns:
+        return
+    check_ids = {
+        int(value)
+        for value in pd.to_numeric(output["check_id"], errors="coerce")
+        .dropna()
+        .astype(int)
+        .tolist()
+    }
+    for check_id in sorted(check_ids):
+        part = output[
+            pd.to_numeric(output["check_id"], errors="coerce") == int(check_id)
+        ].copy()
+        if part.empty:
+            continue
+        check_path = out_dir / f"lightcurve_check_ID{int(check_id)}_raw.csv"
+        part.to_csv(check_path, index=False)
+
+
 def save_dataset_raw_outputs(
     result_dir: Path,
     target_id: int,
@@ -101,33 +162,12 @@ def save_dataset_raw_outputs(
     if logger is not None:
         logger(f"[{result_dir.name}] Saved {out_path.name}")
 
-    if check_df is None or check_df.empty:
-        return
-
-    check_df.to_csv(out_dir / "lightcurve_check_combined_raw.csv", index=False)
-    check_ids_by_filter = check_ids_by_filter or {}
-    for filt_key, check_id in sorted(check_ids_by_filter.items()):
-        part = check_df[
-            check_df["filter"].astype(str).map(normalize_filter_key) == filt_key
-        ].copy()
-        if part.empty:
-            continue
-        part_path = out_dir / f"lightcurve_check_{filt_key}_ID{int(check_id)}_raw.csv"
-        part.to_csv(part_path, index=False)
-        if logger is not None:
-            logger(f"  Check star saved → {part_path.name}")
-
-    if "check_id" not in check_df.columns:
-        return
-
-    for check_id in sorted({
-        int(x) for x in pd.to_numeric(check_df["check_id"], errors="coerce").dropna().astype(int).tolist()
-    }):
-        part = check_df[pd.to_numeric(check_df["check_id"], errors="coerce") == int(check_id)].copy()
-        if part.empty:
-            continue
-        check_path = out_dir / f"lightcurve_check_ID{int(check_id)}_raw.csv"
-        part.to_csv(check_path, index=False)
+    _save_check_raw_outputs(
+        out_dir,
+        check_ids_by_filter=check_ids_by_filter,
+        check_df=check_df,
+        logger=logger,
+    )
 
 
 def save_combined_raw_outputs(
@@ -137,6 +177,8 @@ def save_combined_raw_outputs(
     single_dataset_mode: bool,
     comp_candidate_ids: list[int],
     active_comp_ids: list[int],
+    combined_check: list[pd.DataFrame] | None = None,
+    check_ids_by_filter: dict[str, int] | None = None,
     logger: Callable[[str], None] | None = None,
 ) -> None:
     if not combined_raw:
@@ -176,3 +218,24 @@ def save_combined_raw_outputs(
     except Exception as e:
         if logger is not None:
             logger(f"[WARN] Failed to save comp_selection.json: {e}")
+
+    if combined_check is not None:
+        valid_check = [
+            frame for frame in combined_check if frame is not None and not frame.empty
+        ]
+        combined_check_df = (
+            pd.concat(valid_check, ignore_index=True)
+            if valid_check
+            else pd.DataFrame()
+        )
+        _save_check_raw_outputs(
+            base_dir,
+            check_ids_by_filter=check_ids_by_filter,
+            check_df=combined_check_df,
+            logger=logger,
+        )
+        if logger is not None and not combined_check_df.empty:
+            logger(
+                f"[combined] Saved check-star curve "
+                f"({len(combined_check_df)} rows, {len(valid_check)} dataset(s))"
+            )

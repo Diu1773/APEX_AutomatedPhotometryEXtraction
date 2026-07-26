@@ -20,6 +20,10 @@ def annotate_step10_output(df: pd.DataFrame, mode_tag: str, formula: str) -> pd.
     out = out.drop(columns=["diff_mag"], errors="ignore")
     out["correction_mode"] = mode_tag
     out["correction_formula"] = formula
+    out["correction_preserves_nightly_baseline"] = str(mode_tag).lower() not in {
+        "offset",
+        "color",
+    }
     return out
 
 
@@ -96,12 +100,14 @@ def build_detrend_summary_report_text(
     if mode == "offset":
         lines.append("  Formula: Δm_corr = Δm_raw - ZP₀")
         lines.append("  (Nightly zero-point offset only)")
+        lines.append("  WARNING: corrected data do not preserve inter-night target baselines.")
     elif mode == "sysrem":
         lines.append("  Formula: SYSREM systematic-component correction")
         lines.append("  (Common trends are extracted from comparison stars and applied to the target)")
     else:
         lines.append("  Formula: Δm_corr = Δm_raw - ZP₀ - k''·ΔC·X")
         lines.append("  (Color-dependent extinction correction)")
+        lines.append("  WARNING: nightly intercept removal can suppress long-period target signals.")
         if use_global_k2:
             lines.append("  k'' fitting: GLOBAL (single k'' for all nights)")
         else:

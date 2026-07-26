@@ -18,6 +18,7 @@ from astropy.wcs import WCS, FITSFixedWarning
 from astropy.wcs.utils import proj_plane_pixel_scales
 from astropy.coordinates import SkyCoord
 import astropy.units as u
+from scipy.spatial import cKDTree
 
 from apex.utils.constants import MAG_ERR_COEFF, MAD_TO_SIGMA
 
@@ -35,6 +36,9 @@ from PyQt5.QtWidgets import (
 )
 
 from apex.gui.workflow.step_window_base import StepWindowBase
+from apex.analysis.light_curve.photometry_source_service import (
+    resolve_lightcurve_photometry_source,
+)
 from apex.gui.workflow.run_control import RunControlBar
 from apex.gui.workflow.log_panel import WorkflowLogWindow, WorkerStatusPanel, append_timestamped_log, show_raised
 from apex.gui.workflow.ui_helpers import (
@@ -61,6 +65,12 @@ from apex.utils.step_paths_cmd import step8_psf_dir, step9_selection_dir, step10
 from apex.utils.io_utils import parse_int64_series, read_ecsv_int64_source_id
 from apex.utils.gaia_quality import gaia_quality_mask
 from apex.utils.qc_utils import filter_frame_df_by_qc, should_use_frame_quality_qc
+from apex.utils.photometry_provenance import (
+    build_photometry_provenance,
+    collapse_provenance_values,
+    format_photometry_provenance,
+    summarize_photometry_table,
+)
 
 
 from apex.utils.gaia_transforms import (
@@ -74,7 +84,7 @@ from apex.utils.gaia_transforms import (
 )
 
 _ZP_SIGNATURE_FILE = "zeropoint_signature.json"
-_ZP_SIGNATURE_VERSION = 2
+_ZP_SIGNATURE_VERSION = 3
 _ZP_SIGNATURE_PARAMS = (
     "match_tol_px",
     "min_master_gaia_matches",
@@ -100,6 +110,71 @@ _ZP_SIGNATURE_PARAMS = (
     "site_alt_m",
     "site_tz_offset_hours",
 )
+
+
+def _cmd_photometry_index_candidates(result_dir: Path | str) -> list[Path]:
+    root = Path(result_dir)
+    aperture_dir = step7_forced_phot_dir(root)
+    candidates = [
+        aperture_dir / "photometry_index.csv",
+        root / "photometry_index.csv",
+        root / "phot_index.csv",
+        root / "phot" / "phot_index.csv",
+        root / "phot" / "photometry_index.csv",
+    ]
+    if aperture_dir.exists():
+        candidates.extend(sorted(aperture_dir.glob("*phot*index*.csv")))
+    candidates.extend(sorted(root.glob("*phot*index*.csv")))
+    if (root / "phot").exists():
+        candidates.extend(sorted((root / "phot").glob("*phot*index*.csv")))
+    return candidates
+
+
+def resolve_cmd_photometry_provenance(result_dir: Path | str) -> dict[str, str]:
+    """Describe the last CMD product, or the input that Step 10 would use."""
+    root = Path(result_dir)
+    output_dir = step10_zp_dir(root)
+    for name in (
+        "median_by_ID_filter_wide_cmd.csv",
+        "median_by_ID_filter_wide.csv",
+        "median_by_ID_filter_wide_raw.csv",
+    ):
+        path = output_dir / name
+        if not path.exists() or path.stat().st_size <= 0:
+            continue
+        try:
+            info = summarize_photometry_table(pd.read_csv(path, nrows=500))
+            if info["source"] != "unknown":
+                return info
+        except Exception:
+            continue
+
+    source_info = resolve_lightcurve_photometry_source(root)
+    index_path = Path(source_info["index_path"])
+    if index_path.exists() and index_path.stat().st_size > 0:
+        return build_photometry_provenance(
+            source_info.get("source"),
+            source_info.get("mag_column"),
+            source_info.get("mag_error_column"),
+        )
+
+    index_path = next(
+        (
+            path
+            for path in _cmd_photometry_index_candidates(root)
+            if path.exists() and path.stat().st_size > 0
+        ),
+        None,
+    )
+    return build_photometry_provenance("aperture")
+
+
+def resolve_cmd_photometry_input(
+    result_dir: Path | str,
+    project_state=None,
+) -> dict:
+    """Select complete PSF output unless Step 8 was skipped or is stale."""
+    return resolve_lightcurve_photometry_source(result_dir, project_state)
 
 
 def _zp_numeric(df: pd.DataFrame, column: str) -> pd.Series:
@@ -1286,6 +1361,8 @@ class ZeropointCalibrationWorker(QThread):
         self.result_dir = Path(result_dir)
         self.cache_dir = Path(cache_dir)
         self._stop_requested = False
+        self.last_summary: dict = {}
+        self.last_error = ""
 
     def stop(self):
         self._stop_requested = True
@@ -1326,6 +1403,107 @@ class ZeropointCalibrationWorker(QThread):
             if p1.exists():
                 return p1
         return None
+
+    def _inject_psf_master_identity(
+        self,
+        table: pd.DataFrame,
+        filename: str,
+    ) -> pd.DataFrame:
+        """Attach Step 7 master IDs to a Step 8 PSF table."""
+        step7_path = step7_forced_phot_dir(self.result_dir) / f"photometry_{filename}.tsv"
+        if not step7_path.exists():
+            return table
+        try:
+            master = pd.read_csv(step7_path, sep="\t")
+        except Exception:
+            return table
+        if "ID" not in master.columns:
+            return table
+
+        output = table.copy()
+        matched_id = pd.Series(np.nan, index=output.index, dtype=float)
+        match_distance = pd.Series(np.inf, index=output.index, dtype=float)
+        position_matches = 0
+        uid_matches = 0
+
+        master_x_col = "x_fit" if "x_fit" in master.columns else "x"
+        master_y_col = "y_fit" if "y_fit" in master.columns else "y"
+        psf_x_col = "x_fit" if "x_fit" in output.columns else "x"
+        psf_y_col = "y_fit" if "y_fit" in output.columns else "y"
+        if (
+            {master_x_col, master_y_col} <= set(master.columns)
+            and {psf_x_col, psf_y_col} <= set(output.columns)
+        ):
+            master_xy = master[[master_x_col, master_y_col]].apply(
+                pd.to_numeric, errors="coerce"
+            ).to_numpy(float)
+            master_ids = pd.to_numeric(master["ID"], errors="coerce").to_numpy(float)
+            psf_xy = output[[psf_x_col, psf_y_col]].apply(
+                pd.to_numeric, errors="coerce"
+            ).to_numpy(float)
+            valid_master = np.isfinite(master_xy).all(axis=1) & np.isfinite(master_ids)
+            valid_psf = np.isfinite(psf_xy).all(axis=1)
+            if valid_master.any() and valid_psf.any():
+                radius = max(
+                    0.1,
+                    float(getattr(self.params.P, "psf_cmd_match_radius_px", 1.0)),
+                )
+                tree = cKDTree(master_xy[valid_master])
+                distances, indices = tree.query(
+                    psf_xy[valid_psf],
+                    distance_upper_bound=radius,
+                )
+                hit = np.isfinite(distances)
+                psf_rows = output.index.to_numpy()[valid_psf][hit]
+                selected_ids = master_ids[valid_master][indices[hit]]
+                matched_id.loc[psf_rows] = selected_ids
+                match_distance.loc[psf_rows] = distances[hit]
+                position_matches = int(hit.sum())
+
+        seed_column = "seed_uid" if "seed_uid" in output.columns else "det_uid"
+        if seed_column in output.columns and "det_uid" in master.columns:
+            master_uid = pd.to_numeric(master["det_uid"], errors="coerce").astype("Int64")
+            master_id = pd.to_numeric(master["ID"], errors="coerce")
+            uid_map = (
+                pd.DataFrame({"uid": master_uid, "ID": master_id})
+                .dropna(subset=["uid", "ID"])
+                .drop_duplicates("uid", keep="first")
+                .set_index("uid")["ID"]
+            )
+            seeds = pd.to_numeric(output[seed_column], errors="coerce").astype("Int64")
+            uid_ids = seeds.map(uid_map)
+            # ``seed_uid == -1`` is Step 8's unmatched-residual sentinel, not
+            # a stable Step 7 identity. Other negative values are valid forced
+            # catalog UIDs and remain eligible for the fallback.
+            use_uid = matched_id.isna() & uid_ids.notna() & seeds.ne(-1)
+            matched_id.loc[use_uid] = uid_ids.loc[use_uid].astype(float)
+            uid_matches = int(use_uid.sum())
+
+        output["ID"] = matched_id
+        output = output[output["ID"].notna()].copy()
+        output["_psf_id_match_distance"] = match_distance.loc[output.index]
+        if "mag_psf_err" in output.columns:
+            output["_psf_sort_error"] = pd.to_numeric(
+                output["mag_psf_err"], errors="coerce"
+            ).fillna(np.inf)
+        else:
+            output["_psf_sort_error"] = np.inf
+        before_dedup = len(output)
+        output = output.sort_values(
+            ["_psf_id_match_distance", "_psf_sort_error"],
+            kind="stable",
+        ).drop_duplicates("ID", keep="first")
+        duplicates = before_dedup - len(output)
+        output = output.drop(
+            columns=["_psf_id_match_distance", "_psf_sort_error"],
+            errors="ignore",
+        )
+        self._log(
+            f"[ZP][PSF ID] {filename}: matched={len(output)}/{len(table)} "
+            f"(position={position_matches}, uid_fallback={uid_matches}, "
+            f"duplicate={duplicates})"
+        )
+        return output
 
     @staticmethod
     def _robust_median_and_err(arr):
@@ -1753,26 +1931,17 @@ class ZeropointCalibrationWorker(QThread):
             result_dir = self.result_dir
             output_dir = step10_zp_dir(result_dir)
             output_dir.mkdir(parents=True, exist_ok=True)
-            # Forced phot is preferred; PSF photometry is optional refinement.
-            phot_dir_forced = step7_forced_phot_dir(result_dir)
-            phot_dir_psf    = step8_psf_dir(result_dir)
-
-            idx_candidates = [
-                phot_dir_forced / "photometry_index.csv",
-                phot_dir_psf    / "photometry_index.csv",
-                result_dir   / "photometry_index.csv",
-                result_dir   / "phot_index.csv",
-                result_dir   / "phot" / "phot_index.csv",
-                result_dir   / "phot" / "photometry_index.csv",
-            ]
-            for _pd in (phot_dir_forced, phot_dir_psf):
-                if _pd.exists():
-                    idx_candidates += sorted(_pd.glob("*phot*index*.csv"))
-            idx_candidates += sorted(result_dir.glob("*phot*index*.csv"))
-            if (result_dir / "phot").exists():
-                idx_candidates += sorted((result_dir / "phot").glob("*phot*index*.csv"))
-
-            idx_path = next((p for p in idx_candidates if p.exists() and p.stat().st_size > 0), None)
+            source_info = resolve_cmd_photometry_input(result_dir)
+            idx_path = Path(source_info["index_path"])
+            if not idx_path.exists() or idx_path.stat().st_size <= 0:
+                idx_path = next(
+                    (
+                        path
+                        for path in _cmd_photometry_index_candidates(result_dir)
+                        if path.exists() and path.stat().st_size > 0
+                    ),
+                    None,
+                )
             if idx_path is None:
                 raise FileNotFoundError("photometry index csv not found (or all candidates are empty)")
 
@@ -1780,7 +1949,11 @@ class ZeropointCalibrationWorker(QThread):
                 idx = pd.read_csv(idx_path)
             except pd.errors.EmptyDataError:
                 raise FileNotFoundError(f"photometry index csv is empty: {idx_path.name}")
-            self._log(f"Index = {idx_path.name} | rows={len(idx)}")
+            self._log(
+                f"Photometry = {str(source_info['source']).upper()} | "
+                f"MAG = {source_info['mag_column']} | {source_info['reason']}"
+            )
+            self._log(f"Index = {idx_path.parent.name}/{idx_path.name} | rows={len(idx)}")
 
             if "path" not in idx.columns:
                 for cand in ("phot_tsv", "tsv", "out", "output"):
@@ -1869,6 +2042,13 @@ class ZeropointCalibrationWorker(QThread):
                 except Exception:
                     dfp = pd.read_csv(p)
 
+                if source_info.get("source") == "psf" and "flags_psf" in dfp.columns:
+                    psf_flags = pd.to_numeric(dfp["flags_psf"], errors="coerce")
+                    dfp = dfp[psf_flags.eq(0)].copy()
+                if source_info.get("source") == "psf" and "mag_psf" in dfp.columns:
+                    psf_magnitude = pd.to_numeric(dfp["mag_psf"], errors="coerce")
+                    dfp = dfp[np.isfinite(psf_magnitude)].copy()
+
                 if "is_saturated" in dfp.columns:
                     dfp = dfp[~dfp["is_saturated"].fillna(False).astype(bool)]
                 if "is_nonlinear" in dfp.columns:
@@ -1877,6 +2057,12 @@ class ZeropointCalibrationWorker(QThread):
                     dfp = dfp[~dfp["centroid_outlier"].fillna(False).astype(bool)]
                 if "recenter_capped" in dfp.columns:
                     dfp = dfp[~dfp["recenter_capped"].fillna(False).astype(bool)]
+
+                if "ID" not in dfp.columns and source_info.get("source") == "psf":
+                    dfp = self._inject_psf_master_identity(
+                        dfp,
+                        str(r.get("file", p.name)),
+                    )
 
                 if "ID" not in dfp.columns:
                     # Fallback: inject ID via idmatch join (det_uid → source_id → ID)
@@ -1926,6 +2112,11 @@ class ZeropointCalibrationWorker(QThread):
                     dfp["mag_err"] = np.nan
                     err_col = "mag_err"
 
+                provenance = build_photometry_provenance(
+                    mag_column=mag_col,
+                    mag_error_column=err_col,
+                )
+
                 snr_col = "snr" if "snr" in dfp.columns else ("snr_psf" if "snr_psf" in dfp.columns else None)
 
                 _keep_cols = ["ID", "FILTER", mag_col, err_col] + ([snr_col] if snr_col else [])
@@ -1939,6 +2130,9 @@ class ZeropointCalibrationWorker(QThread):
                 if not _has_exptime_col:
                     tmp["exptime"] = np.nan
                 tmp = tmp.rename(columns={mag_col: "mag_inst", err_col: "mag_err"})
+                tmp["photometry_source"] = provenance["source"]
+                tmp["mag_input_column"] = provenance["mag_column"]
+                tmp["mag_error_input_column"] = provenance["mag_error_column"]
                 if _has_apcorr_col:
                     tmp["step4_apcorr_candidate"] = (
                         tmp["step4_apcorr_candidate"].astype(str).str.strip()
@@ -1997,9 +2191,20 @@ class ZeropointCalibrationWorker(QThread):
                     "mag_inst_werr": werr,
                     "n_frames": n_med,
                     "snr_med": snr_med,
+                    "photometry_source": collapse_provenance_values(g["photometry_source"]),
+                    "mag_input_column": collapse_provenance_values(g["mag_input_column"]),
+                    "mag_error_input_column": collapse_provenance_values(g["mag_error_input_column"]),
                 })
 
             grp_raw = all_df.groupby(["ID", "FILTER"], as_index=False).apply(_combine_group_raw)
+            provenance_by_filter = {
+                filt: build_photometry_provenance(
+                    collapse_provenance_values(group["photometry_source"]),
+                    collapse_provenance_values(group["mag_input_column"]),
+                    collapse_provenance_values(group["mag_error_input_column"]),
+                )
+                for filt, group in all_df.groupby("FILTER")
+            }
 
             grp_raw_path = output_dir / "median_by_ID_filter_raw.csv"
             grp_raw.to_csv(grp_raw_path, index=False, na_rep="NaN")
@@ -2012,6 +2217,9 @@ class ZeropointCalibrationWorker(QThread):
             wide_raw_mag = wide_raw_mag_w.combine_first(wide_raw_mag_med)
             wide_raw_err = wide_raw_err_w.combine_first(wide_raw_err_med)
             wide_raw_snr = grp_raw.pivot_table(index="ID", columns="FILTER", values="snr_med", aggfunc="median")
+            wide_raw_source = grp_raw.pivot_table(index="ID", columns="FILTER", values="photometry_source", aggfunc="first")
+            wide_raw_mag_input = grp_raw.pivot_table(index="ID", columns="FILTER", values="mag_input_column", aggfunc="first")
+            wide_raw_err_input = grp_raw.pivot_table(index="ID", columns="FILTER", values="mag_error_input_column", aggfunc="first")
 
             wide_raw_mag.columns = [f"mag_inst_{c}" for c in wide_raw_mag.columns]
             wide_raw_err.columns = [f"mag_inst_err_{c}" for c in wide_raw_err.columns]
@@ -2020,6 +2228,9 @@ class ZeropointCalibrationWorker(QThread):
             wide_raw_err_w.columns = [f"mag_inst_werr_{c}" for c in wide_raw_err_w.columns]
             wide_raw_mag_med.columns = [f"mag_inst_med_{c}" for c in wide_raw_mag_med.columns]
             wide_raw_err_med.columns = [f"mag_inst_med_err_{c}" for c in wide_raw_err_med.columns]
+            wide_raw_source.columns = [f"photometry_source_{c}" for c in wide_raw_source.columns]
+            wide_raw_mag_input.columns = [f"mag_input_column_{c}" for c in wide_raw_mag_input.columns]
+            wide_raw_err_input.columns = [f"mag_error_input_column_{c}" for c in wide_raw_err_input.columns]
 
             wide_raw = pd.concat(
                 [
@@ -2030,6 +2241,9 @@ class ZeropointCalibrationWorker(QThread):
                     wide_raw_mag_med,
                     wide_raw_err_med,
                     wide_raw_snr,
+                    wide_raw_source,
+                    wide_raw_mag_input,
+                    wide_raw_err_input,
                 ],
                 axis=1,
             ).reset_index()
@@ -2324,10 +2538,16 @@ class ZeropointCalibrationWorker(QThread):
                         ca, cb = color_col_name.split("_", 1)
                         out_cal[ccol_inst] = _color_pair(ca, cb)
 
+                filter_provenance = provenance_by_filter.get(
+                    filt, build_photometry_provenance()
+                )
                 coeff_rows.append({"filter": filt, "zp": zp_f, "ct": ct_f, "ct2": ct2_f, "N": Nf,
                                    "scatter_rms": sc_f, "color_col": color_col_name,
                                    "color_axis": color_axis,
-                                   "ref_source": ref_source_map.get(filt, "")})
+                                   "ref_source": ref_source_map.get(filt, ""),
+                                   "photometry_source": filter_provenance["source"],
+                                   "mag_input_column": filter_provenance["mag_column"],
+                                   "mag_error_input_column": filter_provenance["mag_error_column"]})
                 fit_params[filt] = {"zp": zp_f, "ct": ct_f, "ct2": ct2_f, "scatter_rms": sc_f,
                                     "color_col": color_col_name,
                                     "color_axis": color_axis}
@@ -2505,11 +2725,18 @@ class ZeropointCalibrationWorker(QThread):
                     "n_ref": n,
                     "outlier_fraction": out_frac,
                     "snr_med": float(np.nanmedian(sub["snr"].to_numpy(float))) if "snr" in sub.columns else np.nan,
+                    "photometry_source": collapse_provenance_values(sub["photometry_source"]),
+                    "mag_input_column": collapse_provenance_values(sub["mag_input_column"]),
+                    "mag_error_input_column": collapse_provenance_values(sub["mag_error_input_column"]),
                 })
 
             frame_df = pd.DataFrame(frame_rows)
             if frame_df.empty:
-                frame_df = pd.DataFrame(columns=["file", "filter", "zp_frame", "zp_scatter", "n_ref", "outlier_fraction", "snr_med"])
+                frame_df = pd.DataFrame(columns=[
+                    "file", "filter", "zp_frame", "zp_scatter", "n_ref",
+                    "outlier_fraction", "snr_med", "photometry_source",
+                    "mag_input_column", "mag_error_input_column",
+                ])
                 self._log("No per-frame ZP points; falling back to global ZP by filter.")
             if len(frame_df):
                 frame_df = frame_df.merge(frame_airmass, on=["file", "filter"], how="left")
@@ -2569,6 +2796,9 @@ class ZeropointCalibrationWorker(QThread):
                     "mag_cal_werr": werr,
                     "n_frames": n_med,
                     "snr_med": snr_med,
+                    "photometry_source": collapse_provenance_values(g["photometry_source"]),
+                    "mag_input_column": collapse_provenance_values(g["mag_input_column"]),
+                    "mag_error_input_column": collapse_provenance_values(g["mag_error_input_column"]),
                 })
 
             grp_cal = obs.groupby(["ID", "FILTER"], as_index=False).apply(_combine_group_cal)
@@ -2587,6 +2817,9 @@ class ZeropointCalibrationWorker(QThread):
             wide_mag = wide_mag_w.combine_first(wide_mag_med)
             wide_err = wide_err_w.combine_first(wide_err_med)
             wide_snr = grp_cal.pivot_table(index="ID", columns="FILTER", values="snr_med", aggfunc="median")
+            wide_source = grp_cal.pivot_table(index="ID", columns="FILTER", values="photometry_source", aggfunc="first")
+            wide_mag_input = grp_cal.pivot_table(index="ID", columns="FILTER", values="mag_input_column", aggfunc="first")
+            wide_err_input = grp_cal.pivot_table(index="ID", columns="FILTER", values="mag_error_input_column", aggfunc="first")
 
             wide_mag.columns = [f"mag_cal_{c}" for c in wide_mag.columns]
             wide_err.columns = [f"mag_cal_err_{c}" for c in wide_err.columns]
@@ -2595,6 +2828,9 @@ class ZeropointCalibrationWorker(QThread):
             wide_err_w.columns = [f"mag_cal_werr_{c}" for c in wide_err_w.columns]
             wide_mag_med.columns = [f"mag_cal_med_{c}" for c in wide_mag_med.columns]
             wide_err_med.columns = [f"mag_cal_med_err_{c}" for c in wide_err_med.columns]
+            wide_source.columns = [f"photometry_source_{c}" for c in wide_source.columns]
+            wide_mag_input.columns = [f"mag_input_column_{c}" for c in wide_mag_input.columns]
+            wide_err_input.columns = [f"mag_error_input_column_{c}" for c in wide_err_input.columns]
 
             wide = pd.concat(
                 [
@@ -2605,6 +2841,9 @@ class ZeropointCalibrationWorker(QThread):
                     wide_mag_med,
                     wide_err_med,
                     wide_snr,
+                    wide_source,
+                    wide_mag_input,
+                    wide_err_input,
                 ],
                 axis=1,
             ).reset_index()
@@ -2704,9 +2943,14 @@ class ZeropointCalibrationWorker(QThread):
                 "frame_airmass": str((output_dir / "frame_airmass.csv")) if (output_dir / "frame_airmass.csv").exists() else "",
                 "frame_zeropoint": str((output_dir / "frame_zeropoint.csv")) if (output_dir / "frame_zeropoint.csv").exists() else "",
             }
+            summary.update(summarize_photometry_table(df_out))
+            self.last_summary = dict(summary)
+            self.last_error = ""
             self.finished.emit(summary)
         except Exception as e:
             error_msg = f"{type(e).__name__}: {str(e)}\n{traceback.format_exc()}"
+            self.last_error = error_msg
+            self.last_summary = {}
             self.error.emit(error_msg)
 
 
@@ -2716,13 +2960,18 @@ class CmdViewerWindow(QWidget):
     def __init__(self, df: pd.DataFrame, result_dir: Path, parent=None, embedded: bool = False, params=None):
         super().__init__(parent)
         self.df = self._with_calibrated_aliases(df)
+        self.photometry_provenance = summarize_photometry_table(self.df)
         self.result_dir = Path(result_dir)
         self.params = params
 
         self.setWindowTitle("CMD Viewer")
         if embedded:
             self.setWindowFlags(Qt.Widget)
-            self.setMinimumSize(900, 600)
+            # Embedded in Step 11, this is a *preferred* size, not a floor:
+            # a 600 px minimum exceeded the room Step 11 had, so the host
+            # scroll showed only ~150 px of the plot at a time. Keep it low
+            # enough to fit a laptop screen and let the canvas expand.
+            self.setMinimumSize(760, 420)
         else:
             self.setWindowFlag(Qt.Window, True)
             self.resize(1200, 900)
@@ -2943,6 +3192,14 @@ class CmdViewerWindow(QWidget):
         controls_row2.addWidget(self.yerr_check)
 
         controls_row2.addStretch()
+        self.photometry_source_label = QLabel(
+            format_photometry_provenance(self.photometry_provenance)
+        )
+        self.photometry_source_label.setStyleSheet(
+            "QLabel { color: #455A64; font-weight: bold; }"
+        )
+        controls_row2.addWidget(self.photometry_source_label)
+
         self.view_label = QLabel("View: Instrumental")
         self.view_label.setStyleSheet("QLabel { color: #2196F3; font-weight: bold; }")
         controls_row2.addWidget(self.view_label)
@@ -2963,7 +3220,7 @@ class CmdViewerWindow(QWidget):
         # spare vertical space.  (A maxHeight here caused leftover space
         # to be distributed as ugly gaps between the control rows in the
         # standalone CMD+Isochrone tool.)
-        self.canvas.setMinimumSize(800, 360)
+        self.canvas.setMinimumSize(640, 300)
 
         # Prev/Next View are mounted next to the matplotlib navigation
         # toolbar (above the canvas) so they cannot visually collide with
@@ -4677,6 +4934,13 @@ class ZeropointCalibrationWindow(StepWindowBase):
         info.setStyleSheet("QLabel { background-color: #E3F2FD; padding: 10px; border-radius: 5px; }")
         self.content_layout.addWidget(info)
 
+        self.photometry_source_label = QLabel()
+        self.photometry_source_label.setStyleSheet(
+            "QLabel { color: #455A64; font-weight: bold; padding: 2px 4px; }"
+        )
+        self.content_layout.addWidget(self.photometry_source_label)
+        self._refresh_photometry_source_label()
+
         control_layout = QHBoxLayout()
         btn_params = create_parameter_button("Calibration Parameters")
         btn_params.clicked.connect(self.open_parameters_dialog)
@@ -4714,6 +4978,15 @@ class ZeropointCalibrationWindow(StepWindowBase):
             side_widget=_worker_group,
         )
         self.log_text = self.log_window.log_text
+
+    def _refresh_photometry_source_label(self, info: dict | None = None) -> None:
+        provenance = info or resolve_cmd_photometry_input(
+            self.params.P.result_dir,
+            self.project_state,
+        )
+        self.photometry_source_label.setText(
+            format_photometry_provenance(provenance)
+        )
 
     def log(self, message: str):
         append_timestamped_log(self.log_text, message)
@@ -4895,14 +5168,25 @@ class ZeropointCalibrationWindow(StepWindowBase):
 
     def _build_zp_output_signature(self) -> dict:
         result_dir = Path(self.params.P.result_dir)
+        source_info = resolve_cmd_photometry_input(
+            result_dir,
+            self.project_state,
+        )
+        active_phot_dir = Path(source_info["directory"])
         upstream_paths: list[Path] = [
             step5_wcs_dir(result_dir) / "wcs_solve_summary.csv",
-            step7_forced_phot_dir(result_dir) / "photometry_index.csv",
-            step8_psf_dir(result_dir) / "photometry_index.csv",
+            Path(source_info["index_path"]),
         ]
+        if source_info["source"] == "psf":
+            upstream_paths.extend([
+                step7_forced_phot_dir(result_dir) / "photometry_index.csv",
+                active_phot_dir / "psf_output_signature.json",
+            ])
+            active_patterns = ("photometry_*.tsv",)
+        else:
+            active_patterns = ("photometry_*.tsv", "apcorr_summary.csv")
         for directory, patterns in (
-            (step7_forced_phot_dir(result_dir), ("photometry_*.tsv", "apcorr_summary.csv")),
-            (step8_psf_dir(result_dir), ("photometry_*.tsv",)),
+            (active_phot_dir, active_patterns),
             (step9_selection_dir(result_dir), ("*.csv", "*.tsv", "*.json")),
             (tool_extinction_dir(result_dir), ("*.csv", "*.json")),
         ):
@@ -4934,6 +5218,11 @@ class ZeropointCalibrationWindow(StepWindowBase):
         payload = {
             "signature_version": _ZP_SIGNATURE_VERSION,
             "step": "cmd_step10_zeropoint_calibration",
+            "photometry_input": {
+                "source": source_info["source"],
+                "mag_column": source_info["mag_column"],
+                "mag_error_column": source_info["mag_error_column"],
+            },
             "params": {
                 key: self._signature_value(getattr(self.params.P, key, None))
                 for key in _ZP_SIGNATURE_PARAMS
@@ -5004,6 +5293,7 @@ class ZeropointCalibrationWindow(StepWindowBase):
     def run_analysis(self):
         if self.worker and self.worker.isRunning():
             return
+        self._refresh_photometry_source_label()
         self.log_text.clear()
         self.progress_label.setText("Starting...")
         self._zp_cache_validation_result = None
@@ -5044,6 +5334,7 @@ class ZeropointCalibrationWindow(StepWindowBase):
         else:
             self.progress_label.setText("Done")
             self.log("ZP calibration complete")
+            self._refresh_photometry_source_label(summary)
             if self._current_zp_signature and self._existing_output_summary():
                 try:
                     self._write_zp_signature(self._current_zp_signature)

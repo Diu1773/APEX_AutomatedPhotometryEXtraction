@@ -12,7 +12,7 @@ from PyQt5.QtWidgets import (
     QAction, QApplication, QLineEdit, QTextEdit,
     QPlainTextEdit, QComboBox, QSpinBox, QDoubleSpinBox
 )
-from PyQt5.QtCore import Qt, pyqtSignal, QObject, QEvent
+from PyQt5.QtCore import Qt, pyqtSignal, QObject, QEvent, QEventLoop
 from PyQt5.QtGui import QFont, QIcon, QPixmap, QPainter
 from pathlib import Path
 from typing import Optional, List
@@ -605,6 +605,8 @@ class MainWindowWorkflow(AutoFitMixin, QMainWindow):
     # ── Step dispatch ────────────────────────────────────────────────────────
 
     def open_step(self, step_index: int):
+        if getattr(self, "_step_open_in_progress", False):
+            return
         if not self.project_state.is_step_accessible(step_index):
             prev_idx = step_index - 1
             prev_name = (self.step_names[prev_idx]
@@ -613,18 +615,41 @@ class MainWindowWorkflow(AutoFitMixin, QMainWindow):
                                 f"Please finish Step {step_index}: {prev_name} first.")
             return
 
-        self.project_state.set_current_step(step_index)
         self.append_log(f"Opening Step {step_index + 1}: {self.step_names[step_index]}")
+        previous_window = self.current_step_window
+        status = self.statusBar()
+        status.showMessage(f"Opening Step {step_index + 1}...")
+        self._step_open_in_progress = True
+        QApplication.setOverrideCursor(Qt.WaitCursor)
+        QApplication.processEvents(QEventLoop.ExcludeUserInputEvents)
+        try:
+            win = self._open_step_window(step_index)
+        except Exception as exc:
+            import traceback
 
-        if self.current_step_window:
-            self.current_step_window.close()
+            detail = traceback.format_exc()
+            self.append_log(
+                f"[ERROR] Failed to open Step {step_index + 1}: {exc}\n{detail}"
+            )
+            QMessageBox.critical(
+                self,
+                "Step Load Failed",
+                f"Could not open Step {step_index + 1}:\n{exc}",
+            )
+            return
+        finally:
+            QApplication.restoreOverrideCursor()
+            status.clearMessage()
+            self._step_open_in_progress = False
 
-        win = self._open_step_window(step_index)
         if win is None:
             QMessageBox.information(self, "Step Not Implemented",
                                     f"Step {step_index + 1} is not yet implemented.")
             return
 
+        self.project_state.set_current_step(step_index)
+        if previous_window is not None and previous_window is not win:
+            previous_window.close()
         self.current_step_window = win
         win.show()
 
@@ -1038,13 +1063,15 @@ class MainWindowWorkflow(AutoFitMixin, QMainWindow):
         self.merger_window.activateWindow()
         self.append_log("Opened Multi-Night Light Curve Merger")
 
-    def open_variable_star_tool(self):
+    def open_variable_star_tool(self, handoff: dict | None = None):
         from apex.gui.tools.variable_star import VariableStarToolWindow
         if self.varstar_window is None:
             self.varstar_window = VariableStarToolWindow(
                 self.params, self.project_state, parent=None
             )
             self.varstar_window.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose, False)
+        if handoff:
+            self.varstar_window.apply_period_handoff(handoff)
         self.varstar_window.show()
         self.varstar_window.raise_()
         self.varstar_window.activateWindow()

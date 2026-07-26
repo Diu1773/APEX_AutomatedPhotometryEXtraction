@@ -1,5 +1,5 @@
 """
-Step 11: Period Analysis (Lomb-Scargle / PDM / BLS)
+Step 12: Period Analysis (Lomb-Scargle / PDM / BLS)
 
 Quick period scan.  Detailed analysis (refine, bootstrap, T₀, O-C,
 variable-star / transit / EB fitting) lives in the Tools menu.
@@ -38,7 +38,7 @@ from PyQt5.QtWidgets import (
     QScrollArea,
     QFrame,
 )
-from PyQt5.QtCore import Qt, QThread, pyqtSignal
+from PyQt5.QtCore import Qt, QThread, QTimer, pyqtSignal
 
 from apex.gui.layout_rules import tame_canvas
 from apex.gui.theme import style_button, Tokens
@@ -53,12 +53,21 @@ from apex.analysis.light_curve.period_alias_service import (
     periods_are_window_aliases,
 )
 from apex.analysis.light_curve.period_io_service import (
+    ALL_FILTER_KEY,
     detect_corr_mode_from_df,
     load_period_lightcurve_csv,
     save_period_analysis_outputs,
 )
+from apex.analysis.light_curve.variable_analysis_contract import (
+    ValidatedLightCurveBundle,
+    compute_file_fingerprint,
+)
 from apex.utils.common_helpers import normalize_filter_key as _normalize_filter_key
 from apex.utils.io_utils import read_csv_int64_source_id, coerce_int64_source_id
+from apex.utils.photometry_provenance import (
+    format_photometry_provenance,
+    summarize_photometry_table,
+)
 from apex.utils.step_paths_lc import (
     step8_selection_dir,
     step9_lc_dir,
@@ -66,6 +75,18 @@ from apex.utils.step_paths_lc import (
     find_best_lightcurve_csv,
     load_detrend_preference,
 )
+
+
+_ALL_FILTER_LABEL = "All filters (median aligned)"
+_FILTER_PLOT_COLORS = {
+    "u": "#7E57C2",
+    "b": "#1E88E5",
+    "v": "#43A047",
+    "g": "#2A9D68",
+    "r": "#D64B45",
+    "i": "#7259C7",
+    "z": "#8D6E63",
+}
 
 
 def _load_check_star_for_plot(result_dir: Path, filt: str | None = None):
@@ -164,6 +185,7 @@ class PeriodAnalysisWorker(QThread):
         methods: Optional[List[str]] = None,
         pdm_n_bins: int = 10,
         night_id: Optional[np.ndarray] = None,
+        correction_preserves_nightly_baseline: bool = True,
         include_alias_diagnostics: bool = False,
         include_multimode_diagnostic: bool = False,
     ):
@@ -178,6 +200,9 @@ class PeriodAnalysisWorker(QThread):
         self.methods = methods or ["ls"]
         self.pdm_n_bins = pdm_n_bins
         self.night_id = night_id
+        self.correction_preserves_nightly_baseline = bool(
+            correction_preserves_nightly_baseline
+        )
         self.include_alias_diagnostics = bool(include_alias_diagnostics)
         self.include_multimode_diagnostic = bool(include_multimode_diagnostic)
 
@@ -195,11 +220,14 @@ class PeriodAnalysisWorker(QThread):
                 pdm_n_bins=self.pdm_n_bins,
                 progress_cb=self.progress.emit,
             )
-            mag = self.mag_corr if (
+            use_corrected = self.correction_preserves_nightly_baseline and (
                 self.mag_corr is not None and np.any(np.isfinite(self.mag_corr))
-            ) else self.mag_raw
+            )
+            mag = self.mag_corr if use_corrected else self.mag_raw
             needs_diagnostics = self.include_alias_diagnostics or self.include_multimode_diagnostic
-            ls_result = results.get("corr_ls") or results.get("raw_ls")
+            ls_result = (
+                results.get("corr_ls") if use_corrected else results.get("raw_ls")
+            ) or results.get("raw_ls")
             if needs_diagnostics and not ls_result:
                 ls_result = compute_ls(
                     self.time,
@@ -223,6 +251,10 @@ class PeriodAnalysisWorker(QThread):
                     self.max_period,
                     harmonics=2,
                 )
+                alias_analysis["input_series"] = "corrected" if use_corrected else "raw"
+                alias_analysis["nightly_baseline_preserved"] = bool(
+                    self.correction_preserves_nightly_baseline
+                )
                 if self.include_alias_diagnostics:
                     results["alias_analysis"] = alias_analysis
                 if self.include_multimode_diagnostic:
@@ -245,7 +277,7 @@ class PeriodAnalysisWorker(QThread):
 
 
 class PeriodAnalysisWindow(StepWindowBase):
-    """Step 11: Period Analysis — quick scan with Lomb-Scargle / PDM / BLS."""
+    """Step 12: Period Analysis — quick scan with Lomb-Scargle / PDM / BLS."""
 
     def __init__(self, params, file_manager, project_state, main_window):
         self.file_manager = file_manager
@@ -254,12 +286,23 @@ class PeriodAnalysisWindow(StepWindowBase):
         self.multinight = None
         self.alias_analysis = None
         self.multimode_diagnostic = None
+        self.variable_analysis_bundle = None
         self.lc_data = None
         self.current_filter = None
         self._ui_ready = False
+        self._summary_layout_compact = None
+        self._summary_layout_stacked = None
+        self._summary_resize_pending = False
+        self._periodogram_layout_compact = None
+        self._periodogram_resize_pending = False
+        self._shell_compact = None
+        self._responsive_shell_pending = False
+        self._check_star_plot_cache_key = None
+        self._check_star_plot_cache = None
+        self._check_star_ls_cache = {}
 
         super().__init__(
-            step_index=10,
+            step_index=11,
             step_name="Period Analysis",
             params=params,
             project_state=project_state,
@@ -273,7 +316,7 @@ class PeriodAnalysisWindow(StepWindowBase):
         self._load_light_curve(silent=True)
 
     def _auto_load_target_id(self):
-        """Step 9 light curve output -> Step 8 selection 순서로 target ID 자동 로드."""
+        """Step 10 light curve output -> Step 9 selection 순서로 target ID 자동 로드."""
         rd = Path(self.params.P.result_dir)
         sel_path = step9_lc_dir(rd) / "comp_selection.json"
         if sel_path.exists():
@@ -282,14 +325,14 @@ class PeriodAnalysisWindow(StepWindowBase):
                 target_id = data.get("target_id")
                 if target_id is not None:
                     self.target_id_spin.setValue(int(target_id))
-                    self.target_hint.setText("(Step 9)")
+                    self.target_hint.setText("(Step 10)")
                     return
             except Exception:
                 pass
         tid = _load_step9_target_id(rd)
         if tid is not None:
             self.target_id_spin.setValue(int(tid))
-            self.target_hint.setText("(Step 8)")
+            self.target_hint.setText("(Step 9)")
             return
         self.target_hint.setText("")
 
@@ -306,6 +349,14 @@ class PeriodAnalysisWindow(StepWindowBase):
         root = QHBoxLayout()
         root.setSpacing(t.S3)
         self.content_layout.addLayout(root, 1)
+
+        self.btn_controls = self.add_header_action(
+            "Controls",
+            self._toggle_control_column,
+            tooltip="Show or hide data and period-search controls.",
+            min_width=86,
+        )
+        self.btn_controls.setCheckable(True)
 
         # ── Left: control column (scrolls; never drives window height) ──
         left_host = QWidget()
@@ -344,6 +395,14 @@ class PeriodAnalysisWindow(StepWindowBase):
         self.source_label = QLabel("—")
         self.source_label.setStyleSheet(f"QLabel {{ color: {Tokens.TEXT_SUB}; }}")
         data_layout.addRow("Data source:", self.source_label)
+
+        self.photometry_source_label = QLabel(
+            "Photometry: Unknown | MAG: unknown"
+        )
+        self.photometry_source_label.setStyleSheet(
+            f"QLabel {{ color: {Tokens.TEXT_SUB}; font-weight: bold; }}"
+        )
+        data_layout.addRow(self.photometry_source_label)
 
         self.filter_combo = QComboBox()
         self.filter_combo.currentIndexChanged.connect(self._on_filter_changed)
@@ -412,6 +471,16 @@ class PeriodAnalysisWindow(StepWindowBase):
         self.progress_label.setStyleSheet(f"QLabel {{ color: {Tokens.TEXT_SUB}; }}")
         lv.addWidget(self.progress_label)
 
+        self.btn_open_varstar = QPushButton("Open in Variable Star Tool")
+        style_button(self.btn_open_varstar, height=Tokens.H_BUTTON)
+        self.btn_open_varstar.setToolTip(
+            "Open the current light curve, adopted period, alias candidates, "
+            "and mode diagnostic in the Variable Star Analysis Tool."
+        )
+        self.btn_open_varstar.setEnabled(False)
+        self.btn_open_varstar.clicked.connect(self._open_variable_star_tool)
+        lv.addWidget(self.btn_open_varstar)
+
         lv.addStretch(1)
 
         ctrl_scroll = QScrollArea()
@@ -438,10 +507,24 @@ class PeriodAnalysisWindow(StepWindowBase):
             f"QTextEdit {{ background: {Tokens.SURFACE_ALT}; color: {Tokens.TEXT_SUB}; }}"
         )
         left_v.addWidget(self.log_text)
+        self.control_column = left_col
         root.addWidget(left_col)
 
         # Results tabs
         self.tabs = QTabWidget()
+
+        # Summary tab: the complete quick-look result on one canvas. Detailed
+        # method and interactive phase controls remain available in later tabs.
+        summary_tab = QWidget()
+        summary_layout = QVBoxLayout(summary_tab)
+        self.summary_canvas = FigureCanvas(
+            Figure(figsize=(11, 8), constrained_layout=True)
+        )
+        self.summary_canvas.mpl_connect(
+            "resize_event", self._on_summary_canvas_resize
+        )
+        summary_layout.addWidget(tame_canvas(self.summary_canvas), 1)
+        self.tabs.addTab(summary_tab, "Summary")
 
         # Periodogram tab
         periodogram_tab = QWidget()
@@ -451,12 +534,21 @@ class PeriodAnalysisWindow(StepWindowBase):
         self.chk_alias = QCheckBox("Show sampling-window candidates")
         self.chk_alias.setChecked(True)
         self.chk_alias.toggled.connect(self._update_periodogram_plot)
+        self.chk_alias.toggled.connect(self._update_summary_plot)
         alias_row.addWidget(self.chk_alias)
         alias_row.addStretch()
         periodogram_layout.addLayout(alias_row)
 
         self.periodogram_canvas = FigureCanvas(Figure(figsize=(10, 5)))
-        periodogram_layout.addWidget(tame_canvas(self.periodogram_canvas), 1)
+        self.periodogram_canvas.mpl_connect(
+            "resize_event", self._on_periodogram_canvas_resize
+        )
+        tame_canvas(self.periodogram_canvas, min_h=400)
+        self.periodogram_scroll = QScrollArea()
+        self.periodogram_scroll.setWidgetResizable(True)
+        self.periodogram_scroll.setFrameShape(QFrame.NoFrame)
+        self.periodogram_scroll.setWidget(self.periodogram_canvas)
+        periodogram_layout.addWidget(self.periodogram_scroll, 1)
 
         self.tabs.addTab(periodogram_tab, "Periodogram")
 
@@ -536,6 +628,40 @@ class PeriodAnalysisWindow(StepWindowBase):
         root.addWidget(self.tabs, 1)
 
         self._scan_available_data()
+        QTimer.singleShot(0, self._apply_responsive_shell)
+
+    def resizeEvent(self, event):
+        super().resizeEvent(event)
+        if not hasattr(self, "control_column") or self._responsive_shell_pending:
+            return
+        self._responsive_shell_pending = True
+        QTimer.singleShot(0, self._apply_responsive_shell)
+
+    def _apply_responsive_shell(self) -> None:
+        self._responsive_shell_pending = False
+        if not hasattr(self, "control_column"):
+            return
+        compact = self._uses_compact_shell(self.width())
+        if compact == self._shell_compact:
+            return
+        self._shell_compact = compact
+        self._set_control_column_visible(not compact)
+
+    @staticmethod
+    def _uses_compact_shell(window_width: int) -> bool:
+        return int(window_width) < 1350
+
+    def _set_control_column_visible(self, visible: bool) -> None:
+        self.control_column.setVisible(bool(visible))
+        self.btn_controls.setChecked(bool(visible))
+        self.btn_controls.setToolTip(
+            "Hide data and period-search controls."
+            if visible
+            else "Show data and period-search controls."
+        )
+
+    def _toggle_control_column(self) -> None:
+        self._set_control_column_visible(not self.control_column.isVisible())
 
     # ------------------------------------------------------------------
     # Data scanning / loading
@@ -560,28 +686,48 @@ class PeriodAnalysisWindow(StepWindowBase):
             filters_found: set[str] = set()
             try:
                 df_head = pd.read_csv(lc_path, nrows=500)
+                self.photometry_source_label.setText(
+                    format_photometry_provenance(
+                        summarize_photometry_table(df_head)
+                    )
+                )
                 if "filter" in df_head.columns:
                     for flt in df_head["filter"].dropna().astype(str).unique():
                         fkey = _normalize_filter_key(flt)
                         if fkey and fkey.lower() != "nan":
                             filters_found.add(fkey)
             except Exception:
-                pass
+                self.photometry_source_label.setText(
+                    "Photometry: Unknown | MAG: unknown"
+                )
         else:
             self.source_label.setText("No data")
+            self.photometry_source_label.setText(
+                "Photometry: Unknown | MAG: unknown"
+            )
             filters_found = set()
 
         self.filter_combo.blockSignals(True)
         self.filter_combo.clear()
         if filters_found:
-            self.filter_combo.addItems(sorted(filters_found))
+            ordered_filters = sorted(filters_found)
+            if len(ordered_filters) > 1:
+                self.filter_combo.addItem(_ALL_FILTER_LABEL, ALL_FILTER_KEY)
+            for flt in ordered_filters:
+                self.filter_combo.addItem(flt, flt)
         else:
             self.filter_combo.addItem("(no data)")
         self.filter_combo.blockSignals(False)
-        self.current_filter = self.filter_combo.currentText()
+        self.current_filter = self._selected_filter_key()
+
+    def _selected_filter_key(self) -> str:
+        value = self.filter_combo.currentData()
+        if value is None:
+            value = self.filter_combo.currentText()
+        return str(value)
 
     def _on_filter_changed(self, index: int):
-        self.current_filter = self.filter_combo.currentText()
+        self.current_filter = self._selected_filter_key()
         if self._ui_ready:
             self._load_light_curve(silent=True)
 
@@ -600,12 +746,15 @@ class PeriodAnalysisWindow(StepWindowBase):
         self.results = {}
         self.alias_analysis = None
         self.multimode_diagnostic = None
+        self.variable_analysis_bundle = None
         self.multinight = None
         self.results_table.setRowCount(0)
         self.alias_table.setRowCount(0)
         self.phase_period_combo.blockSignals(True)
         self.phase_period_combo.clear()
         self.phase_period_combo.blockSignals(False)
+        self.summary_canvas.figure.clear()
+        self.summary_canvas.draw_idle()
         self.periodogram_canvas.figure.clear()
         self.periodogram_canvas.draw_idle()
         self.phase_canvas.figure.clear()
@@ -613,10 +762,14 @@ class PeriodAnalysisWindow(StepWindowBase):
         self.progress_label.setText("")
         self.result_callout.setVisible(False)
         self.mode_callout.setVisible(False)
+        self.btn_open_varstar.setEnabled(False)
+        self._check_star_plot_cache_key = None
+        self._check_star_plot_cache = None
+        self._check_star_ls_cache.clear()
 
     def _load_light_curve(self, silent: bool = False):
         target_id = self.target_id_spin.value()
-        flt = self.filter_combo.currentText()
+        flt = self._selected_filter_key()
 
         if not flt or flt == "(no data)":
             self.lc_data = None
@@ -700,7 +853,11 @@ class PeriodAnalysisWindow(StepWindowBase):
             QMessageBox.warning(self, "No Method", "Select at least one method.")
             return
 
+        if self._shell_compact and self.control_column.isVisible():
+            self._set_control_column_visible(False)
+
         self.btn_run.setEnabled(False)
+        self.btn_open_varstar.setEnabled(False)
         self.progress_label.setText("Computing...")
 
         self.worker = PeriodAnalysisWorker(
@@ -714,6 +871,9 @@ class PeriodAnalysisWindow(StepWindowBase):
             methods=methods,
             pdm_n_bins=self.pdm_bins_spin.value(),
             night_id=self.lc_data.get("night_id"),
+            correction_preserves_nightly_baseline=self.lc_data.get(
+                "correction_preserves_nightly_baseline", True
+            ),
             include_alias_diagnostics=True,
             include_multimode_diagnostic=True,
         )
@@ -734,7 +894,7 @@ class PeriodAnalysisWindow(StepWindowBase):
 
     def _on_finished(self, results: dict):
         self.btn_run.setEnabled(True)
-        self.progress_label.setText("Done")
+        self.progress_label.setText("Rendering and saving...")
         # Keep diagnostics separate from per-method periodogram result dicts.
         self.alias_analysis = results.pop("alias_analysis", None)
         self.multimode_diagnostic = results.pop("multimode_diagnostic", None)
@@ -743,6 +903,7 @@ class PeriodAnalysisWindow(StepWindowBase):
 
         self._show_result_callout()
         self._show_multimode_callout()
+        self._update_summary_plot()
         self._update_periodogram_plot()
         self._update_results_table()
         self._update_alias_candidate_table()
@@ -751,10 +912,262 @@ class PeriodAnalysisWindow(StepWindowBase):
         self._save_results()
         self._log_alias_warnings()
         self.log("Analysis complete")
+        self.progress_label.setText("Done")
+        self.btn_open_varstar.setEnabled(
+            bool(self.results)
+            and self.variable_analysis_bundle is not None
+            and self.variable_analysis_bundle.can_launch
+        )
 
         # Enable Bootstrap FAP if LS result is available
         has_ls = any("ls" in k for k in results if "error" not in results.get(k, {}))
         self.btn_bootstrap.setEnabled(has_ls)
+
+    def _bundle_filter_keys(self) -> list[str]:
+        if self.lc_data is None:
+            return []
+        selected = str(self.lc_data.get("filter", ""))
+        if selected and selected != ALL_FILTER_KEY:
+            key = _normalize_filter_key(selected) or selected
+            return [key]
+        values = np.asarray(self.lc_data.get("filter_values", []), dtype=str)
+        return sorted({
+            _normalize_filter_key(value) or str(value).strip()
+            for value in values
+            if str(value).strip() and str(value).strip().lower() != "nan"
+        })
+
+    def _build_comparison_provenance(self, filter_keys: list[str]) -> tuple[dict, list[str]]:
+        selection_dir = step8_selection_dir(Path(self.params.P.result_dir))
+        filters: dict[str, dict] = {}
+        release_reasons: list[str] = []
+        for filt in filter_keys:
+            selection_path = selection_dir / f"selection_{filt}.json"
+            stability_path = selection_dir / f"comparison_stability_{filt}.json"
+            selection: dict = {}
+            stability: dict = {}
+            try:
+                if selection_path.exists():
+                    selection = json.loads(selection_path.read_text(encoding="utf-8"))
+            except Exception:
+                selection = {}
+            try:
+                if stability_path.exists():
+                    stability = json.loads(stability_path.read_text(encoding="utf-8"))
+            except Exception:
+                stability = {}
+
+            comparison_ids = [int(value) for value in selection.get("comparison_ids", [])]
+            comparison_source_ids = [
+                int(value) for value in selection.get("comparison_source_ids", [])
+            ]
+            check_id = selection.get("check_id")
+            check_source_id = selection.get("check_source_id")
+            check_metrics = dict(stability.get("check_metrics") or {})
+            filters[filt] = {
+                "selection_file": str(selection_path) if selection_path.exists() else "",
+                "stability_file": str(stability_path) if stability_path.exists() else "",
+                "photometry_source": str(stability.get("photometry_source", "unknown")),
+                "comparison_ids": comparison_ids,
+                "comparison_source_ids": comparison_source_ids,
+                "check_id": int(check_id) if check_id is not None else None,
+                "check_source_id": int(check_source_id) if check_source_id is not None else None,
+                "check_metrics": check_metrics,
+                "selection_timestamp": str(selection.get("timestamp", "")),
+                "stability_timestamp": str(stability.get("timestamp", "")),
+            }
+
+            if not selection:
+                release_reasons.append(f"{filt}: comparison selection metadata is missing")
+            elif not comparison_ids:
+                release_reasons.append(f"{filt}: no comparison ensemble is selected")
+            if check_id is None and check_source_id is None:
+                release_reasons.append(f"{filt}: no check star is selected")
+            if not stability:
+                release_reasons.append(f"{filt}: comparison stability metadata is missing")
+            elif not check_metrics:
+                release_reasons.append(f"{filt}: check-star stability metrics are missing")
+            elif int(check_metrics.get("n", 0) or 0) < 10:
+                release_reasons.append(f"{filt}: check-star stability has fewer than 10 points")
+
+        if not filter_keys:
+            release_reasons.append("No analysis filter is available for Main QC release")
+        return {
+            "selection_dir": str(selection_dir),
+            "requested_filters": list(filter_keys),
+            "filters": filters,
+        }, release_reasons
+
+    def _build_check_star_qc(self, comparison_provenance: dict) -> tuple[dict, list[str]]:
+        check = self._check_star_plot_data()
+        reasons: list[str] = []
+        ids_by_filter = {
+            filt: entry.get("check_id")
+            for filt, entry in dict(comparison_provenance.get("filters") or {}).items()
+            if entry.get("check_id") is not None
+        }
+        if check is None:
+            reasons.append("No check-star light curve is available")
+            return {
+                "status": "BLOCKED",
+                "available": False,
+                "check_ids_by_filter": ids_by_filter,
+                "n_points": 0,
+                "period_test": {},
+            }, reasons
+
+        period_test: dict[str, object] = {}
+        if self._summary_method_result("ls") is not None:
+            check_ls = self._check_star_ls_result(check)
+            if "error" in check_ls:
+                reasons.append(f"Check-star period test failed: {check_ls['error']}")
+                period_test = {"error": str(check_ls["error"])}
+            else:
+                frequency = np.asarray(check_ls.get("frequency", []), dtype=float)
+                power = np.asarray(check_ls.get("power", []), dtype=float)
+                adopted = float(self._summary_period())
+                candidate_power = None
+                if (
+                    np.isfinite(adopted)
+                    and adopted > 0
+                    and len(frequency) == len(power)
+                    and len(frequency) > 0
+                ):
+                    candidate_index = int(np.nanargmin(np.abs(frequency - 1.0 / adopted)))
+                    candidate_power = float(power[candidate_index])
+                period_test = {
+                    "best_period": float(check_ls.get("best_period", np.nan)),
+                    "best_power": float(check_ls.get("best_power", np.nan)),
+                    "fap": float(check_ls.get("fap", np.nan)),
+                    "power_at_target_candidate": candidate_power,
+                    "target_candidate_period": adopted,
+                }
+
+        filters = sorted({str(value) for value in check.get("filters", [])})
+        return {
+            "status": "PASS" if not reasons else "BLOCKED",
+            "available": True,
+            "check_id": check.get("check_id"),
+            "check_ids_by_filter": ids_by_filter,
+            "n_points": int(len(check["time"])),
+            "filters": filters,
+            "period_test": period_test,
+        }, reasons
+
+    def _build_variable_star_handoff(self) -> ValidatedLightCurveBundle:
+        if self.lc_data is None or not self.results:
+            raise ValueError("Run period analysis before opening the Variable Star Tool.")
+
+        dtype = self._summary_data_type()
+        scan_results: dict[str, dict] = {}
+        for method in ("ls", "pdm", "bls"):
+            result = self._summary_method_result(method)
+            if result is not None:
+                compact_result = dict(result)
+                for transient_key in ("time", "mag", "mag_err"):
+                    compact_result.pop(transient_key, None)
+                scan_results[f"raw_{method}"] = compact_result
+
+        if not scan_results:
+            raise ValueError("No usable periodogram result is available for handoff.")
+
+        filter_key = str(self.lc_data.get("filter", ""))
+        analysis_filter = "__all__" if filter_key == ALL_FILTER_KEY else filter_key
+        mag_col = (
+            self.lc_data.get("col_corr")
+            if dtype == "corr"
+            else self.lc_data.get("col_raw")
+        ) or self.lc_data.get("col_raw")
+        input_mag = self.lc_data.get("mag_corr") if dtype == "corr" else self.lc_data.get("mag_raw")
+        input_time = np.asarray(self.lc_data.get("time", []), dtype=float)
+        input_mag = np.asarray(input_mag, dtype=float)
+        input_valid = np.isfinite(input_time) & np.isfinite(input_mag)
+        input_err = self.lc_data.get("mag_err")
+        if input_err is not None:
+            input_err = np.asarray(input_err, dtype=float)
+            input_valid &= np.isfinite(input_err) & (input_err > 0)
+
+        filter_keys = self._bundle_filter_keys()
+        comparison_provenance, comparison_reasons = self._build_comparison_provenance(
+            filter_keys
+        )
+        check_star_qc, check_reasons = self._build_check_star_qc(comparison_provenance)
+        release_reasons = comparison_reasons + check_reasons
+        main_qc = {
+            "status": "PASS" if not release_reasons else "BLOCKED",
+            "owner": "main_workflow",
+            "check_star": check_star_qc,
+            "reasons": list(release_reasons),
+        }
+        photometry_provenance = {
+            "source": str(self.lc_data.get("photometry_source", "unknown")),
+            "mag_input_column": str(self.lc_data.get("mag_input_column", "unknown")),
+            "mag_error_input_column": str(
+                self.lc_data.get("mag_error_input_column", "unknown")
+            ),
+            "series_mode": dtype,
+            "correction_mode": str(self.lc_data.get("corr_mode", "")),
+            "correction_mode_label": str(self.lc_data.get("corr_mode_label", "")),
+        }
+        source_file = Path(str(self.lc_data.get("source_file", "")))
+        input_signature = {
+            "n_points": int(np.count_nonzero(input_valid)),
+            "time_min": float(np.nanmin(input_time[input_valid])) if np.any(input_valid) else None,
+            "time_max": float(np.nanmax(input_time[input_valid])) if np.any(input_valid) else None,
+        }
+        if source_file.is_file():
+            input_signature.update(compute_file_fingerprint(source_file))
+
+        return ValidatedLightCurveBundle(
+            workspace_dir=str(Path(self.params.P.result_dir)),
+            source_file=str(source_file),
+            target_id=int(self.lc_data.get("target_id", 0)),
+            analysis_filter=analysis_filter,
+            series_mode=dtype,
+            mag_col=str(mag_col or ""),
+            correction_mode=str(self.lc_data.get("corr_mode", "")),
+            correction_preserves_nightly_baseline=bool(
+                self.lc_data.get("correction_preserves_nightly_baseline", True)
+            ),
+            input_signature=input_signature,
+            adopted_period=float(self._summary_period()),
+            scan_results=scan_results,
+            alias_analysis=dict(self.alias_analysis or {}),
+            multimode_diagnostic=dict(self.multimode_diagnostic or {}),
+            search={
+                "min_period": float(self.min_period_spin.value()),
+                "max_period": float(self.max_period_spin.value()),
+                "samples_per_peak": int(self.samples_spin.value()),
+                "pdm_bins": int(self.pdm_bins_spin.value()),
+                "methods": [key.split("_", 1)[1] for key in scan_results],
+            },
+            release_status="APPROVED" if not release_reasons else "BLOCKED",
+            release_reasons=release_reasons,
+            main_qc=main_qc,
+            comparison_provenance=comparison_provenance,
+            photometry_provenance=photometry_provenance,
+        )
+
+    def _open_variable_star_tool(self):
+        try:
+            handoff = self.variable_analysis_bundle or self._build_variable_star_handoff()
+            if not handoff.can_launch:
+                raise ValueError(
+                    "Main workflow did not release this light curve for advanced analysis: "
+                    f"{handoff.release_message}"
+                )
+            launcher = getattr(self.main_window, "open_variable_star_tool", None)
+            if not callable(launcher):
+                raise RuntimeError("Variable Star Tool launcher is unavailable.")
+            launcher(handoff=handoff)
+            self.log(
+                "Opened Variable Star Tool with "
+                f"P={handoff.adopted_period:.8f} d, "
+                f"filter={handoff.analysis_filter}, release={handoff.release_status}."
+            )
+        except Exception as exc:
+            QMessageBox.warning(self, "Variable Star Tool", str(exc))
+            self.log(f"[ERROR] Variable Star Tool handoff failed: {exc}")
 
     def _show_result_callout(self):
         """Surface the adopted candidate without hiding unresolved aliases."""
@@ -911,6 +1324,543 @@ class PeriodAnalysisWindow(StepWindowBase):
     # Plots
     # ------------------------------------------------------------------
 
+    def _summary_data_type(self) -> str:
+        requested = str((self.alias_analysis or {}).get("input_series", "")).lower()
+        if requested == "corrected":
+            requested = "corr"
+        if requested in {"raw", "corr"}:
+            return requested
+        has_corr = self.lc_data is not None and self.lc_data.get("mag_corr") is not None
+        preserves_baseline = bool(
+            self.lc_data.get("correction_preserves_nightly_baseline", True)
+            if self.lc_data
+            else True
+        )
+        return "corr" if has_corr and preserves_baseline else "raw"
+
+    def _summary_method_result(self, method: str) -> dict | None:
+        dtype = self._summary_data_type()
+        result = self.results.get(f"{dtype}_{method}")
+        if isinstance(result, dict) and "error" not in result:
+            return result
+        fallback = self.results.get(f"raw_{method}")
+        if isinstance(fallback, dict) and "error" not in fallback:
+            return fallback
+        return None
+
+    def _summary_period(self) -> float:
+        adopted = float((self.alias_analysis or {}).get("adopted_period", np.nan))
+        if np.isfinite(adopted) and adopted > 0:
+            return adopted
+        for method in ("ls", "pdm", "bls"):
+            result = self._summary_method_result(method)
+            period = float(result.get("best_period", np.nan)) if result else np.nan
+            if np.isfinite(period) and period > 0:
+                return period
+        return np.nan
+
+    @staticmethod
+    def _median_center_for_plot(values: np.ndarray, filters: np.ndarray) -> np.ndarray:
+        centered = np.asarray(values, dtype=float).copy()
+        labels = np.asarray(filters, dtype=str)
+        for label in np.unique(labels):
+            mask = labels == label
+            finite = mask & np.isfinite(centered)
+            if np.any(finite):
+                centered[mask] -= float(np.nanmedian(centered[finite]))
+        return centered
+
+    @staticmethod
+    def _two_harmonic_phase_model(
+        phase: np.ndarray,
+        mag: np.ndarray,
+        mag_err: np.ndarray | None,
+        phase_grid: np.ndarray,
+    ) -> np.ndarray | None:
+        phase = np.asarray(phase, dtype=float)
+        mag = np.asarray(mag, dtype=float)
+        valid = np.isfinite(phase) & np.isfinite(mag)
+        err = None if mag_err is None else np.asarray(mag_err, dtype=float)
+        if err is not None:
+            valid &= np.isfinite(err) & (err > 0)
+        if np.count_nonzero(valid) < 8:
+            return None
+
+        q = phase[valid]
+        y = mag[valid]
+        design = np.column_stack(
+            [
+                np.ones(len(q)),
+                np.sin(2.0 * np.pi * q),
+                np.cos(2.0 * np.pi * q),
+                np.sin(4.0 * np.pi * q),
+                np.cos(4.0 * np.pi * q),
+            ]
+        )
+        if err is not None:
+            root_weight = 1.0 / err[valid]
+            design_fit = design * root_weight[:, None]
+            y_fit = y * root_weight
+        else:
+            design_fit = design
+            y_fit = y
+        try:
+            coefficients, *_ = np.linalg.lstsq(design_fit, y_fit, rcond=None)
+        except np.linalg.LinAlgError:
+            return None
+
+        grid = np.asarray(phase_grid, dtype=float) % 1.0
+        grid_design = np.column_stack(
+            [
+                np.ones(len(grid)),
+                np.sin(2.0 * np.pi * grid),
+                np.cos(2.0 * np.pi * grid),
+                np.sin(4.0 * np.pi * grid),
+                np.cos(4.0 * np.pi * grid),
+            ]
+        )
+        return grid_design @ coefficients
+
+    def _check_star_plot_data(self) -> dict | None:
+        if self.lc_data is None:
+            return None
+        selected_filter = str(self.lc_data.get("filter", ""))
+        requested_filter = None if selected_filter == ALL_FILTER_KEY else selected_filter
+        cache_key = (
+            str(self.lc_data.get("source_file", "")),
+            int(self.lc_data.get("target_id", 0)),
+            selected_filter,
+            self._summary_data_type(),
+        )
+        if cache_key == self._check_star_plot_cache_key:
+            return self._check_star_plot_cache
+        check_id, frame = _load_check_star_for_plot(
+            Path(self.params.P.result_dir), requested_filter
+        )
+        if frame is None or frame.empty:
+            self._check_star_plot_cache_key = cache_key
+            self._check_star_plot_cache = None
+            return None
+
+        time_col = self._phase_plot_check_time_column(frame)
+        dtype = self._summary_data_type()
+        if dtype == "corr":
+            mag_candidates = ["diff_mag", "diff_mag_corr", "diff_mag_raw", "mag"]
+        else:
+            mag_candidates = ["diff_mag_raw", "diff_mag", "mag"]
+        mag_col = next((col for col in mag_candidates if col in frame.columns), None)
+        if time_col is None or mag_col is None:
+            self._check_star_plot_cache_key = cache_key
+            self._check_star_plot_cache = None
+            return None
+
+        time = pd.to_numeric(frame[time_col], errors="coerce").to_numpy(float)
+        if time_col == "rel_time_hr":
+            time = time / 24.0
+        mag = pd.to_numeric(frame[mag_col], errors="coerce").to_numpy(float)
+        err_col = next(
+            (col for col in ("diff_err", "diff_err_corr", "mag_err", "err") if col in frame.columns),
+            None,
+        )
+        mag_err = (
+            pd.to_numeric(frame[err_col], errors="coerce").to_numpy(float)
+            if err_col
+            else None
+        )
+        if "filter" in frame.columns:
+            filters = (
+                frame["filter"]
+                .astype(str)
+                .map(lambda value: _normalize_filter_key(value) or str(value).strip())
+                .to_numpy(dtype=str)
+            )
+        else:
+            filters = np.full(len(frame), requested_filter or "check", dtype=str)
+        mag = self._median_center_for_plot(mag, filters)
+        valid = np.isfinite(time) & np.isfinite(mag)
+        if mag_err is not None:
+            valid &= np.isfinite(mag_err) & (mag_err > 0)
+        if not np.any(valid):
+            self._check_star_plot_cache_key = cache_key
+            self._check_star_plot_cache = None
+            return None
+        payload = {
+            "check_id": check_id,
+            "time": time[valid],
+            "mag": mag[valid],
+            "mag_err": mag_err[valid] if mag_err is not None else None,
+            "filters": filters[valid],
+        }
+        self._check_star_plot_cache_key = cache_key
+        self._check_star_plot_cache = payload
+        return payload
+
+    def _check_star_ls_result(self, check: dict) -> dict:
+        key = (
+            self._check_star_plot_cache_key,
+            float(self.min_period_spin.value()),
+            float(self.max_period_spin.value()),
+            int(self.samples_spin.value()),
+        )
+        cached = self._check_star_ls_cache.get(key)
+        if cached is not None:
+            return cached
+        result = compute_ls(
+            check["time"],
+            check["mag"],
+            check["mag_err"],
+            "check",
+            key[1],
+            key[2],
+            key[3],
+        )
+        self._check_star_ls_cache[key] = result
+        return result
+
+    @staticmethod
+    def _summary_uses_compact_layout(canvas_width: int) -> bool:
+        """Use shorter labels and fixed spacing on constrained widths."""
+        return int(canvas_width) < 900
+
+    @staticmethod
+    def _summary_uses_stacked_layout(canvas_width: int) -> bool:
+        """Stack plots only while the controls are explicitly open."""
+        return int(canvas_width) < 620
+
+    def _on_summary_canvas_resize(self, event) -> None:
+        compact = self._summary_uses_compact_layout(event.width)
+        stacked = self._summary_uses_stacked_layout(event.width)
+        unchanged = (
+            compact == self._summary_layout_compact
+            and stacked == self._summary_layout_stacked
+        )
+        if unchanged or self._summary_resize_pending:
+            return
+        self._summary_resize_pending = True
+        QTimer.singleShot(0, self._refresh_summary_layout_after_resize)
+
+    def _refresh_summary_layout_after_resize(self) -> None:
+        self._summary_resize_pending = False
+        if not self.results or self.lc_data is None:
+            return
+        width = self.summary_canvas.width()
+        compact = self._summary_uses_compact_layout(width)
+        stacked = self._summary_uses_stacked_layout(width)
+        if (
+            compact != self._summary_layout_compact
+            or stacked != self._summary_layout_stacked
+        ):
+            self._update_summary_plot()
+
+    @staticmethod
+    def _periodogram_uses_compact_layout(canvas_width: int) -> bool:
+        """Stack method/source panels when a two-column grid would collapse."""
+        return int(canvas_width) < 620
+
+    def _on_periodogram_canvas_resize(self, event) -> None:
+        compact = self._periodogram_uses_compact_layout(event.width)
+        if (
+            compact == self._periodogram_layout_compact
+            or self._periodogram_resize_pending
+        ):
+            return
+        self._periodogram_resize_pending = True
+        QTimer.singleShot(0, self._refresh_periodogram_layout_after_resize)
+
+    def _refresh_periodogram_layout_after_resize(self) -> None:
+        self._periodogram_resize_pending = False
+        if not self.results:
+            return
+        compact = self._periodogram_uses_compact_layout(
+            self.periodogram_canvas.width()
+        )
+        if compact != self._periodogram_layout_compact:
+            self._update_periodogram_plot()
+
+    def _update_summary_plot(self):
+        fig = self.summary_canvas.figure
+        fig.clear()
+        if not self.results or self.lc_data is None:
+            self.summary_canvas.draw_idle()
+            return
+
+        canvas_width = self.summary_canvas.width()
+        compact = self._summary_uses_compact_layout(canvas_width)
+        stacked = self._summary_uses_stacked_layout(canvas_width)
+        self._summary_layout_compact = compact
+        self._summary_layout_stacked = stacked
+        self.summary_canvas.setMinimumHeight(260)
+        fig.set_layout_engine(None if compact else "constrained")
+        if stacked:
+            grid = fig.add_gridspec(3, 1, height_ratios=(1.05, 1.0, 1.0))
+            ax_lc = fig.add_subplot(grid[0, 0])
+            ax_period = fig.add_subplot(grid[1, 0])
+            ax_phase = fig.add_subplot(grid[2, 0])
+        else:
+            grid = fig.add_gridspec(
+                2, 2, height_ratios=(1.02, 1.0), width_ratios=(1.08, 0.92)
+            )
+            ax_lc = fig.add_subplot(grid[0, :])
+            ax_period = fig.add_subplot(grid[1, 0])
+            ax_phase = fig.add_subplot(grid[1, 1])
+
+        dtype = self._summary_data_type()
+        time = np.asarray(self.lc_data.get("time", []), dtype=float)
+        raw_mag = self.lc_data.get("mag_corr") if dtype == "corr" else self.lc_data.get("mag_raw")
+        if raw_mag is None:
+            raw_mag = self.lc_data.get("mag_raw")
+            dtype = "raw"
+        mag = np.asarray(raw_mag, dtype=float)
+        mag_err_raw = self.lc_data.get("mag_err")
+        mag_err = None if mag_err_raw is None else np.asarray(mag_err_raw, dtype=float)
+        filters = np.asarray(
+            self.lc_data.get(
+                "filter_values",
+                np.full(len(time), str(self.lc_data.get("filter", "data"))),
+            ),
+            dtype=str,
+        )
+        mag = self._median_center_for_plot(mag, filters)
+        valid = np.isfinite(time) & np.isfinite(mag)
+        if mag_err is not None:
+            valid &= np.isfinite(mag_err) & (mag_err > 0)
+        time = time[valid]
+        mag = mag[valid]
+        filters = filters[valid]
+        mag_err = mag_err[valid] if mag_err is not None else None
+        if len(time) == 0:
+            self.summary_canvas.draw_idle()
+            return
+
+        t0 = float(np.nanmin(time))
+        baseline = float(np.nanmax(time) - t0)
+        fallback_colors = ["#2A9D68", "#D64B45", "#7259C7", "#1E88E5", "#C77A12"]
+        band_order = {band: index for index, band in enumerate(("u", "b", "v", "g", "r", "i", "z"))}
+        filter_order = sorted(
+            set(filters.tolist()),
+            key=lambda label: (band_order.get(str(label).lower(), len(band_order)), str(label)),
+        )
+        filter_colors = {
+            label: _FILTER_PLOT_COLORS.get(
+                str(label).lower(), fallback_colors[idx % len(fallback_colors)]
+            )
+            for idx, label in enumerate(filter_order)
+        }
+
+        # Scatter only: connecting sequential multi-band points suggests an
+        # interpolation that was never observed and exaggerates frame glitches.
+        for label in filter_order:
+            mask = filters == label
+            ax_lc.scatter(
+                (time[mask] - t0) * 24.0,
+                mag[mask],
+                s=18,
+                color=filter_colors[label],
+                alpha=0.82,
+                edgecolors=Tokens.PLOT_AXES_BG,
+                linewidths=0.25,
+                label=(
+                    f"{label} (n={np.count_nonzero(mask)})"
+                    if compact
+                    else f"{label} target (n={np.count_nonzero(mask)})"
+                ),
+                zorder=3,
+            )
+
+        check = self._check_star_plot_data()
+        if check is not None:
+            ax_lc.scatter(
+                (check["time"] - t0) * 24.0,
+                check["mag"],
+                s=10,
+                marker="x",
+                color=Tokens.TEXT_MUTED,
+                alpha=0.4,
+                linewidths=0.7,
+                label=(
+                    f"check (n={len(check['time'])})"
+                    if compact
+                    else f"check star (n={len(check['time'])})"
+                ),
+                zorder=2,
+            )
+        ax_lc.axhline(0.0, color=Tokens.PLOT_GRID, lw=0.8)
+        ax_lc.set_title(
+            "Observed differential light curve"
+            if compact
+            else "Observed differential light curve - per-filter median removed",
+            loc="left",
+        )
+        ax_lc.set_xlabel("Hours from first exposure")
+        ax_lc.set_ylabel(
+            "Diff. mag"
+            if compact
+            else "Median-centered differential magnitude [mag]"
+        )
+        ax_lc.invert_yaxis()
+        ax_lc.grid(True, alpha=0.25)
+        ax_lc.legend(
+            loc="upper right",
+            ncol=(
+                min(2, max(1, len(filter_order) + 1))
+                if compact
+                else min(4, max(1, len(filter_order) + 1))
+            ),
+            fontsize=7 if compact else 8,
+        )
+
+        period_colors = {"ls": "#1E88E5", "pdm": "#C77A12", "bls": "#7259C7"}
+        period_labels = {"ls": "Lomb-Scargle", "pdm": "PDM (1-theta)", "bls": "BLS (normalized)"}
+        period_lines = 0
+        period_notes: list[str] = []
+        for method in ("ls", "pdm", "bls"):
+            result = self._summary_method_result(method)
+            if result is None:
+                continue
+            if "frequency" in result:
+                periods = 1.0 / np.asarray(result["frequency"], dtype=float)
+            else:
+                periods = np.asarray(result.get("trial_periods", []), dtype=float)
+            power = np.asarray(result.get("power", []), dtype=float)
+            finite = np.isfinite(periods) & np.isfinite(power) & (periods > 0)
+            if not np.any(finite):
+                continue
+            periods = periods[finite]
+            power = power[finite]
+            order = np.argsort(periods)
+            if method == "bls" and np.nanmax(np.abs(power)) > 0:
+                power = power / np.nanmax(np.abs(power))
+            ax_period.plot(
+                periods[order], power[order], color=period_colors[method], lw=1.2,
+                label=period_labels[method],
+            )
+            period_notes.append(f"{method.upper()} {float(result['best_period']):.6f} d")
+            period_lines += 1
+
+        if check is not None and self._summary_method_result("ls") is not None:
+            check_ls = self._check_star_ls_result(check)
+            if "error" not in check_ls:
+                periods = 1.0 / np.asarray(check_ls["frequency"], dtype=float)
+                order = np.argsort(periods)
+                ax_period.plot(
+                    periods[order], np.asarray(check_ls["power"])[order],
+                    color=Tokens.TEXT_MUTED, lw=0.9, ls=":", label="check-star LS",
+                )
+
+        adopted = self._summary_period()
+        if np.isfinite(adopted):
+            ax_period.axvline(
+                adopted, color=Tokens.PLOT_FG, lw=1.2,
+                label=f"adopted {adopted:.6f} d",
+            )
+        if self.chk_alias.isChecked():
+            for candidate in (self.alias_analysis or {}).get("candidates", [])[1:6]:
+                candidate_period = float(candidate.get("period", np.nan))
+                if np.isfinite(candidate_period):
+                    ax_period.axvline(
+                        candidate_period, color=Tokens.WARN, lw=0.8, ls="-.", alpha=0.75
+                    )
+        min_period = float(self.min_period_spin.value())
+        max_period = float(self.max_period_spin.value())
+        ax_period.set_xlim(min_period, max_period)
+        if max_period / max(min_period, 1e-12) >= 30.0:
+            ax_period.set_xscale("log")
+        ax_period.set_title(f"Period search - {dtype}", loc="left")
+        ax_period.set_xlabel("Trial period [days]")
+        ax_period.set_ylabel("Statistic" if compact else "Periodogram statistic")
+        ax_period.grid(True, alpha=0.25)
+        if period_lines:
+            ax_period.legend(
+                loc="upper right", ncol=2 if compact else 1,
+                fontsize=7 if compact else 8,
+            )
+        if period_notes and not compact:
+            ax_period.text(
+                0.02, 0.04,
+                "\n".join(period_notes),
+                transform=ax_period.transAxes, va="bottom",
+                fontsize=8,
+            )
+
+        if np.isfinite(adopted) and adopted > 0:
+            phase = ((time - t0) / adopted) % 1.0
+            phase_grid = np.linspace(0.0, 2.0, 400)
+            for label in filter_order:
+                mask = filters == label
+                for shift in (0.0, 1.0):
+                    ax_phase.scatter(
+                        phase[mask] + shift, mag[mask], s=16,
+                        color=filter_colors[label], alpha=0.78,
+                        edgecolors=Tokens.PLOT_AXES_BG, linewidths=0.25,
+                        label=(
+                            label if compact and shift == 0
+                            else f"{label} data" if shift == 0
+                            else None
+                        ),
+                    )
+                model = self._two_harmonic_phase_model(
+                    phase[mask], mag[mask], mag_err[mask] if mag_err is not None else None,
+                    phase_grid,
+                )
+                if model is not None:
+                    ax_phase.plot(
+                        phase_grid, model, color=filter_colors[label], lw=1.4,
+                        label=None if compact else f"{label} fit",
+                    )
+            ax_phase.set_xlim(0.0, 2.0)
+            ax_phase.invert_yaxis()
+            ax_phase.set_title(
+                f"Phase | P={adopted:.6f} d"
+                if compact
+                else f"Phase-folded at {adopted:.9f} d",
+                loc="left",
+            )
+            ax_phase.set_xlabel("Phase")
+            ax_phase.set_ylabel(
+                "Diff. mag"
+                if compact
+                else "Median-centered differential magnitude [mag]"
+            )
+            ax_phase.grid(True, alpha=0.25)
+            ax_phase.legend(
+                loc="upper right", ncol=3 if compact else 2,
+                fontsize=7 if compact else 8,
+            )
+            status = str((self.alias_analysis or {}).get("status", "")).upper()
+            mode_status = str((self.multimode_diagnostic or {}).get("status", "")).upper()
+            annotation = "\n".join(
+                line for line in (f"alias: {status}" if status else "", f"mode: {mode_status}" if mode_status else "")
+                if line
+            )
+            if annotation and not compact:
+                ax_phase.text(0.02, 0.04, annotation, transform=ax_phase.transAxes, va="bottom", fontsize=8)
+        else:
+            ax_phase.text(0.5, 0.5, "No valid period", ha="center", va="center", transform=ax_phase.transAxes)
+
+        target_id = int(self.lc_data.get("target_id", 0))
+        cycles = baseline / adopted if np.isfinite(adopted) and adopted > 0 else np.nan
+        cycle_text = f" | {cycles:.2f} cycles" if np.isfinite(cycles) else ""
+        if compact:
+            fig.suptitle(
+                f"ID {target_id} | {baseline * 24.0:.2f} h{cycle_text}", fontsize=10
+            )
+        else:
+            fig.suptitle(
+                f"Target ID {target_id} - period analysis | "
+                f"{baseline * 24.0:.2f} h{cycle_text}"
+            )
+        if compact:
+            if stacked:
+                fig.subplots_adjust(
+                    left=0.16, right=0.98, bottom=0.09, top=0.90, hspace=0.80
+                )
+            else:
+                fig.subplots_adjust(
+                    left=0.10, right=0.98, bottom=0.14, top=0.87,
+                    wspace=0.35, hspace=0.85,
+                )
+        self.summary_canvas.draw_idle()
+
     def _update_periodogram_plot(self):
         fig = self.periodogram_canvas.figure
         fig.clear()
@@ -935,74 +1885,114 @@ class PeriodAnalysisWindow(StepWindowBase):
                 if dt not in data_types_present:
                     data_types_present.append(dt)
 
-        n_rows = len(methods_present) or 1
-        n_cols = len(data_types_present) or 1
+        panel_specs = [
+            (method, dtype)
+            for method in methods_present
+            for dtype in data_types_present
+        ]
+        compact = self._periodogram_uses_compact_layout(
+            self.periodogram_canvas.width()
+        )
+        self._periodogram_layout_compact = compact
+        if compact:
+            n_rows = len(panel_specs) or 1
+            n_cols = 1
+            self.periodogram_canvas.setMinimumHeight(max(520, n_rows * 190))
+        else:
+            n_rows = len(methods_present) or 1
+            n_cols = len(data_types_present) or 1
+            self.periodogram_canvas.setMinimumHeight(400)
         axes = fig.subplots(n_rows, n_cols, squeeze=False)
 
-        for ri, method in enumerate(methods_present):
-            for ci, dtype in enumerate(data_types_present):
+        for panel_index, (method, dtype) in enumerate(panel_specs):
+            if compact:
+                ax = axes[panel_index][0]
+            else:
+                ri = methods_present.index(method)
+                ci = data_types_present.index(dtype)
                 ax = axes[ri][ci]
-                key = f"{dtype}_{method}"
-                data = self.results.get(key)
-                if data is None or "error" in (data or {}):
-                    err_msg = data.get("error", "No data") if data else "No data"
-                    ax.text(0.5, 0.5, err_msg, ha="center", va="center",
-                            transform=ax.transAxes, fontsize=9)
-                    ax.set_title(f"{data_labels.get(dtype, dtype)} / {method_labels.get(method, method)}")
-                    continue
-
-                power = data["power"]
-                best_period = data["best_period"]
-                best_power = data["best_power"]
-
-                if "frequency" in data:
-                    periods = 1.0 / data["frequency"]
-                elif "trial_periods" in data:
-                    periods = data["trial_periods"]
-                else:
-                    ax.text(0.5, 0.5, "No period axis", ha="center", va="center",
-                            transform=ax.transAxes)
-                    continue
-
-                color = method_colors.get(method, "#666")
-                ax.plot(periods, power, color=color, lw=0.8, alpha=0.8)
-                ax.axvline(best_period, color="red", ls="--", lw=1.5, alpha=0.8,
-                           label=f"P={best_period:.6f}d")
-                ax.scatter([best_period], [best_power], color="red", s=50, zorder=5)
-
-                ax.set_xlabel("Period (days)")
-                ax.set_ylabel(y_labels.get(method, "Power"))
-                ax.set_title(
-                    f"{data_labels.get(dtype, dtype)} / {method_labels.get(method, method)}\n"
-                    f"P = {best_period:.6f} d"
+            key = f"{dtype}_{method}"
+            data = self.results.get(key)
+            if data is None or "error" in (data or {}):
+                err_msg = data.get("error", "No data") if data else "No data"
+                ax.text(
+                    0.5, 0.5, err_msg, ha="center", va="center",
+                    transform=ax.transAxes, fontsize=9,
                 )
-                ax.set_xscale("log")
+                ax.set_title(
+                    f"{data_labels.get(dtype, dtype)} / "
+                    f"{method_labels.get(method, method)}"
+                )
+                continue
 
-                # Candidate family generated from the actual sampling window.
-                if hasattr(self, "chk_alias") and self.chk_alias.isChecked():
-                    p_min = self.min_period_spin.value()
-                    p_max = self.max_period_spin.value()
-                    analysis = self.alias_analysis or {}
-                    for candidate in analysis.get("candidates", [])[1:6]:
-                        ap = float(candidate.get("period", np.nan))
-                        if np.isfinite(ap) and p_min <= ap <= p_max:
-                            ax.axvline(
-                                ap,
-                                color="orange",
-                                ls="--",
-                                lw=1.0,
-                                alpha=0.65,
-                                label=(
-                                    f"window candidate {ap:.4f}d"
-                                    if int(candidate.get("rank", 0)) == 2
-                                    else None
-                                ),
-                            )
+            power = data["power"]
+            best_period = data["best_period"]
+            best_power = data["best_power"]
 
-                ax.legend(loc="upper right", fontsize=7)
-                ax.grid(True, alpha=0.3)
+            if "frequency" in data:
+                periods = 1.0 / data["frequency"]
+            elif "trial_periods" in data:
+                periods = data["trial_periods"]
+            else:
+                ax.text(
+                    0.5, 0.5, "No period axis", ha="center", va="center",
+                    transform=ax.transAxes,
+                )
+                continue
 
-        fig.tight_layout()
+            color = method_colors.get(method, "#666")
+            ax.plot(periods, power, color=color, lw=0.8, alpha=0.8)
+            ax.axvline(
+                best_period, color="red", ls="--", lw=1.5, alpha=0.8,
+                label=f"P={best_period:.6f}d",
+            )
+            ax.scatter([best_period], [best_power], color="red", s=50, zorder=5)
+
+            ax.set_xlabel("Period (days)")
+            ax.set_ylabel(y_labels.get(method, "Power"))
+            ax.set_title(
+                f"{data_labels.get(dtype, dtype)} / "
+                f"{method_labels.get(method, method)}\n"
+                f"P = {best_period:.6f} d"
+            )
+            ax.set_xscale("log")
+
+            # Candidate family generated from the actual sampling window.
+            if hasattr(self, "chk_alias") and self.chk_alias.isChecked():
+                p_min = self.min_period_spin.value()
+                p_max = self.max_period_spin.value()
+                analysis = self.alias_analysis or {}
+                for candidate in analysis.get("candidates", [])[1:6]:
+                    ap = float(candidate.get("period", np.nan))
+                    if np.isfinite(ap) and p_min <= ap <= p_max:
+                        ax.axvline(
+                            ap,
+                            color="orange",
+                            ls="--",
+                            lw=1.0,
+                            alpha=0.65,
+                            label=(
+                                f"window candidate {ap:.4f}d"
+                                if int(candidate.get("rank", 0)) == 2
+                                else None
+                            ),
+                        )
+
+            ax.legend(loc="upper right", fontsize=7)
+            ax.grid(True, alpha=0.3)
+
+        if compact:
+            fig.subplots_adjust(
+                left=0.14, right=0.97, bottom=0.06, top=0.95, hspace=1.05
+            )
+        else:
+            short_canvas = self.periodogram_canvas.height() < 520
+            fig.subplots_adjust(
+                left=0.08, right=0.98, bottom=0.08,
+                top=0.84 if short_canvas else 0.90,
+                wspace=0.35,
+                hspace=0.90 if short_canvas else 0.60,
+            )
         self.periodogram_canvas.draw_idle()
 
     def _update_results_table(self):
@@ -1235,15 +2225,29 @@ class PeriodAnalysisWindow(StepWindowBase):
         try:
             result_dir = Path(self.params.P.result_dir)
             _flt = self.lc_data.get("filter", "") if self.lc_data else ""
-            _ck_id, _ck_df = _load_check_star_for_plot(result_dir, _flt)
+            _check_filter = None if _flt == ALL_FILTER_KEY else _flt
+            _ck_id, _ck_df = _load_check_star_for_plot(result_dir, _check_filter)
             if _ck_df is not None and not _ck_df.empty:
                 _t_col = self._phase_plot_check_time_column(_ck_df)
                 _y_col = next((c for c in ["diff_mag_raw", "diff_mag", "mag"] if c in _ck_df.columns), None)
                 if _t_col and _y_col:
-                    if _flt and "filter" in _ck_df.columns:
-                        _ck_df = _ck_df[_ck_df["filter"].astype(str) == _flt]
+                    if _check_filter and "filter" in _ck_df.columns:
+                        _ck_df = _ck_df[
+                            _ck_df["filter"].astype(str).map(_normalize_filter_key)
+                            == _normalize_filter_key(_check_filter)
+                        ]
                     _ct = pd.to_numeric(_ck_df[_t_col], errors="coerce").to_numpy(float)
+                    if _t_col == "rel_time_hr":
+                        _ct = _ct / 24.0
                     _cm = pd.to_numeric(_ck_df[_y_col], errors="coerce").to_numpy(float)
+                    if _flt == ALL_FILTER_KEY and "filter" in _ck_df.columns:
+                        _check_labels = (
+                            _ck_df["filter"]
+                            .astype(str)
+                            .map(lambda value: _normalize_filter_key(value) or str(value).strip())
+                            .to_numpy(dtype=str)
+                        )
+                        _cm = self._median_center_for_plot(_cm, _check_labels)
                     _mask = np.isfinite(_ct) & np.isfinite(_cm)
                     if _mask.any() and np.isfinite(phase_t0):
                         _ck_label = f"Check ID {_ck_id}" if _ck_id is not None else "Check"
@@ -1347,6 +2351,22 @@ class PeriodAnalysisWindow(StepWindowBase):
             multimode_diagnostic=self.multimode_diagnostic,
         )
         self.log(f"Saved: {summary_path}")
+        if hasattr(self, "summary_canvas") and self.summary_canvas.figure.axes:
+            plot_path = out_dir / f"period_summary_{flt}_ID{target_id}.png"
+            self.summary_canvas.figure.savefig(plot_path, dpi=160, bbox_inches="tight")
+            self.log(f"Saved: {plot_path}")
+        try:
+            bundle = self._build_variable_star_handoff()
+            bundle_path = bundle.write_json(out_dir / "variable_analysis_bundle.json")
+            self.variable_analysis_bundle = bundle
+            self.log(f"Saved: {bundle_path}")
+            self.log(
+                f"[MAIN QC] Variable analysis release={bundle.release_status}: "
+                f"{bundle.release_message}"
+            )
+        except Exception as exc:
+            self.variable_analysis_bundle = None
+            self.log(f"[ERROR] Variable analysis bundle failed: {exc}")
 
     def log(self, msg: str):
         if self.log_text is not None:

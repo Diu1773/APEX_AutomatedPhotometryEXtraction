@@ -10,6 +10,7 @@ import pandas as pd
 
 from apex.analysis.light_curve.period_alias_service import infer_night_ids
 from apex.utils.common_helpers import normalize_filter_key
+from apex.utils.photometry_provenance import summarize_photometry_table
 from apex.utils.step_paths_lc import step11_period_dir
 
 
@@ -19,6 +20,25 @@ _CORR_MODE_LABELS = {
     "offset": "Nightly offset",
     "raw": "Raw (no correction)",
 }
+
+ALL_FILTER_KEY = "all"
+
+
+def _is_all_filter_selection(flt: str) -> bool:
+    value = str(flt or "").strip().lower()
+    return value in {ALL_FILTER_KEY, "__all__", "all filters", "all-filters"}
+
+
+def median_align_by_filter(values: np.ndarray, filters: np.ndarray) -> np.ndarray:
+    """Remove only the per-filter zero point from a multi-band series."""
+    aligned = np.asarray(values, dtype=float).copy()
+    labels = np.asarray(filters, dtype=str)
+    for label in np.unique(labels):
+        mask = labels == label
+        finite = mask & np.isfinite(aligned)
+        if np.any(finite):
+            aligned[mask] -= float(np.nanmedian(aligned[finite]))
+    return aligned
 
 
 def detect_corr_mode(filename: str) -> tuple[str, str]:
@@ -52,7 +72,8 @@ def load_period_lightcurve_csv(lc_file: Path, flt: str, target_id: int) -> dict:
     if time_col is None:
         raise ValueError("No time column (JD/HJD/BJD) found.")
 
-    if "filter" in df.columns:
+    combine_filters = _is_all_filter_selection(flt)
+    if "filter" in df.columns and not combine_filters:
         # Compare via canonical key so Johnson R matches R, SDSS r matches r, etc.
         flt_key = normalize_filter_key(flt)
         df_flt = df[df["filter"].astype(str).map(normalize_filter_key) == flt_key].copy()
@@ -88,11 +109,35 @@ def load_period_lightcurve_csv(lc_file: Path, flt: str, target_id: int) -> dict:
     if mag_raw_col is None:
         raise ValueError(f"No magnitude column found. Available columns: {list(df_target.columns)}")
 
+    if "filter" in df_target.columns:
+        filter_values = (
+            df_target["filter"]
+            .astype(str)
+            .map(lambda value: normalize_filter_key(value) or str(value).strip())
+            .to_numpy(dtype=str)
+        )
+    else:
+        filter_values = np.full(len(df_target), str(flt), dtype=str)
+
+    mag_raw = pd.to_numeric(df_target[mag_raw_col], errors="coerce").to_numpy(float)
+    mag_corr = (
+        pd.to_numeric(df_target[mag_corr_col], errors="coerce").to_numpy(float)
+        if mag_corr_col
+        else None
+    )
+    if combine_filters:
+        mag_raw = median_align_by_filter(mag_raw, filter_values)
+        if mag_corr is not None:
+            mag_corr = median_align_by_filter(mag_corr, filter_values)
+
     # Prefer an explicit observing-night label. Older files are grouped into
     # sessions from timestamp gaps so alias diagnostics still see the cadence.
     night_col = next((c for c in ("night_id", "night", "date") if c in df_target.columns), None)
     time_values = pd.to_numeric(df_target[time_col], errors="coerce").to_numpy(float)
-    gap = 12.0 if time_col == "rel_time_hr" else 0.5
+    source_time_unit = "hour" if time_col == "rel_time_hr" else "day"
+    if source_time_unit == "hour":
+        time_values = time_values / 24.0
+    gap = 0.5
     night_id = (
         df_target[night_col].astype(str).to_numpy()
         if night_col
@@ -100,22 +145,35 @@ def load_period_lightcurve_csv(lc_file: Path, flt: str, target_id: int) -> dict:
     )
 
     corr_mode_key, corr_mode_label = detect_corr_mode_from_df(df_target, lc_file.name)
+    photometry_info = summarize_photometry_table(df_target)
+    preserves_nightly_baseline = corr_mode_key not in {"offset", "color"}
+    if "correction_preserves_nightly_baseline" in df_target.columns:
+        raw_flag = str(df_target["correction_preserves_nightly_baseline"].iloc[0]).strip().lower()
+        preserves_nightly_baseline = raw_flag in {"1", "true", "yes", "y"}
     payload = {
         "time": time_values,
-        "mag_raw": df_target[mag_raw_col].to_numpy(float),
-        "mag_corr": df_target[mag_corr_col].to_numpy(float) if mag_corr_col else None,
+        "mag_raw": mag_raw,
+        "mag_corr": mag_corr,
         "mag_err": df_target[mag_err_col].to_numpy(float) if mag_err_col else None,
         "night_id": night_id,
+        "filter_values": filter_values,
+        "filter_alignment": "per_filter_median" if combine_filters else "none",
         "col_night": night_col,
-        "filter": flt,
+        "filter": ALL_FILTER_KEY if combine_filters else flt,
         "target_id": int(target_id),
         "source_file": str(lc_file),
         "col_raw": mag_raw_col,
         "col_corr": mag_corr_col,
         "col_err": mag_err_col,
         "col_time": time_col,
+        "time_unit": "day",
+        "source_time_unit": source_time_unit,
         "corr_mode": corr_mode_key,
         "corr_mode_label": corr_mode_label,
+        "photometry_source": photometry_info["source"],
+        "mag_input_column": photometry_info["mag_column"],
+        "mag_error_input_column": photometry_info["mag_error_column"],
+        "correction_preserves_nightly_baseline": bool(preserves_nightly_baseline),
         "n_rows": int(len(df)),
         "columns": list(df.columns),
     }
@@ -142,6 +200,9 @@ def save_period_analysis_outputs(
         "source_file": lc_data.get("source_file", ""),
         "corr_mode": lc_data.get("corr_mode", "unknown"),
         "corr_mode_label": lc_data.get("corr_mode_label", "Unknown"),
+        "photometry_source": lc_data.get("photometry_source", "unknown"),
+        "mag_input_column": lc_data.get("mag_input_column", "unknown"),
+        "mag_error_input_column": lc_data.get("mag_error_input_column", "unknown"),
         "min_period": float(min_period),
         "max_period": float(max_period),
         "results": {},

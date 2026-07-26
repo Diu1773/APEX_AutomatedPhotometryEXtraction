@@ -3,13 +3,17 @@ from __future__ import annotations
 
 import numpy as np
 import pytest
+from astropy.io import fits
 
+import apex.utils.astro_utils as astro_utils_module
 from apex.utils.astro_utils import (
     AIRMASS_FORMULAS,
     DEFAULT_AIRMASS_FORMULA,
     MAX_REASONABLE_AIRMASS,
     MIN_REASONABLE_AIRMASS,
     airmass_from_alt,
+    compute_airmass_from_jd_array,
+    compute_airmass_from_header,
     compute_bjd_tdb,
     compute_bjd_tdb_array,
     hardie_airmass,
@@ -164,6 +168,39 @@ def test_is_reasonable_airmass(val, expected):
 def test_is_reasonable_airmass_custom_bounds():
     assert is_reasonable_airmass(10.0, max_airmass=12.0)
     assert not is_reasonable_airmass(10.0, max_airmass=8.0)
+
+
+def test_compute_airmass_from_jd_array_is_vectorized_and_preserves_invalids():
+    values = compute_airmass_from_jd_array(
+        np.array([2451545.0, np.nan]),
+        ra_deg=280.0,
+        dec_deg=0.0,
+        site_lat_deg=0.0,
+        site_lon_deg=0.0,
+    )
+    assert values.shape == (2,)
+    assert np.isfinite(values[0])
+    assert not np.isfinite(values[1])
+
+
+def test_airmass_header_skips_wcs_parser_without_celestial_keys(monkeypatch):
+    header = fits.Header(
+        {
+            "DATE-OBS": "2026-01-01T00:00:00",
+            "NAXIS1": 100,
+            "NAXIS2": 100,
+        }
+    )
+
+    def fail_wcs(*_args, **_kwargs):
+        raise AssertionError("WCS should not be built without celestial CTYPE keys")
+
+    monkeypatch.setattr(astro_utils_module, "WCS", fail_wcs)
+
+    info = compute_airmass_from_header(header, 37.0, 127.0, 100.0)
+
+    assert not np.isfinite(info["airmass"])
+    assert not np.isfinite(info["ra_deg"])
 
 
 # ---------------------------------------------------------------------------

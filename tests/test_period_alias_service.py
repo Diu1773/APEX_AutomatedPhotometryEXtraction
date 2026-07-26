@@ -1,6 +1,8 @@
 """Regression tests for sampling-window aware period analysis."""
 
 import numpy as np
+import pandas as pd
+import pytest
 from astropy.timeseries import LombScargle
 
 from apex.analysis.light_curve.period_alias_service import (
@@ -11,6 +13,8 @@ from apex.analysis.light_curve.period_alias_service import (
     fit_multimode_model,
     search_multimode_alias_solutions,
 )
+from apex.analysis.light_curve.period_io_service import load_period_lightcurve_csv
+from apex.analysis.light_curve.detrend_output_service import annotate_step10_output
 
 
 def _two_nights(gap_days, frequencies, spans=(0.14, 0.14), seed=7, noise=0.007):
@@ -119,6 +123,69 @@ def test_multimode_diagnostic_finds_independent_residual_mode():
     )
     assert diagnostic["status"] == "MULTIMODE-SUSPECT", diagnostic
     assert abs(float(diagnostic["candidate_frequency_cd"]) - 15.03124) < 0.08
+
+
+def test_amplitude_modulated_single_mode_is_inconclusive():
+    rng = np.random.default_rng(77)
+    f0 = 11.6256
+    chunks = [np.sort(day + rng.uniform(0.0, 0.15, 45)) for day in range(12)]
+    time = np.concatenate(chunks)
+    night_id = np.concatenate(
+        [np.full(len(chunk), f"n{idx}") for idx, chunk in enumerate(chunks)]
+    )
+    err = np.full(len(time), 0.006)
+    amplitude = 0.18 * (1.0 + 0.45 * np.sin(2.0 * np.pi * 0.18 * time + 0.3))
+    mag = amplitude * np.sin(2.0 * np.pi * f0 * time + 0.2)
+    mag += rng.normal(0.0, err[0], len(time))
+    window = compute_spectral_window(time)
+    diagnostic = diagnose_multimode_suspicion(
+        time,
+        mag,
+        err,
+        night_id,
+        {
+            "adopted_freq_cd": f0,
+            "status": "RESOLVED",
+            "window_peaks": window["peaks"],
+        },
+        min_period=0.04,
+        max_period=0.15,
+    )
+    assert diagnostic["status"] == "INCONCLUSIVE", diagnostic
+    assert "amplitude/phase modulation" in diagnostic["reason"]
+
+
+def test_long_secondary_mode_reports_night_offset_sensitivity():
+    rng = np.random.default_rng(42)
+    f0 = 11.6256
+    f1 = 1.0 / 2.3
+    chunks = [np.sort(day + rng.uniform(0.0, 0.03, 30)) for day in range(12)]
+    time = np.concatenate(chunks)
+    night_id = np.concatenate(
+        [np.full(len(chunk), f"n{idx}") for idx, chunk in enumerate(chunks)]
+    )
+    err = np.full(len(time), 0.007)
+    mag = 0.18 * np.sin(2.0 * np.pi * f0 * time + 0.2)
+    mag += 0.08 * np.sin(2.0 * np.pi * f1 * time + 0.7)
+    mag += rng.normal(0.0, err[0], len(time))
+    window = compute_spectral_window(time)
+    diagnostic = diagnose_multimode_suspicion(
+        time,
+        mag,
+        err,
+        night_id,
+        {
+            "adopted_freq_cd": f0,
+            "status": "RESOLVED",
+            "window_peaks": window["peaks"],
+        },
+        min_period=0.03,
+        max_period=3.0,
+    )
+    assert diagnostic["status"] == "INCONCLUSIVE", diagnostic
+    assert diagnostic["offset_sensitivity"]["sensitive"] is True
+    assert diagnostic["offset_sensitivity"]["status_without_offsets"] == "MULTIMODE-SUSPECT"
+    assert diagnostic["offset_sensitivity"]["status_with_offsets"] == "SINGLE-COMPATIBLE"
 
 
 def test_short_yz_like_nights_are_not_auto_resolved():
@@ -247,6 +314,28 @@ def test_multimode_alias_search_is_joint_and_conservative():
     assert fixed["rmse"] < single["rmse"]
 
 
+def test_truncated_alias_search_cannot_report_resolved():
+    time, mag, err, night_id = _two_nights(
+        2.0,
+        [(11.6256, 0.20, 0.3), (15.03124, 0.05, 0.8)],
+        seed=5,
+    )
+    window = compute_spectral_window(time)
+    result = search_multimode_alias_solutions(
+        time,
+        mag,
+        err,
+        seed_periods=[1.0 / 11.6256, 1.0 / 15.03124],
+        harmonics=1,
+        window_peaks=window["peaks"],
+        night_id=night_id,
+        max_alias_offsets=1,
+        max_solutions=1,
+    )
+    assert result["alias_search_complete"] is False
+    assert result["alias_status"] == "AMBIGUOUS"
+
+
 def test_multimode_fit_can_include_nightly_zero_point_terms():
     f0, f1 = 11.6256, 15.03124
     time, mag, err, night_id = _two_nights(
@@ -274,3 +363,123 @@ def test_multimode_fit_can_include_nightly_zero_point_terms():
     )
     assert with_offsets["rmse"] < 0.5 * without_offsets["rmse"]
     assert abs(with_offsets["night_offsets"]["n2"] - 0.08) < 0.02
+
+
+def test_rank_deficient_multimode_fit_is_rejected():
+    rng = np.random.default_rng(9)
+    time = np.arange(30, dtype=float) + rng.uniform(0.0, 0.02, 30)
+    night_id = np.array([f"n{idx}" for idx in range(len(time))])
+    err = np.full(len(time), 0.01)
+    mag = 0.2 * np.sin(2.0 * np.pi * 11.6256 * time)
+    mag += rng.normal(0.0, err[0], len(time))
+    with pytest.raises(ValueError, match="Underconstrained|Rank-deficient"):
+        fit_multimode_model(
+            time,
+            mag,
+            err,
+            periods=[1.0 / 11.6256, 1.0 / 15.03124],
+            harmonics=2,
+            night_id=night_id,
+            include_night_offsets=True,
+        )
+
+
+def test_relative_hour_time_is_converted_to_days(tmp_path):
+    hours = np.linspace(0.0, 7.2, 120)
+    path = tmp_path / "relative_hours.csv"
+    pd.DataFrame(
+        {
+            "rel_time_hr": hours,
+            "mag": np.sin(2.0 * np.pi * hours / 2.4),
+            "mag_err": np.full(len(hours), 0.01),
+        }
+    ).to_csv(path, index=False)
+    loaded = load_period_lightcurve_csv(path, "V", 1)
+    assert np.ptp(loaded["time"]) == pytest.approx(7.2 / 24.0)
+    assert loaded["time_unit"] == "day"
+    assert loaded["source_time_unit"] == "hour"
+
+
+def test_period_loader_combines_filters_after_median_alignment(tmp_path):
+    path = tmp_path / "multi_filter.csv"
+    pd.DataFrame(
+        {
+            "JD": [2450000.0, 2450000.1, 2450000.2, 2450000.3],
+            "filter": ["g", "g", "r", "r"],
+            "diff_mag_raw": [10.0, 10.2, 13.0, 13.4],
+            "diff_mag": [9.9, 10.1, 12.8, 13.2],
+            "diff_err": [0.01, 0.01, 0.02, 0.02],
+        }
+    ).to_csv(path, index=False)
+
+    loaded = load_period_lightcurve_csv(path, "all", 1)
+
+    assert loaded["filter"] == "all"
+    assert loaded["filter_alignment"] == "per_filter_median"
+    assert loaded["filter_values"].tolist() == ["g", "g", "r", "r"]
+    assert loaded["mag_raw"] == pytest.approx([-0.1, 0.1, -0.2, 0.2])
+    assert loaded["mag_corr"] == pytest.approx([-0.1, 0.1, -0.2, 0.2])
+
+
+def test_period_loader_keeps_single_filter_zero_point(tmp_path):
+    path = tmp_path / "multi_filter.csv"
+    pd.DataFrame(
+        {
+            "JD": [2450000.0, 2450000.1, 2450000.2],
+            "filter": ["g", "g", "r"],
+            "diff_mag_raw": [10.0, 10.2, 13.0],
+        }
+    ).to_csv(path, index=False)
+
+    loaded = load_period_lightcurve_csv(path, "g", 1)
+
+    assert loaded["filter"] == "g"
+    assert loaded["filter_alignment"] == "none"
+    assert loaded["mag_raw"] == pytest.approx([10.0, 10.2])
+
+
+def test_period_loader_preserves_photometry_provenance(tmp_path):
+    path = tmp_path / "psf_lightcurve.csv"
+    pd.DataFrame(
+        {
+            "JD": [2450000.0, 2450000.1],
+            "filter": ["g", "g"],
+            "diff_mag_raw": [0.01, -0.01],
+            "photometry_source": ["psf", "psf"],
+            "mag_input_column": ["mag_psf", "mag_psf"],
+            "mag_error_input_column": ["mag_psf_err", "mag_psf_err"],
+        }
+    ).to_csv(path, index=False)
+
+    loaded = load_period_lightcurve_csv(path, "g", 1)
+
+    assert loaded["photometry_source"] == "psf"
+    assert loaded["mag_input_column"] == "mag_psf"
+    assert loaded["mag_error_input_column"] == "mag_psf_err"
+
+
+@pytest.mark.parametrize(
+    ("mode", "expected"),
+    [("offset", False), ("color", False), ("global", True), ("sysrem", True)],
+)
+def test_step10_output_marks_nightly_baseline_preservation(mode, expected):
+    output = annotate_step10_output(
+        pd.DataFrame({"JD": [2450000.0], "diff_mag_raw": [0.1]}),
+        mode,
+        "test",
+    )
+    assert bool(output["correction_preserves_nightly_baseline"].iloc[0]) is expected
+
+
+def test_period_loader_marks_offset_corrected_series_as_baseline_destructive(tmp_path):
+    path = tmp_path / "lightcurve_ID1_offset.csv"
+    pd.DataFrame(
+        {
+            "JD": [2450000.0, 2450000.1],
+            "diff_mag_raw": [0.1, 0.2],
+            "diff_mag_corr": [-0.05, 0.05],
+            "correction_mode": ["offset", "offset"],
+        }
+    ).to_csv(path, index=False)
+    loaded = load_period_lightcurve_csv(path, "V", 1)
+    assert loaded["correction_preserves_nightly_baseline"] is False

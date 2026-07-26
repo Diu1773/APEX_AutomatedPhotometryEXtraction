@@ -125,3 +125,18 @@ def first_existing_dir(result_dir: PathLike, *dirnames: str) -> Path:
 def forced_phot_input_dir(result_dir: PathLike) -> Path:
     """Forced-photometry dir for READING a (possibly legacy) input workspace."""
     return first_existing_dir(result_dir, STEP7_FORCED_PHOT_DIRNAME, "step5_photometry")
+
+
+def wcs_input_dir(result_dir: PathLike) -> Path:
+    """WCS dir for READING a (possibly legacy) input workspace."""
+    return first_existing_dir(result_dir, STEP5_WCS_DIRNAME, "step6_wcs")
+
+
+def refbuild_input_dir(result_dir: PathLike) -> Path:
+    """Reference-catalog dir for READING a (possibly legacy) workspace."""
+    return first_existing_dir(result_dir, STEP6_REFBUILD_DIRNAME, "step7_refbuild")
+
+
+def idmatch_input_dir(result_dir: PathLike) -> Path:
+    """Source-identity dir for READING current or legacy forced photometry."""
+    return first_existing_dir(result_dir, STEP7_FORCED_PHOT_DIRNAME, "step8_idmatch")

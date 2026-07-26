@@ -1,16 +1,4 @@
-"""Shared I/O helpers for check-star light curve files.
-
-These functions read check-star metadata and CSV outputs produced by Step 9.
-They live here so Step 10 and Step 11 can import them without pulling in the
-entire step9_lightcurve_builder module (which would cause a heavy cross-import
-from gui/ into gui/).
-
-The implementations are intentionally simpler than the Step 9 internal
-versions: they read check_id directly from ``selection_*.json`` without the
-source-ID resolution fallback chain.  That fallback is only needed when Step 9
-*builds* the series; for *reading* already-saved CSVs the direct ID is always
-present.
-"""
+"""Shared I/O helpers for Step 10 check-star light-curve outputs."""
 
 from __future__ import annotations
 
@@ -79,11 +67,13 @@ def load_check_star_csv(
     result_dir : Path
         Pipeline result directory.
     filt : str, optional
-        If given, prefer the filter-specific CSV for that band.
+        If given, filter the combined multi-dataset curve to that band before
+        falling back to legacy per-filter files.
 
     Returns
     -------
-    (check_id, DataFrame) — DataFrame is empty when no file is found.
+    (check_id, DataFrame). The DataFrame is empty when no file is found. The
+    ID is ``None`` when the combined curve contains multiple local check IDs.
     """
     out_dir = step9_lc_dir(result_dir)
     if not out_dir.exists():
@@ -92,12 +82,15 @@ def load_check_star_csv(
     if filt:
         filt_key = _normalize_filter_key(filt)
         check_id = load_check_star_id(result_dir, filt_key)
-        candidates: list[Path] = []
+        candidates: list[tuple[Path, bool]] = [
+            (out_dir / "lightcurve_check_combined_raw.csv", False)
+        ]
         if check_id is not None and filt_key:
-            candidates.append(out_dir / f"lightcurve_check_{filt_key}_ID{check_id}_raw.csv")
-            candidates.append(out_dir / f"lightcurve_check_ID{check_id}_raw.csv")
-        candidates.append(out_dir / "lightcurve_check_combined_raw.csv")
-        for path in candidates:
+            candidates.append(
+                (out_dir / f"lightcurve_check_{filt_key}_ID{check_id}_raw.csv", True)
+            )
+            candidates.append((out_dir / f"lightcurve_check_ID{check_id}_raw.csv", True))
+        for path, require_check_id in candidates:
             if not path.exists():
                 continue
             try:
@@ -106,10 +99,20 @@ def load_check_star_csv(
                 continue
             if "filter" in df.columns and filt_key:
                 df = df[df["filter"].astype(str).map(_normalize_filter_key) == filt_key].copy()
-            if "check_id" in df.columns and check_id is not None:
+            if require_check_id and "check_id" in df.columns and check_id is not None:
                 df = df[pd.to_numeric(df["check_id"], errors="coerce") == int(check_id)].copy()
             if not df.empty:
-                return check_id, df
+                ids = []
+                if "check_id" in df.columns:
+                    ids = sorted({
+                        int(value)
+                        for value in pd.to_numeric(df["check_id"], errors="coerce")
+                        .dropna()
+                        .astype(int)
+                        .tolist()
+                    })
+                loaded_id = ids[0] if len(ids) == 1 else (check_id if not ids else None)
+                return loaded_id, df
         return check_id, pd.DataFrame()
 
     # No filter specified: prefer combined CSV, then any single-check CSV

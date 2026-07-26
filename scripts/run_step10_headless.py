@@ -21,6 +21,9 @@ if str(REPO) not in sys.path:
     sys.path.insert(0, str(REPO))
 
 BACKUP_NAMES = (
+    "median_by_ID_filter_wide_cmd.csv",
+    "median_by_ID_filter_wide.csv",
+    "median_by_ID_filter_wide_raw.csv",
     "zp_fit_coefficients.csv",
     "gaia_sdss_calibrator_by_ID.csv",
     "gaia_cmd_comparison_summary.csv",
@@ -28,6 +31,11 @@ BACKUP_NAMES = (
     "gaia_cmd_drift_by_mag.csv",
     "zp_qc_summary.csv",
 )
+
+
+def _console_text(value) -> str:
+    encoding = getattr(sys.stdout, "encoding", None) or "utf-8"
+    return str(value).encode(encoding, errors="backslashreplace").decode(encoding)
 
 
 def main() -> int:
@@ -38,7 +46,7 @@ def main() -> int:
 
     from PyQt5.QtCore import QCoreApplication
 
-    QCoreApplication(sys.argv)  # QObject/QThread machinery without a GUI
+    app = QCoreApplication.instance() or QCoreApplication(sys.argv)
 
     from apex.config.parameters_cmd import read_params
     from apex.gui.workflow.cmd.step10_zeropoint_calibration import (
@@ -59,15 +67,18 @@ def main() -> int:
         print(f"[backup] {bak}")
 
     worker = ZeropointCalibrationWorker(params, P.data_dir, P.result_dir, P.cache_dir)
-    worker.log.connect(lambda m: print(f"[LOG] {m}"))
-    worker.error.connect(lambda m: print(f"[ERROR] {m}"))
-    ok: dict = {}
-    worker.finished.connect(lambda d: ok.update(d if isinstance(d, dict) else {}))
-
+    worker._log = lambda message: print(
+        f"[LOG] {_console_text(message)}",
+        flush=True,
+    )
     t0 = time.perf_counter()
     worker.run()  # synchronous
-    print(f"[done] elapsed {time.perf_counter() - t0:.1f}s  ok={bool(ok.get('ok', ok))}")
-    return 0
+    ok = dict(worker.last_summary)
+    if worker.last_error:
+        print(f"[ERROR] {_console_text(worker.last_error)}", flush=True)
+    success = bool(ok.get("ok", False))
+    print(f"[done] elapsed {time.perf_counter() - t0:.1f}s  ok={success}")
+    return 0 if success else 1
 
 
 if __name__ == "__main__":

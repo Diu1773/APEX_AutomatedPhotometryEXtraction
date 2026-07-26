@@ -247,6 +247,57 @@ def _normalized_weights(mag_err: Optional[np.ndarray], n: int) -> np.ndarray:
     return w / scale
 
 
+def _solve_weighted_design(
+    design: np.ndarray,
+    values: np.ndarray,
+    weights: np.ndarray,
+) -> dict:
+    """Solve a linear model and reject underconstrained numerical fits."""
+    matrix = np.asarray(design, dtype=float)
+    y = np.asarray(values, dtype=float)
+    w = np.asarray(weights, dtype=float)
+    n = int(len(y))
+    k = int(matrix.shape[1])
+    if n <= k:
+        raise ValueError(f"Underconstrained fit: n_points={n}, n_params={k}.")
+
+    root_w = np.sqrt(w)
+    coeff, _, rank, singular = np.linalg.lstsq(
+        matrix * root_w[:, None], y * root_w, rcond=None
+    )
+    singular = np.asarray(singular, dtype=float)
+    condition = (
+        float(singular[0] / singular[-1])
+        if len(singular) >= 2 and singular[-1] > 0
+        else np.inf
+    )
+    if int(rank) < k:
+        raise ValueError(f"Rank-deficient fit: rank={int(rank)}, n_params={k}.")
+    if not np.isfinite(condition) or condition > 1e12:
+        raise ValueError(f"Ill-conditioned fit: condition={condition:.3e}.")
+
+    coeff = np.asarray(coeff, dtype=float)
+    model = matrix @ coeff
+    residual = y - model
+    wrss = float(np.sum(w * residual**2))
+    rss = float(np.sum(residual**2))
+    bic = float(n * np.log(max(wrss / n, 1e-30)) + k * np.log(n))
+    return {
+        "coeff": coeff,
+        "model": model,
+        "residual": residual,
+        "rss": rss,
+        "wrss": wrss,
+        "rmse": float(np.sqrt(rss / n)),
+        "wrms": float(np.sqrt(wrss / n)),
+        "bic": bic,
+        "n_points": n,
+        "n_params": k,
+        "rank": int(rank),
+        "design_condition": condition,
+    }
+
+
 def _fit_frequency_model(
     time: np.ndarray,
     mag: np.ndarray,
@@ -276,35 +327,10 @@ def _fit_frequency_model(
 
     design = np.column_stack(columns)
     weights = _normalized_weights(mag_err, len(t))
-    root_w = np.sqrt(weights)
-    coeff, _, rank, singular = np.linalg.lstsq(
-        design * root_w[:, None], y * root_w, rcond=None
-    )
-    model = design @ coeff
-    residual = y - model
-    wrss = float(np.sum(weights * residual**2))
-    rss = float(np.sum(residual**2))
-    n = max(len(t), 1)
-    k = int(design.shape[1])
-    bic = float(n * np.log(max(wrss / n, 1e-30)) + k * np.log(n))
-    singular = np.asarray(singular, dtype=float)
-    condition = (
-        float(singular[0] / singular[-1])
-        if len(singular) >= 2 and singular[-1] > 0
-        else np.inf
-    )
+    solved = _solve_weighted_design(design, y, weights)
     return {
-        "coeff": np.asarray(coeff, dtype=float),
+        **solved,
         "labels": labels,
-        "model": model,
-        "residual": residual,
-        "rss": rss,
-        "wrss": wrss,
-        "rmse": float(np.sqrt(rss / n)),
-        "bic": bic,
-        "n_params": k,
-        "rank": int(rank),
-        "design_condition": condition,
     }
 
 
@@ -469,6 +495,7 @@ def analyze_period_aliases(
     max_candidates: int = 10,
     n_injections: int = 8,
     random_seed: int = 12345,
+    night_offset_policy: str = "diagnostic",
 ) -> dict:
     """Rank alias candidates and return a conservative resolution status."""
     t, y, dy, nid = _coerce_series(time, mag, mag_err, night_id)
@@ -510,22 +537,28 @@ def analyze_period_aliases(
     refine_half_width = max(1.5 * abs(grid_step), 1e-5)
     search_fmin = 1.0 / float(max_period)
     search_fmax = 1.0 / float(min_period)
-    include_night_offsets = len(np.unique(nid)) > 1
+    offset_policy = str(night_offset_policy).strip().lower()
+    if offset_policy not in {"none", "diagnostic", "fit"}:
+        raise ValueError("night_offset_policy must be 'none', 'diagnostic', or 'fit'.")
+    include_night_offsets = offset_policy == "fit" and len(np.unique(nid)) > 1
 
     fits: list[dict] = []
     for candidate in candidates:
-        refined_frequency, fit = _refine_frequency_fit(
-            t,
-            y,
-            dy,
-            nid,
-            initial_frequency=float(candidate["freq_cd"]),
-            half_width=refine_half_width,
-            min_frequency=search_fmin,
-            max_frequency=search_fmax,
-            harmonics=harmonics,
-            include_night_offsets=include_night_offsets,
-        )
+        try:
+            refined_frequency, fit = _refine_frequency_fit(
+                t,
+                y,
+                dy,
+                nid,
+                initial_frequency=float(candidate["freq_cd"]),
+                half_width=refine_half_width,
+                min_frequency=search_fmin,
+                max_frequency=search_fmax,
+                harmonics=harmonics,
+                include_night_offsets=include_night_offsets,
+            )
+        except (ValueError, np.linalg.LinAlgError):
+            continue
         refined_period = 1.0 / refined_frequency
         coverage = phase_coverage_metrics(t, refined_period)
         row = dict(candidate)
@@ -543,6 +576,16 @@ def analyze_period_aliases(
             }
         )
         fits.append(row)
+
+    if not fits:
+        return {
+            "status": "INSUFFICIENT",
+            "reason": "All candidate fits were underconstrained or ill-conditioned.",
+            "candidates": [],
+            "window_peaks": list(window.get("peaks", [])),
+            "n_points": int(len(t)),
+            "night_offset_policy": offset_policy,
+        }
 
     fits.sort(key=lambda row: float(row["bic"]))
     best_bic = float(fits[0]["bic"])
@@ -568,6 +611,32 @@ def analyze_period_aliases(
             )
             row["relation_to_best"] = relation
 
+    offset_best_period = None
+    offset_best_frequency = None
+    offset_sensitive = False
+    if offset_policy == "diagnostic" and len(np.unique(nid)) > 1:
+        offset_trials: list[tuple[float, dict]] = []
+        for row in fits:
+            try:
+                trial = _fit_frequency_model(
+                    t,
+                    y,
+                    dy,
+                    nid,
+                    float(row["freq_cd"]),
+                    harmonics,
+                    include_night_offsets=True,
+                )
+            except (ValueError, np.linalg.LinAlgError):
+                continue
+            row["bic_with_night_offsets"] = float(trial["bic"])
+            offset_trials.append((float(trial["bic"]), row))
+        if offset_trials:
+            _, offset_best = min(offset_trials, key=lambda item: item[0])
+            offset_best_period = float(offset_best["period"])
+            offset_best_frequency = float(offset_best["freq_cd"])
+            offset_sensitive = int(offset_best["rank"]) != 1
+
     unique_nights = [night for night in np.unique(nid) if np.sum(nid == night) >= 10]
     loo_trials = 0
     if len(unique_nights) >= 2:
@@ -577,16 +646,21 @@ def analyze_period_aliases(
                 continue
             trial_scores = []
             for row in fits:
-                trial = _fit_frequency_model(
-                    t[keep],
-                    y[keep],
-                    (dy[keep] if dy is not None else None),
-                    nid[keep],
-                    float(row["freq_cd"]),
-                    harmonics,
-                    include_night_offsets=len(np.unique(nid[keep])) > 1,
-                )
-                trial_scores.append(float(trial["bic"]))
+                try:
+                    trial = _fit_frequency_model(
+                        t[keep],
+                        y[keep],
+                        (dy[keep] if dy is not None else None),
+                        nid[keep],
+                        float(row["freq_cd"]),
+                        harmonics,
+                        include_night_offsets=include_night_offsets,
+                    )
+                    trial_scores.append(float(trial["bic"]))
+                except (ValueError, np.linalg.LinAlgError):
+                    trial_scores.append(np.inf)
+            if not np.any(np.isfinite(trial_scores)):
+                continue
             winner = int(np.argmin(trial_scores))
             fits[winner]["leave_one_out_votes"] += 1
             loo_trials += 1
@@ -598,24 +672,32 @@ def analyze_period_aliases(
         centered_residual = np.asarray(best_fit["residual"], dtype=float)
         centered_residual -= float(np.mean(centered_residual))
         recovered = 0
+        successful_injections = 0
         for _ in range(int(n_injections)):
             simulated = np.asarray(best_fit["model"], dtype=float) + rng.choice(
                 centered_residual, size=len(centered_residual), replace=True
             )
             scores = []
             for row in fits:
-                trial = _fit_frequency_model(
-                    t,
-                    simulated,
-                    dy,
-                    nid,
-                    float(row["freq_cd"]),
-                    harmonics,
-                    include_night_offsets=len(unique_nights) > 1,
-                )
-                scores.append(float(trial["bic"]))
+                try:
+                    trial = _fit_frequency_model(
+                        t,
+                        simulated,
+                        dy,
+                        nid,
+                        float(row["freq_cd"]),
+                        harmonics,
+                        include_night_offsets=include_night_offsets,
+                    )
+                    scores.append(float(trial["bic"]))
+                except (ValueError, np.linalg.LinAlgError):
+                    scores.append(np.inf)
+            if not np.any(np.isfinite(scores)):
+                continue
+            successful_injections += 1
             recovered += int(int(np.argmin(scores)) == 0)
-        injection_recovery = float(recovered / int(n_injections))
+        if successful_injections:
+            injection_recovery = float(recovered / successful_injections)
 
     night_spans = [float(np.ptp(t[nid == night])) for night in unique_nights]
     longest_night_span = max(night_spans, default=float(np.ptp(t)))
@@ -665,6 +747,11 @@ def analyze_period_aliases(
                 "No single night spans 1.5 cycles and the combined phase coverage "
                 "still has substantial gaps."
             )
+        if offset_sensitive:
+            status = "AMBIGUOUS"
+            reasons.append(
+                "The preferred alias changes when free nightly offsets are allowed."
+            )
     if status == "RESOLVED":
         reasons.append("Candidate separation and subset checks are consistent.")
 
@@ -708,6 +795,10 @@ def analyze_period_aliases(
             float(injection_recovery) if np.isfinite(injection_recovery) else None
         ),
         "harmonics": int(harmonics),
+        "night_offset_policy": offset_policy,
+        "offset_sensitive": bool(offset_sensitive),
+        "offset_best_period": offset_best_period,
+        "offset_best_frequency_cd": offset_best_frequency,
     }
 
 
@@ -802,24 +893,8 @@ def fit_multimode_model(
             )
         design = np.column_stack([design, *offset_columns])
     weights = _normalized_weights(dy, len(t))
-    root_w = np.sqrt(weights)
-    coeff, _, rank, singular = np.linalg.lstsq(
-        design * root_w[:, None], y * root_w, rcond=None
-    )
-    coeff = np.asarray(coeff, dtype=float)
-    model = design @ coeff
-    residual = y - model
-    rss = float(np.sum(residual**2))
-    wrss = float(np.sum(weights * residual**2))
-    n = len(t)
-    k = int(design.shape[1])
-    bic = float(n * np.log(max(wrss / n, 1e-30)) + k * np.log(n))
-    singular = np.asarray(singular, dtype=float)
-    condition = (
-        float(singular[0] / singular[-1])
-        if len(singular) >= 2 and singular[-1] > 0
-        else np.inf
-    )
+    solved = _solve_weighted_design(design, y, weights)
+    coeff = np.asarray(solved["coeff"], dtype=float)
     evaluated = evaluate_multimode_result(
         {
             "time_ref": time_ref,
@@ -848,18 +923,18 @@ def fit_multimode_model(
         "include_night_offsets": bool(night_offset_terms),
         "time_ref": time_ref,
         "intercept": float(coeff[0]),
-        "model": model,
+        "model": solved["model"],
         "components": evaluated["components"],
         "component_derivatives": evaluated["component_derivatives"],
-        "residual": residual,
+        "residual": solved["residual"],
         "baseline": float(np.ptp(t)),
-        "n_points": int(n),
-        "n_params": k,
-        "rank": int(rank),
-        "rmse": float(np.sqrt(rss / n)),
-        "wrms": float(np.sqrt(wrss / n)),
-        "bic": bic,
-        "design_condition": condition,
+        "n_points": int(solved["n_points"]),
+        "n_params": int(solved["n_params"]),
+        "rank": int(solved["rank"]),
+        "rmse": float(solved["rmse"]),
+        "wrms": float(solved["wrms"]),
+        "bic": float(solved["bic"]),
+        "design_condition": float(solved["design_condition"]),
     }
 
 
@@ -905,7 +980,45 @@ def _mode_fundamental_amplitude(result: dict, mode_index: int) -> float:
     return float(np.hypot(values.get("cos", 0.0), values.get("sin", 0.0)))
 
 
-def diagnose_multimode_suspicion(
+def _fit_primary_with_symmetric_sidebands(
+    time: np.ndarray,
+    mag: np.ndarray,
+    mag_err: Optional[np.ndarray],
+    night_id: np.ndarray,
+    primary_frequency: float,
+    candidate_frequency: float,
+    harmonics: int,
+    include_night_offsets: bool,
+) -> dict:
+    """Fit a linearized amplitude/phase-modulated primary-mode hypothesis."""
+    t = np.asarray(time, dtype=float)
+    y = np.asarray(mag, dtype=float)
+    nid = np.asarray(night_id, dtype=str)
+    tau = t - float(np.min(t))
+    delta = abs(float(candidate_frequency) - float(primary_frequency))
+    mirror_frequency = float(primary_frequency) - np.sign(
+        float(candidate_frequency) - float(primary_frequency)
+    ) * delta
+    if mirror_frequency <= 0:
+        raise ValueError("The symmetric modulation sideband is outside positive frequencies.")
+
+    columns = [np.ones(len(t), dtype=float)]
+    for harmonic in range(1, max(int(harmonics), 1) + 1):
+        phase = 2.0 * np.pi * float(primary_frequency) * harmonic * tau
+        columns.extend([np.cos(phase), np.sin(phase)])
+    for frequency in (float(candidate_frequency), mirror_frequency):
+        phase = 2.0 * np.pi * frequency * tau
+        columns.extend([np.cos(phase), np.sin(phase)])
+    if include_night_offsets:
+        unique_nights = list(dict.fromkeys(nid.tolist()))
+        columns.extend((nid == night).astype(float) for night in unique_nights[1:])
+    design = np.column_stack(columns)
+    solved = _solve_weighted_design(design, y, _normalized_weights(mag_err, len(t)))
+    solved["mirror_frequency_cd"] = mirror_frequency
+    return solved
+
+
+def _diagnose_multimode_once(
     time: np.ndarray,
     mag: np.ndarray,
     mag_err: Optional[np.ndarray],
@@ -916,6 +1029,7 @@ def diagnose_multimode_suspicion(
     harmonics: int = 2,
     samples_per_peak: int = 20,
     max_candidates: int = 8,
+    include_night_offsets: bool = False,
 ) -> dict:
     """Test whether a single-mode model leaves a credible independent signal.
 
@@ -934,7 +1048,7 @@ def diagnose_multimode_suspicion(
             "candidates": [],
         }
 
-    include_offsets = len(np.unique(nid)) > 1
+    include_offsets = bool(include_night_offsets) and len(np.unique(nid)) > 1
     primary_period = 1.0 / primary_frequency
     try:
         single_fit = fit_multimode_model(
@@ -1052,6 +1166,34 @@ def diagnose_multimode_suspicion(
             baseline,
             max_harmonic=max(4, int(harmonics) + 1),
         )
+        modulation_bic = None
+        modulation_mirror_frequency = None
+        joint_advantage_over_modulation = None
+        frequency_separation = abs(refined_frequency - primary_frequency)
+        modulation_sideband_regime = (
+            frequency_separation / max(primary_frequency, 1e-12) <= 0.20
+        )
+        if relation == "independent" and modulation_sideband_regime:
+            try:
+                modulation_fit = _fit_primary_with_symmetric_sidebands(
+                    t,
+                    y,
+                    dy,
+                    nid,
+                    primary_frequency,
+                    refined_frequency,
+                    harmonics,
+                    include_offsets,
+                )
+                modulation_bic = float(modulation_fit["bic"])
+                modulation_mirror_frequency = float(
+                    modulation_fit["mirror_frequency_cd"]
+                )
+                joint_advantage_over_modulation = float(
+                    modulation_bic - float(joint_fit["bic"])
+                )
+            except (ValueError, np.linalg.LinAlgError):
+                pass
         rows.append(
             {
                 "frequency_cd": refined_frequency,
@@ -1060,6 +1202,11 @@ def diagnose_multimode_suspicion(
                 "residual_fap": residual_fap if np.isfinite(residual_fap) else None,
                 "delta_bic": float(single_fit["bic"] - joint_fit["bic"]),
                 "amplitude_mag": _mode_fundamental_amplitude(joint_fit, 1),
+                "joint_bic": float(joint_fit["bic"]),
+                "modulation_bic": modulation_bic,
+                "modulation_mirror_frequency_cd": modulation_mirror_frequency,
+                "joint_advantage_over_modulation_bic": joint_advantage_over_modulation,
+                "modulation_sideband_regime": bool(modulation_sideband_regime),
                 "relation": relation,
                 "note": note,
             }
@@ -1087,7 +1234,7 @@ def diagnose_multimode_suspicion(
                         periods=[primary_period],
                         harmonics=harmonics,
                         night_id=nid[keep],
-                        include_night_offsets=len(np.unique(nid[keep])) > 1,
+                        include_night_offsets=include_offsets,
                     )
                     joint_subset = fit_multimode_model(
                         t[keep],
@@ -1096,7 +1243,7 @@ def diagnose_multimode_suspicion(
                         periods=[primary_period, candidate_period],
                         harmonics=harmonics,
                         night_id=nid[keep],
-                        include_night_offsets=len(np.unique(nid[keep])) > 1,
+                        include_night_offsets=include_offsets,
                     )
                 except (ValueError, np.linalg.LinAlgError):
                     continue
@@ -1126,7 +1273,17 @@ def diagnose_multimode_suspicion(
         fap_value = float(fap) if fap is not None else np.nan
         delta_bic = float(best["delta_bic"])
         stable = loo_fraction is None or loo_fraction >= 0.60
-        strong = np.isfinite(fap_value) and fap_value <= 0.01 and delta_bic >= 10.0 and stable
+        modulation_advantage = best.get("joint_advantage_over_modulation_bic")
+        modulation_rejected = (
+            modulation_advantage is None or float(modulation_advantage) >= 6.0
+        )
+        strong = (
+            np.isfinite(fap_value)
+            and fap_value <= 0.01
+            and delta_bic >= 10.0
+            and stable
+            and modulation_rejected
+        )
         weak = (np.isfinite(fap_value) and fap_value <= 0.05 and delta_bic >= 6.0) or delta_bic >= 10.0
         if strong and not primary_insufficient:
             status = "MULTIMODE-SUSPECT"
@@ -1138,10 +1295,16 @@ def diagnose_multimode_suspicion(
                 reason += f" Leave-one-night-out support is {loo_fraction:.0%}."
         elif weak:
             status = "INCONCLUSIVE"
-            reason = (
-                "An independent residual candidate is present, but its significance, "
-                "sampling stability, or primary-period coverage is insufficient."
-            )
+            if not modulation_rejected:
+                reason = (
+                    "The residual sideband is also consistent with amplitude/phase "
+                    "modulation of a single primary mode."
+                )
+            else:
+                reason = (
+                    "An independent residual candidate is present, but its significance, "
+                    "sampling stability, or primary-period coverage is insufficient."
+                )
         else:
             status = "SINGLE-COMPATIBLE"
             reason = "Independent residual candidates do not pass the significance and joint-fit thresholds."
@@ -1154,6 +1317,7 @@ def diagnose_multimode_suspicion(
         "primary_alias_status": primary_status,
         "single_bic": float(single_fit["bic"]),
         "single_rmse": float(single_fit["rmse"]),
+        "include_night_offsets": bool(include_offsets),
         "candidate_period": float(best["period"]) if best is not None else None,
         "candidate_frequency_cd": float(best["frequency_cd"]) if best is not None else None,
         "candidate_delta_bic": float(best["delta_bic"]) if best is not None else None,
@@ -1166,9 +1330,85 @@ def diagnose_multimode_suspicion(
             "strong_delta_bic_min": 10.0,
             "subset_support_min": 0.60,
             "close_frequency_resolution": "1.5/T",
+            "modulation_sideband_relative_max": 0.20,
+            "joint_vs_modulation_delta_bic_min": 6.0,
         },
         "candidates": rows,
     }
+
+
+def diagnose_multimode_suspicion(
+    time: np.ndarray,
+    mag: np.ndarray,
+    mag_err: Optional[np.ndarray],
+    night_id: Optional[np.ndarray],
+    alias_analysis: dict,
+    min_period: float,
+    max_period: float,
+    harmonics: int = 2,
+    samples_per_peak: int = 20,
+    max_candidates: int = 8,
+    check_night_offset_sensitivity: bool = True,
+) -> dict:
+    """Diagnose extra modes and expose sensitivity to free nightly offsets."""
+    primary = _diagnose_multimode_once(
+        time,
+        mag,
+        mag_err,
+        night_id,
+        alias_analysis,
+        min_period,
+        max_period,
+        harmonics=harmonics,
+        samples_per_peak=samples_per_peak,
+        max_candidates=max_candidates,
+        include_night_offsets=False,
+    )
+    primary["offset_sensitivity"] = {"checked": False}
+
+    nid = None if night_id is None else np.asarray(night_id)
+    if (
+        not check_night_offset_sensitivity
+        or nid is None
+        or len(nid) == 0
+        or len(np.unique(nid.astype(str))) < 2
+    ):
+        return primary
+
+    offset_result = _diagnose_multimode_once(
+        time,
+        mag,
+        mag_err,
+        night_id,
+        alias_analysis,
+        min_period,
+        max_period,
+        harmonics=harmonics,
+        samples_per_peak=samples_per_peak,
+        max_candidates=max_candidates,
+        include_night_offsets=True,
+    )
+    status_without = str(primary.get("status", "INCONCLUSIVE"))
+    status_with = str(offset_result.get("status", "INCONCLUSIVE"))
+    sensitive = status_without != status_with
+    primary["offset_sensitivity"] = {
+        "checked": True,
+        "sensitive": bool(sensitive),
+        "status_without_offsets": status_without,
+        "status_with_offsets": status_with,
+        "candidate_frequency_without_offsets_cd": primary.get("candidate_frequency_cd"),
+        "candidate_frequency_with_offsets_cd": offset_result.get("candidate_frequency_cd"),
+        "reason_with_offsets": offset_result.get("reason", ""),
+    }
+    if sensitive:
+        original_reason = str(primary.get("reason", "")).strip()
+        primary["status"] = "INCONCLUSIVE"
+        primary["reason"] = (
+            "The mode classification changes when free nightly offsets are allowed. "
+            "Treat the nightly zero point as unresolved; "
+            + original_reason
+        ).strip()
+    return primary
 
 
 def search_multimode_alias_solutions(
@@ -1179,8 +1419,9 @@ def search_multimode_alias_solutions(
     harmonics: int = 1,
     window_peaks: Optional[Sequence[dict | float]] = None,
     night_id: Optional[np.ndarray] = None,
+    include_night_offsets: bool = False,
     max_alias_offsets: int = 2,
-    max_solutions: int = 64,
+    max_solutions: int = 1024,
 ) -> dict:
     """Compare simultaneous fits for sampling-alias combinations of modes."""
     t = _finite_time(time)
@@ -1216,11 +1457,14 @@ def search_multimode_alias_solutions(
             combo,
         ),
     )
+    total_combinations = int(len(ordered_indices))
+    solution_limit = max(int(max_solutions), 1)
+    search_complete = total_combinations <= solution_limit
     combinations: Iterable[tuple[float, ...]] = (
         tuple(alternatives[mode_idx][choice] for mode_idx, choice in enumerate(combo))
         for combo in ordered_indices
     )
-    for combo in islice(combinations, max(int(max_solutions), 1)):
+    for combo in islice(combinations, solution_limit):
         if len(combo) != len({round(float(freq), 6) for freq in combo}):
             continue
         trial_periods = [1.0 / float(freq) for freq in combo]
@@ -1232,7 +1476,7 @@ def search_multimode_alias_solutions(
                 periods=trial_periods,
                 harmonics=harmonics,
                 night_id=night_id,
-                include_night_offsets=night_id is not None,
+                include_night_offsets=bool(include_night_offsets),
             )
         except (ValueError, np.linalg.LinAlgError):
             continue
@@ -1258,6 +1502,11 @@ def search_multimode_alias_solutions(
     status_reasons = []
     if runner_delta < 6.0:
         status_reasons.append(f"Runner-up delta BIC={runner_delta:.2f}.")
+    if not search_complete:
+        status = "AMBIGUOUS"
+        status_reasons.append(
+            f"Alias search tested only {solution_limit} of {total_combinations} combinations."
+        )
 
     t_valid, _, _, nid = _coerce_series(time, mag, mag_err, night_id)
     night_spans = [float(np.ptp(t_valid[nid == night])) for night in np.unique(nid)]
@@ -1326,4 +1575,10 @@ def search_multimode_alias_solutions(
         dict(item) if isinstance(item, dict) else {"freq_cd": float(item)}
         for item in (window_peaks or [])
     ]
+    best_fit["alias_search_complete"] = bool(search_complete)
+    best_fit["alias_total_combinations"] = total_combinations
+    best_fit["alias_considered_combinations"] = int(
+        min(solution_limit, total_combinations)
+    )
+    best_fit["alias_fitted_combinations"] = int(len(summaries))
     return best_fit

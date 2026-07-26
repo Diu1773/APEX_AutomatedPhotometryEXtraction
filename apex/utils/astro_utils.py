@@ -277,9 +277,16 @@ def _parse_alt_from_header(header: fits.Header) -> float | None:
 
 def _parse_radec_from_wcs(header: fits.Header) -> tuple[float, float] | None:
     """Parse RA/Dec from WCS center if available."""
+    ctype1 = str(header.get("CTYPE1", "") or "").upper()
+    ctype2 = str(header.get("CTYPE2", "") or "").upper()
+    if not (
+        ("RA" in ctype1 and "DEC" in ctype2)
+        or ("DEC" in ctype1 and "RA" in ctype2)
+    ):
+        return None
     try:
         w = WCS(header, relax=True)
-        if w.celestial is None:
+        if not w.has_celestial:
             return None
         nx = header.get("NAXIS1", None)
         ny = header.get("NAXIS2", None)
@@ -288,7 +295,11 @@ def _parse_radec_from_wcs(header: fits.Header) -> tuple[float, float] | None:
         # 0-based pixel coords: geometric image centre is ((nx-1)/2, (ny-1)/2).
         x = (float(nx) - 1.0) / 2.0
         y = (float(ny) - 1.0) / 2.0
-        ra, dec = w.celestial.wcs_pix2world([[x, y]], 0)[0]
+        world1, world2 = w.celestial.wcs_pix2world([[x, y]], 0)[0]
+        if "RA" in ctype1:
+            ra, dec = world1, world2
+        else:
+            ra, dec = world2, world1
         return float(ra), float(dec)
     except Exception:
         return None
@@ -516,6 +527,50 @@ def compute_bjd_tdb(
         return float((t.tdb + ltt).jd)
     except Exception:
         return np.nan
+
+
+def compute_airmass_from_jd_array(
+    jd_utc_arr: np.ndarray,
+    ra_deg: float,
+    dec_deg: float,
+    site_lat_deg: float,
+    site_lon_deg: float,
+    site_alt_m: float = 0.0,
+    formula: str | None = None,
+) -> np.ndarray:
+    """Compute airmass for an array of UTC Julian Dates.
+
+    Invalid inputs and targets below the horizon are returned as NaN.  This
+    vectorized path is intended for table-backed workflows so callers do not
+    need to reopen one FITS file per exposure.
+    """
+    jd_arr = np.asarray(jd_utc_arr, dtype=float)
+    out = np.full_like(jd_arr, np.nan)
+    valid = np.isfinite(jd_arr)
+    if not np.any(valid):
+        return out
+    coords = (ra_deg, dec_deg, site_lat_deg, site_lon_deg, site_alt_m)
+    try:
+        if not all(np.isfinite(float(value)) for value in coords):
+            return out
+        location = EarthLocation(
+            lat=float(site_lat_deg) * u.deg,
+            lon=float(site_lon_deg) * u.deg,
+            height=float(site_alt_m) * u.m,
+        )
+        times = Time(jd_arr[valid], format="jd", scale="utc", location=location)
+        target = SkyCoord(
+            ra=float(ra_deg) * u.deg,
+            dec=float(dec_deg) * u.deg,
+            frame="icrs",
+        )
+        altitudes = target.transform_to(
+            AltAz(obstime=times, location=location)
+        ).alt.deg
+        out[valid] = np.asarray(airmass_from_alt(altitudes, formula), dtype=float)
+    except Exception:
+        pass
+    return out
 
 
 def compute_bjd_tdb_array(

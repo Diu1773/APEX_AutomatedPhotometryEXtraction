@@ -63,7 +63,7 @@ from matplotlib.figure import Figure
 import matplotlib.colors as mcolors
 from matplotlib.patches import Rectangle, Patch
 
-from apex.gui.layout_rules import FittedDialog, prevent_collapse, tame_canvas
+from apex.gui.layout_rules import FittedDialog, prevent_collapse, scroll_wrap, tame_canvas
 from apex.gui.workflow.step_window_base import StepWindowBase
 from apex.gui.workflow.log_panel import WorkflowLogWindow, WorkerStatusPanel, append_timestamped_log, show_raised
 from apex.gui.workflow.ui_helpers import (
@@ -618,6 +618,138 @@ _PSF_SIGNATURE_PARAMS = (
     "psf_save_residuals",
     "psf_save_all_iter_residuals",
 )
+
+
+def _psf_signature_value(value):
+    if isinstance(value, np.generic):
+        value = value.item()
+    if isinstance(value, Path):
+        return str(value)
+    if isinstance(value, float):
+        return float(value) if np.isfinite(value) else None
+    if isinstance(value, (bool, int, str)) or value is None:
+        return value
+    if isinstance(value, (list, tuple, set)):
+        return [_psf_signature_value(item) for item in value]
+    if isinstance(value, dict):
+        return {
+            str(key): _psf_signature_value(item)
+            for key, item in sorted(value.items(), key=lambda pair: str(pair[0]))
+        }
+    try:
+        if pd.isna(value):
+            return None
+    except Exception:
+        pass
+    return str(value)
+
+
+def _psf_file_signature(path: Path | None) -> dict | None:
+    if path is None:
+        return None
+    try:
+        candidate = Path(path)
+        if not candidate.exists():
+            return None
+        stat = candidate.stat()
+        try:
+            path_text = str(candidate.resolve())
+        except Exception:
+            path_text = str(candidate)
+        return {
+            "path": path_text,
+            "size": int(stat.st_size),
+            "mtime_ns": int(stat.st_mtime_ns),
+        }
+    except Exception:
+        return None
+
+
+def _first_psf_input(candidates: list[Path], *, newest: bool = False) -> Path | None:
+    existing = []
+    for candidate in candidates:
+        try:
+            if candidate.exists() and candidate.stat().st_size > 0:
+                existing.append(candidate)
+        except Exception:
+            continue
+    if not existing:
+        return None
+    if newest:
+        return max(existing, key=lambda path: path.stat().st_mtime_ns)
+    return existing[0]
+
+
+def build_psf_output_signature(
+    params,
+    frames: list[str],
+    *,
+    use_cropped: bool = False,
+    cache_dir: Path | None = None,
+) -> dict:
+    """Build the Step 8 completion signature for GUI and headless runs."""
+    P = params.P
+    result_dir = Path(P.result_dir)
+    cache_path = Path(cache_dir or getattr(P, "cache_dir", result_dir / "cache"))
+    if not cache_path.is_absolute():
+        cache_path = result_dir / cache_path
+    step4_path = step4_dir(result_dir)
+    step7_path = step7_forced_phot_dir(result_dir)
+    cropped_dir = step2_cropped_dir(result_dir)
+    data_dir = Path(P.data_dir)
+
+    frame_inputs = []
+    for frame in frames:
+        detect_csv = _first_psf_input([
+            cache_path / f"detect_{frame}.csv",
+            step4_path / f"detect_{frame}.csv",
+        ])
+        detect_json = _first_psf_input(
+            [
+                cache_path / f"detect_{frame}.json",
+                step4_path / f"detect_{frame}.json",
+            ],
+            newest=True,
+        )
+        fits_path = cropped_dir / frame if use_cropped else data_dir / frame
+        frame_inputs.append({
+            "file": str(frame),
+            "fits": _psf_file_signature(fits_path),
+            "detect_csv": _psf_file_signature(detect_csv),
+            "detect_json": _psf_file_signature(detect_json),
+            "step7_tsv": _psf_file_signature(step7_path / f"photometry_{frame}.tsv"),
+        })
+
+    payload = {
+        "signature_version": _PSF_SIGNATURE_VERSION,
+        "step": "cmd_step8_psf_photometry",
+        "frames": [str(frame) for frame in frames],
+        "use_cropped": bool(use_cropped),
+        "params": {
+            key: _psf_signature_value(getattr(P, key, None))
+            for key in _PSF_SIGNATURE_PARAMS
+        },
+        "inputs": {
+            "step7_index": _psf_file_signature(step7_path / "photometry_index.csv"),
+            "step7_apcorr_summary": _psf_file_signature(step7_path / "apcorr_summary.csv"),
+            "frames": frame_inputs,
+        },
+    }
+    encoded = json.dumps(payload, sort_keys=True, ensure_ascii=False, allow_nan=False)
+    payload["signature_hash"] = hashlib.sha1(encoded.encode("utf-8")).hexdigest()
+    return payload
+
+
+def write_psf_output_signature(result_dir: Path | str, signature: dict) -> Path:
+    output_dir = step8_psf_dir(result_dir)
+    output_dir.mkdir(parents=True, exist_ok=True)
+    signature_path = output_dir / _PSF_SIGNATURE_FILE
+    signature_path.write_text(
+        json.dumps(signature, ensure_ascii=False, indent=2, sort_keys=True, allow_nan=False),
+        encoding="utf-8",
+    )
+    return signature_path
+
 
 _PSF_MODE_PRESETS = {
     "normal": {
@@ -5507,7 +5639,9 @@ class PSFPhotometryWindow(StepWindowBase):
         cmp_layout.addWidget(tame_canvas(self.cmp_canvas), 1)
         qc_splitter.addWidget(cmp_widget)
 
-        self.main_tabs.addTab(qc_tab, "QC")
+        # Tallest page (478 px): scroll it so it does not set the window's
+        # minimum height — see layout_rules.scroll_wrap.
+        self.main_tabs.addTab(scroll_wrap(qc_tab), "QC")
 
         # Tab 4: per-frame final PSF diagnostics.
         final_tab = QWidget()
@@ -5697,47 +5831,12 @@ class PSFPhotometryWindow(StepWindowBase):
             self.log(f"Step4 QC: frame_quality.csv ignored ({qc_info.get('reason', 'unknown')}); using all frames.")
 
     def _build_psf_output_signature(self, frames: list[str]) -> dict:
-        result_dir = Path(self.params.P.result_dir)
-        cache_dir = self._cache_dir_path()
-        s4_dir = step4_dir(result_dir)
-        s7_dir = step7_forced_phot_dir(result_dir)
-
-        frame_inputs = []
-        for fname in frames:
-            detect_csv = self._first_existing_path([
-                cache_dir / f"detect_{fname}.csv",
-                s4_dir / f"detect_{fname}.csv",
-            ])
-            detect_json = self._newest_existing_path([
-                cache_dir / f"detect_{fname}.json",
-                s4_dir / f"detect_{fname}.json",
-            ])
-            frame_inputs.append({
-                "file": str(fname),
-                "fits": self._file_signature(self._resolve_fits_path_window(fname)),
-                "detect_csv": self._file_signature(detect_csv),
-                "detect_json": self._file_signature(detect_json),
-                "step7_tsv": self._file_signature(s7_dir / f"photometry_{fname}.tsv"),
-            })
-
-        payload = {
-            "signature_version": _PSF_SIGNATURE_VERSION,
-            "step": "cmd_step8_psf_photometry",
-            "frames": [str(f) for f in frames],
-            "use_cropped": bool(self.use_cropped),
-            "params": {
-                k: self._signature_value(getattr(self.params.P, k, None))
-                for k in _PSF_SIGNATURE_PARAMS
-            },
-            "inputs": {
-                "step7_index": self._file_signature(s7_dir / "photometry_index.csv"),
-                "step7_apcorr_summary": self._file_signature(s7_dir / "apcorr_summary.csv"),
-                "frames": frame_inputs,
-            },
-        }
-        encoded = json.dumps(payload, sort_keys=True, ensure_ascii=False, allow_nan=False)
-        payload["signature_hash"] = hashlib.sha1(encoded.encode("utf-8")).hexdigest()
-        return payload
+        return build_psf_output_signature(
+            self.params,
+            frames,
+            use_cropped=self.use_cropped,
+            cache_dir=self._cache_dir_path(),
+        )
 
     def _stored_psf_signature(self) -> dict | None:
         sig_path = step8_psf_dir(self.params.P.result_dir) / _PSF_SIGNATURE_FILE
@@ -5750,13 +5849,7 @@ class PSFPhotometryWindow(StepWindowBase):
             return None
 
     def _write_psf_output_signature(self, signature: dict):
-        out_dir = step8_psf_dir(self.params.P.result_dir)
-        out_dir.mkdir(parents=True, exist_ok=True)
-        sig_path = out_dir / _PSF_SIGNATURE_FILE
-        sig_path.write_text(
-            json.dumps(signature, ensure_ascii=False, indent=2, sort_keys=True, allow_nan=False),
-            encoding="utf-8",
-        )
+        write_psf_output_signature(self.params.P.result_dir, signature)
 
     def _psf_signature_matches(self, signature: dict) -> tuple[bool, str]:
         stored = self._stored_psf_signature()

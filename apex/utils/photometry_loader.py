@@ -8,7 +8,7 @@ import pandas as pd
 from .common_helpers import normalize_filter_key
 from .io_utils import read_csv_int64_source_id, coerce_int64_source_id
 from .step_paths import forced_phot_input_dir
-from .step_paths_lc import selection_input_dir
+from .step_paths_lc import selection_input_dirs
 
 
 _DATE_RE = re.compile(r"(20\d{6})")
@@ -61,26 +61,37 @@ def _resolve_idmatch_path(result_dir: Path, fname: str) -> Path | None:
     # separate idmatch file is needed (callers use source_id straight from the
     # TSV). Legacy workspaces kept a per-frame det->source_id map under
     # cache/idmatch/; fall back to it so those frames can still be identified.
-    cand = Path(result_dir) / "cache" / "idmatch" / f"idmatch_{fname}.csv"
-    return cand if cand.exists() else None
+    root = Path(result_dir)
+    date_key = _extract_date_key(fname)
+    candidates = [root / "cache" / "idmatch" / f"idmatch_{fname}.csv"]
+    if date_key:
+        candidates.append(root / "step8_idmatch" / date_key / f"idmatch_{fname}.csv")
+    candidates.append(root / "step8_idmatch" / f"idmatch_{fname}.csv")
+    for path in candidates:
+        if path.exists():
+            return path
+    matches = list((root / "step8_idmatch").glob(f"*/idmatch_{fname}.csv"))
+    return matches[0] if matches else None
 
 
 def _load_source_to_id_map(result_dir: Path, filt_hint: str | None = None) -> dict[int, int]:
-    step9_out = selection_input_dir(result_dir)
-    if not step9_out.exists():
+    selection_dirs = selection_input_dirs(result_dir)
+    if not any(path.exists() for path in selection_dirs):
         return {}
 
     candidates: list[tuple[Path, str]] = []
     filt_key = normalize_filter_key(filt_hint)
     if filt_key:
-        candidates.extend(
-            [
-                (step9_out / f"master_catalog_{filt_key}.tsv", "\t"),
-                (step9_out / f"id_mapping_{filt_key}.csv", ","),
-            ]
-        )
-    candidates.extend((p, "\t") for p in sorted(step9_out.glob("master_catalog_*.tsv")))
-    candidates.extend((p, ",") for p in sorted(step9_out.glob("id_mapping_*.csv")))
+        for step9_out in selection_dirs:
+            candidates.extend(
+                [
+                    (step9_out / f"master_catalog_{filt_key}.tsv", "\t"),
+                    (step9_out / f"id_mapping_{filt_key}.csv", ","),
+                ]
+            )
+    for step9_out in selection_dirs:
+        candidates.extend((p, "\t") for p in sorted(step9_out.glob("master_catalog_*.tsv")))
+        candidates.extend((p, ",") for p in sorted(step9_out.glob("id_mapping_*.csv")))
 
     mapping: dict[int, int] = {}
     for path, sep in candidates:
@@ -137,6 +148,14 @@ def load_frame_photometry(
     if "file" not in df.columns:
         df["file"] = fname
 
+    if "mag" not in df.columns:
+        for column in ("mag_inst", "mag_ap"):
+            if column in df.columns:
+                df["mag"] = pd.to_numeric(df[column], errors="coerce")
+                break
+    if "mag_err" not in df.columns and "mag_ap_err" in df.columns:
+        df["mag_err"] = pd.to_numeric(df["mag_ap_err"], errors="coerce")
+
     if "det_uid" in df.columns:
         df["det_uid"] = pd.to_numeric(df["det_uid"], errors="coerce").astype("Int64")
 
@@ -153,10 +172,24 @@ def load_frame_photometry(
                     idm["det_uid"] = pd.to_numeric(idm["det_uid"], errors="coerce").astype("Int64")
                     idm["source_id"] = coerce_int64_source_id(idm["source_id"]).astype("Int64")
                     merge_cols = ["det_uid", "source_id"]
-                    for extra in ("ra_deg", "dec_deg", "sep_arcsec", "match_confidence"):
+                    for extra in (
+                        "x", "y", "ra_deg", "dec_deg", "sep_arcsec",
+                        "match_confidence",
+                    ):
                         if extra in idm.columns and extra not in df.columns:
                             merge_cols.append(extra)
                     df = df.merge(idm[merge_cols], on="det_uid", how="left")
+
+    if not {"x", "y"} <= set(df.columns):
+        for x_col, y_col in (
+            ("xcenter", "ycenter"),
+            ("x_fit", "y_fit"),
+            ("x_det", "y_det"),
+        ):
+            if {x_col, y_col} <= set(df.columns):
+                df["x"] = pd.to_numeric(df[x_col], errors="coerce")
+                df["y"] = pd.to_numeric(df[y_col], errors="coerce")
+                break
 
     if "source_id" in df.columns:
         df["source_id"] = coerce_int64_source_id(df["source_id"]).astype("Int64")

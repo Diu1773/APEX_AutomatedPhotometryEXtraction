@@ -1,5 +1,5 @@
 """
-Step 9: Light Curve Builder
+Step 10: Light Curve Builder
 """
 
 from __future__ import annotations
@@ -69,7 +69,16 @@ from apex.utils.io_utils import (
     load_headers_table as _load_headers_table_util,
 )
 from apex.utils.photometry_loader import load_frame_photometry
-from apex.utils.constants import get_parallel_workers
+from apex.utils.constants import MAD_TO_SIGMA, get_parallel_workers
+from apex.analysis.light_curve.global_ensemble import select_comparisons_from_qc
+from apex.analysis.light_curve.photometry_source_service import (
+    load_lightcurve_frame_photometry,
+    resolve_lightcurve_photometry_source,
+)
+from apex.utils.photometry_provenance import (
+    build_photometry_provenance,
+    format_photometry_provenance,
+)
 from apex.gui.workflow.log_panel import WorkerStatusPanel
 
 
@@ -88,6 +97,29 @@ class _QcComputeWorker(QThread):
             self.finished.emit(rows)
         except Exception as e:
             self.error.emit(str(e))
+
+
+class _LightCurveTaskWorker(QThread):
+    result_ready = pyqtSignal(str, int, object)
+    error = pyqtSignal(str, int, str)
+
+    def __init__(self, owner, kind: str, token: int, fn):
+        super().__init__(owner)
+        self.kind = str(kind)
+        self.token = int(token)
+        self._fn = fn
+
+    def stop(self):
+        self.requestInterruption()
+
+    def run(self):
+        try:
+            result = self._fn()
+            if not self.isInterruptionRequested():
+                self.result_ready.emit(self.kind, self.token, result)
+        except Exception as exc:
+            if not self.isInterruptionRequested():
+                self.error.emit(self.kind, self.token, str(exc))
 
 
 class ClickableSlider(QSlider):
@@ -128,13 +160,13 @@ from apex.utils.astro_utils import compute_airmass_from_header, compute_bjd_tdb_
 from apex.utils.step_paths_lc import (
     step1_dir,
     step2_cropped_dir,
-    step7_forced_phot_dir,
     step6_refbuild_dir,
     step8_selection_dir,
     step9_lc_dir,
     list_lightcurve_csvs,
     tool_extinction_dir,
 )
+from apex.utils.step_paths import forced_phot_input_dir
 from apex.utils.qc_utils import load_frame_excludes, save_frame_excludes as save_frame_excludes_file
 from apex.analysis.light_curve.lightcurve_output_service import (
     annotate_raw_lightcurve,
@@ -305,7 +337,8 @@ def _compute_star_median_mags(
 
     Returns: {star_id: {"g": mag_g, "r": mag_r, ...}}
     """
-    idx_path = step7_forced_phot_dir(result_dir) / "photometry_index.csv"
+    phot_dir = forced_phot_input_dir(result_dir)
+    idx_path = phot_dir / "photometry_index.csv"
     if not idx_path.exists():
         return {}
 
@@ -329,7 +362,6 @@ def _compute_star_median_mags(
     frame_info = []
     for _, idx_row in idx_df.iterrows():
         fname = str(idx_row["file"])
-        phot_dir = step7_forced_phot_dir(result_dir)
         phot_path = next(
             (phot_dir / n for n in (f"{fname}_photometry.tsv", f"photometry_{fname}.tsv")
              if (phot_dir / n).exists()),
@@ -666,7 +698,7 @@ def _load_selection_ids(result_dir: Path) -> tuple[int | None, list[int]]:
             return next(iter(target_ids)), list(next(iter(comp_sets)))
         if len(target_ids) == 1:
             # Filters may legitimately carry different comp sets (or some may be
-            # empty). Seed Step 9 with the union so plotting/QC can start from
+            # empty). Seed Step 10 with the union so plotting/QC can start from
             # the full candidate pool without silently preferring one filter.
             union_comp_ids = sorted({
                 int(x)
@@ -757,8 +789,24 @@ def _load_selection_ids(result_dir: Path) -> tuple[int | None, list[int]]:
         return None, []
 
 
+def _active_comparison_ids_for_filter(
+    selection: dict,
+    active_comp_ids: list[int],
+) -> list[int]:
+    """Limit the global Step 10 candidate list to one filter's selection."""
+    active_set = {int(value) for value in active_comp_ids if value is not None}
+    selected_ids = [
+        int(value)
+        for value in selection.get("comparison_ids", [])
+        if value is not None
+    ]
+    if not selected_ids:
+        return [int(value) for value in active_comp_ids if value is not None]
+    return [value for value in selected_ids if value in active_set]
+
+
 def _load_selection_ids_by_filter(result_dir: Path) -> dict:
-    """필터별 selection 로드 (Step 8에서 저장한 selection_{filter}.json)"""
+    """필터별 selection 로드 (Step 9에서 저장한 selection_{filter}.json)"""
     step9_out = step8_selection_dir(result_dir)
     filter_selections = {}
 
@@ -822,6 +870,7 @@ def _load_selection_ids_by_filter(result_dir: Path) -> dict:
 
             target_id_val = int(target_id) if target_id is not None else None
             comp_id_vals = [int(x) for x in comp_ids if x is not None]
+            comp_source_id_vals = [int(x) for x in comp_source_ids if x is not None]
 
             # Recover IDs from source IDs when selection JSON has null/empty final IDs.
             if target_id_val is None and target_source_id is not None:
@@ -832,21 +881,24 @@ def _load_selection_ids_by_filter(result_dir: Path) -> dict:
                     refbuild_map = _load_step6_refbuild_id_map()
                     if int(target_source_id) in refbuild_map:
                         target_id_val = int(refbuild_map[int(target_source_id)])
-            if not comp_id_vals and comp_source_ids:
+            if comp_source_id_vals:
                 sid_map = _load_step8_id_map(flt)
-                if sid_map:
-                    comp_id_vals = sorted({
-                        int(sid_map[int(x)])
-                        for x in comp_source_ids
-                        if x is not None and int(x) in sid_map
-                    })
-                if not comp_id_vals:
+                if not sid_map:
                     refbuild_map = _load_step6_refbuild_id_map()
-                    comp_id_vals = sorted({
-                        int(refbuild_map[int(x)])
-                        for x in comp_source_ids
-                        if x is not None and int(x) in refbuild_map
-                    })
+                    sid_map = refbuild_map
+                resolved_pairs: list[tuple[int, int]] = []
+                seen_ids: set[int] = set()
+                for source_id in comp_source_id_vals:
+                    if source_id not in sid_map:
+                        continue
+                    resolved_id = int(sid_map[source_id])
+                    if resolved_id in seen_ids:
+                        continue
+                    seen_ids.add(resolved_id)
+                    resolved_pairs.append((resolved_id, source_id))
+                if resolved_pairs:
+                    comp_id_vals = [pair[0] for pair in resolved_pairs]
+                    comp_source_id_vals = [pair[1] for pair in resolved_pairs]
 
             # Check star
             check_source_id = data.get("check_source_id")
@@ -865,7 +917,7 @@ def _load_selection_ids_by_filter(result_dir: Path) -> dict:
                 "target_id": target_id_val,
                 "comparison_ids": comp_id_vals,
                 "target_source_id": int(target_source_id) if target_source_id is not None else None,
-                "comparison_source_ids": [int(x) for x in comp_source_ids if x is not None],
+                "comparison_source_ids": comp_source_id_vals,
                 "check_id": check_id_val,
                 "check_source_id": int(check_source_id) if check_source_id is not None else None,
             }
@@ -876,7 +928,7 @@ def _load_selection_ids_by_filter(result_dir: Path) -> dict:
 
 
 def _load_check_star_meta_by_filter(result_dir: Path) -> dict[str, dict[str, int]]:
-    """Load per-filter check star metadata from Step 8 selection JSONs."""
+    """Load per-filter check star metadata from Step 9 selection JSONs."""
     out: dict[str, dict[str, int]] = {}
     filter_sel = _load_selection_ids_by_filter(result_dir)
     for flt, sel in sorted(filter_sel.items()):
@@ -910,70 +962,10 @@ def _load_check_star_id(result_dir: Path, filt: str | None = None):
 
 
 def _load_check_star_csv(result_dir: Path, filt: str | None = None) -> tuple:
-    """Load check star CSV from step10 output.
+    """Compatibility wrapper around the shared downstream check-star loader."""
+    from apex.analysis.light_curve.check_star_io import load_check_star_csv
 
-    If ``filt`` is given, prefer the filter-specific check-star CSV for that band.
-    Otherwise prefer the combined check-star CSV that merges all configured filters.
-    """
-    out_dir = step9_lc_dir(result_dir)
-    if not out_dir.exists():
-        return None, pd.DataFrame()
-
-    if filt:
-        filt_key = _normalize_filter_key(filt)
-        check_id = _load_check_star_id(result_dir, filt_key)
-        candidates = []
-        if check_id is not None and filt_key:
-            candidates.append(out_dir / f"lightcurve_check_{filt_key}_ID{check_id}_raw.csv")
-            candidates.append(out_dir / f"lightcurve_check_ID{check_id}_raw.csv")
-        candidates.append(out_dir / "lightcurve_check_combined_raw.csv")
-        for path in candidates:
-            if not path.exists():
-                continue
-            try:
-                df = pd.read_csv(path)
-            except Exception:
-                continue
-            if "filter" in df.columns and filt_key:
-                df = df[df["filter"].astype(str).map(_normalize_filter_key) == filt_key].copy()
-            if "check_id" in df.columns and check_id is not None:
-                df = df[pd.to_numeric(df["check_id"], errors="coerce") == int(check_id)].copy()
-            if not df.empty:
-                return check_id, df
-        return check_id, pd.DataFrame()
-
-    combined_path = out_dir / "lightcurve_check_combined_raw.csv"
-    if combined_path.exists():
-        try:
-            df = pd.read_csv(combined_path)
-            cid = None
-            if "check_id" in df.columns:
-                ids = sorted({
-                    int(x) for x in pd.to_numeric(df["check_id"], errors="coerce").dropna().astype(int).tolist()
-                })
-                if len(ids) == 1:
-                    cid = ids[0]
-            return cid, df
-        except Exception:
-            pass
-
-    check_id = _load_check_star_id(result_dir)
-    if check_id is not None:
-        p = out_dir / f"lightcurve_check_ID{check_id}_raw.csv"
-        if p.exists():
-            try:
-                return check_id, pd.read_csv(p)
-            except Exception:
-                pass
-
-    for p in sorted(out_dir.glob("lightcurve_check_ID*_raw.csv")):
-        try:
-            cid = int(p.stem.replace("lightcurve_check_ID", "").replace("_raw", ""))
-            return cid, pd.read_csv(p)
-        except Exception:
-            continue
-
-    return None, pd.DataFrame()
+    return load_check_star_csv(result_dir, filt=filt)
 
 
 def _load_target_radec(result_dir: Path, target_id: int) -> tuple[float, float]:
@@ -1019,7 +1011,11 @@ FILTER_COLORS = {
 
 
 class LightCurveBuilderWindow(StepWindowBase):
-    """Step 9: Light curve builder (diff/abs)."""
+    """Step 10: Light curve builder (diff/abs)."""
+
+    background_log = pyqtSignal(str)
+    background_worker_status = pyqtSignal(int, str, str, int)
+    background_worker_clear = pyqtSignal()
 
     def __init__(self, params, file_manager, project_state, main_window, runtime_mode: bool = False):
         self.file_manager = file_manager
@@ -1057,6 +1053,14 @@ class LightCurveBuilderWindow(StepWindowBase):
         # 측광 TSV 캐시 (파일별 측광 데이터)
         self._photometry_cache: dict[str, pd.DataFrame] = {}
         self._photometry_cache_dir: Path | None = None
+        self._photometry_source_cache: dict[str, dict] = {}
+        self._force_aperture_for_datasets = False
+        self._lc_task_worker: _LightCurveTaskWorker | None = None
+        self._pending_plot_request: dict | None = None
+        self._pending_build_request: dict | None = None
+        self._plot_request_token = 0
+        self._build_request_token = 0
+        self._pending_qc_run = False
 
         # QC 캐시
         self.qc_rows: list[dict] = []
@@ -1097,7 +1101,7 @@ class LightCurveBuilderWindow(StepWindowBase):
         self._filter_keys: list[str] = []
 
         super().__init__(
-            step_index=8,
+            step_index=9,
             step_name="Light Curve Builder",
             params=params,
             project_state=project_state,
@@ -1110,6 +1114,9 @@ class LightCurveBuilderWindow(StepWindowBase):
             self.setup_step_ui()
             self.restore_state()
             self._auto_load_ids()
+        self.background_log.connect(self._append_background_log)
+        self.background_worker_status.connect(self._apply_background_worker_status)
+        self.background_worker_clear.connect(self._clear_background_worker_status)
 
     def _setup_runtime_ui(self):
         """Build a lightweight runtime-only UI for merger inline execution."""
@@ -1126,6 +1133,13 @@ class LightCurveBuilderWindow(StepWindowBase):
 
         rd = Path(self.params.P.result_dir)
         self.datasets = [(rd.name, rd)]
+        source = self._photometry_source_for_dir(rd)
+        self.photometry_source_label = QLabel(
+            format_photometry_provenance(source)
+        )
+        self.photometry_source_label.setWordWrap(True)
+        self.photometry_source_label.setToolTip(str(source.get("reason", "")))
+        self.content_layout.addWidget(self.photometry_source_label)
 
         self.log_window = QWidget(self, Qt.Window)
         self.log_window.setWindowTitle("Light Curve Log & Workers")
@@ -1158,7 +1172,7 @@ class LightCurveBuilderWindow(StepWindowBase):
         self.target_edit = QLineEdit()
         self.comp_edit = QLineEdit()
 
-        # Read-only info bar for target / comparison IDs (auto-loaded from Step 8)
+        # Read-only info bar for target / comparison IDs (auto-loaded from Step 9)
         self.id_info_label = QLabel("Target / Comp: (loading...)")
         self.id_info_label.setProperty("banner", "warn")
         self.id_info_label.setWordWrap(True)
@@ -1167,6 +1181,14 @@ class LightCurveBuilderWindow(StepWindowBase):
         # Fix base dataset to current result_dir
         rd = Path(self.params.P.result_dir)
         self.datasets = [(rd.name, rd)]
+        source = self._photometry_source_for_dir(rd)
+        self.photometry_source_label = QLabel(
+            format_photometry_provenance(source)
+        )
+        self.photometry_source_label.setProperty("role", "caption")
+        self.photometry_source_label.setWordWrap(True)
+        self.photometry_source_label.setToolTip(str(source.get("reason", "")))
+        left_v.addWidget(self.photometry_source_label)
 
         # ----- 추가 데이터셋 패널 -----
         ds_group = QGroupBox("추가 데이터셋")
@@ -1544,7 +1566,30 @@ class LightCurveBuilderWindow(StepWindowBase):
         self._update_frame_qc_summary()
 
     def log(self, msg: str):
-        self.log_text.append(msg)
+        if QThread.currentThread() != self.thread():
+            self.background_log.emit(str(msg))
+            return
+        self._append_background_log(str(msg))
+
+    def _append_background_log(self, msg: str) -> None:
+        try:
+            self.log_text.append(str(msg))
+        except RuntimeError:
+            pass
+
+    def _apply_background_worker_status(
+        self, worker_id: int, task: str, status: str, progress: int
+    ) -> None:
+        try:
+            self._worker_panel.update_worker(worker_id, task, status, progress)
+        except RuntimeError:
+            pass
+
+    def _clear_background_worker_status(self) -> None:
+        try:
+            self._worker_panel.clear()
+        except RuntimeError:
+            pass
 
     def _on_tab_changed(self, idx: int) -> None:
         self._update_frame_qc_summary()
@@ -2087,7 +2132,7 @@ class LightCurveBuilderWindow(StepWindowBase):
         self.build_light_curve()
 
     def _auto_load_ids(self):
-        """Step 8 selection에서 target/comp ID를 자동 로드."""
+        """Step 9 selection에서 target/comp ID를 자동 로드."""
         rd = Path(self.params.P.result_dir)
         target_id, comp_ids = _load_selection_ids(rd)
         if target_id is not None:
@@ -2109,7 +2154,7 @@ class LightCurveBuilderWindow(StepWindowBase):
             self.id_info_label.setText(f"Target: ID {t}  |  Comp: (없음)")
             banner = "warn"
         else:
-            self.id_info_label.setText("Target / Comp: Step 8에서 선택해주세요")
+            self.id_info_label.setText("Target / Comp: Step 9에서 선택해주세요")
             banner = "error"
         self.id_info_label.setProperty("banner", banner)
         refresh(self.id_info_label)
@@ -2200,6 +2245,73 @@ class LightCurveBuilderWindow(StepWindowBase):
             return comp_source_ids_all[idx]
         return None
 
+    def _resolved_photometry_source_for_dir(self, result_dir: Path) -> dict:
+        key = str(Path(result_dir).resolve())
+        if key not in self._photometry_source_cache:
+            current = Path(self.params.P.result_dir).resolve()
+            state = self.project_state if Path(result_dir).resolve() == current else None
+            self._photometry_source_cache[key] = resolve_lightcurve_photometry_source(
+                result_dir, state
+            )
+        return self._photometry_source_cache[key]
+
+    def _photometry_source_for_dir(self, result_dir: Path) -> dict:
+        source = self._resolved_photometry_source_for_dir(result_dir)
+        if not self._force_aperture_for_datasets or source.get("source") != "psf":
+            return source
+        aperture_dir = forced_phot_input_dir(result_dir)
+        return {
+            **source,
+            **build_photometry_provenance("aperture", "mag", "mag_err"),
+            "directory": aperture_dir,
+            "index_path": aperture_dir / "photometry_index.csv",
+            "reason": "PSF unavailable for every dataset; using aperture for all",
+        }
+
+    def _refresh_photometry_source_policy(self, *, log: bool = False) -> None:
+        sources = [
+            self._resolved_photometry_source_for_dir(Path(result_dir)).get("source")
+            for _, result_dir in self.datasets
+        ]
+        force_aperture = len(sources) > 1 and any(source != "psf" for source in sources)
+        changed = force_aperture != self._force_aperture_for_datasets
+        self._force_aperture_for_datasets = force_aperture
+        if changed:
+            self._photometry_cache.clear()
+            self._photometry_cache_dir = None
+            self._diff_series_cache.clear()
+            self._check_series_cache.clear()
+        source_label = self.__dict__.get("photometry_source_label")
+        if sources and source_label is not None:
+            active = "aperture" if force_aperture else str(sources[0])
+            reason = (
+                "PSF unavailable for every dataset; aperture enforced for all"
+                if force_aperture
+                else self._photometry_source_for_dir(Path(self.datasets[0][1])).get(
+                    "reason", ""
+                )
+            )
+            active_info = self._photometry_source_for_dir(Path(self.datasets[0][1]))
+            source_label.setText(format_photometry_provenance(active_info))
+            source_label.setToolTip(reason)
+        if log and sources:
+            active = "aperture" if force_aperture else str(sources[0])
+            detail = ", ".join(str(source) for source in sources)
+            self.log(f"[Photometry] Active source: {active} (datasets: {detail})")
+
+    def _load_active_photometry_index(self, result_dir: Path) -> pd.DataFrame:
+        source = self._photometry_source_for_dir(result_dir)
+        idx_path = Path(source["index_path"])
+        try:
+            index = pd.read_csv(idx_path)
+        except Exception:
+            return pd.DataFrame()
+        if source.get("source") == "psf" and "file" in index.columns:
+            allowed = {Path(str(frame)).name for frame in source.get("frames", [])}
+            basenames = index["file"].astype(str).map(lambda value: Path(value).name)
+            index = index[basenames.isin(allowed)].reset_index(drop=True)
+        return index
+
     def _get_photometry_df(self, result_dir: Path, fname: str) -> pd.DataFrame | None:
         """Load photometry TSV with caching."""
         # Clear cache if result_dir changed
@@ -2210,7 +2322,8 @@ class LightCurveBuilderWindow(StepWindowBase):
         if fname in self._photometry_cache:
             return self._photometry_cache[fname]
 
-        df = load_frame_photometry(result_dir, fname)
+        source = self._photometry_source_for_dir(result_dir)
+        df = load_lightcurve_frame_photometry(result_dir, fname, source)
 
         self._photometry_cache[fname] = df
         return df
@@ -2227,17 +2340,26 @@ class LightCurveBuilderWindow(StepWindowBase):
 
         n_workers = min(get_parallel_workers(self.params), len(to_load))
         for i in range(n_workers):
-            self._worker_panel.update_worker(i, f"Preloading {len(to_load)} files…", "Loading", 0)
+            message = f"Preloading {len(to_load)} files..."
+            if QThread.currentThread() != self.thread():
+                self.background_worker_status.emit(i, message, "Loading", 0)
+            else:
+                self._worker_panel.update_worker(i, message, "Loading", 0)
+
+        source = self._photometry_source_for_dir(result_dir)
 
         def _load_one(fname):
-            df = load_frame_photometry(result_dir, fname)
+            df = load_lightcurve_frame_photometry(result_dir, fname, source)
             return fname, df
 
         with ThreadPoolExecutor(max_workers=n_workers) as pool:
             for fname, df in pool.map(_load_one, to_load):
                 self._photometry_cache[fname] = df
 
-        self._worker_panel.clear()
+        if QThread.currentThread() != self.thread():
+            self.background_worker_clear.emit()
+        else:
+            self._worker_panel.clear()
 
     def _build_star_mag_series(
         self,
@@ -2248,12 +2370,14 @@ class LightCurveBuilderWindow(StepWindowBase):
         files_override: list[str] | None = None,
         preload: bool = True,
     ) -> pd.DataFrame:
-        idx_path = step7_forced_phot_dir(result_dir) / "photometry_index.csv"
+        source_info = self._photometry_source_for_dir(result_dir)
+        photometry_source = source_info["source"]
+        idx_path = Path(source_info["index_path"])
         if not idx_path.exists():
             if verbose:
                 self.log(f"[WARN] photometry_index.csv not found in {result_dir}")
             return pd.DataFrame()
-        idx = pd.read_csv(idx_path)
+        idx = self._load_active_photometry_index(result_dir)
         if "file" not in idx.columns:
             if verbose:
                 self.log(f"[WARN] photometry_index.csv missing 'file' column")
@@ -2371,6 +2495,9 @@ class LightCurveBuilderWindow(StepWindowBase):
 
         return pd.DataFrame({
             "file": files,
+            "photometry_source": [photometry_source] * len(files),
+            "mag_input_column": [source_info["mag_column"]] * len(files),
+            "mag_error_input_column": [source_info["mag_error_column"]] * len(files),
             "filter": filters,
             "date": dates,
             "JD": tarr,
@@ -2387,12 +2514,14 @@ class LightCurveBuilderWindow(StepWindowBase):
         verbose: bool = True,
         target_source_id_by_filter: dict[str, int] | None = None,
     ) -> pd.DataFrame:
-        idx_path = step7_forced_phot_dir(result_dir) / "photometry_index.csv"
+        source_info = self._photometry_source_for_dir(result_dir)
+        photometry_source = source_info["source"]
+        idx_path = Path(source_info["index_path"])
         if not idx_path.exists():
             if verbose:
                 self.log(f"[WARN] photometry_index.csv not found in {result_dir}")
             return pd.DataFrame()
-        idx = pd.read_csv(idx_path)
+        idx = self._load_active_photometry_index(result_dir)
         if "file" not in idx.columns:
             if verbose:
                 self.log(f"[WARN] photometry_index.csv missing 'file' column")
@@ -2511,8 +2640,10 @@ class LightCurveBuilderWindow(StepWindowBase):
             use_source_id = False
             target_source_id = None
             comp_source_map: dict[int, int] = {}
+            frame_comp_ids = [int(cid) for cid in comp_ids]
             if filt_key in filter_selections:
                 sel = filter_selections[filt_key]
+                frame_comp_ids = _active_comparison_ids_for_filter(sel, comp_ids)
                 override_target_sid = None
                 if target_source_id_by_filter is not None:
                     override_target_sid = target_source_id_by_filter.get(filt_key)
@@ -2524,7 +2655,7 @@ class LightCurveBuilderWindow(StepWindowBase):
                         target_source_id = sel.get("target_source_id")
                     else:
                         target_source_id = self._map_comp_source_id(sel, target_id)
-                for cid in comp_ids:
+                for cid in frame_comp_ids:
                     sid = self._map_comp_source_id(sel, cid)
                     if sid is not None:
                         comp_source_map[int(cid)] = int(sid)
@@ -2548,7 +2679,7 @@ class LightCurveBuilderWindow(StepWindowBase):
             # Comparison ensemble
             cmags = []
             cerrs = []
-            for cid in comp_ids:
+            for cid in frame_comp_ids:
                 row_c = pd.DataFrame()
                 if use_source_id and cid in comp_source_map and "source_id" in df.columns:
                     row_c = _select_rows_by_source_id(df, int(comp_source_map[cid]))
@@ -2609,6 +2740,9 @@ class LightCurveBuilderWindow(StepWindowBase):
 
         return pd.DataFrame({
             "file": files,
+            "photometry_source": [photometry_source] * len(files),
+            "mag_input_column": [source_info["mag_column"]] * len(files),
+            "mag_error_input_column": [source_info["mag_error_column"]] * len(files),
             "filter": filters,
             "date": dates,
             "night_id": night_ids,
@@ -2665,12 +2799,17 @@ class LightCurveBuilderWindow(StepWindowBase):
             filter_keys = check_df["filter"].astype(str).map(_normalize_filter_key)
             check_df = check_df[filter_keys.isin(valid_filters)].copy()
             if not check_df.empty:
-                check_df["check_id"] = filter_keys.loc[check_df.index].map(check_ids_by_filter)
-        if "check_id" in check_df.columns:
-            check_ids = pd.to_numeric(check_df["check_id"], errors="coerce")
-            check_df = check_df[check_ids.notna()].copy()
-            if not check_df.empty:
-                check_df["check_id"] = pd.to_numeric(check_df["check_id"], errors="coerce").astype(int)
+                row_filter_keys = filter_keys.loc[check_df.index]
+                check_df["check_id"] = row_filter_keys.map(check_ids_by_filter).astype("Int64")
+                check_df["check_source_id"] = row_filter_keys.map(
+                    check_source_ids_by_filter
+                ).astype("Int64")
+        identity_mask = pd.Series(False, index=check_df.index)
+        for column in ("check_id", "check_source_id"):
+            if column in check_df.columns:
+                identity_mask |= pd.to_numeric(check_df[column], errors="coerce").notna()
+        if not check_df.empty:
+            check_df = check_df[identity_mask].copy()
         if "JD" in check_df.columns and not check_df.empty:
             check_df = check_df.sort_values("JD").reset_index(drop=True)
         result = (check_ids_by_filter, check_df)
@@ -2685,12 +2824,12 @@ class LightCurveBuilderWindow(StepWindowBase):
                 self.log(f"[CACHE] Using cached diff series for target={target_id}, comp={comp_id}")
             return self._diff_series_cache[cache_key].copy()
 
-        idx_path = step7_forced_phot_dir(result_dir) / "photometry_index.csv"
+        idx_path = Path(self._photometry_source_for_dir(result_dir)["index_path"])
         if not idx_path.exists():
             if verbose:
                 self.log(f"[WARN] photometry_index.csv not found in {result_dir}")
             return pd.DataFrame()
-        idx = pd.read_csv(idx_path)
+        idx = self._load_active_photometry_index(result_dir)
         if "file" not in idx.columns:
             if verbose:
                 self.log(f"[WARN] photometry_index.csv missing 'file' column")
@@ -3238,10 +3377,123 @@ class LightCurveBuilderWindow(StepWindowBase):
             return
         comp_id = self.comp_ids_list[self.comp_index]
         target_id = int(self.target_edit.text().strip())
-        df = self._build_plot_diff_series(target_id, comp_id)
+        self._plot_request_token += 1
+        self._pending_plot_request = {
+            "kind": "plot",
+            "token": self._plot_request_token,
+            "target_id": target_id,
+            "comp_id": int(comp_id),
+            "comp_ids": list(self.comp_ids_list),
+        }
+        self.plot_info_label.setText(f"Comparison ID {comp_id} | Loading...")
+        self._start_next_lc_task()
+
+    def _start_next_lc_task(self) -> None:
+        if getattr(self, "_qc_running", False):
+            return
+        worker = self._lc_task_worker
+        if worker is not None and worker.isRunning():
+            return
+
+        request = self._pending_build_request
+        if request is not None:
+            self._pending_build_request = None
+        else:
+            request = self._pending_plot_request
+            self._pending_plot_request = None
+        if request is None:
+            if self._pending_build_request is None and hasattr(self, "btn_plot"):
+                self.btn_plot.setText("Plot && Save")
+                self.btn_plot.setEnabled(True)
+            return
+
+        kind = str(request["kind"])
+        token = int(request["token"])
+        if kind == "build":
+            target_id = int(request["target_id"])
+            comp_ids = [int(value) for value in request["comp_ids"]]
+
+            def _compute():
+                return self._build_light_curve_core(target_id, comp_ids)
+        else:
+            target_id = int(request["target_id"])
+            comp_id = int(request["comp_id"])
+            comp_ids = [int(value) for value in request["comp_ids"]]
+
+            def _compute():
+                df = self._build_plot_diff_series(target_id, comp_id)
+                check_ids, check_df = self._build_plot_check_series(comp_ids)
+                return {
+                    "target_id": target_id,
+                    "comp_id": comp_id,
+                    "df": df,
+                    "check_ids": check_ids,
+                    "check_df": check_df,
+                }
+
+        worker = _LightCurveTaskWorker(self, kind, token, _compute)
+        self._lc_task_worker = worker
+        worker.result_ready.connect(self._on_lc_task_ready)
+        worker.error.connect(self._on_lc_task_error)
+        worker.finished.connect(
+            lambda current=worker: self._on_lc_task_finished(current)
+        )
+        worker.start()
+
+    def _on_lc_task_ready(self, kind: str, token: int, payload: object) -> None:
+        if kind == "build":
+            if token != self._build_request_token:
+                return
+            summary = payload if isinstance(payload, dict) else {}
+            self.log(
+                f"[BUILD] Ready: {summary.get('n_valid', 0)}/"
+                f"{summary.get('n_total', 0)} valid points"
+            )
+            self.save_state()
+            self.plot_current_comparison()
+            self.show_log_window()
+            return
+        if token != self._plot_request_token or not isinstance(payload, dict):
+            return
+        self._render_current_comparison(
+            int(payload["target_id"]),
+            payload.get("df", pd.DataFrame()),
+            payload.get("check_ids", {}),
+            payload.get("check_df", pd.DataFrame()),
+        )
+
+    def _on_lc_task_error(self, kind: str, token: int, message: str) -> None:
+        if kind == "build" and token == self._build_request_token:
+            QMessageBox.warning(self, "Light Curve", message)
+        elif kind == "plot" and token == self._plot_request_token:
+            self.log(f"Plot load failed: {message}")
+            self._update_plot_info()
+
+    def _on_lc_task_finished(self, worker: _LightCurveTaskWorker) -> None:
+        if self._lc_task_worker is worker:
+            self._lc_task_worker = None
+        worker.deleteLater()
+        if self._pending_qc_run:
+            self._pending_qc_run = False
+            QTimer.singleShot(0, self.run_comp_qc)
+            return
+        if self._pending_build_request is None:
+            self.btn_plot.setText("Plot && Save")
+            self.btn_plot.setEnabled(True)
+        self._start_next_lc_task()
+
+    def _render_current_comparison(
+        self,
+        target_id: int,
+        df: pd.DataFrame,
+        check_ids_by_filter: dict[str, int],
+        check_df: pd.DataFrame,
+    ) -> None:
         if df.empty:
             self.log("No light curve data to plot.")
+            self._update_plot_info()
             return
+        self._update_plot_info()
         y_col = "diff_mag_raw" if "diff_mag_raw" in df.columns else "diff_mag"
         self._ensure_filter_colors(df["filter"].astype(str).tolist())
         self._lc_ever_plotted = True
@@ -3348,9 +3600,6 @@ class LightCurveBuilderWindow(StepWindowBase):
 
         # Check star overlay
         try:
-            check_ids_by_filter, check_df = self._build_plot_check_series(
-                self.comp_ids_list,
-            )
             if not check_df.empty:
                 if self.x_axis_mode == "phase" and "phase" not in check_df.columns:
                     if phase_time_col and self.phase_period > 0 and phase_time_col in check_df.columns and np.isfinite(phase_t0):
@@ -3481,7 +3730,10 @@ class LightCurveBuilderWindow(StepWindowBase):
             sigma_nights = float(np.std(night_medians, ddof=1)) if len(night_medians) >= 2 else np.nan
 
             # Outliers (3σ from median)
-            outlier_count = int(np.sum(np.abs(yv - med) > self.qc_sigma * mad)) if np.isfinite(mad) and mad > 0 else 0
+            robust_sigma = MAD_TO_SIGMA * mad
+            outlier_count = int(
+                np.sum(np.abs(yv - med) > self.qc_sigma * robust_sigma)
+            ) if np.isfinite(robust_sigma) and robust_sigma > 0 else 0
             outlier_frac = outlier_count / max(n, 1)
 
             if verbose:
@@ -3500,6 +3752,11 @@ class LightCurveBuilderWindow(StepWindowBase):
                 "use": comp_id in active_set,
             })
 
+        max_points = max((int(row.get("n", 0)) for row in rows), default=0)
+        for row in rows:
+            row["coverage_fraction"] = (
+                float(int(row.get("n", 0)) / max_points) if max_points > 0 else 0.0
+            )
         return rows
 
     def _save_comp_qc_summary(self, result_dir: Path, rows: list[dict]) -> None:
@@ -3525,11 +3782,17 @@ class LightCurveBuilderWindow(StepWindowBase):
         comp_ids: list[int],
         files_override: list[str] | None = None,
     ) -> dict:
-        idx_path = step7_forced_phot_dir(result_dir) / "photometry_index.csv"
+        idx_path = Path(self._photometry_source_for_dir(result_dir)["index_path"])
         try:
             idx_mtime_ns = int(idx_path.stat().st_mtime_ns)
         except OSError:
             idx_mtime_ns = 0
+        source = self._photometry_source_for_dir(result_dir)
+        source_index = Path(source.get("index_path", idx_path))
+        try:
+            source_index_mtime_ns = int(source_index.stat().st_mtime_ns)
+        except OSError:
+            source_index_mtime_ns = 0
         current_date = self.qc_date_combo.currentText() if hasattr(self, "qc_date_combo") else "All"
         return {
             "target_id": int(target_id),
@@ -3539,6 +3802,10 @@ class LightCurveBuilderWindow(StepWindowBase):
             "excluded_files": sorted(str(k) for k in self._get_frame_exclude_map(result_dir).keys()),
             "qc_sigma": float(self.qc_sigma),
             "photometry_index_mtime_ns": idx_mtime_ns,
+            "photometry_source": source.get("source", "aperture"),
+            "mag_input_column": source.get("mag_column", "mag"),
+            "mag_error_input_column": source.get("mag_error_column", "mag_err"),
+            "source_index_mtime_ns": source_index_mtime_ns,
         }
 
     def _load_cached_comp_qc_summary(self, result_dir: Path, signature: dict) -> list[dict] | None:
@@ -3657,13 +3924,12 @@ class LightCurveBuilderWindow(StepWindowBase):
         idx: pd.DataFrame | None = None,
     ) -> tuple[list[str], dict[str, str]]:
         if idx is None:
-            idx_path = step7_forced_phot_dir(result_dir) / "photometry_index.csv"
+            idx_path = Path(self._photometry_source_for_dir(result_dir)["index_path"])
             if not idx_path.exists():
                 self._qc_date_label_map = {}
                 return [], {}
-            try:
-                idx = pd.read_csv(idx_path)
-            except Exception:
+            idx = self._load_active_photometry_index(result_dir)
+            if idx.empty:
                 self._qc_date_label_map = {}
                 return [], {}
         if "file" not in idx.columns:
@@ -3778,6 +4044,15 @@ class LightCurveBuilderWindow(StepWindowBase):
     def run_comp_qc(self):
         if getattr(self, "_qc_running", False):
             return
+        task_worker = self._lc_task_worker
+        if task_worker is not None and task_worker.isRunning():
+            self._pending_qc_run = True
+            if hasattr(self, "qc_status_label"):
+                self.qc_status_label.setText(
+                    "QC queued after light-curve loading..."
+                )
+                self.qc_status_label.show()
+            return
         if not self.datasets:
             return
 
@@ -3837,6 +4112,7 @@ class LightCurveBuilderWindow(StepWindowBase):
             if getattr(self, "_pending_auto_use", False):
                 self._pending_auto_use = False
                 self._apply_auto_use_thresholds()
+            self._start_next_lc_task()
             return
 
         self._qc_running = True
@@ -3905,6 +4181,7 @@ class LightCurveBuilderWindow(StepWindowBase):
         if getattr(self, "_pending_auto_use", False):
             self._pending_auto_use = False
             self._apply_auto_use_thresholds()
+        self._start_next_lc_task()
 
     def _on_qc_error(self, msg: str) -> None:
         self._qc_running = False
@@ -3920,6 +4197,7 @@ class LightCurveBuilderWindow(StepWindowBase):
             self.qc_status_label.show()
         QApplication.restoreOverrideCursor()
         self.log(f"[QC] Error: {msg}")
+        self._start_next_lc_task()
 
     def auto_use_qc(self):
         if not self.qc_rows:
@@ -3941,17 +4219,23 @@ class LightCurveBuilderWindow(StepWindowBase):
         min_n = int(self.qc_min_points)
         if rms_max <= 0:
             rms_max = np.inf
-        df["use_auto"] = (
-            (df["n"].astype(float) >= min_n)
-            & (df["rms"].astype(float) <= rms_max)
-            & (df["outlier_frac"].astype(float) <= frac_max)
+        selection = select_comparisons_from_qc(
+            df,
+            rms_max=rms_max,
+            outlier_frac_max=frac_max,
+            min_points=min_n,
+            min_coverage=0.8,
+            min_count=3,
         )
+        selected_ids = set(selection["selected_ids"])
+        df["use_auto"] = df["comp_id"].astype(int).isin(selected_ids)
         if df["use_auto"].sum() == 0:
             self.log("[QC] Auto Use: no comps passed thresholds (kept current selection)")
             return
         self.log(
-            f"[QC] Auto Use: rms<= {self.qc_rms_max:.4f}, "
-            f"outlier_frac<= {self.qc_outlier_frac_max:.3f}, min_n>= {self.qc_min_points}"
+            f"[QC] Auto Use ({selection['method']}): rms<= {self.qc_rms_max:.4f}, "
+            f"outlier_frac<= {self.qc_outlier_frac_max:.3f}, "
+            f"coverage>=0.80, night_scatter<=rms_limit, min_n>= {self.qc_min_points}"
         )
         self._qc_table_block = True
         for row_idx in range(self.qc_table.rowCount()):
@@ -4131,7 +4415,7 @@ class LightCurveBuilderWindow(StepWindowBase):
 
     def _collect_qc_preview_files(self, result_dir: Path) -> tuple[list[str], list[str], list[str]]:
         """Return (files_all_filters, files_filtered_by_filter_sel, filters_all) for QC preview."""
-        idx_path = step7_forced_phot_dir(result_dir) / "photometry_index.csv"
+        idx_path = Path(self._photometry_source_for_dir(result_dir)["index_path"])
         if not idx_path.exists():
             return [], [], []
 
@@ -4150,6 +4434,12 @@ class LightCurveBuilderWindow(StepWindowBase):
             except Exception:
                 return [], [], []
             self._qc_idx_cache[cache_key] = (mtime, idx)
+
+        source = self._photometry_source_for_dir(result_dir)
+        if source.get("source") == "psf" and "file" in idx.columns:
+            allowed = {Path(str(frame)).name for frame in source.get("frames", [])}
+            basenames = idx["file"].astype(str).map(lambda value: Path(value).name)
+            idx = idx[basenames.isin(allowed)].reset_index(drop=True)
 
         if "file" not in idx.columns:
             return [], [], []
@@ -4340,6 +4630,7 @@ class LightCurveBuilderWindow(StepWindowBase):
         self.log(f"[BUILD] Target ID: {target_id}")
         self.log(f"[BUILD] Active Comp IDs: {active_comp_ids}")
         self.log(f"[BUILD] Datasets: {len(self.datasets)}")
+        self._refresh_photometry_source_policy(log=True)
 
         if active_comp_ids and not self.runtime_mode:
             qc_rows = self._compute_comp_qc(self.datasets[0][1], target_id, active_comp_ids, verbose=False)
@@ -4348,6 +4639,8 @@ class LightCurveBuilderWindow(StepWindowBase):
             self.log("[BUILD] Runtime mode: skip precomputing QC summary")
 
         combined_raw: list[pd.DataFrame] = []
+        combined_check: list[pd.DataFrame] = []
+        combined_check_ids_by_filter: dict[str, int] = {}
         single_dataset_mode = len(self.datasets) == 1
         for label, result_dir in self.datasets:
             result_dir = Path(result_dir)
@@ -4365,6 +4658,12 @@ class LightCurveBuilderWindow(StepWindowBase):
                     active_comp_ids,
                     verbose=False,
                 )
+                for filt_key, check_id in check_ids_by_filter.items():
+                    combined_check_ids_by_filter.setdefault(filt_key, int(check_id))
+                if not check_df.empty:
+                    check_df = check_df.copy()
+                    check_df["dataset"] = str(label)
+                    combined_check.append(check_df)
                 if check_ids_by_filter and check_df.empty:
                     self.log("  Check star configured but no usable check-star light curve was built")
             except Exception as e:
@@ -4387,6 +4686,8 @@ class LightCurveBuilderWindow(StepWindowBase):
             single_dataset_mode=single_dataset_mode,
             comp_candidate_ids=self.comp_candidate_ids,
             active_comp_ids=active_comp_ids,
+            combined_check=combined_check,
+            check_ids_by_filter=combined_check_ids_by_filter,
             logger=self.log,
         )
 
@@ -4438,10 +4739,20 @@ class LightCurveBuilderWindow(StepWindowBase):
             return
 
         active_comp_ids = list(comp_ids)
-        self._build_light_curve_core(int(target_id), active_comp_ids)
-        self.save_state()
-        self.plot_current_comparison()
+        if self.runtime_mode:
+            return self._build_light_curve_core(int(target_id), active_comp_ids)
+        self._build_request_token += 1
+        self._pending_build_request = {
+            "kind": "build",
+            "token": self._build_request_token,
+            "target_id": int(target_id),
+            "comp_ids": active_comp_ids,
+        }
+        self.btn_plot.setEnabled(False)
+        self.btn_plot.setText("Building...")
+        self.log("[BUILD] Queued background light-curve build")
         self.show_log_window()
+        self._start_next_lc_task()
 
     def keyPressEvent(self, event):
         if event.key() == Qt.Key_Left:
@@ -4485,15 +4796,38 @@ class LightCurveBuilderWindow(StepWindowBase):
             target_ids[0] if target_ids else None,
         )
         step9_dir = step9_lc_dir(result_dir).resolve()
+        target_output_valid = False
         for path in paths:
             try:
                 if path.resolve().parent != step9_dir:
                     continue
                 if not pd.read_csv(path, nrows=1).empty:
-                    return True
+                    target_output_valid = True
+                    break
             except Exception:
                 continue
-        return False
+        if not target_output_valid:
+            return False
+
+        filter_selections = _load_selection_ids_by_filter(result_dir)
+        required_filters = [
+            filt
+            for filt, selection in filter_selections.items()
+            if selection.get("target_id") is not None
+        ]
+        if not required_filters:
+            return False
+        for filt in required_filters:
+            selection = filter_selections[filt]
+            if selection.get("check_id") is None and selection.get("check_source_id") is None:
+                return False
+            _check_id, check_df = _load_check_star_csv(result_dir, filt=filt)
+            if check_df.empty or "diff_mag_raw" not in check_df.columns:
+                return False
+            values = pd.to_numeric(check_df["diff_mag_raw"], errors="coerce")
+            if not values.notna().any():
+                return False
+        return True
 
     # ------------------------------------------------------------------
     # Multi-dataset helpers
@@ -4533,6 +4867,7 @@ class LightCurveBuilderWindow(StepWindowBase):
                 return
         self.datasets.append((p.name, p))
         self.ds_list_widget.addItem(p.name)
+        self._refresh_photometry_source_policy()
         self._update_dataset_summary()
         self.save_state()
 
@@ -4543,6 +4878,7 @@ class LightCurveBuilderWindow(StepWindowBase):
         self.ds_list_widget.takeItem(row)
         if row < len(self.datasets):
             self.datasets.pop(row)
+        self._refresh_photometry_source_policy()
         self._update_dataset_summary()
         self.save_state()
 
@@ -4619,5 +4955,6 @@ class LightCurveBuilderWindow(StepWindowBase):
                 self.datasets.append((p.name, p))
                 if hasattr(self, "ds_list_widget"):
                     self.ds_list_widget.addItem(p.name)
+        self._refresh_photometry_source_policy()
         self._update_dataset_summary()
         self._set_dataset_panel_expanded(self.dataset_panel_expanded, persist=False)

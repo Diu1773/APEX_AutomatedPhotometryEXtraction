@@ -37,6 +37,10 @@ from apex.utils.common_helpers import format_cmd_title, target_display_name
 from apex.utils.cmd_gaia_enrichment import merge_gaia_columns_from_catalog
 from apex.utils.gaia_transforms import teff_from_color
 from apex.utils.parsec_columns import read_parsec_header
+from apex.utils.photometry_provenance import (
+    format_photometry_provenance,
+    summarize_photometry_table,
+)
 from apex.analysis.cmd.isochrone_fitter_v2 import IsochroneFitterV2, FitMode, FitResult, FitBounds, GridScanResult
 
 # Extinction coefficients R = A/E(B-V) (Cardelli+1989 / Fitzpatrick+1999)
@@ -846,6 +850,16 @@ class IsochroneModelWindow(StepWindowBase):
         info = QLabel("Load isochrone data, explore with sliders, or run automatic fitting.")
         info.setStyleSheet("QLabel { background-color: #E3F2FD; padding: 10px; border-radius: 5px; }")
         self.content_layout.addWidget(info)
+
+        self.photometry_source_label = QLabel()
+        self.photometry_source_label.setStyleSheet(
+            "QLabel { color: #455A64; font-weight: bold; padding: 2px 4px; }"
+        )
+        self.photometry_source_label.setToolTip(
+            "Original measurement source used to build the calibrated CMD magnitudes."
+        )
+        self.content_layout.addWidget(self.photometry_source_label)
+        self._refresh_photometry_source_label()
 
         # === File Selection ===
         file_group = QGroupBox("Isochrone Source")
@@ -2253,6 +2267,7 @@ class IsochroneModelWindow(StepWindowBase):
             if show_error:
                 QMessageBox.critical(self, "Error", f"Failed to load CMD data: {e}")
             return None, None, None
+        self._refresh_photometry_source_label(df)
         df = self._enrich_cmd_gaia_columns(df)
         self._initialize_parallax_range(df)
 
@@ -2289,6 +2304,27 @@ class IsochroneModelWindow(StepWindowBase):
         self._cached_iso_file = iso_file
 
         return df, iso_raw, iso_file
+
+    def _refresh_photometry_source_label(
+        self,
+        df: Optional[pd.DataFrame] = None,
+    ) -> None:
+        if df is None:
+            input_dir = step10_zp_dir(self.params.P.result_dir)
+            candidates = (
+                input_dir / "median_by_ID_filter_wide_cmd.csv",
+                input_dir / "median_by_ID_filter_wide.csv",
+            )
+            wide_path = next((path for path in candidates if path.exists()), None)
+            if wide_path is not None:
+                try:
+                    df = pd.read_csv(wide_path, nrows=500)
+                except Exception:
+                    df = None
+        provenance = summarize_photometry_table(df) if df is not None else None
+        self.photometry_source_label.setText(
+            format_photometry_provenance(provenance)
+        )
 
     def _load_iso_raw_fast(self, iso_file: Path) -> Optional[np.ndarray]:
         """Load an isochrone table quickly, with an on-disk .npy cache.
