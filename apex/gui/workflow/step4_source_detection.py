@@ -526,6 +526,12 @@ class QCInspectionPanel(QWidget):
                 "sky_sigma": self._safe_float(meta.get("bkg_rms"), np.nan),
                 "fwhm_med": self._safe_float(meta.get("fwhm_px"), np.nan),
                 "n_sources": int(meta.get("n_sources", 0) or 0),
+                # Raw extractor yield and the post-shape count, so frame QC can
+                # see over-detection that the silent filters would otherwise
+                # hide behind a normal-looking n_sources.
+                "n_raw_detections": int(meta.get("n_raw_detections", 0) or 0),
+                "n_after_shape_filter": int(meta.get("n_after_shape_filter", 0) or 0),
+                "detect_capped": bool(meta.get("detect_capped", False)),
                 "elong_med": self._safe_float(meta.get("median_elongation"), np.nan),
                 "round_med": self._safe_float(meta.get("median_roundness"), np.nan),
                 "sat_star_count": int(meta.get("sat_star_count", 0) or 0),

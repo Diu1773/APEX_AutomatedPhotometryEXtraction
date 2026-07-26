@@ -497,6 +497,13 @@ def run_detection(file_list, params, data_dir, cache_dir, use_cropped=False,
                     return [tuple(xy) for xy in pts]
 
                 n_sources = 0
+                # Detection bookkeeping: n_sources alone hides over-detection,
+                # because the shape filter and the keep-max cap below run
+                # silently. Keeping the raw and post-shape counts lets frame QC
+                # see "extracted 4000, kept 1600" instead of just "1600".
+                n_raw_detections = 0
+                n_after_shape = 0
+                detect_capped = False
                 positions = []
                 fwhm_values = []
                 fwhm_seed = float(getattr(P, 'fwhm_seed_px', getattr(P, 'fwhm_pix_guess', 6.0) or 6.0))
@@ -574,6 +581,12 @@ def run_detection(file_list, params, data_dir, cache_dir, use_cropped=False,
                     )
 
                     if objects is not None and len(objects) > 0:
+                        # Raw extractor yield, before any filtering. Recorded
+                        # because the filters below are silent: a frame that
+                        # extracts thousands of noise peaks ends up with a
+                        # normal-looking n_sources, so over-detection left no
+                        # trace and no QC downstream could see it.
+                        n_raw_detections = int(len(objects))
                         x_arr = np.asarray(objects["x"], float)
                         y_arr = np.asarray(objects["y"], float)
                         flux_arr = np.asarray(objects["flux"], float)
@@ -609,9 +622,11 @@ def run_detection(file_list, params, data_dir, cache_dir, use_cropped=False,
                         flux_arr, peak_arr = flux_arr[keep], peak_arr[keep]
                         elong_arr, round_arr = elong_arr[keep], round_arr[keep]
                         flag_arr = flag_arr[keep]
+                        n_after_shape = int(len(x_arr))
 
                         detect_keep_max = int(getattr(P, 'detect_keep_max', 6000))
                         if len(x_arr) > detect_keep_max:
+                            detect_capped = True
                             sl = slice(0, detect_keep_max)
                             x_arr, y_arr = x_arr[sl], y_arr[sl]
                             flux_arr, peak_arr = flux_arr[sl], peak_arr[sl]
@@ -1071,6 +1086,9 @@ def run_detection(file_list, params, data_dir, cache_dir, use_cropped=False,
 
                 result = {
                     'n_sources': n_sources,
+                    'n_raw_detections': n_raw_detections,
+                    'n_after_shape_filter': n_after_shape,
+                    'detect_capped': detect_capped,
                     'positions': positions,
                     'peak_positions': peak_positions,
                     'fwhm_px': fwhm_median,
@@ -1102,6 +1120,9 @@ def run_detection(file_list, params, data_dir, cache_dir, use_cropped=False,
                 step4_file = step4_out / f"detect_{filename}.json"
                 payload = {
                     'n_sources': n_sources,
+                    'n_raw_detections': n_raw_detections,
+                    'n_after_shape_filter': n_after_shape,
+                    'detect_capped': detect_capped,
                     'fwhm_px': fwhm_median,
                     'fwhm_arcsec': fwhm_arcsec,
                     'fwhm_n_used': fwhm_support_count,
