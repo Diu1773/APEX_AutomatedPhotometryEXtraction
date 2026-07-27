@@ -61,8 +61,12 @@
 ### D-003 · `n_det_frames` 측정을 어느 데이터로 돌릴지
 
 - 무엇: union ref build 를 한 번 돌려 `n_det_frames` 분포를 뽑을 **입력 데이터셋** 선택.
-- 지금: 기존 산출물로는 못 잰다. `validation/real_gui_run/{M13,M36}_g_cluster` 는
-  `step4_detection` 만 있고 프레임도 1장씩이다. union 은 한 그룹에 여러 장이 필요하다.
+- 지금: 기존 산출물로는 못 잰다. **`validation/` 전체(20 GB / 10,990 파일)를 전수 탐색해
+  `*master*` · `*ref*` 이름의 카탈로그가 0건**임을 확인했다(2026-07-27).
+  `real_gui_run/{M13,M36}_g_cluster` 는 `step4_detection` 만 있고 프레임도 1장씩이라
+  union 자체가 성립하지 않는다. union 은 한 그룹에 여러 장이 필요하다.
+  (`tests/test_step6_union_master.py` 가 union 로직을 검증하지만 합성 프레임이라
+  실측 분포로는 못 쓴다.)
   `E:\observed_Analysis\` 상위에 M13 · M3 · M37 · M5 · M67 · NGC457 · NGC6811 등이 있으나
   `M13/light` 아래는 이미 처리된 산출물(npy 144 · tsv 82 · csv 69)이고 원본 FITS 위치는 미확인.
 - 선택지:
