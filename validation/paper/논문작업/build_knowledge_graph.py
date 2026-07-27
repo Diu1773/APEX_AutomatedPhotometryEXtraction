@@ -195,7 +195,7 @@ fig4·fig5 데이터 출처 미표기, "이런 문제가 많으니" 전수.
 - **근본원인**: 규칙이 FIGURE_SPEC 문서에만 있고 코드에 강제 안 됨 → **기계검사 가능 규격**으로 전환
 - **P0**: provenance_block() 헬퍼+감사스크립트 · fig3 재설계(trials≥30·오차막대·이중축폐기) ·
   fig5를 NGC457 278별→NGC6811 499별로 교체 · fig2/4/6 명세추가
-- **P1**: fig1을 **LCO Sinistro CCD + QHY600 CMOS**(E:\APEX_validation\external)로 확장 →
+- **P1**: fig1을 **LCO Sinistro CCD + QHY600 CMOS**(E:/APEX_validation/external)로 확장 →
   단일카메라 한계를 완전도 축에서 돌파
 - 감사결과 표·데이터명세 규격은 계획문서에"""),
     N("pend_manuscript", "원고 §3.6 갱신", 6, """# 원고 반영 대기
