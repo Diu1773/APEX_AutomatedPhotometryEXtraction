@@ -44,6 +44,8 @@ RASTI(또는 PASP)에 투고 완료.
 
 ## 사용자 의견
 
+- **투고처 RASTI vs PASP 최종 확정** — A안 — RASTI / B. PASP  
+  `07-28 01:42` 대시보드 결정. 카드 원문: `Main/DECISIONS.md`
 - **APEX 논문 §3 을 지금 쓸지, 재검출 결과를 기다릴지** — 논문써 근데 내가 fig들 엄청 지적했던거 알아?
   `2026-07-27 23:37` 대시보드 결정. 카드 원문: `Main/DECISIONS.md`
   → ⚠️ **결정 시점에 §3 은 이미 쓰여 있었다.** 이 파일이 낡아서 "비어 있음"으로 보였다.
@@ -61,21 +63,6 @@ RASTI(또는 PASP)에 투고 완료.
 3. `references.bib` 43건 최종 검증 (`/ars-citation-check`)
 
 ## 사용자 판단 필요
-
-### D-001 · 투고처 RASTI vs PASP 최종 확정
-- 무엇: APEX 논문의 투고처를 RASTI(RAS Techniques and Instruments)와 PASP(Publications of the ASP) 중 확정
-- 지금: 원고는 이미 `mnras.cls`(MNRAS/RASTI 공용 OUP 템플릿)로 43,254자·section 6개·그림 49장까지 완성. 투고처만 미정
-- 선택지: A. RASTI / B. PASP
-- 근거:
-  · **범위 적합성** — RASTI의 공식 scope가 "software for processing data (including pipelines), data analysis and modelling"을 명시적으로 포함한다 (academic.oup.com/rasti/pages/why-publish, 2026-07 확인). APEX는 검증 섹션이 전체 원고의 42%(18,060자/11개 하위절)를 차지하는 파이프라인 검증 논문 — RASTI가 명시한 범위와 정확히 겹친다. PASP는 범용 천문학지에 계측·소프트웨어 코너가 있는 형태로, 과학 성과(§4, YZ Boo)의 비중이 더 요구될 가능성이 있다.
-  · **포맷 비용** — 원고가 이미 `mnras.cls`로 작성됨. RASTI는 MNRAS와 동일한 OUP LaTeX 클래스를 그대로 받아 재포맷이 0. PASP는 AASTeX 필수 — 43k자·49그림 전체를 재조판해야 한다.
-  · **비용** — RASTI APC는 £1,339(비회원 기준, RAS 회원 20% 할인, LMIC 국가 전액 면제) 단일 트랙(완전 OA). PASP는 OA $3,490, 또는 구독 트랙 페이지당 $129 + 부록 $175 — 49개 그림이 딸린 원고는 페이지 수가 많아 구독 트랙도 결코 저렴하지 않다 (iopscience.iop.org/journal/1538-3873/page/publication-charges, 2026-07 확인). RASTI가 확실히 저렴하다.
-  · **지표/인지도** — PASP는 IF 7.22(2024)·SJR 2.517·Q1로 인지도가 높은 종합 천문학지다. RASTI는 SJR 0.856, 2021년 창간이라 전통 Impact Factor가 아직 없다 (다만 Web of Science ESCI·ADS·DOAJ·Scopus에는 색인됨). 이 항목은 PASP 우위다.
-  · **심사 소요 기간** — 양쪽 모두 공식 게재까지 소요일수를 찾지 못함 (찾지 못함).
-- 권고: **RASTI.** scope 명문화 일치 + 재포맷 비용 0 + APC 절반 이하, 세 축이 전부 RASTI를 가리킨다. PASP의 우위는 인지도(IF/SJR)뿐인데, 이건 저자가 감내할 수 있는 트레이드오프다. 단, 공저자(지도교수)가 인지도를 우선순위로 두면 PASP로 뒤집을 근거가 된다 — 그 판단은 사람 몫.
-- 되돌리기: 만약 RASTI 심사에서 "과학 성과 비중 부족"으로 반려되면, §4(YZ Boo, 현재 936자로 다른 절의 1/6)를 확장한 뒤 PASP로 재투고를 검토한다.
-
-- 신규성 주장 강도 — "세 파이프라인 전부 초과검출을 안 본다"를 어디까지 밀지
 
 ## 함정
 
