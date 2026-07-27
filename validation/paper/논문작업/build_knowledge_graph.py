@@ -186,6 +186,18 @@ frame_zeropoint.csv에 airmass 있음. 단 ZP 레퍼런스 얽힘 + airmass span
 - 예측기 = 머지된 `apex/analysis/detection_limit.py` (PEAK_SN50=4.05, step7 QC게이트와 동일경로)
 - 실현 = `extract_realized_depth.py`(Eddington-safe 중앙값등급, master-한계 순환가드)
 - 조사 이력: `FIG_A_PRESENTATION_SURVEY.md` (Kessler 형식귀속 한정 포함)"""),
+    N("plan_figrebuild", "그림 전수 재작업 계획", 6, """# 그림 전수 재작업 — 회고+계획 (2026-07-28)
+정본 `FIGURE_REBUILD_PLAN.md`. 사용자 지시: fig1 대상/개수 확대, fig3 전면 재설계("너무 대충"),
+fig4·fig5 데이터 출처 미표기, "이런 문제가 많으니" 전수.
+- **반복 실패 R1~R6**: R1 데이터출처 미표기(3회+) · R2 데이터를 모델처럼(2회) · R3 표본부족(2회)
+  · R4 주장과대/귀속오류(2회) · R5 알려진결함 방치(fig3 trials=4가 메모리에 있었는데 논문에 실림)
+  · R6 원고이중화(.md만 고치고 .tex 방치)
+- **근본원인**: 규칙이 FIGURE_SPEC 문서에만 있고 코드에 강제 안 됨 → **기계검사 가능 규격**으로 전환
+- **P0**: provenance_block() 헬퍼+감사스크립트 · fig3 재설계(trials≥30·오차막대·이중축폐기) ·
+  fig5를 NGC457 278별→NGC6811 499별로 교체 · fig2/4/6 명세추가
+- **P1**: fig1을 **LCO Sinistro CCD + QHY600 CMOS**(E:\APEX_validation\external)로 확장 →
+  단일카메라 한계를 완전도 축에서 돌파
+- 감사결과 표·데이터명세 규격은 계획문서에"""),
     N("pend_manuscript", "원고 §3.6 갱신", 6, """# 원고 반영 대기
 §3.6을 다중프레임 실측주입+법칙으로 갱신 · §3.7(측성)·§3.15(시계열) 스텁 채우기 ·
 [[dec_citation_fixes|인용 6건]] 반영 · Data Availability 그림번호 깨짐 수정."""),
@@ -195,7 +207,7 @@ EDGES = [
     # hubs
     ("hub_paper", "hub_repro"),
     ("hub_paper", "dec_figure_spec"), ("hub_paper", "dec_citation_fixes"),
-    ("hub_paper", "dec_vv_ladder"), ("hub_paper", "pend_manuscript"),
+    ("hub_paper", "dec_vv_ladder"), ("hub_paper", "pend_manuscript"), ("hub_paper", "plan_figrebuild"), ("plan_figrebuild", "dec_figure_spec"),
     ("hub_repro", "fig_completeness"), ("hub_repro", "fig_astrometry"),
     ("hub_repro", "fig_iraf"), ("hub_repro", "fig_precision"),
     ("hub_repro", "dec_repro_def"),
