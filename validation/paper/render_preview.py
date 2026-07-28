@@ -268,387 +268,370 @@ _fig_html = "".join(
     f'</span><span class="pn"></span></li>'
     for n in sorted(FIGMAP) if n in CAPTIONS)
 
-# 절(<h2>) 마다 새 페이지
-_parts = [p for p in re.split(r'(?=<h2)', BODY) if p.strip()]
-_sheets = "\n".join(f'<section class="sheet">{p}</section>' for p in _parts)
+# ── 표제면: A&A 667, A62 (AutoPhOT 논문) 판면을 그대로 따른다 ──
+#    저널 머리 → 제목 → 저자 → 소속 → 접수일 → 초록(전폭) → Key words → 2단 본문
+_abs = re.search(r'<h2[^>]*\bid=["\']?abstract["\']?[^>]*>.*?</h2>(.*?)(?=<h2)', BODY, re.S)
+ABS_HTML, KW_HTML = "", ""
+if _abs:
+    ABS_HTML = _abs.group(1).strip()
+    BODY = BODY.replace(_abs.group(0), "", 1)
+    # 원고가 이미 가진 핵심어 줄을 그대로 쓴다 (따로 지어내지 않는다)
+    _kw = re.search(r'<p>\s*<strong>핵심어[^<]*</strong>(.*?)</p>', ABS_HTML, re.S)
+    if _kw:
+        KW_HTML = f'<p class="kw"><b>핵심어.</b>{_kw.group(1)}</p>'
+        ABS_HTML = ABS_HTML.replace(_kw.group(0), "", 1).strip()
 
-COVER = f'''<section class="sheet cover">
-  <div class="cover-inner">
-    <p class="cover-kicker">RAS Techniques and Instruments · 투고 준비 원고</p>
-    <h1 class="cover-title">{html.escape(DOC_TITLE)}</h1>
-    <p class="cover-authors">저자 미기재 (투고 전 확정)</p>
-    <p class="cover-affil">한국천문연구원 · 소형망원경 측광 파이프라인</p>
-    <div class="cover-meta">
-      <span>국문 원고</span><span>그림 {len(FIGMAP)}점</span><span>인용 {len(LAB)}건</span>
-    </div>
-    <p class="cover-note">{DOC_NOTE}</p>
+TITLEBLOCK = f'''<div class="titleblock">
+  <div class="jrnl">
+    <div class="jl">RAS Techniques and Instruments<br><span>투고 준비 원고 · 국문 검토용</span></div>
+    <div class="jr">RASTI</div>
   </div>
-</section>'''
+  <h1 class="ptitle">{html.escape(DOC_TITLE)}</h1>
+  <p class="pauth">저자 미기재 (투고 전 확정)</p>
+  <p class="paff">한국천문연구원 · 소형망원경 측광 파이프라인<br>
+     <span class="pmail">2026erpcosmos@gmail.com</span></p>
+  <p class="pdate">{DOC_NOTE}</p>
+</div>
+<div class="absblock">
+  <div class="abshead">초록</div>
+  {ABS_HTML}
+  {KW_HTML}
+</div>'''
 
-TOC = f'''<section class="sheet toc">
-  <h2 class="toc-h">목차</h2>
+# 목차는 A&A 판면에 없다. 검토 편의를 위해 기본은 켜 두되 한 줄로 끌 수 있게 한다.
+WANT_TOC = True
+TOCBLOCK = (f'''<div class="tocblock">
+  <div class="toc-h">차례</div>
   <ol class="toc-list">{_toc_html}</ol>
-  <h2 class="toc-h">그림 목록</h2>
+  <div class="toc-h">그림</div>
   <ol class="toc-figs">{_fig_html}</ol>
-</section>'''
+</div>''' if WANT_TOC else "")
 
-BODY = COVER + TOC + _sheets
+BODY = TITLEBLOCK + TOCBLOCK + f'<div class="flow">{BODY}</div>'
 
-
+# ============================================================================
+#  판면 — A&A 667, A62 (2022) 를 자로 삼는다.
+#  A4 210×297mm = 96dpi 에서 794×1123px. 좌우 여백 17mm, 위 20mm, 아래 16mm,
+#  단 간격 6mm, 단 너비 ≈ 85mm. 본문 9pt(12px) Times, 제목은 산세리프.
+# ============================================================================
 CSS = r"""
-:root{ color-scheme:light; --ink:#111; --muted:#4a4f56; --code:#eef0f2;
-       --page-w:46rem; --page-h:1040px; }
+:root{
+  color-scheme:light;
+  --pw:794px; --ph:1123px;          /* A4 @96dpi */
+  --mx:64px; --mt:76px; --mb:60px;  /* 판면 여백 */
+  --gut:24px;                        /* 단 사이 */
+  --ink:#111; --muted:#4b5057; --link:#1a3d8f;
+  --serif:"Times New Roman",Times,"Noto Serif KR","Batang",serif;
+  --sans:"Helvetica Neue",Arial,"Malgun Gothic","Noto Sans KR",sans-serif;
+}
 *{box-sizing:border-box}
-html,body{margin:0;background:#e6e7ea;}
-/* 한글 본문 폰트: Noto Serif KR(본명조 계열)을 1순위로 둔다. 예전 스택은 미설치
-   Nanum Myeongjo 를 먼저 찾다가 Batang 으로 떨어져 화면에서 구식으로 보였다. */
-/* 숫자가 많은 문서라 lining figure 가 필수다. Georgia 는 old-style figure 가 기본이라
-   "Step 0" 이 "Step o" 로 보인다 — Cambria/Times 를 앞에 둔다. */
-body{color:var(--ink);
-  font-family:"Cambria","Times New Roman",Times,"Noto Serif KR",
-              "Apple SD Gothic Neo","Malgun Gothic",serif;
-  font-size:15px;line-height:1.70;text-rendering:optimizeLegibility;
-  font-variant-numeric:lining-nums;font-feature-settings:"lnum" 1;
-  word-break:keep-all;overflow-wrap:break-word;
-  -webkit-font-smoothing:antialiased;}
+html,body{margin:0;background:#8f9298;}
+body{font-family:var(--serif);font-size:12.2px;line-height:1.36;color:var(--ink);
+  font-variant-numeric:lining-nums;-webkit-font-smoothing:antialiased;}
 
-/* ── 위계: 본문(15px) < h4 < h3(17.4px) < h2(24px) < 표지 제목 ── */
-h2{font-size:1.60rem;line-height:1.28;font-weight:700;margin:0 0 1rem;
-   letter-spacing:-.012em;text-wrap:balance;}
-h3{font-size:1.16rem;line-height:1.42;font-weight:700;margin:1.55rem 0 .42rem;
-   text-wrap:balance;}
-h4{font-size:1.00rem;font-weight:700;font-style:italic;margin:1.1rem 0 .28rem;}
-
-/* 한글은 양끝맞춤하면 어절 간격이 벌어져 읽기 나빠진다. 왼쪽 정렬 + 문단 간격. */
-p{margin:0 0 .82rem;text-align:left;}
-p.pending{color:var(--muted);font-style:italic;}
-strong{font-weight:700;}
-code{font-family:"Courier New",ui-monospace,monospace;background:var(--code);
-  padding:.02em .28em;font-size:.88em;}
-.math{font-family:"Cambria Math","Times New Roman",serif;white-space:nowrap;}
-.math sub,.math sup{font-size:.74em;}
-
-/* 초록: 제목은 작고 자간 넓게, 본문은 괘선 사이 좁은 단 (논문 관례) */
-h2#abstract{font-size:.94rem;letter-spacing:.22em;text-align:center;font-weight:700;
-  margin:0 0 1.1rem;}
-h2#abstract + p{font-size:.94rem;line-height:1.66;margin:0 .6rem .9rem;
-  padding:1.1rem .2rem;border-top:1.4px solid #111;border-bottom:1.4px solid #111;}
-
-blockquote{margin:.9rem 1.4rem;padding-left:.9rem;border-left:2px solid #999;
-  color:var(--muted);font-size:.95rem;}
-
-.tw{overflow-x:auto;margin:1rem 0;}
-table{border-collapse:collapse;width:100%;font-size:.79rem;
-  font-variant-numeric:tabular-nums;line-height:1.38;margin:0 auto;}
-thead th{border-top:1.3px solid #000;border-bottom:.8px solid #000;
-  text-align:left;padding:.4rem .55rem;font-weight:700;vertical-align:bottom;}
-tbody td{padding:.32rem .55rem;vertical-align:top;}
-tbody tr:last-child td{border-bottom:1.3px solid #000;}
-
-figure{margin:1.3rem 0;text-align:center;}
-figure img{max-width:100%;height:auto;background:#fff;}
-figcaption{font-size:.79rem;color:var(--ink);margin:.5rem auto 0;max-width:38rem;
-  text-align:left;line-height:1.45;}
-figcaption b{font-weight:700;}
-::selection{background:#ccd8ee;}
-a{color:#7a1010;text-decoration:none;}
-
-/* ── 지면(page) — JS 조판이 여기에 내용을 흘려 넣는다 ── */
+/* ── 지면 ── */
 #src{display:none;}
-#book{padding:.75rem 0 .75rem;}
-/* 조판 중에는 모든 지면을 펼쳐 둔다 — display:none 이면 높이가 0 이라 측정이 안 된다 */
-#book.measuring .page{display:block;visibility:hidden;position:absolute;top:0;left:-99999px;}
-.page{position:relative;background:#fff;width:min(var(--page-w),94vw);
-  height:var(--page-h);margin:0 auto;padding:3.1rem 3rem 2.7rem;
-  box-shadow:0 1px 5px rgba(0,0,0,.17);border-radius:2px;display:none;}
-.page.on{display:block;}
-.page-body{height:100%;overflow:hidden;}
-.folio{position:absolute;left:0;right:0;bottom:1.05rem;text-align:center;
-  font-size:.72rem;color:#9299a1;letter-spacing:.1em;font-variant-numeric:tabular-nums;}
-.p-cover .page-body{display:flex;align-items:center;}
-@media (max-width:680px){ .page{padding:1.7rem 1.3rem 2.3rem;} }
+#stage{overflow:hidden;}
+#book{transform-origin:top left;width:var(--pw);}
+.page{position:relative;width:var(--pw);height:var(--ph);background:#fff;
+  margin:0 0 14px;box-shadow:0 2px 10px rgba(0,0,0,.35);overflow:hidden;}
+.pinner{position:absolute;left:var(--mx);right:var(--mx);top:var(--mt);bottom:var(--mb);
+  display:flex;flex-direction:column;}
+.span:not(:empty){margin-bottom:10px;}
+.cols{flex:1 1 auto;min-height:0;display:flex;gap:var(--gut);}
+.col{flex:1 1 0;min-width:0;overflow:hidden;}
+.run{position:absolute;left:var(--mx);right:var(--mx);top:34px;font-size:10px;
+  color:#111;text-align:center;}
+.folio{position:absolute;left:var(--mx);right:var(--mx);bottom:32px;font-size:10px;color:#111;}
+.folio.r{text-align:right;} .folio.l{text-align:left;}
 
-/* ── 표지 ── */
-/* p{text-align:left} 가 상속을 이기므로 표지 문단은 따로 가운데로 되돌린다 */
-.cover-inner{width:100%;text-align:center;}
-.cover-inner p{text-align:center;}
-.cover-kicker{font-size:.72rem;letter-spacing:.16em;color:#5a5f66;margin:0 0 2.2rem;
-  text-transform:uppercase;}
-.cover-title{font-size:1.92rem;line-height:1.36;font-weight:700;margin:0 0 2rem;
-  letter-spacing:-.015em;text-wrap:balance;}
-.cover-authors{font-size:1rem;margin:0 0 .3rem;}
-.cover-affil{font-size:.86rem;color:#5a5f66;margin:0 0 2.4rem;}
-.cover-meta{display:flex;gap:1.3rem;justify-content:center;font-size:.76rem;
-  color:#5a5f66;border-top:1px solid #dfe1e6;border-bottom:1px solid #dfe1e6;
-  padding:.66rem 0;margin:0 auto 1.6rem;max-width:26rem;}
-.cover-note{font-size:.75rem;color:#7a7f86;font-style:italic;margin:0;}
+/* ── 본문 조판 ── */
+/* 좁은 단에서 한글 양끝맞춤은 어절 사이가 벌어지므로, 한글은 어디서나 줄바꿈을
+   허용(word-break:normal)해 균일하게 채운다. 국문 학술지 조판 관례다. */
+p{margin:0;text-align:justify;word-break:normal;overflow-wrap:break-word;text-indent:1.1em;}
+h2 + p, h3 + p, h4 + p, figure + p, .tw + p, blockquote + p{text-indent:0;}
+/* 제목·캡션은 어절 중간에서 끊기면 안 된다. 본문 단만 음절 단위 줄바꿈을 허용한다. */
+h2,h3,h4,.ptitle,.abshead,.toc-h,figcaption,thead th{word-break:keep-all;}
+h2{font-family:var(--sans);font-size:12.8px;font-weight:700;line-height:1.25;
+  margin:11px 0 4px;text-indent:0;}
+h3{font-family:var(--sans);font-size:11.6px;font-weight:700;line-height:1.25;
+  margin:9px 0 3px;text-indent:0;}
+h4{font-family:var(--sans);font-size:11.2px;font-weight:700;font-style:italic;
+  margin:7px 0 2px;text-indent:0;}
+.col > *:first-child{margin-top:0;}
+strong{font-weight:700;}
+em{font-style:italic;}
+code{font-family:"Courier New",monospace;font-size:.92em;}
+.math{font-family:"Cambria Math","Times New Roman",serif;white-space:nowrap;}
+.math sub,.math sup{font-size:.72em;}
+blockquote{margin:5px 0 5px 10px;padding-left:8px;border-left:1.5px solid #999;
+  color:var(--muted);font-size:11.4px;text-align:justify;}
+p.pending{color:var(--muted);font-style:italic;text-indent:0;}
+a{color:var(--link);text-decoration:none;}
 
-/* ── 목차 ── */
-.toc-h{font-size:1.16rem;margin:0 0 .7rem;padding-bottom:.35rem;
-  border-bottom:1px solid #dfe1e6;font-weight:700;}
-.toc-list,.toc-figs{list-style:none;padding:0;margin:0 0 1.6rem;font-size:.88rem;}
-.toc-list li.h2{font-weight:700;margin:.62rem 0 .16rem;}
-.toc-list li.h3{padding-left:1.3rem;color:#3a3f46;margin:.1rem 0;}
-.toc-figs li{margin:.16rem 0;color:#3a3f46;font-size:.81rem;}
-/* 목차 항목: float 로 쪽번호를 붙이면 두 줄짜리 항목에서 아래 항목 번호와 겹친다.
-   flex 로 본문/쪽번호를 나눈다. */
-.go{cursor:pointer;display:flex;align-items:baseline;gap:.6rem;}
-.go .tx{flex:1 1 auto;min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
-.go .pn{flex:0 0 auto;color:#9299a1;font-size:.82em;font-variant-numeric:tabular-nums;}
-.go:hover .tx{color:#7a1010;text-decoration:underline;}
+/* ── 표제면 ── */
+.jrnl{display:flex;justify-content:space-between;align-items:flex-start;
+  font-size:10.5px;line-height:1.35;margin:0 0 26px;}
+.jl span{color:var(--link);}
+.jr{font-family:var(--sans);font-weight:700;font-size:15px;letter-spacing:.02em;
+  border-bottom:2px solid var(--ink);padding-bottom:1px;}
+.ptitle{font-family:var(--sans);font-size:22px;line-height:1.28;font-weight:700;
+  text-align:center;margin:0 0 16px;text-wrap:balance;}
+.pauth{font-size:13px;text-align:center;text-indent:0;margin:0 0 14px;}
+.paff{font-size:10.5px;text-align:center;text-indent:0;line-height:1.45;margin:0 0 12px;}
+.pmail{font-family:"Courier New",monospace;font-size:9.6px;}
+.pdate{font-size:10px;text-align:center;text-indent:0;color:var(--muted);
+  font-style:italic;margin:0 0 18px;}
+.absblock{margin:0 44px 6px;}
+.abshead{font-family:var(--sans);font-size:10.5px;font-weight:700;text-align:center;
+  letter-spacing:.14em;margin:0 0 5px;}
+.absblock p{font-size:11px;line-height:1.4;text-align:justify;text-indent:0;}
+.absblock .kw{margin-top:7px;font-size:10.6px;}
 
-/* ── 넘김 막대 ── */
-#nav{position:fixed;left:0;right:0;bottom:0;z-index:9;display:flex;height:48px;
-  align-items:center;justify-content:center;gap:.5rem;padding:0 .5rem;
-  background:rgba(243,243,246,.97);border-top:1px solid #d4d7dd;}
-#nav button{font:inherit;font-size:.84rem;line-height:1;padding:.5rem .85rem;
-  border:1px solid #c2c6cd;background:#fff;color:#20242a;border-radius:3px;
-  cursor:pointer;-webkit-tap-highlight-color:transparent;}
-#nav button:disabled{opacity:.34;cursor:default;}
-#pgind{font-size:.82rem;color:#3a3f46;min-width:6.2rem;text-align:center;
+/* ── 차례 ── */
+.tocblock{font-size:11px;}
+.toc-h{font-family:var(--sans);font-size:12.4px;font-weight:700;margin:0 0 5px;
+  padding-bottom:2px;border-bottom:1px solid #111;}
+.toc-list,.toc-figs{list-style:none;padding:0;margin:0 0 12px;}
+.toc-list li{display:flex;gap:.5em;align-items:baseline;margin:1px 0;}
+.toc-list li.h2{font-weight:700;margin-top:5px;}
+.toc-list li.h3{padding-left:1.1em;}
+.toc-figs li{display:flex;gap:.5em;align-items:baseline;margin:1px 0;font-size:10.4px;}
+.tx{flex:1 1 auto;min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+.pn{flex:0 0 auto;font-variant-numeric:tabular-nums;color:#333;}
+.go{cursor:pointer;}
+.go:hover .tx{color:var(--link);}
+
+/* ── 그림·표 (전폭) ── */
+figure{margin:0 0 9px;text-align:center;}
+figure img{max-width:100%;height:auto;}
+figcaption{font-size:10.2px;line-height:1.36;text-align:justify;margin:4px 0 0;text-indent:0;}
+.tw{margin:0 0 9px;}
+table{border-collapse:collapse;width:100%;font-size:10px;line-height:1.3;
   font-variant-numeric:tabular-nums;}
-#loading{max-width:24rem;margin:22vh auto;text-align:center;color:#6b7078;
-  font-size:.9rem;}
+thead th{border-top:1.1px solid #111;border-bottom:.7px solid #111;text-align:left;
+  padding:2.6px 4px;font-weight:700;vertical-align:bottom;}
+tbody td{padding:2.2px 4px;vertical-align:top;}
+tbody tr:last-child td{border-bottom:1.1px solid #111;}
+
+/* ── 뷰어 크롬 ── */
+#hud{position:fixed;right:12px;bottom:12px;z-index:20;display:flex;gap:6px;
+  align-items:center;background:rgba(28,30,34,.9);color:#eceef1;border-radius:4px;
+  padding:6px 9px;font-family:var(--sans);font-size:12px;}
+#hud button{font:inherit;background:#3a3e45;color:#eceef1;border:0;border-radius:3px;
+  padding:4px 8px;cursor:pointer;}
+#hud button:hover{background:#4b505a;}
+#pgind{font-variant-numeric:tabular-nums;min-width:4.6em;text-align:center;}
+#loading{position:fixed;inset:0;display:flex;align-items:center;justify-content:center;
+  background:#8f9298;color:#f0f1f3;font-family:var(--sans);font-size:13px;z-index:30;}
 
 @media print{
+  @page{size:A4;margin:0;}
   html,body{background:#fff;}
-  #nav,#loading{display:none!important;}
-  #book{padding:0;}
-  .page{display:block!important;width:auto;max-width:none;height:auto;
-    box-shadow:none;margin:0;padding:0 0 1.2rem;page-break-after:always;}
-  .page-body{height:auto;overflow:visible;}
-  .folio{position:static;margin-top:.6rem;}
+  #hud,#loading{display:none!important;}
+  #stage{overflow:visible;height:auto!important;}
+  #book{transform:none!important;margin:0!important;}
+  .page{box-shadow:none;margin:0;page-break-after:always;}
 }
 """
 
 JS = r"""
 (function(){
+  var PW=794;
   var src=document.getElementById('src'), book=document.getElementById('book'),
-      nav=document.getElementById('nav'), ind=document.getElementById('pgind'),
-      bPrev=document.getElementById('prev'), bNext=document.getElementById('next'),
-      bToc=document.getElementById('toc'), load=document.getElementById('loading');
-  var pages=[], cur=0, tocPage=0;
+      stage=document.getElementById('stage'), load=document.getElementById('loading'),
+      ind=document.getElementById('pgind');
+  var pages=[], pending=[], scale=1;
 
-  function metrics(){
-    var pr=document.createElement('div'); pr.className='page';
-    pr.style.cssText='visibility:hidden;display:block;position:absolute;';
-    book.appendChild(pr);
-    var cs=getComputedStyle(pr),
-        padV=parseFloat(cs.paddingTop)+parseFloat(cs.paddingBottom),
-        w=pr.clientWidth;
-    book.removeChild(pr);
-    // 지면은 항상 화면 안에 다 들어와야 한다(넘김이지 스크롤이 아니다).
-    // 화면이 충분히 높으면 A4 비율까지만 키운다.
-    // 넘김 막대 높이는 CSS 에서 48px 로 고정돼 있다. offsetHeight 를 쓰면 폰트 로딩 전
-    // 값이 잡혀 지면이 화면보다 작게 조판된다. 뷰포트 높이는 innerHeight 를 쓴다 —
-    // quirks 모드에서 documentElement.clientHeight 는 뷰포트가 아니라 내용 높이를 준다.
-    var avail=(window.innerHeight||document.documentElement.clientHeight) - 48 - 22;
-    var h=Math.max(380, Math.min(Math.round(w*1.414), avail));
-    return {h:h, body:Math.max(240, h-padV)};
-  }
-  function newPage(cls){
-    var pg=document.createElement('div'); pg.className='page'+(cls?' '+cls:'');
-    var pb=document.createElement('div'); pb.className='page-body';
-    pg.appendChild(pb); book.appendChild(pg);
-    var o={el:pg, body:pb}; pages.push(o); return o;
-  }
+  function el(t,c){ var e=document.createElement(t); if(c) e.className=c; return e; }
   function isHead(n){ return n && /^H[234]$/.test(n.tagName); }
+  function isSpanBlock(n){ return n && (n.tagName==='FIGURE' || n.classList.contains('tw')); }
 
-  function splitList(list, page, M){
-    var tag=list.tagName.toLowerCase(),
-        box=document.createElement(tag); box.className=list.className;
-    page.body.appendChild(box);
+  function newPage(){
+    var pg=el('div','page');
+    pg.innerHTML='<div class="run"></div><div class="pinner">'+
+      '<div class="span"></div><div class="cols"><div class="col"></div>'+
+      '<div class="col"></div></div></div><div class="folio"></div>';
+    book.appendChild(pg);
+    var cs=pg.querySelectorAll('.col');
+    var P={el:pg, span:pg.querySelector('.span'), cols:[cs[0],cs[1]], ci:0,
+           inner:pg.querySelector('.pinner')};
+    pages.push(P); return P;
+  }
+  function fits(c){ return c.scrollHeight<=c.clientHeight+1; }
+
+  /* 전폭 요소(그림·표)는 지면 머리에 앉힌다. 판면의 58% 를 넘지 않게 줄인다. */
+  function spanCap(P){ return P.inner.clientHeight*0.58; }
+  function shrink(node, P){
+    var im=node.querySelector('img'); if(!im) return;
+    for (var k=0;k<16 && P.span.offsetHeight>spanCap(P);k++){
+      var h=im.getBoundingClientRect().height||400;
+      im.style.maxHeight=Math.round(h*0.9)+'px'; im.style.width='auto';
+    }
+  }
+  function flushSpan(P){
+    while (pending.length){
+      var f=pending[0], wasEmpty=!P.span.firstChild;
+      P.span.appendChild(f);
+      if (P.span.offsetHeight>spanCap(P)){
+        if (wasEmpty){ shrink(f,P); pending.shift(); }
+        else { P.span.removeChild(f); break; }
+      } else { pending.shift(); }
+    }
+  }
+  function fresh(){ var P=newPage(); flushSpan(P); return P; }
+  function advance(P){ if (P.ci===0){ P.ci=1; return P; } return fresh(); }
+
+  function splitList(list, P){
+    var tag=list.tagName.toLowerCase(), box=el(tag,list.className);
+    P.cols[P.ci].appendChild(box);
     var kids=[].slice.call(list.children);
     for (var i=0;i<kids.length;i++){
       box.appendChild(kids[i]);
-      if (page.body.scrollHeight>M.body){
+      if (!fits(P.cols[P.ci])){
         box.removeChild(kids[i]);
         if (!box.children.length){ box.appendChild(kids[i]); continue; }
-        page=newPage();
-        box=document.createElement(tag); box.className=list.className;
-        page.body.appendChild(box); box.appendChild(kids[i]);
+        P=advance(P); box=el(tag,list.className);
+        P.cols[P.ci].appendChild(box); box.appendChild(kids[i]);
       }
     }
-    return page;
+    return P;
   }
-  // 그림이 남은 자리에 안 들어가면 지면 절반이 비어 버린다. LaTeX 의 float 처럼
-  // 뒤로 미뤄 두고 본문을 마저 흘린 뒤, 다음 지면 머리에 앉힌다.
-  var pending=[];
-  // 캡션까지 합쳐 지면보다 큰 그림은 어느 지면에도 안 들어가 큐를 영영 막는다.
-  // 빈 지면에서는 그림을 줄여서라도 반드시 앉힌다.
-  function shrinkToFit(fig, page, M){
-    var im=fig.querySelector('img'); if(!im) return;
-    for (var k=0; k<14 && page.body.scrollHeight>M.body; k++){
-      var h=parseFloat(im.style.maxHeight)||(M.body*0.66);
-      im.style.maxHeight=Math.round(h*0.88)+'px';
+
+  function place(node, P){
+    if (isSpanBlock(node)){ pending.push(node); return P; }
+    var c=P.cols[P.ci];
+    c.appendChild(node);
+    if (fits(c)) return P;
+    c.removeChild(node);
+    var listy=(node.tagName==='OL'||node.tagName==='UL')&&node.children.length>1;
+    if (!c.firstChild){                       // 빈 단인데도 안 들어감
+      if (listy) return splitList(node,P);
+      c.appendChild(node);
+      return advance(P);
     }
-  }
-  function flushPending(page, M){
-    while (pending.length){
-      var empty=!page.body.firstChild, fig=pending[0];
-      page.body.appendChild(fig);
-      if (page.body.scrollHeight<=M.body){ pending.shift(); }
-      else if (empty){ shrinkToFit(fig, page, M); pending.shift(); }
-      else { page.body.removeChild(fig); break; }
+    var last=c.lastElementChild, orphan=null;
+    if (isHead(last) && c.children.length>1){ orphan=last; c.removeChild(last); }
+    var P2=advance(P);
+    if (orphan) P2.cols[P2.ci].appendChild(orphan);
+    if (listy) return splitList(node,P2);
+    var c2=P2.cols[P2.ci];
+    c2.appendChild(node);
+    if (!fits(c2) && c2.children.length>1){
+      c2.removeChild(node);
+      var P3=advance(P2); P3.cols[P3.ci].appendChild(node); return P3;
     }
-    return page;
-  }
-  function place(node, page, M){
-    page.body.appendChild(node);
-    if (page.body.scrollHeight<=M.body) return page;
-    page.body.removeChild(node);
-    var listy = (node.tagName==='OL'||node.tagName==='UL') && node.children.length>1;
-    if (!page.body.firstChild){                 // 빈 지면인데도 안 들어감
-      if (listy) return splitList(node, page, M);
-      page.body.appendChild(node);
-      if (node.tagName==='FIGURE') shrinkToFit(node, page, M);
-      return flushPending(newPage(), M);
-    }
-    if (node.tagName==='FIGURE'){ pending.push(node); return page; }
-    var last=page.body.lastElementChild, np=newPage();
-    if (isHead(last) && page.body.children.length>1) np.body.appendChild(last); // 제목 고아 방지
-    flushPending(np, M);
-    if (listy) return splitList(node, np, M);
-    np.body.appendChild(node);
-    if (np.body.scrollHeight>M.body && np.body.children.length>1){
-      np.body.removeChild(node);
-      var np2=flushPending(newPage(), M); np2.body.appendChild(node); return np2;
-    }
-    return np;
+    return P2;
   }
 
   function build(){
     book.innerHTML=''; pages=[]; pending=[];
-    book.classList.add('measuring');
-    var M=metrics();
-    document.documentElement.style.setProperty('--page-h', M.h+'px');
-    var secs=[].slice.call(src.querySelectorAll('.sheet')), page=null;
-    secs.forEach(function(sec){
-      var cover=sec.classList.contains('cover');
-      if (!page || page.body.firstChild){ page=newPage(cover?'p-cover':''); if(!cover) flushPending(page,M); }
-      else if (cover) page.el.classList.add('p-cover');
-      if (sec.classList.contains('toc')) tocPage=pages.length-1;
-      [].slice.call(sec.children).forEach(function(k){
-        var c=k.cloneNode(true);
-        c.querySelectorAll && [].slice.call(c.querySelectorAll('img')).forEach(function(im){
-          im.style.maxHeight=Math.round(M.body*0.66)+'px'; im.style.width='auto';
-        });
-        page=place(c, page, M);
-      });
+    var P=newPage();
+    ['.titleblock','.absblock'].forEach(function(sel){          // 표제면은 전폭
+      var n=src.querySelector(sel); if(n) P.span.appendChild(n.cloneNode(true));
     });
-    while (pending.length){                       // 미뤄 둔 그림 마무리
-      var n0=pending.length, pg=flushPending(newPage(), M);
-      if (pending.length===n0) pg.body.appendChild(pending.shift());
+    var flow=src.querySelector('.flow');
+    [].slice.call(flow.children).forEach(function(k){ P=place(k.cloneNode(true), P); });
+    while (pending.length){                                     // 남은 그림 마무리
+      var n0=pending.length, Q=fresh();
+      if (pending.length===n0){
+        var f=pending.shift(); Q.span.appendChild(f); shrink(f,Q);
+      }
     }
+    var toc=src.querySelector('.tocblock');                     // 차례는 2쪽에 1단 전폭
+    if (toc){
+      var T=el('div','page');
+      T.innerHTML='<div class="run"></div><div class="pinner"><div class="span"></div>'+
+        '<div class="cols"><div class="col"></div></div></div><div class="folio"></div>';
+      T.querySelector('.col').appendChild(toc.cloneNode(true));
+      book.insertBefore(T, pages[0].el.nextSibling);
+      pages.splice(1,0,{el:T});
+    }
+    var N=pages.length;
     pages.forEach(function(p,i){
-      var f=document.createElement('div'); f.className='folio';
-      f.textContent = i===0 ? '' : (i+1)+' / '+pages.length;
-      p.el.appendChild(f);
+      if (i>0) p.el.querySelector('.run').textContent=
+        'APEX — GUI 기반 구경·PSF 측광 파이프라인 (국문 원고)';
+      var f=p.el.querySelector('.folio');
+      f.className='folio '+((i+1)%2 ? 'r' : 'l');
+      f.textContent='APEX, '+(i+1)+' / '+N+' 쪽';
     });
-    book.classList.remove('measuring');
     linkToc();
-    var hp=/[#&?]p=(\d+)/.exec(location.hash||'');
-    if (hp) cur=parseInt(hp[1],10)-1;
-    if (cur>=pages.length) cur=pages.length-1;
-    show(cur);
+    fit();
     load.style.display='none';
+    var hp=/[#&?]p=(\d+)/.exec(location.hash||'');     // #p=7 로 그 쪽을 바로 연다
+    if (hp){ var pg=pages[parseInt(hp[1],10)-1];
+      if (pg) window.scrollTo(0, Math.max(0, pg.el.offsetTop*scale-6)); }
   }
 
   function linkToc(){
     var where={};
     pages.forEach(function(p,i){
-      [].slice.call(p.body.querySelectorAll('h2,h3')).forEach(function(h){
-        var t=h.textContent.trim(); if(!(t in where)) where[t]=i;
-      });
-      [].slice.call(p.body.querySelectorAll('figcaption')).forEach(function(c){
-        var m=/그림\s*(\d+)/.exec(c.textContent); if(m && !('fig'+m[1] in where)) where['fig'+m[1]]=i;
-      });
-    });
-    pages.forEach(function(p){
-      [].slice.call(p.body.querySelectorAll('.toc-list li.go')).forEach(function(li){
-        mark(li, where[li.querySelector('.tx').textContent.trim()]);
-      });
-      [].slice.call(p.body.querySelectorAll('.toc-figs li.go')).forEach(function(li){
-        var m=/그림\s*(\d+)/.exec(li.textContent);
-        mark(li, m?where['fig'+m[1]]:undefined);
-      });
+      [].slice.call(p.el.querySelectorAll('h2,h3')).forEach(function(h){
+        var t=h.textContent.trim(); if(!(t in where)) where[t]=i; });
+      [].slice.call(p.el.querySelectorAll('figcaption')).forEach(function(c){
+        var m=/그림\s*(\d+)/.exec(c.textContent);
+        if(m && !('f'+m[1] in where)) where['f'+m[1]]=i; });
     });
     function mark(li,i){
-      if (i===undefined){ li.classList.remove('go'); return; }
+      if (i===undefined) return;
       li.querySelector('.pn').textContent=i+1;
-      li.addEventListener('click', function(){ show(i); });
+      li.classList.add('go');
+      li.addEventListener('click',function(){ goto(i); });
     }
+    [].slice.call(book.querySelectorAll('.toc-list li')).forEach(function(li){
+      mark(li, where[li.querySelector('.tx').textContent.trim()]); });
+    [].slice.call(book.querySelectorAll('.toc-figs li')).forEach(function(li){
+      var m=/그림\s*(\d+)/.exec(li.textContent); mark(li, m?where['f'+m[1]]:undefined); });
   }
 
-  function show(i){
+  function fit(){
+    var w=stage.clientWidth;
+    scale=Math.min(1,(w-20)/PW);
+    book.style.transform='scale('+scale+')';
+    book.style.marginLeft=Math.max(0,(w-PW*scale)/2)+'px';
+    stage.style.height=Math.ceil(book.scrollHeight*scale)+'px';
+    onScroll();
+  }
+  function goto(i){
+    var p=pages[i]; if(!p) return;
+    window.scrollTo({top:Math.max(0,p.el.offsetTop*scale-6), behavior:'smooth'});
+  }
+  function onScroll(){
     if (!pages.length) return;
-    cur=Math.max(0,Math.min(pages.length-1,i));
-    pages.forEach(function(p,k){ p.el.classList.toggle('on', k===cur); });
-    ind.textContent=(cur+1)+' / '+pages.length;
-    bPrev.disabled=(cur===0); bNext.disabled=(cur===pages.length-1);
-    window.scrollTo(0,0);
+    var y=(window.scrollY||window.pageYOffset||0)/scale + 40, cur=1;
+    for (var i=0;i<pages.length;i++){ if (pages[i].el.offsetTop<=y) cur=i+1; else break; }
+    ind.textContent=cur+' / '+pages.length;
   }
-  bPrev.addEventListener('click',function(){show(cur-1);});
-  bNext.addEventListener('click',function(){show(cur+1);});
-  bToc.addEventListener('click',function(){show(tocPage);});
-  document.addEventListener('keydown',function(e){
-    if (e.key==='ArrowRight'||e.key==='PageDown'||e.key===' ') { show(cur+1); e.preventDefault(); }
-    else if (e.key==='ArrowLeft'||e.key==='PageUp') { show(cur-1); e.preventDefault(); }
-    else if (e.key==='Home') show(0);
-    else if (e.key==='End') show(pages.length-1);
-  });
-  var x0=null,y0=null;
-  book.addEventListener('touchstart',function(e){
-    x0=e.changedTouches[0].clientX; y0=e.changedTouches[0].clientY;},{passive:true});
-  book.addEventListener('touchend',function(e){
-    if(x0===null) return;
-    var dx=e.changedTouches[0].clientX-x0, dy=e.changedTouches[0].clientY-y0;
-    if (Math.abs(dx)>45 && Math.abs(dx)>Math.abs(dy)*1.4) show(cur + (dx<0?1:-1));
-    x0=null;},{passive:true});
-
+  window.addEventListener('scroll', onScroll, {passive:true});
   var t=null;
-  window.addEventListener('resize',function(){
-    clearTimeout(t); t=setTimeout(function(){ load.style.display=''; build(); },220);});
-  window.addEventListener('beforeprint',function(){
-    pages.forEach(function(p){p.el.classList.add('on');});});
-  window.addEventListener('afterprint',function(){ show(cur); });
+  window.addEventListener('resize', function(){ clearTimeout(t); t=setTimeout(fit,150); });
+  document.getElementById('top').addEventListener('click', function(){ goto(0); });
+  document.getElementById('toctop').addEventListener('click', function(){ goto(1); });
 
-  // 첫 조판이 끝난 뒤 가용 높이가 달라졌으면(초기 레이아웃이 덜 자리잡은 경우) 한 번만 다시 짠다
-  var settled=false;
-  function buildOnce(){
-    build();
-    if (settled) return;
-    requestAnimationFrame(function(){
-      settled=true;
-      var want=metrics().h,
-          got=parseFloat(getComputedStyle(document.documentElement).getPropertyValue('--page-h'));
-      if (Math.abs(want-got)>6) build();
-    });
-  }
-  if (document.readyState==='complete') buildOnce();
-  else window.addEventListener('load', buildOnce);
+  if (document.readyState==='complete') build();
+  else window.addEventListener('load', build);
 })();
 """
 
 HTML = f"""<meta charset="utf-8">
-<title>APEX — 검증된 그래픽 측광 파이프라인 (국문 프리뷰)</title>
+<title>APEX — GUI 기반 구경·PSF 측광 파이프라인 (국문 원고)</title>
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <style>{CSS}</style>
 <div id="src">
 {BODY}
 </div>
-<div id="loading">지면을 조판하는 중…</div>
-<div id="book"></div>
-<nav id="nav">
-  <button id="prev" type="button">‹ 이전</button>
+<div id="stage"><div id="book"></div></div>
+<div id="loading">판면을 조판하는 중…</div>
+<div id="hud">
+  <button id="top" type="button">처음</button>
+  <button id="toctop" type="button">차례</button>
   <span id="pgind">– / –</span>
-  <button id="next" type="button">다음 ›</button>
-  <button id="toc" type="button">목차</button>
-</nav>
+</div>
 <script>{JS}</script>"""
-# 단독 파일은 doctype 이 있어야 한다. 없으면 quirks 모드로 떨어져 뷰포트 높이 계산이
-# 틀리고 지면이 화면을 못 채운다. 아티팩트용 사본은 게시 때 skeleton 이 씌워지므로 뺀다.
+
+# 단독 파일은 doctype 이 있어야 한다. 없으면 quirks 모드로 떨어져 판면 계산이 틀린다.
+# 아티팩트용 사본은 게시 때 skeleton 이 씌워지므로 뺀다.
 OUT.write_text("<!doctype html>\n" + HTML, encoding="utf-8")
 OUT_ARTIFACT.write_text(HTML, encoding="utf-8")
-print("wrote", OUT, round(len(HTML)/1e6, 2), "MB | citations", len(LAB), "| figs", len(FIGMAP))
+print("wrote", OUT, round(len(HTML) / 1e6, 2), "MB | citations", len(LAB), "| figs", len(FIGMAP))
 print("wrote", OUT_ARTIFACT.name, "(아티팩트용 — doctype 없음)")
