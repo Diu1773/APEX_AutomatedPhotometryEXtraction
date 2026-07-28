@@ -53,6 +53,16 @@
 
 ## 사용자 의견
 
+- **컷아웃 비교 그림을 논문 fig 로** — 원문(07-28): *"저것도 논문 fig감으로 ㄱㅊ은데?
+  좀만더 연구해보자"*
+  대상: `E:\APEX_validation_output\_ndet_m67g\answer_cutouts.png` (1프레임 검출 vs
+  10프레임 검출, 같은 좌표를 10장 전부에서 자른 격자) + `n1_scatter.png`
+  (78개 전수 분류 산점도) + `n1_classification.csv`.
+  수치: 우주선류 34~47 · 문턱 별 17~30 (판정선 2.5→3.0σ 민감, 구간으로 쓸 것).
+  **후보 위치:** §3 의 union/reference 검증부 — min-frames 게이트가 무엇을 거르고
+  무엇을 잃는지 실물로 보여준다. `stetson1994` min-frames 선례와 바로 연결.
+  paper 세션이 집을 때: `FIGURE_REBUILD_PLAN.md` 의 실행 순서에 후보로 편입하고,
+  T-001 규칙(그림 안에 데이터 출처·Fig.N 캡션) 적용해 다시 그릴 것.
 - **투고처 RASTI vs PASP 최종 확정** — A안 — RASTI / B. PASP  
   `07-28 01:42` 대시보드 결정. 카드 원문: `Main/DECISIONS.md`
 - **APEX 논문 §3 을 지금 쓸지, 재검출 결과를 기다릴지** — 논문써 근데 내가 fig들 엄청 지적했던거 알아?
