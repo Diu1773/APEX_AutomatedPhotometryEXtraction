@@ -27,6 +27,8 @@ validation/reports/
 validation/report/
 validation/_scratch/
 validation/real_gui_run/
+# n_det_frames 측정 스크래치 (2026-07-28) — 프레임 사본 590MB, 결과는 TRACK.md 에 기록됨
+validation/_ndet_m67g/
 validation/psf_archive/
 
 # Paper figure inputs: intermediate CSV stays on disk, out of git (~627 MB).
