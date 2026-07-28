@@ -22,19 +22,21 @@
 
 ## 지금
 
-- 마지막 커밋: `95af5b2` 2026-07-27 — docs(harness): add harness protocol section to AGENTS.md
-- 하네스 설치됨 (2026-07-27): AGENTS.md에 세션 종료 프로토콜, Stop hook이 이 파일 갱신을 검사
-- 미푸쉬: 0 · 미커밋: 0 (2026-07-27 하네스 구축 세션에서 정리)
-- 진행 중: 프레임별 예측 검출한계 QC 게이트 완성됨. 원고 §3 반영 대기
-- **2026-07-28 10:26 `n_det_frames` 측정 완료** (D-003 해소 → 실행 → D-004 카드 생성).
-  「지금 시작」 큐에서 이 세션(낮, max 계정)이 집었다 — 야간 배치·일회성 예약이
-  도구 승인에서 얼어 두 번 놓친 항목이다. 아래 「측정 완료」 절에 숫자.
-  코드 변경 없음(문서·측정만) → 오라클 재실행 안 함. 마지막 통과 기록: 614 passed (07-27).
-- **2026-07-28 12:xx D-004 종결** — 기본값 1 유지, `crowding_flag` 오염만 코드로 수정.
-  `refbuild.py` 에 `neighbor_distances()` 분리 + 회귀 검사 6건.
-  오라클 **620 passed** (614+6). 실데이터로 오염 0 확인 (M67·M3).
-- 2026-07-27 21:xx 야간 배치(첫 실행, 계정 `max`) — 코드 변경 없음.
-  「다음 3개」 1번을 실행 가능한 형태로 좁히고 D-003 을 올렸다.
+- 마지막 커밋: `9d615be` 2026-07-28 — fix(refbuild): 이웃 계산에서 1프레임 검출 제외 (D-004)
+- 미푸쉬 0 · 미커밋 0 · 오라클 **620 passed / 4분 41초** (2026-07-28)
+- 하네스: `AGENTS.md` 에 세션 시작 동기화 + 종료 프로토콜. Stop hook 이 이 파일 갱신을 검사
+
+**2026-07-28 오전에 끝난 것** (research-os 세션에서 수행, 이후 APEX 세션으로 인계)
+
+- `n_det_frames` 실측 2개 성단 완료 → 아래 「측정 완료」. D-003·D-004 둘 다 종결
+- `crowding_flag` 오염 수정 — `refbuild.py` 에 `neighbor_distances()` 분리,
+  회귀 검사 6건(`tests/test_refbuild_neighbor_trust.py`). 오라클 614 → 620
+- 논문 fig 후보 3종 생성 (경로는 `TRACK_PAPER.md` 「사용자 의견」)
+
+**진행 중 / 열린 것**
+
+- 프레임별 예측 검출한계 QC 게이트는 완성됨. 원고 반영은 `TRACK_PAPER.md` 소관
+- 열린 결정 없음 (「사용자 판단 필요」 비어 있음)
 
 ## 사용자 의견
 
@@ -49,11 +51,16 @@
 
 ## 다음 3개
 
-1. 4000프레임 재검출 — 원본 계수(`n_raw_detections`)가 이제 기록되므로 재실행하면 실제 숫자가 남음
-2. `source_quality.py:115` All-NaN slice 경고 처리 — roundness 계산에서 발생 (테스트 4건)
-3. 헤드리스 wcs 스텝 버그 수정 — `wcs_solve.py:4092` 가 `pixel_scale_arcsec=None` 이면
-   `float(None)` 으로 죽는다 (`getattr` 기본값은 키가 None 으로 **존재**하면 무력).
-   `getattr(...) or nan` 한 줄 + 회귀 테스트. 아래 「함정」 참조.
+1. **헤드리스 wcs 스텝 버그** — `wcs_solve.py:4092` 가 `pixel_scale_arcsec=None` 이면
+   `float(None)` 으로 죽는다. `getattr(P, "pixel_scale_arcsec", np.nan)` 은 키가
+   **None 으로 존재하면** 기본값이 안 먹는다.
+   고칠 것: `float(getattr(...) or np.nan)` 한 줄 + 회귀 테스트 1건.
+   재현: `parameters.example.toml` 기반 config 로 `apex run --mode lc --steps 5`.
+   (2026-07-28 M67 측정 때 이 버그로 step5 를 우회했다 — 「함정」 참조)
+2. **4000프레임 재검출** — 원본 계수(`n_raw_detections`)가 이제 기록되므로
+   재실행하면 실제 숫자가 남는다. `TRACK_PAPER.md` §3 의 사례 수를 채운다.
+   ⚠️ 시작 전 `[parallel]`·`[wcs]` 의 `max_workers` 를 확인할 것 — 1 이면 안 끝난다(함정).
+3. `source_quality.py:115` All-NaN slice 경고 처리 — roundness 계산에서 발생 (테스트 4건)
 
 ## 측정 완료 — `n_det_frames` 분포 · 두 성단 (2026-07-28)
 
