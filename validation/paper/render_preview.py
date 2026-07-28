@@ -547,6 +547,10 @@ JS = r"""
     var P=newPage();
     P.el.classList.add('p-toc');
     P.cols[1].style.display='none';
+    // 단 폭이 인라인으로 고정돼 있으므로, 한 단만 쓸 때는 판면 전폭으로 다시 준다.
+    var full=GEO.PW-2*GEO.MX;
+    P.cols[0].style.width=full+'px';
+    P.cols[0].style.flex='0 0 '+full+'px';
     return P;
   }
   function layoutToc(toc){
