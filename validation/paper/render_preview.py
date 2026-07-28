@@ -218,7 +218,87 @@ while i < len(lines):
 flush_para(para); emit_figs()
 BODY = "\n".join(out)
 
+# ---------- 논문 체재로 조립: 표지 · 목차 · 절 단위 페이지 ----------
+_m = re.search(r'<h1 class="title">(.*?)</h1>', BODY, re.S)
+DOC_TITLE = re.sub(r"<[^>]+>", "", _m.group(1)).strip() if _m else "APEX"
+BODY = re.sub(r'<h1 class="title">.*?</h1>', "", BODY, count=1, flags=re.S)
+_note = re.search(r'<p class="docnote">(.*?)</p>', BODY, re.S)
+DOC_NOTE = _note.group(1).strip() if _note else ""
+BODY = re.sub(r'<p class="docnote">.*?</p>', "", BODY, count=1, flags=re.S)
+
+# 목차 — 본문의 절 제목과 그림 목록에서 만든다
+_toc = []
+for _h in re.finditer(r'<(h2|h3)[^>]*>(.*?)</\1>', BODY, re.S):
+    _t = re.sub(r"<[^>]+>", "", _h.group(2)).strip()
+    if _t and not _t.startswith("그림"):
+        _toc.append((_h.group(1), _t))
+_toc_html = "".join(
+    f'<li class="{lvl}">{html.escape(t)}</li>' for lvl, t in _toc)
+_fig_html = "".join(
+    f'<li>그림 {n}. {html.escape(re.sub(r"<[^>]+>", "", inline(CAPTIONS[n]))[:64])}…</li>'
+    for n in sorted(FIGMAP) if n in CAPTIONS)
+
+# 절(<h2>) 마다 새 페이지
+_parts = [p for p in re.split(r'(?=<h2)', BODY) if p.strip()]
+_sheets = "\n".join(f'<section class="sheet">{p}</section>' for p in _parts)
+
+COVER = f'''<section class="sheet cover">
+  <div class="cover-inner">
+    <p class="cover-kicker">RAS Techniques and Instruments · 투고 준비 원고</p>
+    <h1 class="cover-title">{html.escape(DOC_TITLE)}</h1>
+    <p class="cover-authors">저자 미기재 (투고 전 확정)</p>
+    <p class="cover-affil">한국천문연구원 · 소형망원경 측광 파이프라인</p>
+    <div class="cover-meta">
+      <span>국문 원고</span><span>그림 {len(FIGMAP)}점</span><span>인용 {len(LAB)}건</span>
+    </div>
+    <p class="cover-note">{DOC_NOTE}</p>
+  </div>
+</section>'''
+
+TOC = f'''<section class="sheet toc">
+  <h2 class="toc-h">목차</h2>
+  <ol class="toc-list">{_toc_html}</ol>
+  <h2 class="toc-h">그림 목록</h2>
+  <ol class="toc-figs">{_fig_html}</ol>
+</section>'''
+
+BODY = COVER + TOC + _sheets
+
+
 CSS = r"""
+/* ── 논문 체재: 화면에서도 페이지처럼 보이게 ── */
+body{background:#e9e9ec;}
+.wrap{max-width:none;margin:0;padding:2rem 1rem 4rem;}
+.sheet{background:#fff;max-width:46rem;margin:0 auto 1.6rem;padding:3.4rem 3.2rem 3.8rem;
+  box-shadow:0 1px 3px rgba(0,0,0,.14);border-radius:2px;}
+.sheet > h2:first-child{margin-top:0;}
+@media (max-width:640px){ .sheet{padding:2rem 1.3rem 2.4rem;} }
+
+.cover{display:flex;align-items:center;min-height:60vh;}
+.cover-inner{width:100%;text-align:center;}
+.cover-kicker{font-size:.76rem;letter-spacing:.09em;color:#5a5f66;margin:0 0 2.4rem;
+  text-transform:uppercase;}
+.cover-title{font-size:1.68rem;line-height:1.42;font-weight:700;margin:0 0 2.2rem;
+  text-wrap:balance;}
+.cover-authors{font-size:.98rem;margin:0 0 .3rem;}
+.cover-affil{font-size:.86rem;color:#5a5f66;margin:0 0 2.6rem;}
+.cover-meta{display:flex;gap:1.4rem;justify-content:center;font-size:.78rem;
+  color:#5a5f66;border-top:1px solid #e2e4e8;border-bottom:1px solid #e2e4e8;
+  padding:.7rem 0;margin:0 auto 1.8rem;max-width:26rem;}
+.cover-note{font-size:.76rem;color:#7a7f86;font-style:italic;margin:0;}
+
+.toc-h{font-size:1.02rem;margin:0 0 .8rem;padding-bottom:.4rem;
+  border-bottom:1px solid #e2e4e8;}
+.toc-list,.toc-figs{list-style:none;padding:0;margin:0 0 2.2rem;font-size:.9rem;}
+.toc-list li.h2{font-weight:700;margin:.7rem 0 .2rem;}
+.toc-list li.h3{padding-left:1.4rem;color:#3a3f46;margin:.12rem 0;}
+.toc-figs li{margin:.2rem 0;color:#3a3f46;font-size:.83rem;}
+
+@media print{
+  body{background:#fff;}
+  .sheet{box-shadow:none;margin:0;page-break-after:always;max-width:none;}
+}
+
 :root{ color-scheme:light; --ink:#000; --muted:#2c2c2c; --rule:#000; --code:#eef0f2; }
 *{box-sizing:border-box}
 html,body{background:#fff;}
