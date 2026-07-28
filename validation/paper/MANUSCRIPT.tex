@@ -159,12 +159,38 @@ Measuring the same 95 well-detected stars in one synthetic frame (known truth) i
 \label{sec:irafcheck}
 
 \begin{figure}
-  \includegraphics[width=\columnwidth]{fig5_crosscheck_iraf.png}
-  \caption{APEX versus IRAF/DAOPHOT on 278 real stars in NGC~457 ($g$ band): MAD $0.0043$ mag, $r=0.99998$. Real data, independent code.}
+  \includegraphics[width=\columnwidth]{fig_iraf_crosscheck.png}
+  \caption{APEX versus IRAF/DAOPHOT on 499 real stars in NGC~6811 ($V$ band), a frame reduced from raw entirely by APEX. Both engines measure the same fixed sky coordinates with the matched parameters of Table~\ref{tab:irafparams}. MAD $9.7$ mmag, $r=0.99989$, with the binned median flat to the faint end.}
   \label{fig:irafcheck}
 \end{figure}
 
-The strongest single accuracy test in this suite measures 278 real stars in NGC~457 ($g$ band) independently with APEX's forced photometry and with IRAF's \texttt{phot} (DAOPHOT, via PyRAF) at identical fixed sky coordinates (Fig.~\ref{fig:irafcheck}). After zeropoint alignment: MAD $0.0043$ mag, RMS $0.0083$ mag, Pearson $r=0.99998$, position RMS $0.0004$ px, and 99.6 per cent of stars agreeing within 0.02 mag. Because this is real observed data and IRAF shares no code with APEX, milli-magnitude agreement here tests on-sky correctness rather than internal self-consistency. Its one limitation is extent: it is a single frame in a single band, and extending the IRAF cross-check across more frames and bands is the most valuable remaining strengthening of the accuracy claim, left as near-term work.
+\begin{table}
+  \caption{Parameter matching for the IRAF cross-check. APEX's own values, taken from the frame it had already reduced, were transcribed into the corresponding IRAF tasks so that the residual isolates the two flux integrators rather than a configuration difference. Values are for the NGC~6811 $V$ frame; FWHM-derived quantities follow APEX's scale factors ($0.8$, $4$, $2\times$FWHM).}
+  \label{tab:irafparams}
+  \begin{tabular}{lll}
+    \hline
+    Quantity & APEX & IRAF task.parameter \\
+    \hline
+    PSF FWHM        & 6.146 px            & \texttt{datapars.fwhmpsf} 6.146 \\
+    Aperture radius & 4.917 px            & \texttt{photpars.apertures} 4.917 \\
+    Sky annulus     & 24.585 px           & \texttt{fitskypars.annulus} 24.585 \\
+    Annulus width   & 12.292 px           & \texttt{fitskypars.dannulus} 12.292 \\
+    Sky estimator   & clipped median      & \texttt{salgorithm} median, $3\sigma$ \\
+    Gain            & 0.681 e$^-$/ADU     & \texttt{datapars.epadu} 0.681 \\
+    Read noise      & 2.35 e$^-$          & \texttt{datapars.readnoise} 2.35 \\
+    Background $\sigma$ & 30.334 ADU      & \texttt{datapars.sigma} 30.334 \\
+    Exposure        & 30 s                & \texttt{datapars.itime} 30 \\
+    Zeropoint       & 25.0                & \texttt{photpars.zmag} 25.0 \\
+    Recentring      & disabled            & \texttt{calgorithm} none, shift 0 \\
+    Noise model     & CCD equation        & \texttt{datapars.noise} poisson \\
+    Aperture corr.  & 1.429 applied       & not applied (see text) \\
+    \hline
+  \end{tabular}
+\end{table}
+
+The strongest single accuracy test in this suite measures 499 real stars in NGC~6811 ($V$ band) independently with APEX's forced photometry and with IRAF's \texttt{phot} (DAOPHOT, via PyRAF) at identical fixed sky coordinates (Fig.~\ref{fig:irafcheck}). A comparison between two photometry codes only isolates the codes if everything else is held equal, so APEX's own configuration for that frame --- aperture and annulus radii, gain, read noise, background $\sigma$, exposure time, zeropoint, and the decision not to recentre --- was transcribed into the corresponding IRAF tasks before the run; Table~\ref{tab:irafparams} lists the correspondence. Recentring is disabled on both sides (\texttt{calgorithm}~=~none, maximum shift 0), so both engines integrate flux at the same pixel positions and the residual cannot absorb a centroiding difference. The one deliberate asymmetry is the aperture correction, which APEX applies ($1.429$ for this frame) and IRAF does not; being a single multiplicative constant it appears purely as a zeropoint offset ($-0.049$ mag) and is removed by the same zeropoint alignment used for any inter-code comparison.
+
+After that alignment the two engines agree to MAD $9.7$ mmag, RMS $18.7$ mmag, and Pearson $r=0.99989$, with the binned median residual flat from the bright end to the faint end --- the systematic-attribution check of \citet{schechter1993}. The agreement is best read against the errors the two codes report for themselves: median formal uncertainties of $20.3$ mmag (APEX) and $19.0$ mmag (IRAF) combine in quadrature to $27.8$ mmag, so the measured disagreement between two independently implemented integrators is roughly a third of the scatter their own error models predict. Because this is real observed data on a frame APEX reduced from raw, and because IRAF shares no code with APEX, this tests on-sky correctness rather than internal self-consistency. The same procedure applied to a second cluster and band (NGC~457, $g$, 278 stars) gives MAD $4.3$ mmag; extending the cross-check further across frames and bands remains the most valuable strengthening of the accuracy claim.
 
 \subsection{Frame quality control}
 \label{sec:qc}
