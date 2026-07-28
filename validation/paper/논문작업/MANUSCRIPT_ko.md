@@ -265,6 +265,47 @@ CMD 모드의 과학 산출물인 색-등급도는 아무것도 맞추지 않고
 
 여기 모은 증거로 볼 때, APEX의 공용 측광 과정은 붐비지 않는 산개성단 장에서 실제 구상성단 중심부에 이르기까지 점광원의 구경·PSF 측광에 대해 검증되고, 보고 오차가 실측 산포와 일치하며, 교차 확인을 거친 기기다. 그리고 그 CMD 모드 산출물은 같은 별들에 대해 독립 기기들이 보는 것을 재현한다. APEX는 나아가 자체 프레임을 원시에서 보정하며, 이 단계는 독립 전처리 파이프라인 둘과 비트동일하게, 그리고 카메라 두 대를 더해 출판된 서베이 파이프라인과 대조해 검증됐다(3.2–3.5절). 이것은 *측정*에 대한 주장이며, 이소크론 물리량의 자동 복원, 구조가 뚜렷한 배경에서의 측광, 분해 한계보다 미세한 겹침, 그리고 현재 코드로 다시 확인하지 않은 기기로부터는 분석 범위에서 제외하였다. APEX의 기여는, 그동안 명령행 도구가 손에 닿지 않던 관측자들에게 그 검증된 측광 과정을 그래픽 흐름으로 닿게 한 것, 그리고 여기서 세운 범위 안에서는 접근성이 정확도를 깎지 않음을 주장이 아니라 실증으로 보인 것이다.
 
+## 부록 A. 용어 대조표
+
+APEX를 처음 쓰는 독자는 대개 IRAF/DAOPHOT이나 파이썬 측광 패키지 가운데 하나에
+익숙하다. 아래 표는 같은 개념을 세 환경에서 각각 무엇이라 부르는지 대응시킨 것이다.
+본문의 국문 표기도 이 표를 기준으로 통일하였다. 3.11절의 표 3은 IRAF 교차확인에
+실제로 넣은 파라미터 *값*을 비교하며, 이 부록은 개념 대응을 다룬다.
+
+| 본 논문 (국문) | 영문 | IRAF / DAOPHOT | Python (photutils · astropy) |
+|---|---|---|---|
+| 검출기 보정 | detector calibration | `ccdproc` | `ccdproc` |
+| 마스터 bias | master bias | `zerocombine` | `ccdproc.combine` |
+| 마스터 dark | master dark | `darkcombine` | `ccdproc.combine` |
+| 마스터 flat | master flat | `flatcombine` | `ccdproc.combine` |
+| 오버스캔 제거 | overscan correction | `ccdproc` (`biassec`) | `ccdproc.subtract_overscan` |
+| 프레임 자르기 | trim | `ccdproc` (`trimsec`) | `ccdproc.trim_image` |
+| 우주선 제거 | cosmic-ray rejection | `cosmicrays` | `astroscrappy.detect_cosmics` |
+| 천체 검출 | source detection | `daofind` | `DAOStarFinder` · `sep.extract` |
+| 검출 문턱값 | detection threshold | `findpars.threshold` | `threshold` |
+| 반치폭 | FWHM | `datapars.fwhmpsf` | `fwhm` |
+| 중심 잡기 | centroiding | `centerpars` | `centroid_sources` |
+| astrometric solution | astrometric solution | `ccmap` · `ccsetwcs` | `astropy.wcs.WCS` |
+| 마스터 카탈로그 | master catalogue | — | — |
+| 강제 측광 | forced photometry | `phot` (고정 좌표, `calgorithm=none`) | `aperture_photometry` |
+| 구경 반지름 | aperture radius | `photpars.apertures` | `CircularAperture(r)` |
+| 하늘 고리 | sky annulus | `fitskypars.annulus` · `dannulus` | `CircularAnnulus` |
+| 하늘 배경 추정 | sky estimation | `fitskypars.salgorithm` | `Background2D` · `SExtractorBackground` |
+| 구경 보정 | aperture correction | `mkapfile` | — (본 연구 구현) |
+| 성장 곡선 | curve of growth | `mkapfile` | — (본 연구 구현) |
+| PSF 측광 | PSF photometry | `psf` · `allstar` | `EPSFBuilder` · `PSFPhotometry` |
+| 기기 등급 | instrumental magnitude | `mag` | — |
+| 등급 오차 | magnitude error | `merr` | — |
+| 영점 | zero point | `fitparams` | — (본 연구 구현) |
+| 검출 완전도 | detection completeness | `addstar` 뒤 재검출 | — (본 연구 구현) |
+| 프레임 품질 관리 | frame quality control | — | — (본 연구 구현) |
+| 추세 제거 | detrending | — | — (본 연구 구현, SYSREM) |
+| 주기 탐색 | period search | `pdm` | `LombScargle` · (PDM은 본 연구 구현) |
+
+빈칸(—)은 그 환경에 대응하는 표준 태스크나 함수가 없다는 뜻이다. `ccdproc`은 IRAF의
+태스크 이름이면서 동시에 파이썬 패키지 이름이기도 하므로 문맥에 따라 구분해야 한다.
+IRAF 태스크명은 확인한 것만 적었다.
+
 ## 자료·코드 이용 (Data and code availability)
 
 APEX는 오픈소스로 MIT 라이선스 아래 `https://github.com/Diu1773/APEX_AutomatedPhotometryEXtraction` 에서 공개된다. `validation/paper/` 아래 검증 묶음은 `run_all.py`로 모든 그림을 재현한다. 자체완결 합성 그림(그림 6–4, 6)은 고정 시드에서 외부 자료 없이 다시 생성되고, 실측 그림(그림 10, 7–9)은 관측 자료 볼륨이 필요하며, 그림 12–8의 Pan-STARRS 1 교차매칭은 저장소에 캐시되어 있다. 이 원고와 함께 두는 `references.bib`에 인용한 모든 문헌을 DOI와 함께 싣는다.
