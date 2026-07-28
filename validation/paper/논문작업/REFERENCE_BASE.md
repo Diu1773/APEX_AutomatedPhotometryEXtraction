@@ -23,12 +23,18 @@
 
 | | |
 |---|---|
-| 무엇 | 시계열 차등 측광용 GUI. 영상 처리부터 광도곡선 추출까지 |
-| 문헌 | **The Astronomical Journal** (정식 논문, SCIE) |
+| 무엇 | ImageJ 위에 얹은 천문 전용 GUI. 영상 보정부터 광도곡선 적합까지 |
+| 문헌 | **The Astronomical Journal** (정식 논문, SCIE). 27쪽 |
 | 인터페이스 | **GUI** |
-| 확인 상태 | **서지 확인** (원문 미독) |
-| APEX가 주장 가능 | 단일 시야 차등·식 측광 중심이라는 것 |
-| 주장 불가 | 이 도구의 정확도·한계에 대한 평가. **원문을 안 읽었다** |
+| 확인 상태 | **원문 확인** (2026-07-29, arXiv:1701.04817 정독) |
+| 구조 | 1 서론 / 2 개요와 기본 기능 / 3 Data Processor(영상 보정) / 4 초정밀 측광과 광도곡선(단일 구경·다중 구경 차등·Multi-Plot·적합과 추세제거·비교별 앙상블) / 5 업데이터 |
+| **자기 포지션(초록 원문)** | *"research grade image calibration and analysis tools with a GUI driven approach"* · *"enables new users, even at the level of **undergraduate student, high school student, or amateur astronomer**"* |
+| 정확도에 대한 서술 | 본문에 **한 문장**뿐이다. *"We and the KELT follow-up team have verified the accuracy of AIJ against … IRAF, IDL, and MaxIm DL."* **수치도 그림도 절도 없다.** 논문 전체에 compare/validate/benchmark 라는 낱말이 0회, agreement 1회 |
+| 정밀도 근거 | 별도 논문(Collins et al. 2017a)을 가리킨다. WASP-12b·Qatar-1b 식 잔차 RMS 183·255 ppm. 이는 **정밀도(산포)**이지 기준 대비 **정확도(일치)**가 아니다 |
+| 사용 실적 | KELT 후속관측 팀, 학부 실습, 고교 수업 |
+| APEX가 주장 가능 | ① 단일 시야 시계열 차등 측광 중심이라는 것 ② **APEX와 같은 대상 독자를 명시한 선례**라는 것 ③ 정확도 비교의 **수치가 논문에 제시되지 않았다**는 것 |
+| 주장 불가 | "AIJ는 검증하지 않았다" — 했다고 밝히고 있다. 쓸 수 있는 말은 *"그 비교의 수치와 조건이 논문에 제시되지 않았다"* 까지다 |
+| 함정 | **APEX의 대상 독자 서술은 신규성이 아니다.** AIJ가 2017년에 같은 말을 했다. 차별점은 독자가 아니라 **범위(성단 CMD·다중야간)와 검증의 형태(수치가 있는 비교)** 다 |
 
 ### tsiaras2019 · HOPS
 
