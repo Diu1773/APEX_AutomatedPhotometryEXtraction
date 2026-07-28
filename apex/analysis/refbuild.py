@@ -119,6 +119,56 @@ def _extract_date_key(filename: str, params=None) -> str:
     return date_key or "unknown_date"
 
 
+def neighbor_distances(xy, n_det_frames=None):
+    """Distance to the nearest *trusted* neighbour, for every row.
+
+    Returns (distances, n_trusted).
+
+    Sources detected in exactly one frame are mostly cosmic rays and hot pixels,
+    not stars. Measured on 2026-07-28 with ten frames each: of the M67 g' sources
+    seen in exactly one frame, 34/78 are one-shot spikes with no counterpart in
+    the other nine; M3 B gives 44/128. Letting those into the neighbour tree
+    mislabels the *real* star beside them as crowded, and that label then travels
+    with the real star through the rest of the pipeline. Measured contamination
+    at ref_fwhm * 2.5: 6/732 real stars (0.8 per cent) in M67, 12/830
+    (1.4 per cent) in M3.
+
+    So the tree holds trusted rows only, while *every* row is still queried --
+    a single-frame source keeps a meaningful distance to its nearest real
+    neighbour rather than being dropped.
+
+    Known side effect, measured rather than assumed. ``n_det_frames`` is the
+    only signal available here, so this also excludes the genuinely faint stars
+    that sit at the detection threshold and happened to be detected once. Of the
+    false crowding flags it clears: in M67 3/3 came from confirmed one-shot
+    spikes, but in M3 the 13 split 6 spikes / 6 threshold stars / 1 ambiguous.
+    Those six are real sources no longer counted as crowding neighbours --
+    acceptable because a source at the detection limit adds little flux to its
+    neighbour's aperture, but it is a trade, not a free win.
+
+    n_det_frames is absent on the single-anchor path
+    (ref_master_union=False), where every row comes from one frame and the
+    split would be meaningless; there the old unfiltered behaviour is kept.
+    """
+    from scipy.spatial import KDTree
+
+    xy = np.asarray(xy, dtype=float)
+    trusted = np.ones(len(xy), dtype=bool)
+    if n_det_frames is not None:
+        cand = (pd.to_numeric(pd.Series(n_det_frames), errors="coerce")
+                .to_numpy() >= 2)
+        # Never let the filter empty the tree: a run where nothing is seen
+        # twice must fall back to the unfiltered behaviour.
+        if cand.sum() >= 2:
+            trusted = cand
+
+    tree = KDTree(xy[trusted])
+    dists, _ = tree.query(xy, k=2)  # k=2: self (when trusted) + neighbour
+    # A trusted row finds itself at distance 0, so take the second hit; an
+    # untrusted row is not in the tree, so the first hit is already the answer.
+    return np.where(trusted, dists[:, 1], dists[:, 0]), int(trusted.sum())
+
+
 def run_refbuild(
     params,
     data_dir,
@@ -1372,11 +1422,14 @@ def run_refbuild(
     # ── Neighbor distance + crowding_flag ────────────────────────────────
     if {"x_ref", "y_ref"} <= set(master_df.columns) and len(master_df) > 1:
         try:
-            from scipy.spatial import KDTree
             xy = master_df[["x_ref", "y_ref"]].to_numpy(float)
-            tree = KDTree(xy)
-            dists, _ = tree.query(xy, k=2)  # k=2: self + nearest neighbour
-            master_df["neighbor_dist_px"] = dists[:, 1]
+            n_det = (master_df["n_det_frames"]
+                     if "n_det_frames" in master_df.columns else None)
+            dist_px, n_trusted = neighbor_distances(xy, n_det)
+            master_df["neighbor_dist_px"] = dist_px
+            if n_trusted < len(master_df):
+                _log(f"[REF] neighbor tree: {n_trusted}/{len(master_df)} sources "
+                     f"(n_det_frames>=2); single-frame detections excluded")
             ref_fwhm_row = (
                 metrics.loc[metrics["file"] == ref_fname, "fwhm_px"]
                 if "fwhm_px" in metrics.columns else None
