@@ -9,7 +9,7 @@ ROOT = Path(r"C:\Users\bmffr\Desktop\Result\Automated_Photometry_EXtraction\vali
 SRC = ROOT / "논문작업" / "MANUSCRIPT_ko.md"
 BIB = ROOT / "references.bib"
 FIGDIR = ROOT / "figures"
-OUT = Path(r"C:\Users\bmffr\AppData\Local\Temp\claude\C--Users-bmffr-Desktop-Result-Automated-Photometry-EXtraction\671e5e9e-3ddb-4c65-9711-7a874bcba688\scratchpad\paper_ko.html")
+OUT = ROOT / "MANUSCRIPT_ko_preview.html"   # 정본 자리(2026-07-09부터 이 경로)
 
 # ---------- figures ----------
 # manuscript figure number (pipeline order) -> source fig file number (old order)
@@ -202,11 +202,15 @@ CSS = r"""
 :root{ color-scheme:light; --ink:#000; --muted:#2c2c2c; --rule:#000; --code:#eef0f2; }
 *{box-sizing:border-box}
 html,body{background:#fff;}
+/* 한글 본문 폰트: Noto Serif KR(본명조 계열)을 1순위로 둔다. 예전 스택은 미설치
+   Nanum Myeongjo 를 먼저 찾다가 Batang 으로 떨어져 화면에서 구식으로 보였다. */
 body{margin:0;color:var(--ink);
-  font-family:"Georgia","Times New Roman",Times,"Nanum Myeongjo","Batang","Apple SD Gothic Neo",serif;
-  line-height:1.66;font-size:17.5px;text-rendering:optimizeLegibility;
+  font-family:"Georgia","Times New Roman",Times,"Noto Serif KR",
+              "Apple SD Gothic Neo","Malgun Gothic",serif;
+  line-height:1.78;font-size:17px;text-rendering:optimizeLegibility;
+  word-break:keep-all;overflow-wrap:break-word;
   -webkit-font-smoothing:antialiased;}
-.wrap{max-width:45rem;margin:0 auto;padding:3.4rem 1.7rem 6rem;}
+.wrap{max-width:44rem;margin:0 auto;padding:3.2rem 1.5rem 6rem;}
 
 h1.title{font-size:1.62rem;line-height:1.3;text-align:center;text-wrap:balance;
   font-weight:700;margin:0 0 1rem;}
@@ -218,7 +222,8 @@ h2{font-size:1.15rem;font-weight:700;margin:1.9rem 0 .55rem;text-wrap:balance;}
 h3{font-size:1.02rem;font-weight:700;margin:1.4rem 0 .4rem;font-style:italic;text-wrap:balance;}
 h4{font-size:.97rem;font-weight:700;font-style:italic;margin:1.1rem 0 .3rem;}
 
-p{margin:0;text-align:justify;text-justify:inter-word;text-indent:1.6em;}
+/* 한글은 양끝맞춤하면 어절 간격이 벌어져 읽기 나빠진다. 왼쪽 정렬 + 문단 간격. */
+p{margin:0 0 .95rem;text-align:left;}
 h1+p,h2+p,h3+p,h4+p,blockquote+p,figure+p,.tw+p,p.docnote,p.pending{text-indent:0;}
 p.pending{color:var(--muted);font-style:italic;}
 strong{font-weight:700;}

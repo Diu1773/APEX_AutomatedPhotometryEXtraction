@@ -186,6 +186,19 @@ frame_zeropoint.csv에 airmass 있음. 단 ZP 레퍼런스 얽힘 + airmass span
 - 예측기 = 머지된 `apex/analysis/detection_limit.py` (PEAK_SN50=4.05, step7 QC게이트와 동일경로)
 - 실현 = `extract_realized_depth.py`(Eddington-safe 중앙값등급, master-한계 순환가드)
 - 조사 이력: `FIG_A_PRESENTATION_SURVEY.md` (Kessler 형식귀속 한정 포함)"""),
+    N("advisor_feedback", "교수님 피드백(포지셔닝)", 6, """# 교수님 피드백 — 원문+분해 (2026-07-28)
+정본 `ADVISOR_FEEDBACK.md`. **두 축**:
+- **축1 실행가능**: ① 완전도가 "미리 정한 함수에 맞춘 것"으로 읽힘 → 캡션 문장순서 조정
+  ② **DAOPHOT 파라미터 정합표 없음** — min/max·initial·구경·annulus·gain·datamin 등 대응표 필요.
+  파라미터가 다르면 MAD 9.7 mmag가 무엇의 차이인지 말할 수 없다 → IRAF 비교 신뢰도 좌우
+- **축2 근본(positioning)**: *"과학자에게 준다? 그냥 IRAF 따라하면 돼"* · *"risk를 가지면서
+  이걸 써야 하는 이유?"* · *"주 타겟층을 정해야 목적·활용방안이 나온다"* ·
+  *"과정경험 중점이냐 실제 연구까지 쓸 수 있게 하느냐"*
+- **핵심 통찰**: §3 검증 전체가 곧 "risk를 낮췄다"의 증거인데 **§1이 그걸 positioning으로
+  연결 안 하고 있다**. 필요한 건 새 실험이 아니라 서론 재구성.
+- **타겟층 3안**: A 과정경험(교육) · B 연구사용 · **C 결합(권고)** = "과학자 방식으로 직접
+  해보려는 사람"(학부·석사초년·진지한 아마추어). C면 서론 사용자상 문단 + risk 연결 문단 +
+  단계별 학습경로 표 + A2 파라미터표. 전부 서술이라 되돌리기 쉬움. **사용자 결정 대기**"""),
     N("plan_figrebuild", "그림 재작업+원고동기화 계획", 6, """# 그림 전수 재작업 — 회고+계획 (2026-07-28)
 정본 `FIGURE_REBUILD_PLAN.md`. 사용자: fig1 대상/개수, fig3 전면재설계("너무 대충"), fig4·fig5 출처 미표기.
 - **반복 실패 R1~R6**: R1 데이터출처 미표기(3회+) · R2 데이터를 모델처럼 · R3 표본부족 · R4 주장과대
@@ -206,7 +219,7 @@ EDGES = [
     # hubs
     ("hub_paper", "hub_repro"),
     ("hub_paper", "dec_figure_spec"), ("hub_paper", "dec_citation_fixes"),
-    ("hub_paper", "dec_vv_ladder"), ("hub_paper", "pend_manuscript"), ("hub_paper", "plan_figrebuild"), ("plan_figrebuild", "dec_figure_spec"),
+    ("hub_paper", "dec_vv_ladder"), ("hub_paper", "pend_manuscript"), ("hub_paper", "plan_figrebuild"), ("hub_paper", "advisor_feedback"), ("advisor_feedback", "fig_iraf"), ("plan_figrebuild", "dec_figure_spec"),
     ("hub_repro", "fig_completeness"), ("hub_repro", "fig_astrometry"),
     ("hub_repro", "fig_iraf"), ("hub_repro", "fig_precision"),
     ("hub_repro", "dec_repro_def"),
