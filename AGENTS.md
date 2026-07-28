@@ -30,14 +30,29 @@ Recent history uses concise lowercase prefixes such as `feat:`, `fix:`, and `rem
 
 # 하네스 프로토콜 (research-os)
 
-> 제어층: `C:\Users\bmffr\Desktop\Main` — `NOW.md`, `PORTFOLIO.yaml`, `dashboard.html`
+> 제어층: `C:\Users\bmffr\Desktop\Main` — `NOW.md`, `PORTFOLIO.yaml`, `SESSION_BOOTSTRAP.md`
+> (대시보드는 2026-07-28 보류. 작업면은 각 레포의 세션이고 프로토콜은 파일로 돈다)
+
+## 세션 시작 동기화 — 작업 전에 한 번
+
+Claude Code 는 전역 `SessionStart` hook 이 이걸 자동으로 넣어준다.
+**Codex 는 자동으로 안 되므로 첫 행동으로 직접 한 번 실행한다.**
+컨텍스트에 `SESSION_SYNC_V1` 블록이 이미 있으면 다시 돌리지 않는다.
+
+```text
+python -X utf8 C:/Users/bmffr/Desktop/Main/scripts/session_sync.py --cwd .
+```
+
+출력에는 이 레포의 트랙·최근 커밋·미커밋 변경·「사용자 판단 필요」가 들어 있다.
+기존 미커밋 변경은 다른 세션의 작업일 수 있으니 임의로 지우거나 되돌리지 않는다.
+공통 규약 원문은 `C:/Users/bmffr/Desktop/Main/SESSION_BOOTSTRAP.md`.
 
 ## 세션을 시작할 때
 
 **TRACK.md (개발) · TRACK_PAPER.md (논문) 를 먼저 읽는다.** 이 트랙의 상태에 대한 유일한 진실이다.
 사용자에게 "전에 뭘 했었죠"를 묻지 않는다. 파일에 다 있다.
 
-**`## 사용자 의견` 절을 반드시 읽는다.** 사용자가 대시보드에서 남긴 방향 지시가
+**`## 사용자 의견` 절을 반드시 읽는다.** 사용자가 남긴 방향 지시가
 거기 최신순으로 쌓인다. 그 방향과 다르게 가려면 먼저 물어본다.
 
 
