@@ -524,12 +524,51 @@ JS = r"""
     return P2;
   }
 
+  /* 차례는 전폭 한 단으로 따로 짠다. 항목이 넘치면 다음 지면으로 잇는다. */
+  function newTocPage(){
+    var P=newPage();
+    P.el.classList.add('p-toc');
+    P.cols[1].style.display='none';
+    return P;
+  }
+  function layoutToc(toc){
+    var P=newTocPage(), col=P.cols[0];
+    function ok(){ return col.scrollHeight<=col.clientHeight+1; }
+    [].slice.call(toc.children).forEach(function(node){
+      var c=node.cloneNode(true);
+      col.appendChild(c);
+      if (ok()) return;
+      col.removeChild(c);
+      if (c.tagName==='OL'){
+        var box=document.createElement('ol'); box.className=c.className;
+        col.appendChild(box);
+        [].slice.call(c.children).forEach(function(li){
+          box.appendChild(li);
+          if (!ok()){
+            box.removeChild(li);
+            P=newTocPage(); col=P.cols[0];
+            box=document.createElement('ol'); box.className=c.className;
+            col.appendChild(box); box.appendChild(li);
+          }
+        });
+      } else {
+        P=newTocPage(); col=P.cols[0]; col.appendChild(c);
+      }
+    });
+  }
+
   function build(){
     book.innerHTML=''; pages=[]; pending=[];
-    var P=newPage();
-    ['.titleblock','.absblock'].forEach(function(sel){          // 표제면은 전폭
-      var n=src.querySelector(sel); if(n) P.span.appendChild(n.cloneNode(true));
+    // 1) 표제면 — 제목과 초록만. 본문은 여기서 시작하지 않는다.
+    var T0=newPage(); T0.el.classList.add('p-title');
+    ['.titleblock','.absblock'].forEach(function(sel){
+      var n=src.querySelector(sel); if(n) T0.span.appendChild(n.cloneNode(true));
     });
+    // 2) 차례 — 본문 앞에 온다
+    var toc=src.querySelector('.tocblock');
+    if (toc) layoutToc(toc);
+    // 3) 본문 — 새 지면부터 2단
+    var P=newPage();
     var flow=src.querySelector('.flow');
     [].slice.call(flow.children).forEach(function(k){ P=place(k.cloneNode(true), P); });
     while (pending.length){                                     // 남은 그림 마무리
@@ -537,15 +576,6 @@ JS = r"""
       if (pending.length===n0){
         var f=pending.shift(); Q.span.appendChild(f); shrink(f,Q);
       }
-    }
-    var toc=src.querySelector('.tocblock');                     // 차례는 2쪽에 1단 전폭
-    if (toc){
-      var T=el('div','page');
-      T.innerHTML='<div class="run"></div><div class="pinner"><div class="span"></div>'+
-        '<div class="cols"><div class="col"></div></div></div><div class="folio"></div>';
-      T.querySelector('.col').appendChild(toc.cloneNode(true));
-      book.insertBefore(T, pages[0].el.nextSibling);
-      pages.splice(1,0,{el:T});
     }
     var N=pages.length;
     pages.forEach(function(p,i){
