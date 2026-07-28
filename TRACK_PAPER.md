@@ -18,38 +18,31 @@
 권장 기법: 수치를 원고에 하드코딩하지 말고 스크립트가 매크로 파일을 생성하게 한다.
 데이터가 바뀌면 본문이 자동 갱신되고, 본문과 표가 어긋나는 사고가 원천 차단된다.
 
-## 지금
+## 지금 (2026-07-29 야간 자율작업 후)
 
-- 마지막 커밋: `4b6b079` 2026-07-28 00:07 — paper(tex): discussion reflects real-frame depth + QC gate
-- **§3 은 이미 쓰였다.** 이 파일이 9커밋 동안 "§3만 비어 있음"으로 낡아 있었다 (F-019).
-  채운 커밋: `f240804` 19:20 · `6a8bcaa` 19:33 · `4b6b079` 00:07
+- **투고처**: PASP 유력. SCIE·IF 6.8·ASTROPOP 선례. RASTI 는 **ESCI 라 제외**.
+  결정은 투고 직전, 교수님과. 미결 카드는 아래 D-P01.
+- **국문 원고 33,267자 / A4 2단 24쪽 / 그림 15 / 인용 39건**
+  아티팩트: https://claude.ai/code/artifact/51d2287e-960b-4bd9-9172-13e1c49855c0
+- 문체 검사(`논문작업/style_audit.py`): 전체 47건 → 서론은 **1건**(하네스가 '좋음'
+  예문으로 든 형태). 억지 번역어 0, 괄호 병기 반복 0.
+- **레퍼런스 지식베이스 신설**: `논문작업/REFERENCE_BASE.md`. 원문 PDF 10편은
+  `논문작업/refs/`(git 제외, URL 기록됨).
 
-  2026-07-28 01:xx 실측 — `validation/paper/MANUSCRIPT.tex` 43,254자 / section 6개:
+### 오늘 확인이 논문 방향을 바꾼 사실
 
-  | 절 | 분량 | 하위절 |
-  |---|---:|---:|
-  | 1. Introduction | 5,052자 | 0 |
-  | 2. Design and implementation | 6,640자 | 4 |
-  | **3. Validation** | **18,060자** | **11** |
-  | 4. Science application (YZ Boo) | 936자 | 0 |
-  | 5. Discussion | 6,302자 | 4 |
-  | 6. Conclusion | 1,968자 | 0 |
-
-  운영 QC 절(`sec:depthqc`)은 수치가 박힌 완성 산문이다 — 3성단 **57 프레임**,
-  예측 대 실현 깊이 **RMS 78 mmag**, 전 프레임이 **±0.5 mag** 게이트 안,
-  `S/N50 = 4.05` 고정, 마스터 한계에 근접한 **9 프레임**은 circularity guard 로 제외.
-
-- **2026-07-28 01:50 세션 발견 (`6e7860d`) — 투고본이 한국어 초안보다 6개 하위절 뒤진다.**
-  `MANUSCRIPT.tex` 검증 하위절 11개 vs `MANUSCRIPT_ko.md` 16개.
-  투고본에 없는 것: Step 0 검출기 보정 · 검출기 특성화 · ccdproc 교차검증 ·
-  교차기기 보정(LCO Sinistro/QHY600 vs BANZAI) · astrometry · 시계열 코어.
-  그 세션의 표현: *"raw-to-science in one tool 주장의 증거 기반 전체"* 가 빠져 있다 —
-  **개별 그림 수정보다 이게 우선이다.**
-- fig1 LCO 확장은 **기각** (`6e7860d`): 논문 스스로 교차기기 일반성을 범위 밖으로
-  선언했으므로 반쪽 일반성 주장만 부른다. 같은 카메라 안에서 강화한다 (조건 확대 또는 M5/M3).
-  그림 재작업 계획: `validation/paper/논문작업/FIGURE_REBUILD_PLAN.md` (R1~R6 반복 실패 회고 포함)
-- 막힌 것: 없음. 다만 **§4 가 936자로 유독 얇다** — 다른 절의 1/6 이다.
-  의도된 축약인지 미완인지는 사람 판단.
+1. **AstroImageJ 가 2017년에 APEX 와 같은 대상 독자를 이미 명시했다**
+   ("undergraduate student, high school student, or amateur astronomer").
+   → 대상 독자는 신규성이 아니다. 차별점은 **처리 범위와 검증의 형태**.
+2. **AIJ 의 정확도 서술은 본문 한 문장**이고 수치·그림·절이 없다. 27쪽에
+   compare/validate/benchmark 0회. AIJ 의 신뢰 근거는 "많이 쓰인다"(KELT·행성 10편)다.
+   APEX 엔 그 근거가 없으므로 **측정으로 대신해야 한다** — 검증 40% 의 정당화.
+3. **HOPS 는 1쪽 학회 초록**이고 **검출기 보정도 한다.** raw→science 를 배타적
+   차별점으로 쓰면 틀린다.
+4. **riello2021 원문 확인**: "BP tends to be systematically brighter towards the
+   faint end". §3.13 의 "Gaia BP 알려진 결함" 이 문헌으로 뒷받침된다.
+5. **SPIE ATI 2026 은 7월 5–10일에 이미 끝났고 격년이라 다음은 2028.**
+   Proc. SPIE 는 학술대회 논문집이라 SCIE 가 아니다.
 
 ## 사용자 의견
 
