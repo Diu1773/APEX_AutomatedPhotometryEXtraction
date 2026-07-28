@@ -140,6 +140,69 @@
 
 ---
 
+## 방법·기준 문헌
+
+### stetson1987 · DAOPHOT
+
+| | |
+|---|---|
+| 문헌 | PASP 99, 191 (32쪽) · `refs/stetson1987.pdf` · https://articles.adsabs.harvard.edu/pdf/1987PASP...99..191S |
+| 확인 상태 | **원문 확인** (2026-07-29, 초록·구성) |
+| 무엇 | 밀집장 항성 측광 프로그램. 겹친 별상(blended stellar images)의 정확한 측광을 위한 수학적 알고리즘에 초점 |
+| 특기 | 초록이 스스로 *"known shortcomings of the current program"* 을 논한다고 밝힌다. 도구 논문이 자기 한계를 쓰는 선례 |
+| 주장 가능 | 밀집장 측광의 표준 참조. §3.11 교차확인의 기준 엔진 |
+
+### bertin1996 · SExtractor
+
+| | |
+|---|---|
+| 문헌 | A&AS 117, 393 (12쪽) · `refs/bertin1996.pdf` |
+| 확인 상태 | **원문 확인** (2026-07-29, 초록) |
+| 무엇 | 천체 검출·디블렌딩·측정·분류. 신경망 기반 별/은하 분리 |
+| **함정** | 초록이 *"particularly suited to the analysis of large **extragalactic** surveys"* 라고 밝힌다. **밀집 성단 측광용이 아니다** — 그 자리는 DAOPHOT 이다. 검출 엔진으로만 인용해야 한다 |
+| 주장 불가 | 밀집장 항성 측광 성능. SEP(barbary2016)와 혼동 금지 — **SEP 는 Barbary 2016 이다** |
+
+### stetson1994 · ALLFRAME
+
+| | |
+|---|---|
+| 문헌 | PASP 106, 250 (31쪽) · `refs/stetson1994.pdf` |
+| 확인 상태 | **원문 확인** (2026-07-29, 초록) |
+| 무엇 | 구상성단 M15 코어(중심 2분각)의 CMD·색-색도를 CFHT + HST 자료로. **ALLFRAME 을 처음 상세히 기술** |
+| 방법 | 모든 프레임의 기하·측광 정보를 **동시에** 사용 |
+| 주장 가능 | 밀집 성단 코어 측광의 선례. §3.12(M5·M13 코어)의 문헌 근거 |
+
+### mccully2018 · BANZAI
+
+| | |
+|---|---|
+| 문헌 | Proc. SPIE (9쪽) · `refs/mccully2018.pdf` · arXiv:1811.04163 |
+| 확인 상태 | **원문 확인** (2026-07-29, 초록) |
+| 무엇 | LCOGT 로봇 망원경망의 실시간 처리 파이프라인. 하룻밤 수천 장 |
+| 수행 범위(원문) | 기기 특성 제거(불량화소 마스킹, bias·dark 제거, flat 보정), astrometric fitting, 소스 카탈로그 추출 |
+| 주장 가능 | §3.5 교차기기 비교의 기준. **독립적으로 개발·운영되는 출판 파이프라인**이라는 것 |
+
+### riello2021 · Gaia EDR3 측광
+
+| | |
+|---|---|
+| 문헌 | A&A 649, A3 (35쪽) · `refs/riello2021.pdf` · arXiv:2012.01916 |
+| 확인 상태 | **원문 확인** (2026-07-29, BP 어두운 쪽 서술 검색) |
+| **핵심 문장** | *"**BP tends to be systematically brighter towards the faint end**: it would therefore make sense to include a restriction on G_BP in the archive query"* |
+| 기전 | 어두운 쪽에서 BP/RP 스펙트럼의 S/N 이 낮고 **잔여 배경(residual background)** 이 남는다. 보정 계수가 Table 5 에 두 등급 구간으로 주어진다 |
+| 주장 가능 | §3.13 의 "Gaia BP 참조의 알려진 결함" 이 **문헌으로 확인된 사실**이라는 것. 원문이 아카이브 질의에서 G_BP 제한을 권고할 정도다 |
+| 주의 | 부호를 쓸 때 확인할 것 — 원문은 BP 가 어두운 쪽에서 **더 밝게**(등급이 작게) 치우친다고 말한다 |
+
+### janesick2007 · Photon Transfer
+
+| | |
+|---|---|
+| 문헌 | **단행본** (SPIE Press, *Photon Transfer: DN → λ*) |
+| 확인 상태 | **미확인 — 책이라 내려받을 수 없다** |
+| 주장 가능 | PTC 방법의 표준 참조로 서지 인용까지. **책의 특정 내용을 근거로 문장을 쓰지 않는다** |
+
+---
+
 ## 확인이 남은 것
 
 서지만 확인했거나 미확인이다. **내용을 근거로 문장을 쓰기 전에 원문을 봐야 한다.**
