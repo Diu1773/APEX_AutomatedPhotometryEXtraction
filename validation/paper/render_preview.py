@@ -447,15 +447,33 @@ JS = r"""
   function isHead(n){ return n && /^H[234]$/.test(n.tagName); }
   function isSpanBlock(n){ return n && (n.tagName==='FIGURE' || n.classList.contains('tw')); }
 
+  /* 판면 치수는 CSS 변수가 아니라 여기서 정하고 인라인으로 박는다.
+     아티팩트처럼 호스트가 자기 스타일시트를 얹는 환경에서 :root 변수나 클래스
+     규칙이 밀리면 지면 높이가 안 먹고 단이 무한정 늘어난다(2026-07-28 실제로 발생:
+     로컬 23쪽 / 아티팩트 4쪽, 오른쪽 단이 빈 채 왼쪽 단만 넘침). 인라인 선언은
+     호스트 스타일시트보다 우선하므로 조판이 환경에 상관없이 같아진다. */
+  var GEO={PW:794, PH:1123, MX:64, MT:76, MB:60, GUT:24};
   function newPage(){
     var pg=el('div','page');
     pg.innerHTML='<div class="run"></div><div class="pinner">'+
       '<div class="span"></div><div class="cols"><div class="col"></div>'+
       '<div class="col"></div></div></div><div class="folio"></div>';
     book.appendChild(pg);
-    var cs=pg.querySelectorAll('.col');
-    var P={el:pg, span:pg.querySelector('.span'), cols:[cs[0],cs[1]], ci:0,
-           inner:pg.querySelector('.pinner')};
+    var inner=pg.querySelector('.pinner'), cols=pg.querySelector('.cols'),
+        cs=pg.querySelectorAll('.col'),
+        colW=(GEO.PW-2*GEO.MX-GEO.GUT)/2, innerH=GEO.PH-GEO.MT-GEO.MB;
+    pg.style.cssText='position:relative;width:'+GEO.PW+'px;height:'+GEO.PH+'px;'+
+      'box-sizing:border-box;overflow:hidden;background:#fff;margin:0 0 14px;'+
+      'box-shadow:0 2px 10px rgba(0,0,0,.35);flex:none;';
+    inner.style.cssText='position:absolute;left:'+GEO.MX+'px;top:'+GEO.MT+'px;'+
+      'width:'+(GEO.PW-2*GEO.MX)+'px;height:'+innerH+'px;box-sizing:border-box;'+
+      'display:flex;flex-direction:column;';
+    cols.style.cssText='flex:1 1 auto;min-height:0;display:flex;gap:'+GEO.GUT+'px;';
+    for (var i=0;i<cs.length;i++){
+      cs[i].style.cssText='width:'+colW+'px;flex:0 0 '+colW+'px;min-width:0;'+
+        'overflow:hidden;box-sizing:border-box;';
+    }
+    var P={el:pg, span:pg.querySelector('.span'), cols:[cs[0],cs[1]], ci:0, inner:inner};
     pages.push(P); return P;
   }
   function fits(c){ return c.scrollHeight<=c.clientHeight+1; }
@@ -559,6 +577,10 @@ JS = r"""
 
   function build(){
     book.innerHTML=''; pages=[]; pending=[];
+    src.style.display='none';
+    stage.style.cssText='overflow:hidden;';
+    book.style.cssText='transform-origin:top left;width:'+GEO.PW+'px;'+
+      'display:block;margin:0;padding:0;';
     // 1) 표제면 — 제목과 초록만. 본문은 여기서 시작하지 않는다.
     var T0=newPage(); T0.el.classList.add('p-title');
     ['.titleblock','.absblock'].forEach(function(sel){
@@ -588,6 +610,22 @@ JS = r"""
     linkToc();
     fit();
     load.style.display='none';
+    // 조판 자체 점검. 넘치는 단이 있으면 지면 높이가 안 먹은 것이다.
+    var over=0;
+    pages.forEach(function(p){
+      if(!p.cols) return;
+      p.cols.forEach(function(c){
+        if (c.offsetParent!==null && c.scrollHeight>c.clientHeight+2) over++;
+      });
+    });
+    if (over || pages.length<6){
+      var m=document.createElement('div');
+      m.style.cssText='position:fixed;left:8px;bottom:8px;z-index:30;background:#7a1010;'+
+        'color:#fff;font:12px/1.4 sans-serif;padding:6px 9px;border-radius:3px;';
+      m.textContent='조판 오류: '+pages.length+'쪽, 넘치는 단 '+over+'개';
+      document.body.appendChild(m);
+      if (window.console) console.warn('[APEX] 조판 오류', {pages:pages.length, overflow:over});
+    }
     var hp=/[#&?]p=(\d+)/.exec(location.hash||'');     // #p=7 로 그 쪽을 바로 연다
     if (hp){ var pg=pages[parseInt(hp[1],10)-1];
       if (pg) window.scrollTo(0, Math.max(0, pg.el.offsetTop*scale-6)); }
@@ -615,7 +653,7 @@ JS = r"""
   }
 
   function fit(){
-    var w=stage.clientWidth;
+    var w=stage.clientWidth||document.documentElement.clientWidth||PW;
     scale=Math.min(1,(w-20)/PW);
     book.style.transform='scale('+scale+')';
     book.style.marginLeft=Math.max(0,(w-PW*scale)/2)+'px';
@@ -638,8 +676,20 @@ JS = r"""
   document.getElementById('top').addEventListener('click', function(){ goto(0); });
   document.getElementById('toctop').addEventListener('click', function(){ goto(1); });
 
-  if (document.readyState==='complete') build();
-  else window.addEventListener('load', build);
+  /* 그림이 아직 안 실린 상태에서 조판하면 높이를 0으로 재서 쪽수가 틀어진다.
+     한 번 짜고, 남은 그림이 다 실리면 한 번만 다시 짠다. */
+  function boot(){
+    build();
+    var late=[].slice.call(src.querySelectorAll('img')).filter(function(i){ return !i.complete; });
+    if (!late.length) return;
+    var left=late.length, done=function(){ if (--left<=0) build(); };
+    late.forEach(function(i){
+      i.addEventListener('load', done, {once:true});
+      i.addEventListener('error', done, {once:true});
+    });
+  }
+  if (document.readyState==='complete') boot();
+  else window.addEventListener('load', boot);
 })();
 """
 
