@@ -51,3 +51,7 @@ tmp/
 ui_screenshots/
 # Benchmark run outputs (timestamped dirs)
 benchmark/*_2026*/
+
+# 레퍼런스 원문 PDF — 저작권이 있으므로 커밋하지 않는다.
+# 어디서 받았는지는 논문작업/REFERENCE_BASE.md 에 URL 로 적어 두었다.
+validation/paper/논문작업/refs/
