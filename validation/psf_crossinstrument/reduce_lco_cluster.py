@@ -34,7 +34,14 @@ if str(_REPO) not in sys.path:
 BASE = Path(r"E:\APEX_validation\psf_crossinstrument")
 
 # 대상별 출력 파일명 접두 (APEX 는 pp_<object>-NNNN-FILT.fit 형태를 쓴다)
-PREFIX = {"m67_lco": "m67lco", "m45_wide": "m45lco", "m67_ubv": "m67ubv"}
+PREFIX = {
+    "m67_lco": "m67lco",
+    "m45_wide": "m45lco",
+    "m67_ubv": "m67ubv",
+    # 우주선 제거를 끈 대조군(--no-cr) — 파일명은 원본과 같게 두어야
+    # 검출·측광 산출물을 나란히 비교할 수 있다.
+    "m67_nocr_test": "m67lco",
+}
 
 KEEP = [
     "DATE-OBS", "EXPTIME", "FILTER", "OBJECT", "RA", "DEC", "CAT-RA", "CAT-DEC",
