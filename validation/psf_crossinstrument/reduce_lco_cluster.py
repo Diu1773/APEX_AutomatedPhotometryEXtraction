@@ -23,6 +23,14 @@ from pathlib import Path
 import numpy as np
 from astropy.io import fits
 
+# 레포 루트를 경로에 넣어 apex 패키지(우주선 제거)를 쓴다.
+# resolve() 를 쓰면 안 된다 — validation/ 은 E:\APEX_validation_output 으로의
+# 정션이라 링크를 따라가면 레포 밖(E:\)으로 나가 apex 를 못 찾는다.
+# absolute() 는 링크를 따라가지 않는다.
+_REPO = Path(__file__).absolute().parents[2]
+if str(_REPO) not in sys.path:
+    sys.path.insert(0, str(_REPO))
+
 BASE = Path(r"E:\APEX_validation\psf_crossinstrument")
 
 # 대상별 출력 파일명 접두 (APEX 는 pp_<object>-NNNN-FILT.fit 형태를 쓴다)
@@ -57,7 +65,16 @@ def _sci(path: Path):
     raise RuntimeError(f"no 2-D HDU: {path}")
 
 
-def main(key: str) -> None:
+def main(key: str, clean_cr: bool = True) -> None:
+    from apex.analysis.cosmetic import (
+        HAS_ASTROSCRAPPY,
+        clean_frame,
+        hot_pixel_mask,
+    )
+
+    if clean_cr and not HAS_ASTROSCRAPPY:
+        raise SystemExit("astroscrappy 가 없다 — --no-cr 로 끄거나 설치할 것")
+
     d = BASE / key
     raw_dir, mst_dir, ref_dir = d / "raw", d / "masters", d / "banzai_ref"
     out_dir = d / "sci"
@@ -167,7 +184,27 @@ def main(key: str) -> None:
 
         n_nan = int(np.sum(~np.isfinite(apex)))
         apex[~np.isfinite(apex)] = np.nanmedian(apex)
+
+        # 우주선·핫픽셀 제거 — APEX Step 0 과 같은 함수(astroscrappy = L.A.Cosmic,
+        # objlim 으로 실제 천체를 보호)를 쓴다. BANZAI e91 에는 이 처리가 들어
+        # 있지만 우리는 raw 에서 직접 보정하므로 여기서 해야 한다.
+        # 안 하면 CMOS 프레임의 점광원 잡음이 EPSF 참조별로 뽑혀 PSF 가 무너진다
+        # (2026-07-29 실측: M67/QHY600 은 FWHM<=1.5px 검출이 40% 였고 EPSF 가
+        # 실제 별보다 2.75배 좁게 만들어져 PSF 플럭스가 구경의 32% 로 떨어졌다.
+        # Sinistro CCD 는 0% 라 무사했다).
+        n_cr = 0
+        if clean_cr:
+            hmask = hot_pixel_mask(mdark, 6.0) if mdark is not None else None
+            apex, _cmask, n_cr = clean_frame(
+                apex,
+                gain=1.0,                       # 이 배열은 이미 전자 단위
+                readnoise=float(H.get("RDNOISE", 6.5)),
+                satlevel=float(rh.get("SATURATE", 65535.0)),
+                sigclip=4.5, objlim=5.0, hot_mask=hmask,
+            )
+
         ov_txt = f" over={over:.1f}ADU" if bs is not None else ""
+        cr_txt = f" cr={n_cr}" if clean_cr else " cr=off"
 
         counter[filt] = counter.get(filt, 0) + 1
         name = f"pp_{PREFIX[key]}-{counter[filt]:04d}-{filt}.fit"
@@ -180,7 +217,7 @@ def main(key: str) -> None:
         hdr["SATURATE"] = (float(rh.get("SATURATE", 46200.0)), "e-, from BANZAI e91")
         hdr["CALSRC"] = ("APEX-arith vs BANZAI", "calibration provenance")
         fits.PrimaryHDU(apex.astype(np.float32), hdr).writeto(out_dir / name, overwrite=True)
-        print(f"  {name}  median={np.nanmedian(apex):7.2f} e-  nan_filled={n_nan}{ov_txt}")
+        print(f"  {name}  median={np.nanmedian(apex):7.2f} e-  nan_filled={n_nan}{ov_txt}{cr_txt}")
 
     if not checked:
         raise SystemExit("e91 대조를 한 번도 못 했다 — banzai_ref 파일명 확인")
@@ -188,5 +225,7 @@ def main(key: str) -> None:
 
 
 if __name__ == "__main__":
-    for k in (sys.argv[1:] or ["m67_lco"]):
-        main(k)
+    args = [a for a in sys.argv[1:] if not a.startswith("--")]
+    clean = "--no-cr" not in sys.argv
+    for k in (args or ["m67_lco"]):
+        main(k, clean_cr=clean)

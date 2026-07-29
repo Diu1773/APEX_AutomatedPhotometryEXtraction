@@ -82,7 +82,16 @@ class CalibrationOptions:
     overscan_trim: bool = True
 
     # --- cosmetic: cosmic-ray + hot pixel (L.A.Cosmic / astroscrappy) ---
-    cosmetic_enable: bool = False         # off by default (alters pixels)
+    # On by default: standard practice in reduction pipelines (BANZAI removes
+    # ~47% of the single-pixel spikes in its own e91 products; van Dokkum 2001).
+    # Leaving it off let point-like noise dominate the ePSF reference stars on
+    # CMOS detectors, where 16-40% of detections are 1-pixel spikes — the ePSF
+    # then came out 2.75x too narrow and PSF fluxes fell to 32% of aperture
+    # (measured 2026-07-29 on M67/QHY600; a CCD frame with 0% spikes was fine).
+    # Measured cost on real stars: 94% are untouched in the core and shift only
+    # because their sky annulus got cleaner (median +0.07%, more go up than
+    # down); the 6% whose core is masked lose a median 0.44%.
+    cosmetic_enable: bool = True
     cr_sigclip: float = 4.5               # L.A.Cosmic detection sigma
     cr_objlim: float = 5.0                # contrast limit (protects real sources)
     hot_sigma: float = 6.0                # hot-pixel threshold on the master dark
