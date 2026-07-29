@@ -438,6 +438,46 @@ body.reflow #src .absblock p{font-size:.98rem;}
 body.reflow #zout,body.reflow #zin,body.reflow #zfit,
 body.reflow #zoomind,body.reflow #pgind,body.reflow #toctop{display:none;}
 
+/* ── 메모 ── */
+mark.apexnote{background:#fff2a8;color:inherit;padding:0 .05em;border-bottom:1.5px solid #d9b100;}
+mark.apexnote.flash{animation:apexflash 1.2s ease-out;}
+@keyframes apexflash{0%{background:#ffd23f}100%{background:#fff2a8}}
+#notebtn{position:absolute;z-index:40;display:none;font-family:var(--sans);font-size:12px;
+  background:#1f2329;color:#fff;border:0;border-radius:4px;padding:6px 10px;cursor:pointer;
+  box-shadow:0 2px 8px rgba(0,0,0,.35);}
+#notepanel{position:fixed;right:0;top:0;bottom:0;width:min(23rem,88vw);z-index:41;
+  background:#fbfbfc;border-left:1px solid #cfd3da;display:none;flex-direction:column;
+  font-family:var(--sans);box-shadow:-2px 0 14px rgba(0,0,0,.18);}
+#notepanel.on{display:flex;}
+#notepanel header{display:flex;align-items:center;gap:.5rem;padding:.7rem .8rem;
+  border-bottom:1px solid #e2e5ea;font-size:13px;font-weight:700;}
+#notepanel header .sp{flex:1;}
+#notepanel header button{font:inherit;font-size:11.5px;font-weight:400;padding:.3rem .55rem;
+  border:1px solid #c4c8ce;background:#fff;border-radius:3px;cursor:pointer;}
+#notelist{flex:1;overflow-y:auto;padding:.5rem .6rem 2rem;}
+.noteitem{border:1px solid #e2e5ea;border-radius:4px;padding:.55rem .6rem;margin:0 0 .5rem;
+  background:#fff;font-size:12.5px;line-height:1.5;}
+.noteitem .when{font-size:10.5px;color:#7b828c;}
+.noteitem .quote{margin:.3rem 0;padding-left:.5rem;border-left:3px solid #ffd23f;color:#333;
+  font-size:11.5px;max-height:4.4em;overflow:hidden;}
+.noteitem .body{white-space:pre-wrap;color:#111;}
+.noteitem .row{display:flex;gap:.35rem;margin-top:.45rem;}
+.noteitem .row button{font:inherit;font-size:11px;padding:.22rem .5rem;border:1px solid #c4c8ce;
+  background:#fff;border-radius:3px;cursor:pointer;}
+.noteitem .row .del{color:#7a1010;}
+#noteempty{color:#7b828c;font-size:12px;padding:1rem .3rem;line-height:1.6;}
+#noteexport{position:fixed;inset:0;z-index:42;background:rgba(20,22,26,.55);display:none;
+  align-items:center;justify-content:center;padding:1rem;}
+#noteexport.on{display:flex;}
+#noteexport .box{background:#fff;border-radius:6px;width:min(46rem,96vw);max-height:86vh;
+  display:flex;flex-direction:column;padding:.9rem;}
+#noteexport textarea{flex:1;min-height:44vh;font:12px/1.5 "Courier New",monospace;
+  border:1px solid #cfd3da;border-radius:4px;padding:.6rem;resize:none;}
+#noteexport .row{display:flex;gap:.4rem;justify-content:flex-end;margin-top:.6rem;}
+#noteexport button{font:inherit;font-size:12px;padding:.4rem .8rem;border:1px solid #c4c8ce;
+  background:#fff;border-radius:3px;cursor:pointer;}
+@media print{ #notebtn,#notepanel,#noteexport{display:none!important;} mark.apexnote{background:none;} }
+
 /* ── 뷰어 크롬 ── */
 #hud{position:fixed;right:12px;bottom:12px;z-index:20;display:flex;gap:6px;
   align-items:center;background:rgba(28,30,34,.9);color:#eceef1;border-radius:4px;
@@ -667,6 +707,7 @@ JS = r"""
     fit();
     load.style.display='none';
     applyInitialReflow();   // 조판이 끝난 뒤에 적용한다
+    renderNotes(); markAll();
     // 조판 자체 점검. 넘치는 단이 있으면 지면 높이가 안 먹은 것이다.
     var over=0;
     pages.forEach(function(p){
@@ -758,6 +799,7 @@ JS = r"""
     if (rb) rb.textContent = on ? '판면' : '읽기';
     try { localStorage.setItem('apexPaperReflow', on ? '1' : '0'); } catch(e){}
     if (!on) fit();
+    markAll();
   }
   if (rb) rb.addEventListener('click', function(){
     setReflow(!document.body.classList.contains('reflow'));
@@ -775,6 +817,163 @@ JS = r"""
   } catch(e){}
   document.getElementById('top').addEventListener('click', function(){ goto(0); });
   document.getElementById('toctop').addEventListener('click', function(){ goto(1); });
+
+
+  /* ══ 메모 ══════════════════════════════════════════════════════════
+     인용문 문자열로 위치를 잡는다. DOM 경로로 잡으면 조판이 다시 될 때마다
+     끊어진다. 원고가 바뀌어 인용문을 못 찾으면 표시만 못 하고 메모는 남는다. */
+  var NKEY='apexPaperNotes';
+  function nLoad(){ try{ return JSON.parse(localStorage.getItem(NKEY)||'[]'); }catch(e){ return []; } }
+  function nSave(v){ try{ localStorage.setItem(NKEY, JSON.stringify(v)); }catch(e){} }
+  var notes=nLoad();
+
+  var nbtn=document.getElementById('notebtn'),
+      npanel=document.getElementById('notepanel'),
+      nlist=document.getElementById('notelist'),
+      nempty=document.getElementById('noteempty'),
+      nexp=document.getElementById('noteexport'),
+      nta=document.getElementById('noteta'),
+      ncount=document.getElementById('notecount');
+  var pendingQuote='';
+
+  function fmtTime(ts){
+    var d=new Date(ts);
+    function p(n){ return (n<10?'0':'')+n; }
+    return d.getFullYear()+'-'+p(d.getMonth()+1)+'-'+p(d.getDate())+' '+p(d.getHours())+':'+p(d.getMinutes());
+  }
+  function activeRoot(){
+    return document.body.classList.contains('reflow') ? src : book;
+  }
+
+  /* 선택이 생기면 그 자리에 단추를 띄운다 */
+  document.addEventListener('mouseup', function(){
+    setTimeout(function(){
+      var sel=window.getSelection();
+      if (!sel || sel.isCollapsed){ nbtn.style.display='none'; return; }
+      var t=sel.toString().trim();
+      if (t.length<2){ nbtn.style.display='none'; return; }
+      var root=activeRoot();
+      if (!root.contains(sel.anchorNode)){ nbtn.style.display='none'; return; }
+      var r=sel.getRangeAt(0).getBoundingClientRect();
+      pendingQuote=t.replace(/\s+/g,' ').slice(0,300);
+      nbtn.style.display='block';
+      nbtn.style.left=Math.max(8, r.left+window.scrollX)+'px';
+      nbtn.style.top=(r.bottom+window.scrollY+6)+'px';
+    }, 10);
+  });
+  document.addEventListener('scroll', function(){ nbtn.style.display='none'; }, {passive:true});
+
+  nbtn.addEventListener('click', function(){
+    var body=prompt('메모를 입력하세요\n\n인용: ' + pendingQuote.slice(0,80) + (pendingQuote.length>80?'…':''), '');
+    nbtn.style.display='none';
+    if (body===null) return;
+    notes.push({ id:Date.now()+'-'+Math.random().toString(36).slice(2,7),
+                 quote:pendingQuote, body:body.trim(), at:Date.now() });
+    nSave(notes); renderNotes(); markAll();
+    if (!npanel.classList.contains('on')) togglePanel(true);
+  });
+
+  /* 인용문을 본문에서 찾아 표시한다 */
+  function clearMarks(){
+    [].slice.call(document.querySelectorAll('mark.apexnote')).forEach(function(m){
+      var p=m.parentNode; while(m.firstChild) p.insertBefore(m.firstChild,m);
+      p.removeChild(m); p.normalize();
+    });
+  }
+  /* 인용문을 한 텍스트 노드 안에서 찾아 표시한다.
+     노드를 가로지르는 계산은 조판·표시가 노드를 쪼개면서 어긋난다
+     (2026-07-30: 범위는 맞는데 빈 mark 가 생겼다). 한 노드 안에서만 찾고,
+     못 찾으면 표시만 건너뛴다. 메모와 인용문은 그대로 남는다. */
+  function markAll(){
+    clearMarks();
+    var root=activeRoot();
+    notes.forEach(function(n){
+      var q=(n.quote||'').replace(/\s+/g,' ').trim();
+      if (q.length<2) return;
+      var w=document.createTreeWalker(root, NodeFilter.SHOW_TEXT, null), node;
+      while ((node=w.nextNode())){
+        if (node.parentNode && node.parentNode.closest && node.parentNode.closest('mark.apexnote')) continue;
+        var j=node.nodeValue.indexOf(q);
+        if (j<0) continue;
+        try {
+          var rg=document.createRange();
+          rg.setStart(node, j); rg.setEnd(node, j+q.length);
+          var m=document.createElement('mark');
+          m.className='apexnote'; m.dataset.nid=n.id; m.title=n.body||'(메모 없음)';
+          rg.surroundContents(m);
+        } catch(e){}
+        break;
+      }
+    });
+  }
+
+  function renderNotes(){
+    ncount.textContent=notes.length ? '메모 '+notes.length : '메모';
+    nlist.innerHTML='';
+    nempty.style.display = notes.length ? 'none' : 'block';
+    notes.slice().sort(function(a,b){ return b.at-a.at; }).forEach(function(n){
+      var d=document.createElement('div'); d.className='noteitem';
+      var w=document.createElement('div'); w.className='when'; w.textContent=fmtTime(n.at);
+      var q=document.createElement('div'); q.className='quote'; q.textContent=n.quote;
+      var b=document.createElement('div'); b.className='body'; b.textContent=n.body||'(메모 없음)';
+      var row=document.createElement('div'); row.className='row';
+      var go=document.createElement('button'); go.textContent='이동';
+      go.addEventListener('click', function(){ jumpTo(n); });
+      var ed=document.createElement('button'); ed.textContent='수정';
+      ed.addEventListener('click', function(){
+        var v=prompt('메모 수정', n.body||''); if (v===null) return;
+        n.body=v.trim(); nSave(notes); renderNotes(); markAll();
+      });
+      var del=document.createElement('button'); del.className='del'; del.textContent='삭제';
+      del.addEventListener('click', function(){
+        notes=notes.filter(function(x){ return x.id!==n.id; });
+        nSave(notes); renderNotes(); markAll();
+      });
+      row.appendChild(go); row.appendChild(ed); row.appendChild(del);
+      d.appendChild(w); d.appendChild(q); d.appendChild(b); d.appendChild(row);
+      nlist.appendChild(d);
+    });
+  }
+  function jumpTo(n){
+    var m=document.querySelector('mark.apexnote[data-nid="'+n.id+'"]');
+    if (!m){ alert('본문에서 이 부분을 찾지 못했습니다. 원고가 수정되었을 수 있습니다.'); return; }
+    m.scrollIntoView({block:'center', behavior:'smooth'});
+    m.classList.remove('flash'); void m.offsetWidth; m.classList.add('flash');
+  }
+  function togglePanel(on){
+    npanel.classList.toggle('on', on===undefined ? !npanel.classList.contains('on') : on);
+  }
+
+  function exportText(){
+    if (!notes.length) return '메모가 없습니다.';
+    var out=['# 원고 메모 ('+notes.length+'건, '+fmtTime(Date.now())+' 내보냄)',''];
+    notes.slice().sort(function(a,b){ return a.at-b.at; }).forEach(function(n,i){
+      out.push('## '+(i+1)+'. '+fmtTime(n.at));
+      out.push('> '+n.quote);
+      out.push('');
+      out.push(n.body||'(메모 없음)');
+      out.push('');
+    });
+    return out.join('\n');
+  }
+  document.getElementById('nexport').addEventListener('click', function(){
+    nta.value=exportText(); nexp.classList.add('on'); nta.focus(); nta.select();
+  });
+  document.getElementById('ncopy').addEventListener('click', function(){
+    nta.select();
+    try { document.execCommand('copy'); } catch(e){}
+    if (navigator.clipboard) { navigator.clipboard.writeText(nta.value).catch(function(){}); }
+    document.getElementById('ncopy').textContent='복사됨';
+    setTimeout(function(){ document.getElementById('ncopy').textContent='복사'; }, 1400);
+  });
+  document.getElementById('nclose').addEventListener('click', function(){ nexp.classList.remove('on'); });
+  document.getElementById('nclear').addEventListener('click', function(){
+    if (!notes.length) return;
+    if (!confirm('메모 '+notes.length+'건을 모두 지웁니다. 되돌릴 수 없습니다.')) return;
+    notes=[]; nSave(notes); renderNotes(); markAll();
+  });
+  document.getElementById('npanelclose').addEventListener('click', function(){ togglePanel(false); });
+  document.getElementById('nopen').addEventListener('click', function(){ togglePanel(); });
 
   /* 그림이 아직 안 실린 상태에서 조판하면 높이를 0으로 재서 쪽수가 틀어진다.
      한 번 짜고, 남은 그림이 다 실리면 한 번만 다시 짠다. */
@@ -801,6 +1000,25 @@ HTML = f"""<meta charset="utf-8">
 {BODY}
 </div>
 <div id="stage"><div id="sizer"><div id="book"></div></div></div>
+<button id="notebtn" type="button">메모</button>
+<aside id="notepanel">
+  <header><span id="notecount">메모</span><span class="sp"></span>
+    <button id="nexport" type="button">내보내기</button>
+    <button id="nclear" type="button">전체 삭제</button>
+    <button id="npanelclose" type="button">닫기</button>
+  </header>
+  <div id="notelist"></div>
+  <div id="noteempty">본문에서 문장을 드래그하면 「메모」 단추가 뜹니다.<br><br>
+    메모는 이 브라우저에 저장되며, 원고를 다시 올려도 남습니다.<br>
+    다 적은 뒤 <b>내보내기</b>로 복사해 대화에 붙여 주세요.</div>
+</aside>
+<div id="noteexport"><div class="box">
+  <textarea id="noteta" readonly></textarea>
+  <div class="row">
+    <button id="ncopy" type="button">복사</button>
+    <button id="nclose" type="button">닫기</button>
+  </div>
+</div></div>
 <div id="loading">판면을 조판하는 중…</div>
 <div id="hud">
   <button id="top" type="button">처음</button>
@@ -811,6 +1029,7 @@ HTML = f"""<meta charset="utf-8">
   <button id="zin" type="button" title="확대">+</button>
   <button id="zfit" type="button" title="폭 맞춤">맞춤</button>
   <button id="rflow" type="button" title="좁은 화면에서 읽기">읽기</button>
+  <button id="nopen" type="button" title="메모">메모</button>
 </div>
 <script>{JS}</script>"""
 
