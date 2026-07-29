@@ -332,6 +332,7 @@ body{font-family:var(--serif);font-size:12.2px;line-height:1.36;color:var(--ink)
 /* ── 지면 ── */
 #src{display:none;}
 #stage{overflow:hidden;}
+#sizer{position:relative;}
 #book{transform-origin:top left;width:var(--pw);}
 .page{position:relative;width:var(--pw);height:var(--ph);background:#fff;
   margin:0 0 14px;box-shadow:0 2px 10px rgba(0,0,0,.35);overflow:hidden;}
@@ -414,6 +415,29 @@ thead th{border-top:1.1px solid #111;border-bottom:.7px solid #111;text-align:le
 tbody td{padding:2.2px 4px;vertical-align:top;}
 tbody tr:last-child td{border-bottom:1.1px solid #111;}
 
+/* ── 읽기 모드 — A4 2단은 좁은 화면에서 못 읽는다(375px 폰에서 실효 5.5px).
+   판면을 접고 한 단으로 흘려 읽는다. PDF 뷰어의 reflow 에 해당한다. ── */
+body.reflow #stage{display:none;}
+body.reflow #src{display:block;max-width:40rem;margin:0 auto;background:#fff;
+  padding:1.4rem 1.15rem 5rem;font-size:16px;line-height:1.78;}
+body.reflow #src .tocblock{display:none;}
+body.reflow #src p{text-align:left;text-indent:0;margin:0 0 .95rem;word-break:keep-all;}
+body.reflow #src h2{font-size:1.5rem;line-height:1.3;margin:1.8rem 0 .6rem;}
+body.reflow #src h3{font-size:1.16rem;margin:1.4rem 0 .4rem;}
+body.reflow #src h4{font-size:1.02rem;margin:1.1rem 0 .3rem;}
+body.reflow #src figure{margin:1.4rem 0;}
+body.reflow #src figure img{max-height:none;width:100%;}
+body.reflow #src figcaption{font-size:.86rem;line-height:1.5;}
+body.reflow #src table{font-size:.84rem;}
+body.reflow #src .tw{overflow-x:auto;}
+body.reflow #src .titleblock .ptitle{font-size:1.6rem;}
+body.reflow #src .absblock{margin:0 0 1.2rem;}
+body.reflow #src .jrnl{display:block;margin-bottom:1.4rem;}
+body.reflow #src .jr{display:inline-block;margin-top:.45rem;font-size:13px;}
+body.reflow #src .absblock p{font-size:.98rem;}
+body.reflow #zout,body.reflow #zin,body.reflow #zfit,
+body.reflow #zoomind,body.reflow #pgind,body.reflow #toctop{display:none;}
+
 /* ── 뷰어 크롬 ── */
 #hud{position:fixed;right:12px;bottom:12px;z-index:20;display:flex;gap:6px;
   align-items:center;background:rgba(28,30,34,.9);color:#eceef1;border-radius:4px;
@@ -422,6 +446,7 @@ tbody tr:last-child td{border-bottom:1.1px solid #111;}
   padding:4px 8px;cursor:pointer;}
 #hud button:hover{background:#4b505a;}
 #pgind{font-variant-numeric:tabular-nums;min-width:4.6em;text-align:center;}
+#zoomind{font-variant-numeric:tabular-nums;min-width:3.2em;text-align:center;font-size:11px;color:#c9ced6;}
 #loading{position:fixed;inset:0;display:flex;align-items:center;justify-content:center;
   background:#8f9298;color:#f0f1f3;font-family:var(--sans);font-size:13px;z-index:30;}
 
@@ -430,6 +455,7 @@ tbody tr:last-child td{border-bottom:1.1px solid #111;}
   html,body{background:#fff;}
   #hud,#loading{display:none!important;}
   #stage{overflow:visible;height:auto!important;}
+  #sizer{width:auto!important;height:auto!important;margin:0!important;}
   #book{transform:none!important;margin:0!important;}
   .page{box-shadow:none;margin:0;page-break-after:always;}
 }
@@ -440,7 +466,8 @@ JS = r"""
   var PW=794;
   var src=document.getElementById('src'), book=document.getElementById('book'),
       stage=document.getElementById('stage'), load=document.getElementById('loading'),
-      ind=document.getElementById('pgind');
+      ind=document.getElementById('pgind'), sizer=document.getElementById('sizer'),
+      zind=document.getElementById('zoomind');
   var pages=[], pending=[], scale=1;
 
   function el(t,c){ var e=document.createElement(t); if(c) e.className=c; return e; }
@@ -639,6 +666,7 @@ JS = r"""
     linkToc();
     fit();
     load.style.display='none';
+    applyInitialReflow();   // 조판이 끝난 뒤에 적용한다
     // 조판 자체 점검. 넘치는 단이 있으면 지면 높이가 안 먹은 것이다.
     var over=0;
     pages.forEach(function(p){
@@ -681,12 +709,29 @@ JS = r"""
       var m=/그림\s*(\d+)/.exec(li.textContent); mark(li, m?where['f'+m[1]]:undefined); });
   }
 
+  /* 확대율. 1 = 폭 맞춤. A4 를 좁은 화면에 맞추면 본문 12.2px 가 실효 6px 까지
+     줄어 읽을 수 없다. PDF 뷰어처럼 사용자가 키울 수 있게 한다.
+     transform 은 레이아웃에 영향을 주지 않으므로, 실제 크기를 갖는 #sizer 로
+     스크롤 영역을 만들고 그 안에서 #book 을 시각적으로만 확대한다. */
+  var zoom=1;
+  function setZoom(z){
+    zoom=Math.max(0.5, Math.min(3, z));
+    fit();
+    try { localStorage.setItem('apexPaperZoom', String(zoom)); } catch(e){}
+  }
   function fit(){
+    if (document.body.classList.contains('reflow')) return;
     var w=stage.clientWidth||document.documentElement.clientWidth||PW;
-    scale=Math.min(1,(w-20)/PW);
+    var base=Math.min(1,(w-20)/PW);
+    scale=base*zoom;
+    var cw=Math.ceil(PW*scale), ch=Math.ceil(book.scrollHeight*scale);
+    sizer.style.width=cw+'px';
+    sizer.style.height=ch+'px';
+    sizer.style.margin='0 auto';
     book.style.transform='scale('+scale+')';
-    book.style.marginLeft=Math.max(0,(w-PW*scale)/2)+'px';
-    stage.style.height=Math.ceil(book.scrollHeight*scale)+'px';
+    stage.style.overflowX = cw>w ? 'auto' : 'hidden';
+    stage.style.height=(ch+2)+'px';
+    if (zind) zind.textContent=Math.round(scale*100)+'%';
     onScroll();
   }
   function goto(i){
@@ -702,6 +747,32 @@ JS = r"""
   window.addEventListener('scroll', onScroll, {passive:true});
   var t=null;
   window.addEventListener('resize', function(){ clearTimeout(t); t=setTimeout(fit,150); });
+  function on(id, fn){ var e=document.getElementById(id); if (e) e.addEventListener('click', fn); }
+  on('zin',  function(){ setZoom(zoom*1.25); });
+  on('zout', function(){ setZoom(zoom/1.25); });
+  on('zfit', function(){ setZoom(1); });
+  var rb=document.getElementById('rflow');
+  function setReflow(on){
+    document.body.classList.toggle('reflow', on);
+    src.style.display = on ? 'block' : 'none';   // build() 가 건 인라인을 덮는다
+    if (rb) rb.textContent = on ? '판면' : '읽기';
+    try { localStorage.setItem('apexPaperReflow', on ? '1' : '0'); } catch(e){}
+    if (!on) fit();
+  }
+  if (rb) rb.addEventListener('click', function(){
+    setReflow(!document.body.classList.contains('reflow'));
+  });
+  // 좁은 화면은 읽기 모드로 시작한다. 사용자가 고른 값이 있으면 그것을 따른다.
+  // 적용은 조판이 끝난 뒤에 한다(applyInitialReflow).
+  function applyInitialReflow(){
+    var saved = null;
+    try { saved = localStorage.getItem('apexPaperReflow'); } catch(e){}
+    setReflow(saved === null ? (window.innerWidth < 640) : saved === '1');
+  }
+  try {
+    var z=parseFloat(localStorage.getItem('apexPaperZoom'));
+    if (z && z>0.4 && z<3.2) zoom=z;
+  } catch(e){}
   document.getElementById('top').addEventListener('click', function(){ goto(0); });
   document.getElementById('toctop').addEventListener('click', function(){ goto(1); });
 
@@ -729,12 +800,17 @@ HTML = f"""<meta charset="utf-8">
 <div id="src">
 {BODY}
 </div>
-<div id="stage"><div id="book"></div></div>
+<div id="stage"><div id="sizer"><div id="book"></div></div></div>
 <div id="loading">판면을 조판하는 중…</div>
 <div id="hud">
   <button id="top" type="button">처음</button>
   <button id="toctop" type="button">차례</button>
   <span id="pgind">– / –</span>
+  <button id="zout" type="button" title="축소">&minus;</button>
+  <span id="zoomind">100%</span>
+  <button id="zin" type="button" title="확대">+</button>
+  <button id="zfit" type="button" title="폭 맞춤">맞춤</button>
+  <button id="rflow" type="button" title="좁은 화면에서 읽기">읽기</button>
 </div>
 <script>{JS}</script>"""
 
