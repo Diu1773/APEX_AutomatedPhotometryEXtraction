@@ -22,21 +22,34 @@
 
 ## 지금
 
-- 마지막 커밋: `9d615be` 2026-07-28 — fix(refbuild): 이웃 계산에서 1프레임 검출 제외 (D-004)
-- 미푸쉬 0 · 미커밋 0 · 오라클 **620 passed / 4분 41초** (2026-07-28)
+- 마지막 커밋: `15787a9` 2026-07-29 — fix(headless): wcs engine 선택·타깃좌표 유도 + EPSF 품질 영속화
+- 오라클 **620 passed / 14분 44초** (2026-07-29 — QHY 파이프라인 병행이라 평소보다 느림)
 - 하네스: `AGENTS.md` 에 세션 시작 동기화 + 종료 프로토콜. Stop hook 이 이 파일 갱신을 검사
 
-**2026-07-28 오전에 끝난 것** (research-os 세션에서 수행, 이후 APEX 세션으로 인계)
+**2026-07-29 PSF 완성 세션에서 끝난 것**
 
-- `n_det_frames` 실측 2개 성단 완료 → 아래 「측정 완료」. D-003·D-004 둘 다 종결
-- `crowding_flag` 오염 수정 — `refbuild.py` 에 `neighbor_distances()` 분리,
-  회귀 검사 6건(`tests/test_refbuild_neighbor_trust.py`). 오라클 614 → 620
-- 논문 fig 후보 3종 생성 (경로는 `TRACK_PAPER.md` 「사용자 의견」)
+- **PSF 헤드리스 완주 실증** — reprocess M13 혼잡장 **15/15 + signature** (8분17초,
+  단일워커 환산 ~60초/프레임, M13급 1,400소스). PSF vs 구경: 13/15 프레임
+  Δ=−0.075±0.008 · MAD 0.038 mag. 튀는 2프레임은 그 자리에서 분해 —
+  `0002-R` 추적불량 이중피크(워커 자체 경고 = PSF QC 정상작동),
+  `0004-R` **구경 apcorr 단독 이상**(1.73 vs 1.46, 같은 별 −0.22 mag; PSF 는 안정) → 칩 발행
+- **LCO 교차기기 PSF 완주** — Sinistro CCD 4앰프(NGC5985 rp 120s) + QHY600 CMOS(Proxima
+  V 20s), steps 1-7 → step 8 전 과정. `E:\APEX_validation\psf_crossinstrument\REPORT.md`
+  + fig 2장. MAD 0.027 / 0.039 mag. **§3.12 "카메라 한 대" 한계 해소 재료.**
+  Sinistro 에서 형태 컷(모라비안 튜닝)이 후보 1개로 붕괴 → 완화 로직이 59개 복구(안전망 실증)
+- 위 테스트가 드러낸 **헤드리스 공백 3건 수정** (`15787a9`): ① `[wcs] engine` 키 신설
+  (ASTAP 이 헤드리스에서 도달 불가였음) ② `run_wcs_solve` target_coord 를 config 에서 유도
+  ③ EPSF 품질 경고(이중피크·비대칭)를 `residual_meta.epsf_reference.quality_*` 로 영속화
+- **GUI 코드 감사** — 파라미터 저장·로드 왕복 16/16 무손실(실측), 캐시 시그니처에 psf 60키
+  완비, QThread+워커패널+ETA+Stop 정상. `parameters_cmd.py` 77-374 죽은 리터럴 맵 → 칩
 
 **진행 중 / 열린 것**
 
-- 프레임별 예측 검출한계 QC 게이트는 완성됨. 원고 반영은 `TRACK_PAPER.md` 소관
-- 열린 결정 없음 (「사용자 판단 필요」 비어 있음)
+- **GUI 실구동 사용감**(속도·파라미터 조작감) — 화면 제어 승인 대기
+- **광시야 모노 축** — 로컬에 없음 확정(DSY=동일 C3-61000+3947mm, M45 npy 는 출처불명 폐기).
+  ZTF 공개 프레임(0.86°, 1"/px, ~38MB/장) 다운로드 승인 대기
+- PSF `flux_scale_correction`(구경 앵커) 기본 off — 프레임별 정규화 오프셋(+0.05~+0.16)을
+  흡수할지 검토 후보 (CMD 는 프레임 ZP 가 흡수하므로 필수는 아님)
 
 ## 사용자 의견
 
@@ -60,7 +73,9 @@
 2. **4000프레임 재검출** — 원본 계수(`n_raw_detections`)가 이제 기록되므로
    재실행하면 실제 숫자가 남는다. `TRACK_PAPER.md` §3 의 사례 수를 채운다.
    ⚠️ 시작 전 `[parallel]`·`[wcs]` 의 `max_workers` 를 확인할 것 — 1 이면 안 끝난다(함정).
-3. `source_quality.py:115` All-NaN slice 경고 처리 — roundness 계산에서 발생 (테스트 4건)
+3. **PSF 다중프레임 반복성** — LCO 는 카메라당 1장뿐. `reprocess/M67`(step7 30장, 산개)에
+   step8 을 완주시키면 프레임간 안정성 축이 채워진다 (M13 혼잡장 15장은 완료).
+   그다음: `source_quality.py:115` All-NaN slice 경고 (테스트 4건)
 
 ## 측정 완료 — `n_det_frames` 분포 · 두 성단 (2026-07-28)
 
@@ -197,6 +212,9 @@
   (이번 실측: 검출 50초 + 병합 4초).
 ## 함정
 
+- **로컬 astrometry.net 인덱스는 남천을 안 덮는다** (2mass-04 시리즈 48청크 중 31개).
+  남천 대상(예: dec −62° Proxima 필드)은 blind 가 영원히 안 풀린다 — `[wcs] engine = "astap"`
+  으로 지정할 것 (D50 은 전천 1,476파일). QHY600 교차기기 검증 때 발견 (2026-07-29).
 - **`validation/` 은 커밋하지 않는다.** 20,088 MB / 10,990 파일. `.gitignore`에 있음.
   논문 자산(`validation/paper/figures`, `captions`, `논문작업`, `fig*.py`)만 추적한다.
 - **실행은 `run.bat` 또는 `.venv-deploy\Scripts\python`.** 시스템 python 아님.
