@@ -476,7 +476,24 @@ mark.apexnote.flash{animation:apexflash 1.2s ease-out;}
 #noteexport .row{display:flex;gap:.4rem;justify-content:flex-end;margin-top:.6rem;}
 #noteexport button{font:inherit;font-size:12px;padding:.4rem .8rem;border:1px solid #c4c8ce;
   background:#fff;border-radius:3px;cursor:pointer;}
-@media print{ #notebtn,#notepanel,#noteexport{display:none!important;} mark.apexnote{background:none;} }
+
+#notecompose,#notepop{position:absolute;z-index:44;background:#fff;border:1px solid #c8ccd3;
+  border-radius:6px;box-shadow:0 6px 22px rgba(0,0,0,.22);padding:.6rem;display:none;
+  width:min(20rem,86vw);font-family:var(--sans);}
+#notecompose.on,#notepop.on{display:block;}
+#notecompose .q,#notepop .q{font-size:11px;color:#6b7078;border-left:3px solid #ffd23f;
+  padding-left:.45rem;margin:0 0 .45rem;max-height:3.2em;overflow:hidden;line-height:1.45;}
+#notecompose textarea{width:100%;box-sizing:border-box;min-height:5.2em;font:13px/1.55 inherit;
+  border:1px solid #cfd3da;border-radius:4px;padding:.45rem;resize:vertical;}
+#notecompose .row,#notepop .row{display:flex;gap:.35rem;justify-content:flex-end;margin-top:.45rem;}
+#notecompose button,#notepop button{font:inherit;font-size:12px;padding:.32rem .7rem;
+  border:1px solid #c4c8ce;background:#fff;border-radius:3px;cursor:pointer;}
+#notecompose .save{background:#1f2329;color:#fff;border-color:#1f2329;}
+#notepop .body{font-size:12.5px;line-height:1.55;white-space:pre-wrap;margin:0 0 .2rem;}
+#notepop .when{font-size:10.5px;color:#7b828c;margin-bottom:.35rem;}
+#notepop .del{color:#7a1010;}
+mark.apexnote{cursor:pointer;}
+@media print{ #notebtn,#notepanel,#noteexport,#notecompose,#notepop{display:none!important;} mark.apexnote{background:none;} }
 
 /* ── 뷰어 크롬 ── */
 #hud{position:fixed;right:12px;bottom:12px;z-index:20;display:flex;gap:6px;
@@ -863,14 +880,82 @@ JS = r"""
   });
   document.addEventListener('scroll', function(){ nbtn.style.display='none'; }, {passive:true});
 
+  /* 샌드박스 iframe 에서는 prompt/alert/confirm 이 막힌다. 전부 인라인 UI 로 한다. */
+  var ncomp=document.getElementById('notecompose'),
+      ncta=ncomp.querySelector('textarea'),
+      ncq=ncomp.querySelector('.q'),
+      npop=document.getElementById('notepop');
+  var editingId=null;
+
+  function place(el, x, y){
+    el.classList.add('on');
+    var w=el.offsetWidth, vw=document.documentElement.clientWidth;
+    el.style.left=Math.max(8, Math.min(x, vw-w-8))+'px';
+    el.style.top=(y+8)+'px';
+  }
+  function openCompose(quote, x, y, existing){
+    npop.classList.remove('on');
+    editingId = existing ? existing.id : null;
+    ncq.textContent = quote;
+    ncta.value = existing ? (existing.body||'') : '';
+    place(ncomp, x, y);
+    ncta.focus();
+  }
+  function closeCompose(){ ncomp.classList.remove('on'); editingId=null; }
+
   nbtn.addEventListener('click', function(){
-    var body=prompt('메모를 입력하세요\n\n인용: ' + pendingQuote.slice(0,80) + (pendingQuote.length>80?'…':''), '');
+    var r=nbtn.getBoundingClientRect();
     nbtn.style.display='none';
-    if (body===null) return;
-    notes.push({ id:Date.now()+'-'+Math.random().toString(36).slice(2,7),
-                 quote:pendingQuote, body:body.trim(), at:Date.now() });
-    nSave(notes); renderNotes(); markAll();
-    if (!npanel.classList.contains('on')) togglePanel(true);
+    openCompose(pendingQuote, r.left+window.scrollX, r.bottom+window.scrollY);
+  });
+  ncomp.querySelector('.cancel').addEventListener('click', closeCompose);
+  ncomp.querySelector('.save').addEventListener('click', saveCompose);
+  ncta.addEventListener('keydown', function(e){
+    if ((e.ctrlKey||e.metaKey) && e.key==='Enter'){ saveCompose(); }
+    if (e.key==='Escape'){ closeCompose(); }
+  });
+  function saveCompose(){
+    var body=ncta.value.trim();
+    if (editingId){
+      notes.forEach(function(n){ if (n.id===editingId) n.body=body; });
+    } else {
+      if (!body && !ncq.textContent) { closeCompose(); return; }
+      notes.push({ id:Date.now()+'-'+Math.random().toString(36).slice(2,7),
+                   quote:ncq.textContent, body:body, at:Date.now() });
+    }
+    nSave(notes); closeCompose(); renderNotes(); markAll();
+    togglePanel(true);
+  }
+
+  /* 형광펜을 누르면 말풍선 */
+  document.addEventListener('click', function(e){
+    var m=e.target.closest && e.target.closest('mark.apexnote');
+    if (!m){
+      if (!e.target.closest || !e.target.closest('#notepop')) npop.classList.remove('on');
+      if (e.target.closest && !e.target.closest('#notecompose') && e.target!==nbtn) {
+        /* 작성 중이면 유지 */
+      }
+      return;
+    }
+    var n=notes.filter(function(x){ return x.id===m.dataset.nid; })[0];
+    if (!n) return;
+    npop.querySelector('.when').textContent=fmtTime(n.at);
+    npop.querySelector('.q').textContent=n.quote;
+    npop.querySelector('.body').textContent=n.body||'(메모 없음)';
+    npop.dataset.nid=n.id;
+    var r=m.getBoundingClientRect();
+    place(npop, r.left+window.scrollX, r.bottom+window.scrollY);
+  });
+  npop.querySelector('.close').addEventListener('click', function(){ npop.classList.remove('on'); });
+  npop.querySelector('.edit').addEventListener('click', function(){
+    var n=notes.filter(function(x){ return x.id===npop.dataset.nid; })[0];
+    if (!n) return;
+    var r=npop.getBoundingClientRect();
+    openCompose(n.quote, r.left+window.scrollX, r.top+window.scrollY, n);
+  });
+  npop.querySelector('.del').addEventListener('click', function(){
+    notes=notes.filter(function(x){ return x.id!==npop.dataset.nid; });
+    nSave(notes); npop.classList.remove('on'); renderNotes(); markAll();
   });
 
   /* 인용문을 본문에서 찾아 표시한다 */
@@ -921,8 +1006,8 @@ JS = r"""
       go.addEventListener('click', function(){ jumpTo(n); });
       var ed=document.createElement('button'); ed.textContent='수정';
       ed.addEventListener('click', function(){
-        var v=prompt('메모 수정', n.body||''); if (v===null) return;
-        n.body=v.trim(); nSave(notes); renderNotes(); markAll();
+        var r=ed.getBoundingClientRect();
+        openCompose(n.quote, Math.max(8, r.left+window.scrollX-260), r.bottom+window.scrollY, n);
       });
       var del=document.createElement('button'); del.className='del'; del.textContent='삭제';
       del.addEventListener('click', function(){
@@ -936,7 +1021,9 @@ JS = r"""
   }
   function jumpTo(n){
     var m=document.querySelector('mark.apexnote[data-nid="'+n.id+'"]');
-    if (!m){ alert('본문에서 이 부분을 찾지 못했습니다. 원고가 수정되었을 수 있습니다.'); return; }
+    if (!m){ nempty.style.display='block';
+      nempty.textContent='본문에서 이 부분을 찾지 못했습니다. 원고가 수정되었을 수 있습니다.';
+      return; }
     m.scrollIntoView({block:'center', behavior:'smooth'});
     m.classList.remove('flash'); void m.offsetWidth; m.classList.add('flash');
   }
@@ -967,9 +1054,15 @@ JS = r"""
     setTimeout(function(){ document.getElementById('ncopy').textContent='복사'; }, 1400);
   });
   document.getElementById('nclose').addEventListener('click', function(){ nexp.classList.remove('on'); });
-  document.getElementById('nclear').addEventListener('click', function(){
+  var clearArm=false, clearBtn=document.getElementById('nclear');
+  clearBtn.addEventListener('click', function(){
     if (!notes.length) return;
-    if (!confirm('메모 '+notes.length+'건을 모두 지웁니다. 되돌릴 수 없습니다.')) return;
+    if (!clearArm){                      // confirm 이 막히므로 두 번 눌러 확인한다
+      clearArm=true; clearBtn.textContent='한 번 더';
+      setTimeout(function(){ clearArm=false; clearBtn.textContent='전체 삭제'; }, 3000);
+      return;
+    }
+    clearArm=false; clearBtn.textContent='전체 삭제';
     notes=[]; nSave(notes); renderNotes(); markAll();
   });
   document.getElementById('npanelclose').addEventListener('click', function(){ togglePanel(false); });
@@ -1001,6 +1094,21 @@ HTML = f"""<meta charset="utf-8">
 </div>
 <div id="stage"><div id="sizer"><div id="book"></div></div></div>
 <button id="notebtn" type="button">메모</button>
+<div id="notecompose">
+  <p class="q"></p>
+  <textarea placeholder="메모를 적으세요 (Ctrl+Enter 저장)"></textarea>
+  <div class="row"><button type="button" class="cancel">취소</button>
+    <button type="button" class="save">저장</button></div>
+</div>
+<div id="notepop">
+  <div class="when"></div>
+  <p class="q"></p>
+  <p class="body"></p>
+  <div class="row"><button type="button" class="edit">수정</button>
+    <button type="button" class="del">삭제</button>
+    <button type="button" class="close">닫기</button></div>
+</div>
+
 <aside id="notepanel">
   <header><span id="notecount">메모</span><span class="sp"></span>
     <button id="nexport" type="button">내보내기</button>
