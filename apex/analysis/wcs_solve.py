@@ -4828,6 +4828,20 @@ def run_wcs_solve(
 
     eng = _normalize_engine(engine) if engine is not None else resolve_wcs_engine(params)
 
+    # 헤드리스 호출자가 target_coord 를 안 넘기면 config 의 target 좌표로 채운다.
+    # (ASTAP 워커는 중심 좌표가 필수인데, 이 유도가 없으면 "set parameters.toml
+    # target.ra_deg" 라는 에러 안내가 실제로는 동작하지 않는 안내가 된다.)
+    if target_coord is None:
+        try:
+            _ra = getattr(params.P, "target_ra_deg", None)
+            _dec = getattr(params.P, "target_dec_deg", None)
+            if _ra is not None and _dec is not None:
+                _ra_f, _dec_f = float(_ra), float(_dec)
+                if np.isfinite(_ra_f) and np.isfinite(_dec_f):
+                    target_coord = SkyCoord(_ra_f * u.deg, _dec_f * u.deg, frame="icrs")
+        except Exception:
+            target_coord = None
+
     _summary_holder: dict = {}
     _internal_results: dict = {}
 

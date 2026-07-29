@@ -2391,6 +2391,10 @@ class Step6PSFWorker(QThread):
                 n_core_excluded_init = 0
                 n_core_excluded_redetect = 0
                 n_core_excluded_result = 0
+                # EPSF 품질 지표 기본값 — 모델 재사용 등으로 품질 검사 블록을
+                # 건너뛰는 경로에서도 residual_meta 조립이 참조할 수 있게 한다.
+                epsf_quality_n_blobs = 0
+                epsf_quality_max_quadrant_frac = float("nan")
 
                 def _core_keep(xy_like) -> np.ndarray:
                     return psf_core_keep_mask(np.asarray(xy_like, dtype=float), core_cut)
@@ -2784,6 +2788,11 @@ class Step6PSFWorker(QThread):
                             psf_type_built = 'epsf'
 
                         # ── P4-10: EPSF quality check ─────────────────────────────────
+                        # 경고를 로그로만 남기지 않고 residual_meta 에도 영속화한다
+                        # (M13 20250308 0002-R: 이중 피크 프레임이 로그로만 경고돼
+                        # 다운스트림이 기계적으로 제외할 수 없었다 — 2026-07-29).
+                        epsf_quality_n_blobs = 0
+                        epsf_quality_max_quadrant_frac = float("nan")
                         try:
                             _ed = np.asarray(epsf.data, dtype=float)
                             _ed_pos = np.where(_ed > 0, _ed, 0.0)
@@ -2795,6 +2804,7 @@ class Step6PSFWorker(QThread):
                                 _high = (_norm > 0.5).astype(float)
                                 from scipy.ndimage import label as _label
                                 _labeled, _n_blobs = _label(_high)
+                                epsf_quality_n_blobs = int(_n_blobs)
                                 if _n_blobs > 1:
                                     self._log(
                                         f"[WARN][EPSF] {fname}: possible double-peak PSF "
@@ -2810,6 +2820,7 @@ class Step6PSFWorker(QThread):
                                 _qtot = _q1 + _q2 + _q3 + _q4
                                 if _qtot > 0:
                                     _qmax = max(_q1, _q2, _q3, _q4) / _qtot
+                                    epsf_quality_max_quadrant_frac = float(_qmax)
                                     if _qmax > 0.45:  # >45% in one quadrant = asymmetric
                                         self._log(
                                             f"[WARN][EPSF] {fname}: asymmetric PSF "
@@ -5008,6 +5019,18 @@ class Step6PSFWorker(QThread):
                                 else None
                             ),
                             "catalog_path": epsf_reference_catalog_name,
+                            # EPSF 품질 검사 (로그 경고의 기계 판독 가능한 영속본)
+                            "quality_n_blobs": int(epsf_quality_n_blobs),
+                            "quality_double_peak": bool(epsf_quality_n_blobs > 1),
+                            "quality_max_quadrant_frac": (
+                                float(epsf_quality_max_quadrant_frac)
+                                if np.isfinite(epsf_quality_max_quadrant_frac)
+                                else None
+                            ),
+                            "quality_asymmetric": bool(
+                                np.isfinite(epsf_quality_max_quadrant_frac)
+                                and epsf_quality_max_quadrant_frac > 0.45
+                            ),
                         },
                         "flux_scale": {
                             "enabled": bool(flux_scale_correction),

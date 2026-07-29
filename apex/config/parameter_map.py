@@ -200,6 +200,7 @@ COMMON_TOML_KEY_MAP: tuple[tuple[tuple[str, ...], str], ...] = (
     (('source_quality', 'apcorr_flux_pct'), 'source_quality_apcorr_flux_pct'),
     (('source_quality', 'psf_seed_flux_pct'), 'source_quality_psf_seed_flux_pct'),
     (('source_quality', 'edge_fwhm_mult'), 'source_quality_edge_fwhm_mult'),
+    (('wcs', 'engine'), 'wcs_engine'),
     (('wcs', 'astap_exe'), 'astap_exe'),
     (('wcs', 'timeout_s'), 'astap_timeout_s'),
     (('wcs', 'astap_search_radius_deg'), 'astap_search_radius_deg'),
