@@ -96,6 +96,7 @@ from apex.analysis.psf_policy import (
     merge_forced_catalog_seeds,
     plan_epsf_stars,
     plan_psf_fit_window,
+    psf_symmetric_mask,
     select_epsf_reference_stars,
     select_spatially_balanced,
 )
@@ -2546,14 +2547,45 @@ class Step6PSFWorker(QThread):
                         )
                         epsf_plan_target = epsf_plan.target
                         epsf_grid_size = epsf_plan.grid_size
+                        # 완화하더라도 절대 넘기면 안 되는 최소 방어선: ePSF 참조별의
+                        # FWHM 은 프레임 대표 FWHM 의 절반은 되어야 한다. 점광원 잡음
+                        # (우주선·핫픽셀)은 FWHM 이 1 px 근처라 여기서 걸린다.
+                        # 이 하한이 없으면, 형태 컷이 목표 수를 못 채웠을 때 컷을 통째로
+                        # 버리고 「밝고 고립」 기준만 남는데 — 그 기준의 최적해가 바로
+                        # 우주선이다(플럭스가 1 px 에 몰려 피크 최대, 이웃 없음).
+                        # 2026-07-29 M67/QHY600 에서 실제로 FWHM 1.00 px 소스가 참조별로
+                        # 뽑혀 ePSF 가 2.75배 좁아졌고 PSF 플럭스가 구경의 32% 로 떨어졌다.
+                        _fwhm_floor_ok = np.ones(len(xy_all), dtype=bool)
+                        _fwhm_floor = 0.5 * float(fwhm_safe)
+                        if "fwhm_px" in det_df.columns:
+                            _fw = det_df["fwhm_px"].to_numpy(float)[finite_xy]
+                            # 측정 실패(NaN)는 통과시킨다 — 하한은 「점광원임이 확인된
+                            # 것」만 거르기 위한 것이지 미측정 별을 버리기 위한 게 아니다.
+                            _fwhm_floor_ok = ~np.isfinite(_fw) | (_fw >= _fwhm_floor)
+
+                        # FWHM 은 표본(measure_max)에만 측정되므로 대부분 NaN 이다.
+                        # 픽셀만으로 판정하는 PSF 대칭 검사를 함께 건다 — 별은 등방이라
+                        # 좌우 또는 상하 **양쪽** 이웃이 피크의 일정 비율 이상이지만,
+                        # 고립 스파이크·2픽셀 쌍·L자/대각 클러스터는 그렇지 못하다.
+                        # 실측(M67/QHY600, CR 미제거 프레임): astroscrappy 가 CR 로 지목한
+                        # 45,433곳 중 67.3% 를 걸러내면서 검출된 별 736개는 100% 보존.
+                        _psf_sym_ok = psf_symmetric_mask(
+                            img_sub, xy_all, background=0.0, neighbor_frac=0.3
+                        )
+                        _fwhm_floor_ok = _fwhm_floor_ok & _psf_sym_ok
+
                         if _morph_applied:
                             if n_epsf_candidates_post_morph < epsf_plan.target:
-                                in_range = _in_range_pre_morph
+                                in_range = _in_range_pre_morph & _fwhm_floor_ok
+                                n_floor_drop = int(
+                                    np.sum(_in_range_pre_morph & ~_fwhm_floor_ok)
+                                )
                                 _morphology_ok_cand = _morphology_ok[in_range]
                                 self._log(
                                     f"[EPSF] morphology filter: {n_epsf_candidates_pre_morph} -> "
                                     f"{n_epsf_candidates_post_morph}; target={epsf_plan.target} "
-                                    "-> relaxed to pre-morph pool"
+                                    f"-> relaxed to pre-morph pool "
+                                    f"(FWHM>={_fwhm_floor:.2f}px floor dropped {n_floor_drop})"
                                 )
                             else:
                                 in_range = _in_range_pre_morph & _morphology_ok

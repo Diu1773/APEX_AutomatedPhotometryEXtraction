@@ -736,3 +736,81 @@ def estimate_psf_flux_seeds(
             output[index] = amplitude
 
     return output
+
+
+def psf_symmetric_mask(
+    image: np.ndarray,
+    xy: np.ndarray,
+    *,
+    background: float | np.ndarray = 0.0,
+    neighbor_frac: float = 0.3,
+) -> np.ndarray:
+    """Keep only sources whose profile is symmetric like a real PSF.
+
+    A star is isotropic, so at its peak both horizontal neighbours (or both
+    vertical ones) sit at a sizable fraction of the peak. Point-like noise does
+    not: an isolated hot pixel has no bright neighbour at all, a two-pixel pair
+    has only one side, an L-shaped or diagonal cluster fails on both axes. The
+    test compares neighbours *against the peak itself*, so it is scale
+    invariant — faint and bright stars pass alike, and a spike of any
+    brightness fails.
+
+    This matters for ePSF reference selection: candidates are ranked by
+    "bright and isolated", which is exactly what a cosmic ray maximises
+    (all its flux in one pixel, no neighbours). On CMOS detectors 16-40% of
+    detections can be 1-pixel spikes, and once they enter the ePSF the model
+    comes out far too narrow (measured 2.75x on M67/QHY600, dropping PSF flux
+    to 32% of aperture).
+
+    Ported from the AstralImage cosmetic engine (``_extended_bright_cores``),
+    which uses the same neighbour-pair test to protect stars from hot-pixel
+    correction. Here it is used to *reject* non-stars rather than protect
+    stars, but the geometric argument is identical.
+
+    Parameters
+    ----------
+    image :
+        Frame the sources were detected on.
+    xy :
+        ``(N, 2)`` array of source positions (x, y), pixel coordinates.
+    background :
+        Scalar or per-pixel background to subtract before the comparison.
+        Neighbour ratios are meaningless on an un-subtracted sky.
+    neighbor_frac :
+        Minimum neighbour-to-peak ratio. 0.3 accepts a PSF as narrow as
+        FWHM ~1.6 px while still rejecting single-pixel spikes.
+
+    Returns
+    -------
+    np.ndarray
+        Boolean mask, ``True`` where the source looks like a PSF. Sources too
+        close to the border to test are kept (``True``) — the caller's other
+        cuts handle edges.
+    """
+    xy = np.asarray(xy, dtype=float)
+    if xy.ndim != 2 or xy.shape[0] == 0:
+        return np.zeros(0, dtype=bool)
+
+    resid = np.asarray(image, dtype=float) - background
+    ny, nx = resid.shape
+    keep = np.ones(len(xy), dtype=bool)
+
+    xi = np.rint(xy[:, 0]).astype(int)
+    yi = np.rint(xy[:, 1]).astype(int)
+    inside = (xi >= 1) & (xi < nx - 1) & (yi >= 1) & (yi < ny - 1)
+    if not np.any(inside):
+        return keep
+
+    xs, ys = xi[inside], yi[inside]
+    peak = resid[ys, xs]
+    thr = float(neighbor_frac) * peak
+
+    left = resid[ys, xs - 1] >= thr
+    right = resid[ys, xs + 1] >= thr
+    up = resid[ys - 1, xs] >= thr
+    down = resid[ys + 1, xs] >= thr
+
+    # A non-positive peak carries no shape information; leave it to other cuts.
+    symmetric = ((left & right) | (up & down)) | ~np.isfinite(peak) | (peak <= 0)
+    keep[inside] = symmetric
+    return keep
