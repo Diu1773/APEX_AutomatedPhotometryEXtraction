@@ -569,21 +569,30 @@ JS = r"""
     return k.getBoundingClientRect().bottom - c.getBoundingClientRect().top;
   }
 
-  /* 전폭 요소(그림·표)는 지면 머리에 앉힌다. 판면의 58% 를 넘지 않게 줄인다. */
-  function spanCap(P){ return P.inner.clientHeight*0.58; }
-  function shrink(node, P){
+  /* 전폭 요소(그림·표)는 지면 머리에 앉힌다. 기본은 판면의 58% 로, 한 지면에 하나다.
+     다만 그림 15장 + 표 4개를 본문 14쪽에 다 앉힐 수는 없어서, 밀린 개수만큼 머리
+     자리를 넓혀 준다. 안 넓히면 본문이 끝난 뒤에 그림만 있는 지면이 줄줄이 남는다
+     (2026-07-30: 그림 10-15 와 표 2개가 17-24쪽으로 밀렸다). */
+  var draining=false;
+  function spanCap(P){
+    if (draining) return P.inner.clientHeight;   // 본문이 끝났으면 지면을 다 쓴다
+    var frac = pending.length>=3 ? 0.80 : (pending.length===2 ? 0.70 : 0.58);
+    return P.inner.clientHeight*frac;
+  }
+  function shrink(node, P, cap){
     var im=node.querySelector('img'); if(!im) return;
-    for (var k=0;k<16 && P.span.offsetHeight>spanCap(P);k++){
+    for (var k=0;k<16 && P.span.offsetHeight>cap;k++){
       var h=im.getBoundingClientRect().height||400;
       im.style.maxHeight=Math.round(h*0.9)+'px'; im.style.width='auto';
     }
   }
   function flushSpan(P){
+    var cap=spanCap(P);            // 들어올 때의 밀린 정도로 한 번만 정한다
     while (pending.length){
       var f=pending[0], wasEmpty=!P.span.firstChild;
       P.span.appendChild(f);
-      if (P.span.offsetHeight>spanCap(P)){
-        if (wasEmpty){ shrink(f,P); pending.shift(); }
+      if (P.span.offsetHeight>cap){
+        if (wasEmpty){ shrink(f,P,cap); pending.shift(); }
         else { P.span.removeChild(f); break; }
       } else { pending.shift(); }
     }
@@ -607,6 +616,36 @@ JS = r"""
     return P;
   }
 
+  /* 빈 단인데도 블록이 안 들어가면, 지면 머리(그림·표)가 자리를 너무 먹은 것이다.
+     마지막 것부터 pending 앞으로 되돌려 단을 넓혀 본다. 앞에 넣으므로 차례는 그대로다.
+     되돌릴 것이 없으면 false — 그때는 어쩔 수 없이 넘치게 둔다. */
+  function giveBackSpan(node, P, c){
+    while (P.span.children.length){
+      var back=P.span.lastElementChild;
+      P.span.removeChild(back); pending.unshift(back);
+      c.appendChild(node);
+      if (fits(c)) return true;
+      c.removeChild(node);
+    }
+    return false;
+  }
+  /* 블록을 지금 단에 앉힌다. 안 들어가면 지면 머리를 되돌려 단을 넓혀 본다.
+     되돌릴 것도 없으면 넘치게 두는 수밖에 없다 — 이 함수를 거치지 않고 그냥
+     appendChild 하면 검사 없이 넘친다(2026-07-30: 10쪽 오른쪽 단 +141px). */
+  function accept(node, P){
+    var c=P.cols[P.ci];
+    c.appendChild(node);
+    if (fits(c)) return P;
+    c.removeChild(node);
+    if (giveBackSpan(node,P,c)) return P;
+    c.appendChild(node);
+    return P;
+  }
+  function onlyHeads(c){
+    for (var i=0;i<c.children.length;i++) if (!isHead(c.children[i])) return false;
+    return true;
+  }
+
   function place(node, P){
     if (isSpanBlock(node)){ pending.push(node); return P; }
     var c=P.cols[P.ci];
@@ -618,7 +657,7 @@ JS = r"""
       // 남은 높이는 scrollHeight 로 재면 안 된다. overflow:hidden 인 요소의
       // scrollHeight 는 내용이 짧아도 clientHeight 밑으로 안 내려가서 차이가 늘 0 이
       // 되고, 그러면 모든 제목이 밀려난다(2026-07-29: 24쪽 -> 27쪽, 잘린 제목 1 -> 5).
-      if (isHead(node) && c.children.length>1 && c.clientHeight-contentBottom(c) < 34){
+      if (isHead(node) && c.children.length>1 && c.clientHeight-contentBottom(c) < 48){
         c.removeChild(node);
         var Pn=advance(P); Pn.cols[Pn.ci].appendChild(node); return Pn;
       }
@@ -626,6 +665,9 @@ JS = r"""
     }
     c.removeChild(node);
     var listy=(node.tagName==='OL'||node.tagName==='UL')&&node.children.length>1;
+    // 이 단에 있는 것이 제목뿐(또는 빈 단)이면 옮길 데가 없다. 지면 머리를 되돌려
+    // 제목과 본문을 한자리에 앉힌다. 안 그러면 제목만 남고 본문이 다음 단으로 간다.
+    if (onlyHeads(c) && giveBackSpan(node,P,c)) return P;
     if (!c.firstChild){                       // 빈 단인데도 안 들어감
       if (listy) return splitList(node,P);
       c.appendChild(node);
@@ -644,9 +686,11 @@ JS = r"""
     if (listy) return splitList(node,P2);
     var c2=P2.cols[P2.ci];
     c2.appendChild(node);
-    if (!fits(c2) && c2.children.length>1){
+    if (!fits(c2)){
       c2.removeChild(node);
-      var P3=advance(P2); P3.cols[P3.ci].appendChild(node); return P3;
+      if (onlyHeads(c2) && giveBackSpan(node,P2,c2)) return P2;
+      if (!c2.firstChild){ c2.appendChild(node); return advance(P2); }
+      return accept(node, advance(P2));
     }
     return P2;
   }
@@ -688,8 +732,17 @@ JS = r"""
     });
   }
 
+  var reflowInit=false;
   function build(){
-    book.innerHTML=''; pages=[]; pending=[];
+    // 읽기 모드가 켜져 있으면 #stage 가 display:none 이라 단 높이가 0 으로 잡힌다.
+    // 조판하는 동안만 판면을 보이게 한다.
+    // (2026-07-30: 그림이 늦게 실려 재조판될 때 이 상태로 돌아 24쪽이 4쪽이 됐다)
+    var wasReflow=document.body.classList.contains('reflow');
+    if (wasReflow) document.body.classList.remove('reflow');
+    // 진단 배너는 #book 밖에 붙으므로 여기서 직접 지운다. 안 지우면 그림이 실리기
+    // 전 첫 조판에서 뜬 배너가 정상 재조판 뒤에도 남는다.
+    var oldbn=document.getElementById('typoerr'); if (oldbn) oldbn.remove();
+    book.innerHTML=''; pages=[]; pending=[]; draining=false;
     src.style.display='none';
     stage.style.cssText='overflow:hidden;';
     book.style.cssText='transform-origin:top left;width:'+GEO.PW+'px;'+
@@ -706,10 +759,11 @@ JS = r"""
     var P=newPage();
     var flow=src.querySelector('.flow');
     [].slice.call(flow.children).forEach(function(k){ P=place(k.cloneNode(true), P); });
-    while (pending.length){                                     // 남은 그림 마무리
+    draining=true;                                              // 남은 그림 마무리
+    while (pending.length){
       var n0=pending.length, Q=fresh();
       if (pending.length===n0){
-        var f=pending.shift(); Q.span.appendChild(f); shrink(f,Q);
+        var f=pending.shift(); Q.span.appendChild(f); shrink(f,Q,spanCap(Q));
       }
     }
     var N=pages.length;
@@ -723,7 +777,8 @@ JS = r"""
     linkToc();
     fit();
     load.style.display='none';
-    applyInitialReflow();   // 조판이 끝난 뒤에 적용한다
+    if (!reflowInit){ reflowInit=true; applyInitialReflow(); }  // 조판 뒤에 적용
+    else if (wasReflow) setReflow(true);                        // 재조판이면 원래대로
     renderNotes(); markAll();
     // 조판 자체 점검. 넘치는 단이 있으면 지면 높이가 안 먹은 것이다.
     var over=0;
@@ -733,13 +788,20 @@ JS = r"""
         if (c.offsetParent!==null && c.scrollHeight>c.clientHeight+2) over++;
       });
     });
-    if (over || pages.length<6){
-      var m=document.createElement('div');
+    // 흘려보낸 블록이 다 앉았는지도 센다. 조판 함수가 다른 함수에 가려지면 쪽수만으로는
+    // 안 잡힌다(2026-07-30: 메모 말풍선의 place() 가 조판 place() 를 덮어 본문 0블록).
+    var want=flow.children.length, got=0;
+    pages.forEach(function(p){
+      if (p.cols) p.cols.forEach(function(c){ got+=c.children.length; });
+      got+=p.span.children.length;
+    });
+    if (over || pages.length<6 || got<want){
+      var m=document.createElement('div'); m.id='typoerr';
       m.style.cssText='position:fixed;left:8px;bottom:8px;z-index:30;background:#7a1010;'+
         'color:#fff;font:12px/1.4 sans-serif;padding:6px 9px;border-radius:3px;';
-      m.textContent='조판 오류: '+pages.length+'쪽, 넘치는 단 '+over+'개';
+      m.textContent='조판 오류: '+pages.length+'쪽 · 넘치는 단 '+over+'개 · 블록 '+got+'/'+want;
       document.body.appendChild(m);
-      if (window.console) console.warn('[APEX] 조판 오류', {pages:pages.length, overflow:over});
+      if (window.console) console.warn('[APEX] 조판 오류 '+m.textContent);
     }
     var hp=/[#&?]p=(\d+)/.exec(location.hash||'');     // #p=7 로 그 쪽을 바로 연다
     if (hp){ var pg=pages[parseInt(hp[1],10)-1];
@@ -887,7 +949,9 @@ JS = r"""
       npop=document.getElementById('notepop');
   var editingId=null;
 
-  function place(el, x, y){
+  /* 조판기의 place(node,P) 와 이름이 겹치면 안 된다. 함수 선언은 나중 것이 이겨서
+     본문 조판이 통째로 이 함수로 넘어간다(2026-07-30: 24쪽 -> 4쪽, 본문 0블록). */
+  function placePop(el, x, y){
     el.classList.add('on');
     var w=el.offsetWidth, vw=document.documentElement.clientWidth;
     el.style.left=Math.max(8, Math.min(x, vw-w-8))+'px';
@@ -898,7 +962,7 @@ JS = r"""
     editingId = existing ? existing.id : null;
     ncq.textContent = quote;
     ncta.value = existing ? (existing.body||'') : '';
-    place(ncomp, x, y);
+    placePop(ncomp, x, y);
     ncta.focus();
   }
   function closeCompose(){ ncomp.classList.remove('on'); editingId=null; }
@@ -944,7 +1008,7 @@ JS = r"""
     npop.querySelector('.body').textContent=n.body||'(메모 없음)';
     npop.dataset.nid=n.id;
     var r=m.getBoundingClientRect();
-    place(npop, r.left+window.scrollX, r.bottom+window.scrollY);
+    placePop(npop, r.left+window.scrollX, r.bottom+window.scrollY);
   });
   npop.querySelector('.close').addEventListener('click', function(){ npop.classList.remove('on'); });
   npop.querySelector('.edit').addEventListener('click', function(){
