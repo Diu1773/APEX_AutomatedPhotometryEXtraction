@@ -477,6 +477,13 @@ JS = r"""
     pages.push(P); return P;
   }
   function fits(c){ return c.scrollHeight<=c.clientHeight+1; }
+  /* 단 안에서 내용이 실제로 어디까지 찼는지. overflow:hidden 이라 scrollHeight 로는
+     못 잰다(내용이 짧아도 clientHeight 밑으로 안 내려간다). */
+  function contentBottom(c){
+    var k=c.lastElementChild;
+    if (!k) return 0;
+    return k.getBoundingClientRect().bottom - c.getBoundingClientRect().top;
+  }
 
   /* 전폭 요소(그림·표)는 지면 머리에 앉힌다. 판면의 58% 를 넘지 않게 줄인다. */
   function spanCap(P){ return P.inner.clientHeight*0.58; }
@@ -520,7 +527,19 @@ JS = r"""
     if (isSpanBlock(node)){ pending.push(node); return P; }
     var c=P.cols[P.ci];
     c.appendChild(node);
-    if (fits(c)) return P;
+    if (fits(c)){
+      // 제목을 넣고 남는 자리가 두 줄도 안 되면 본문이 못 따라오므로 제목만 남는다.
+      // 넘치기를 기다리지 말고 그 자리에서 다음 단으로 넘긴다.
+      //
+      // 남은 높이는 scrollHeight 로 재면 안 된다. overflow:hidden 인 요소의
+      // scrollHeight 는 내용이 짧아도 clientHeight 밑으로 안 내려가서 차이가 늘 0 이
+      // 되고, 그러면 모든 제목이 밀려난다(2026-07-29: 24쪽 -> 27쪽, 잘린 제목 1 -> 5).
+      if (isHead(node) && c.children.length>1 && c.clientHeight-contentBottom(c) < 34){
+        c.removeChild(node);
+        var Pn=advance(P); Pn.cols[Pn.ci].appendChild(node); return Pn;
+      }
+      return P;
+    }
     c.removeChild(node);
     var listy=(node.tagName==='OL'||node.tagName==='UL')&&node.children.length>1;
     if (!c.firstChild){                       // 빈 단인데도 안 들어감
@@ -528,10 +547,16 @@ JS = r"""
       c.appendChild(node);
       return advance(P);
     }
-    var last=c.lastElementChild, orphan=null;
-    if (isHead(last) && c.children.length>1){ orphan=last; c.removeChild(last); }
+    // 단 끝에 남은 제목은 **연속된 것을 전부** 다음 단으로 옮긴다. 하나만 옮기면
+    // h2 바로 뒤에 h3 가 붙은 자리에서 h2 가 홀로 남는다
+    // (2026-07-29 실제 발생: 4쪽 오른쪽 단 끝의 "2. 설계와 구현").
+    var orphans=[];
+    while (c.children.length>1 && isHead(c.lastElementChild)){
+      orphans.unshift(c.lastElementChild);
+      c.removeChild(c.lastElementChild);
+    }
     var P2=advance(P);
-    if (orphan) P2.cols[P2.ci].appendChild(orphan);
+    orphans.forEach(function(h){ P2.cols[P2.ci].appendChild(h); });
     if (listy) return splitList(node,P2);
     var c2=P2.cols[P2.ci];
     c2.appendChild(node);
