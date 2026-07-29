@@ -78,30 +78,33 @@
 
 ## 사용자 판단 필요
 
-### D-P02 · PSF 측광(8단계)이 GUI 전용이다 (2026-07-29, **열림**)
+### D-P02 · PSF 측광(8단계)의 계층과 검증 범위 (2026-07-29, **열림**)
 
-사용자 질문 *"psf가 제일 무겁지 않나?"* 에서 코드를 확인해 드러난 사실.
+사용자 질문 *"psf가 제일 무겁지 않나?"* → *"psf도 헤드리스로 되지않나?"* 로 확인한 사실.
+**두 번째 질문에서 Claude 가 틀렸고 사용자가 맞았다.**
 
 | | |
 |---|---|
-| 헤드리스 파이프라인 `apex/pipeline/steps/` | calibration·scan·crop·sky_qc·detect·wcs·refbuild·forcedphot = **0~7단계뿐** |
-| PSF 측광(8단계) | `apex/gui/workflow/cmd/step8_psf_photometry.py` **8,589줄**. `EPSFBuilder`·`PSFPhotometry` 가 이 GUI 파일 안에 있다 |
-| `apex/analysis/psf_*.py` | 정책·진단·반복 판정·플럭스 스케일만(1,966줄). 적합 자체는 없다 |
+| `apex/pipeline/steps/` | calibration·scan·crop·sky_qc·detect·wcs·refbuild·forcedphot = **0~7단계뿐** |
+| PSF 계산부 | `apex/gui/workflow/cmd/step8_psf_photometry.py` (8,589줄)에 `EPSFBuilder`·`PSFPhotometry` |
+| `apex/analysis/psf_*.py` | 정책·진단·반복 판정·플럭스 스케일만 (1,966줄) |
+| **`scripts/run_step8_headless.py`** | **production `Step6PSFWorker` 를 창 없이 그대로 실행한다** (102줄). `QCoreApplication` 만 만들고 화면은 안 띄운다 |
 
-**원고에 미친 영향** — 「GUI 와 헤드리스가 동일한 코드를 실행한다」를 세 곳에서
-주장하고 있었다. 0~7단계에는 맞지만 PSF 에는 맞지 않는다. 세 곳 모두 공용 과정으로
-한정하고, PSF 가 GUI 전용이며 3.12절 결과가 GUI 산출물임을 명시했다(§2.2). §5.2 에
-미검증 범위로 적었다.
+**따라서 「검증이 사용자 실행과 같은 코드를 확인한다」는 PSF 에도 성립한다.**
+`apex.pipeline` 러너에 없을 뿐 헤드리스 실행 경로는 있다.
+
+Claude 의 오류 경위: 레포 전체 grep 이 타임아웃되자 `apex/` 로 범위를 좁혀 다시 찾고
+그 결과를 전부로 취급했다. 러너는 `scripts/` 에 있었다. 원고에 "GUI 안에서만 실행된다"
+고 썼다가 되돌렸다(§2.2·§5.2).
 
 **사용자 전언 (2026-07-29)**: *"psf측광도 다른 기기테스트 해봐야하는데 실제 gui에서도
-어떻게 사용되는지 안봤어 만들어놓고"*
+어떻게 사용되는지 안봤어 만들어놓고"*, *"다른 세션에서는 psf 완성을 해야하긴 하겠네"*
 
-**할 일**
-1. PSF 를 다른 검출기에서 시험 — 현재 3.12절은 카메라 한 대(Moravian C3-61000)뿐
-2. GUI 에서 8단계가 실제로 어떻게 쓰이는지 확인 — 만들어 놓고 사용 흐름을 본 적이 없다
-3. (선택) PSF 적합을 `apex/analysis` 로 옮겨 헤드리스 경로를 만들지 결정.
-   옮기면 「동일 코드」 주장을 전 단계로 넓힐 수 있다. 8,589줄 GUI 파일에서 계산부를
-   분리하는 작업이라 규모가 크다
+**다른 세션에서 할 일**
+1. **PSF 를 다른 검출기에서 시험** — 3.12절이 카메라 한 대(Moravian C3-61000)뿐
+2. **GUI 에서 8단계 실사용 흐름 확인** — 만들어 놓고 본 적이 없다
+3. (선택) PSF 적합을 `apex/analysis` 로 옮겨 `apex.pipeline` 에 단계로 등록.
+   지금도 헤드리스로 돌지만 계층 규칙(analysis 는 Qt 비의존)에는 어긋난다
 
 ### D-P01 · 한 편으로 갈지, 가벼운 국문 + 공학저널로 나눌지 (2026-07-28, **미결**)
 
