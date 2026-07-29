@@ -58,6 +58,54 @@ CAMERAS = {
         # 남천을 안 덮어 blind 풀이 실패 → 전천 D50 을 가진 ASTAP 으로 지정.
         "wcs_engine": "astap",
     },
+    # ── 성단 CMD 세트 (step 12 까지) ──────────────────────────────────────
+    # LCO 0.4m tfn / sq32 = QHY600, central 30'x30' — M67, B·V 각 5장 60 s.
+    # 우리 Moravian M67(2026-02-08) 과 같은 성단 다른 기기 대조용.
+    "m67_lco": {
+        "target_name": "M67",
+        "ra_deg": 132.846,
+        "dec_deg": 11.814,
+        "telescope_focal_mm": 1048.0,
+        "camera_pixel_um": 3.76,
+        "binning": 1,
+        "gain_e_per_adu": 1.0,
+        "rdnoise_e": 3.18,
+        "saturation_adu": 46200.0,
+        "datamax_adu": 44000.0,
+        "datamin_adu": -100.0,
+        "pixel_scale_arcsec": 0.74,
+        "guess_arcsec": 2.5,
+        "filter_key": "V",
+        "site_lat": 28.3, "site_lon": -16.5116, "site_alt": 2390.0, "site_tz": 0.0,
+        "wcs_engine": "astap",
+        # 탬플릿의 30 s 로는 반경 0.47°·G<25 질의가 못 끝난다(2026-07-29 실측).
+        "gaia_timeout_s": 300.0,
+    },
+    # 같은 기기의 **풀프레임** 2.0°x1.3° — M45, B·V 각 10장 120 s.
+    # 우리 Moravian(0.43°) 의 4.6배 시야 → 광시야 EPSF 공간변화 검증.
+    "m45_wide": {
+        "target_name": "M45",
+        "ra_deg": 56.75,
+        "dec_deg": 24.117,
+        "telescope_focal_mm": 1048.0,
+        "camera_pixel_um": 3.76,
+        "binning": 1,
+        "gain_e_per_adu": 1.0,
+        "rdnoise_e": 3.18,
+        "saturation_adu": 46200.0,
+        "datamax_adu": 44000.0,
+        "datamin_adu": -100.0,
+        "pixel_scale_arcsec": 0.74,
+        "guess_arcsec": 2.5,
+        "filter_key": "V",
+        "site_lat": 28.3, "site_lon": -16.5116, "site_alt": 2390.0, "site_tz": 0.0,
+        "wcs_engine": "astap",
+        # 시야 반경이 1.2° 라 M67 보다 더 오래 걸린다.
+        "gaia_timeout_s": 600.0,
+        # 풀프레임 2.0°x1.3° 에서 G<25 를 받으면 백만 행급이라 질의가 안 끝난다.
+        # M45 멤버는 밝으므로(V 3~14) G<20 이면 CMD·영점보정에 충분하다.
+        "gaia_mag_max": 20.0,
+    },
 }
 
 
