@@ -33,9 +33,15 @@ __all__ = [
 ]
 
 # PARSEC CMD 3.x column indices (0-based) for each photometric band.
+# Johnson U is UXmag (Bessell 1990 blue-extended passband), the column PARSEC
+# ships for ground-based U. Verified against reference colours on the bundled
+# grid: an A0V point (logTe 3.981) gives UX-B = -0.04 and B-V = +0.01 (both are
+# 0.00 by definition), and a K-type point gives UX-B = +1.29, B-V = +1.15.
+# A U-B colour is what breaks the age/metallicity degeneracy of a single
+# optical colour, so [M/H] stays unconstrained without it.
 PARSEC_ISO_COL = {
     "u": 28, "g": 29, "r": 30, "i": 31, "z": 32,
-    "B": 30, "V": 31, "R": 32, "I": 33,
+    "U": 28, "B": 30, "V": 31, "R": 32, "I": 33,
 }
 
 # Total-to-selective extinction A_band / E(B-V) (Cardelli/SF2011, R_V=3.1).

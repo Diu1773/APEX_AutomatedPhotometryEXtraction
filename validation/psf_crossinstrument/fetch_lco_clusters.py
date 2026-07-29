@@ -27,7 +27,14 @@ API = "https://archive-api.lco.global/frames/"
 SETS = {
     "m45_wide": dict(target="M45", inst="sq32", day="2025-01-14"),
     "m67_lco": dict(target="M67", inst="sq32", day="2024-10-29"),
+    # U+B+V 가 같은 밤에 있는 유일한 M67 세트 (LCO 0.4m / kb74 = SBIG STL-6303).
+    # U-B 색이 있어야 나이-금속함량 축퇴가 풀린다 — B-V 만으로는 [M/H] 가
+    # 사전분포를 1.7σ 밀어내고 금속결핍 쪽으로 rail 한다(REPORT_M67_CROSS.md §2).
+    "m67_ubv": dict(target="M67", inst="kb74", day="2015-04-01",
+                    filters=("U", "B", "V")),
 }
+
+DEFAULT_FILTERS = ("B", "V")
 
 
 def q(**kw) -> dict:
@@ -64,25 +71,28 @@ def fetch(url: str, dest: Path) -> tuple[int, bool]:
 
 def run_set(key: str, spec: dict) -> None:
     base = OUT / key
-    print(f"\n=== {key}: {spec['target']} / {spec['inst']} / {spec['day']} ===")
+    filters = tuple(spec.get("filters", DEFAULT_FILTERS))
+    print(f"\n=== {key}: {spec['target']} / {spec['inst']} / {spec['day']} "
+          f"/ {'+'.join(filters)} ===")
 
     sci = [
         r for r in q(target_name=spec["target"], INSTRUME=spec["inst"],
                      DAY_OBS=spec["day"], RLEVEL="00", OBSTYPE="EXPOSE",
                      limit="100")["results"]
-        if r["FILTER"] in ("B", "V")
+        if r["FILTER"] in filters
     ]
     e91 = [
         r for r in q(target_name=spec["target"], INSTRUME=spec["inst"],
                      DAY_OBS=spec["day"], RLEVEL="91", OBSTYPE="EXPOSE",
                      limit="100")["results"]
-        if r["FILTER"] in ("B", "V")
+        if r["FILTER"] in filters
     ]
-    nb = sum(1 for r in sci if r["FILTER"] == "B")
-    print(f"  raw e00: B{nb} V{len(sci)-nb}  |  e91 대조: {len(e91)} (필터당 1장만 받음)")
+    counts = {f: sum(1 for r in sci if r["FILTER"] == f) for f in filters}
+    print(f"  raw e00: " + " ".join(f"{f}{n}" for f, n in counts.items())
+          + f"  |  e91 대조: {len(e91)} (필터당 1장만 받음)")
 
     masters: dict[str, dict] = {}
-    for f in ("B", "V"):
+    for f in filters:
         ref = next((r for r in e91 if r["FILTER"] == f), None)
         if ref is None:
             continue

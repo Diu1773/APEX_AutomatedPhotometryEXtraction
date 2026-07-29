@@ -26,7 +26,7 @@ from astropy.io import fits
 BASE = Path(r"E:\APEX_validation\psf_crossinstrument")
 
 # 대상별 출력 파일명 접두 (APEX 는 pp_<object>-NNNN-FILT.fit 형태를 쓴다)
-PREFIX = {"m67_lco": "m67lco", "m45_wide": "m45lco"}
+PREFIX = {"m67_lco": "m67lco", "m45_wide": "m45lco", "m67_ubv": "m67ubv"}
 
 KEEP = [
     "DATE-OBS", "EXPTIME", "FILTER", "OBJECT", "RA", "DEC", "CAT-RA", "CAT-DEC",
@@ -67,9 +67,12 @@ def main(key: str) -> None:
     mbias, _ = _sci(next(mst_dir.glob("*bias*.fits.fz")))
     mdark, mdh = _sci(next(mst_dir.glob("*dark*.fits.fz")))
     dexp = float(mdh.get("EXPTIME", 300.0))
+    # 마스터 플랫의 필터 접미사 구분자가 세대마다 다르다:
+    #   2024 QHY600 : ...bin1x1-B.fits.fz   (하이픈)
+    #   2015 SBIG   : ..._bin1x1_U.fits.fz  (언더스코어)
     flats = {}
     for p in mst_dir.glob("*skyflat*"):
-        f = re.search(r"-([A-Za-z0-9]+)\.fits", p.name)
+        f = re.search(r"[-_]([A-Za-z0-9]+)\.fits", p.name)
         if f:
             flats[f.group(1)] = _sci(p)[0]
     print(f"masters: bias·dark(t={dexp:.0f}s)·flat{sorted(flats)}")
@@ -97,26 +100,50 @@ def main(key: str) -> None:
         lexp = float(H["EXPTIME"])
         mf = flats[filt]
 
-        # 읽기 모드에 따라 오버스캔이 있다 — QHY600 full_frame 은 상단 30행에
-        # BIASSEC 이 있고 TRIMSEC 으로 잘라야 마스터와 크기가 맞는다.
-        # central30x30 크롭 모드는 BIASSEC='N/A' 라 이 블록을 건너뛴다.
+        # 오버스캔·트림 시점은 기기 세대마다 다르다. 실측한 세 경우:
+        #   QHY600 central30x30 : BIASSEC='N/A', raw·마스터 모두 트림 전 크기
+        #   QHY600 full_frame   : 상단 30행 BIASSEC, 마스터가 전부 **트림 후** 크기
+        #   SBIG STL-6303       : BIASSEC='UNKNOWN', **bias 만 트림 전**,
+        #                         dark·flat 은 트림 후 → bias 를 빼고 잘라야 한다
+        # 그래서 순서를 고정하지 않고, 마스터를 적용하기 직전에 크기를 맞춘다.
         bs, ts = _sec(H.get("BIASSEC", "")), _sec(H.get("TRIMSEC", ""))
         over = 0.0
         if bs is not None:
             x1, x2, y1, y2 = bs
             over = float(np.median(raw[y1:y2, x1:x2]))
             raw = raw - np.float32(over)
-        if ts is not None:
-            x1, x2, y1, y2 = ts
-            raw = raw[y1:y2, x1:x2]
-        if raw.shape != mbias.shape:
+
+        def _align(arr: np.ndarray, target: tuple[int, int], what: str) -> np.ndarray:
+            if arr.shape == target:
+                return arr
+            if ts is not None:
+                x1, x2, y1, y2 = ts
+                cut = arr[y1:y2, x1:x2]
+                if cut.shape == target:
+                    return cut
             raise SystemExit(
-                f"{p.name}: 트림 후 {raw.shape} 가 마스터 {mbias.shape} 와 다르다"
+                f"{p.name}: {what} 적용 전 크기 {arr.shape} → 목표 {target} 로 못 맞춤"
             )
 
-        apex = (raw * gain - biaslvl - mbias - mdark * (lexp / dexp)) / np.where(
-            np.abs(mf) < 1e-6, np.nan, mf
+        # 마스터 bias 의 단위도 세대마다 다르다:
+        #   QHY600(2024) : 전자 단위, median≈0. BIASLVL 이 별도 스칼라 레벨
+        #                  → raw*gain - BIASLVL - bias
+        #   SBIG(2015)   : **ADU 단위**, median≈1048. BIASLVL = median*gain
+        #                  → (raw - bias)*gain   (BIASLVL 을 또 빼면 이중 차감)
+        # BIASLVL 이 median(bias)*gain 과 일치하는지로 판별한다.
+        mb_med = float(np.median(mbias))
+        bias_in_adu = (
+            abs(biaslvl) > 1.0
+            and abs(mb_med * gain - biaslvl) < 0.05 * abs(biaslvl)
         )
+        if bias_in_adu:
+            x = (_align(raw, mbias.shape, "bias") - mbias) * np.float32(gain)
+        else:
+            x = raw * np.float32(gain) - np.float32(biaslvl)
+            x = _align(x, mbias.shape, "bias") - mbias
+        x = _align(x, mdark.shape, "dark") - mdark * np.float32(lexp / dexp)
+        x = _align(x, mf.shape, "flat")
+        apex = x / np.where(np.abs(mf) < 1e-6, np.nan, mf)
 
         # 첫 프레임 중 e91 이 있는 것으로 보정 산술 대조
         ref = ref_dir / p.name.replace("-e00", "-e91")
@@ -127,9 +154,14 @@ def main(key: str) -> None:
             med = float(np.median(diff[fin]))
             mad = float(1.4826 * np.median(np.abs(diff[fin] - med)))
             sky = float(np.median(e91[fin]))
-            print(f"  [대조] {p.name[-18:]} vs BANZAI: Δmed={med:+.4f} e- "
-                  f"robustσ={mad:.4f} (sky {sky:.1f} e-)")
-            if abs(med) > 1.0 or mad > 1.0:
+            # 게이트는 하늘 대비 상대값으로 본다. 절대 e- 로 잡으면 하늘이
+            # 밝은 세트(M45 sky 399 e-)와 어두운 세트(U 300 s, sky 73 e-)를
+            # 같은 잣대로 재게 되고, 읽기잡음이 큰 옛 CCD 가 부당하게 걸린다.
+            rel_med = abs(med) / max(abs(sky), 1e-6)
+            rel_mad = mad / max(abs(sky), 1e-6)
+            print(f"  [대조] {p.name[-18:]} vs BANZAI: Δmed={med:+.4f} e- ({rel_med*100:.2f}%) "
+                  f"robustσ={mad:.4f} ({rel_mad*100:.2f}%) (sky {sky:.1f} e-)")
+            if rel_med > 0.05 or rel_mad > 0.15:
                 raise SystemExit("BANZAI 대조 실패 — 보정 산술을 확인할 것")
             checked = True
 

@@ -105,6 +105,33 @@ CAMERAS = {
         # 풀프레임 2.0°x1.3° 에서 G<25 를 받으면 백만 행급이라 질의가 안 끝난다.
         # M45 멤버는 밝으므로(V 3~14) G<20 이면 CMD·영점보정에 충분하다.
         "gaia_mag_max": 20.0,
+        # 밝은 멤버(V 2.9~6)가 120 s 에서 포화해 FWHM 측정이 3.1~8.4 px 로
+        # 요동한다 — 상한 4" 로 자르면 프레임을 잃는다(2026-07-29 실측).
+        "fwhm_arcsec_max": 8.0,
+    },
+    # LCO 1m elp / kb74 = SBIG STL-6303 (0.2335"/px, 4095x4089 = 16'x16').
+    # M67 을 **같은 밤에 U·B·V** 로 찍은 유일한 공개 세트(2015-04-01).
+    # U-B 색이 나이-금속함량 축퇴를 푸는 열쇠다. 세 번째 검출기이기도 하다.
+    "m67_ubv": {
+        "target_name": "M67",
+        "ra_deg": 132.846,
+        "dec_deg": 11.814,
+        # 0.2335"/px, SBIG STL-6303 픽셀 9 um → focal = 206.265*9/0.2335 = 7949 mm
+        "telescope_focal_mm": 7949.0,
+        "camera_pixel_um": 9.0,
+        "binning": 1,
+        "gain_e_per_adu": 1.0,     # 보정 산출물이 전자 단위
+        "rdnoise_e": 13.5,
+        "saturation_adu": 64400.0,
+        "datamax_adu": 60000.0,
+        "datamin_adu": -200.0,
+        "pixel_scale_arcsec": 0.2335,
+        "guess_arcsec": 2.0,
+        "filter_key": "V",
+        "site_lat": 30.679833, "site_lon": -104.015173, "site_alt": 2030.0,
+        "site_tz": -6.0,
+        "wcs_engine": "astap",
+        "gaia_timeout_s": 300.0,
     },
 }
 
@@ -160,6 +187,17 @@ def main() -> None:
         # WCS 솔버 스케일 범위 — 탬플릿(0.393"/px 기기)값이 새면 0.74"/px 는 범위 밖
         one("astnet_local_scale_low", round(C["pixel_scale_arcsec"] * 0.85, 3))
         one("astnet_local_scale_high", round(C["pixel_scale_arcsec"] * 1.15, 3))
+        # FWHM 허용 범위(px)는 픽셀 스케일에 딸린 값이다. 탬플릿은 0.39"/px
+        # 기기(px 3~10)를 담고 있어서, 0.2335"/px 기기에서는 실제 FWHM
+        # 11.6~14.6 px 이 상한 10 을 넘어 **검출이 8장 중 6장 실패**했다
+        # (2026-07-29 실측). 각도 기준(arcsec_min/max)에서 유도한다.
+        # 상한 각도는 기기 사정에 따라 넓힐 수 있다(M45 는 밝은 멤버가 포화해
+        # FWHM 이 6.2" 까지 부풀려진 프레임이 있다 — 자르면 프레임을 잃는다).
+        ps = float(C["pixel_scale_arcsec"])
+        a_max = float(C.get("fwhm_arcsec_max", 4.0))
+        one("px_min", round(1.0 / ps, 2))
+        one("px_max", round(a_max / ps, 2))
+        one("arcsec_max", a_max)
         # 솔버 엔진 명시 (탬플릿에 키가 없으므로 [wcs] 절 머리에 삽입)
         if C.get("wcs_engine"):
             txt = txt.replace("[wcs]\n", f'[wcs]\nengine = "{C["wcs_engine"]}"\n', 1)

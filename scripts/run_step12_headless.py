@@ -53,6 +53,10 @@ def main() -> int:
     ap.add_argument("--burn", type=int, default=600)
     ap.add_argument("--err-floor", type=float, default=0.02)
     ap.add_argument("--seed", type=int, default=2024)
+    ap.add_argument("--mag-max", type=float, default=None,
+                    help="drop stars fainter than this in the magnitude band "
+                         "(diagnostic: isolates the bright end where the "
+                         "Gaia-transformation colour drift is flat)")
     args = ap.parse_args()
 
     import numpy as np
@@ -76,6 +80,13 @@ def main() -> int:
     df = pd.read_csv(wide)
     print(f"wide CMD: {len(df)} rows | columns: "
           f"{[c for c in df.columns if c.startswith('mag_std')]}")
+
+    if args.mag_max is not None:
+        col = f"mag_std_{args.mag}"
+        before = len(df)
+        v = pd.to_numeric(df[col], errors="coerce")
+        df = df[v.notna() & (v <= float(args.mag_max))].copy()
+        print(f"mag cut: {col} <= {args.mag_max} -> {len(df)}/{before} rows")
 
     colors = [tuple(part.split("-", 1)) for part in args.colors.split(",")]
     for b1, b2 in colors:
@@ -147,6 +158,7 @@ def main() -> int:
             "ebv_prior": args.ebv_prior,
             "parallax_prior": bool(args.parallax_prior),
             "membership": cfg.use_membership,
+            "mag_max": args.mag_max,
             "walkers": args.walkers, "steps": args.steps, "burn": args.burn,
             "err_floor": args.err_floor, "seed": args.seed,
         },
