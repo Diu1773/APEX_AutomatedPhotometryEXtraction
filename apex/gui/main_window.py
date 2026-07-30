@@ -239,6 +239,10 @@ class MainWindowWorkflow(AutoFitMixin, QMainWindow):
                 from apex.config.parameters_lc import Parameters
             param_path = Path(param_file) if param_file else Path("parameters.toml")
             self.params = Parameters(param_path)
+            # 파라미터 파일을 명시해서 연 경우에는 그 파일이 기준이다.
+            # 기본 parameters.toml 로 연 평소 실행에서는 예전처럼 마지막으로
+            # 고른 폴더를 복원한다(_bootstrap_file_selection_state).
+            self._explicit_param_file = bool(param_file)
 
             from apex.core import InstrumentConfig, FileManager, ProjectState
             self.instrument = InstrumentConfig(self.params)
@@ -250,7 +254,7 @@ class MainWindowWorkflow(AutoFitMixin, QMainWindow):
             self.project_state = ProjectState(state_dir)
             self._register_state_mirror()
 
-            self._bootstrap_file_selection_state()
+            self._bootstrap_file_selection_state(respect_explicit_param=True)
 
         except Exception as e:
             QMessageBox.critical(self, "Initialization Error",
@@ -317,11 +321,24 @@ class MainWindowWorkflow(AutoFitMixin, QMainWindow):
 
     # ── LC file-selection bootstrap ──────────────────────────────────────────
 
-    def _bootstrap_file_selection_state(self) -> None:
+    def _bootstrap_file_selection_state(self, respect_explicit_param: bool = False) -> None:
+        """저장된 file_selection 으로 params 경로를 되살린다.
+
+        `respect_explicit_param` 은 창을 처음 만들 때만 켠다. 프로젝트를
+        불러오는 경로(_load_project_state)는 일부러 params 를 그 프로젝트로
+        옮기는 것이므로 막으면 안 된다.
+        """
         state_data = self.project_state.get_step_data("file_selection")
         if not state_data:
             return
         data_dir = state_data.get("data_dir")
+        if data_dir and respect_explicit_param and getattr(self, "_explicit_param_file", False):
+            # 명시한 파라미터 파일과 다른 프로젝트의 상태면 덮어쓰지 않는다.
+            # 이 상태는 모드당 하나(apex/.state/<mode>)라 마지막에 GUI 로 연
+            # 프로젝트가 남아 있고, 그대로 두면 지정한 result_dir 이 조용히
+            # 바뀌어 엉뚱한 자료를 읽는다.
+            if Path(data_dir) != Path(self.params.P.data_dir):
+                data_dir = None
         if data_dir:
             self.params.P.data_dir = Path(data_dir)
             saved_result_dir = state_data.get("result_dir")
