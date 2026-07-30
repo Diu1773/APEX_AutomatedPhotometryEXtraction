@@ -101,8 +101,17 @@ def _psf_stats(result_dir: Path) -> dict:
             continue
         m = p.merge(q, on="det_uid", suffixes=("_p", "_a"))
         if "flux_psf_e" in m.columns and "flux_e" in m.columns:
-            r = pd.to_numeric(m["flux_psf_e"], errors="coerce") / pd.to_numeric(
-                m["flux_e"], errors="coerce"
+            # **검출된 별만 쓴다.** 강제 측광 위치(그 프레임에서 검출되지 않은
+            # 어두운 별)는 구경이 거의 0 을 재므로 비율이 10~68 로 폭주한다.
+            # 섞어서 중앙값을 내면 강제 측광 비율이 높은 자료가 「PSF 이상」으로
+            # 보인다 — NGC6811(강제 56%)에서 실제로 그렇게 오진했다(2026-07-30).
+            sel = m
+            if "forced_flag" in m.columns:
+                sel = m[~m["forced_flag"].astype(bool)]
+            elif "detected_flag" in m.columns:
+                sel = m[m["detected_flag"].astype(bool)]
+            r = pd.to_numeric(sel["flux_psf_e"], errors="coerce") / pd.to_numeric(
+                sel["flux_e"], errors="coerce"
             )
             r = r[np.isfinite(r) & (r > 0)]
             if len(r):
