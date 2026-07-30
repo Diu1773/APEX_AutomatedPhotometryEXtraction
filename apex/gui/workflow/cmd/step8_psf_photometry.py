@@ -228,6 +228,101 @@ def _filter_subset(df: pd.DataFrame, column: str, filt: str | None) -> pd.DataFr
     return df[keys == filt_key].copy()
 
 
+def load_psf_qc_inputs(psf_dir: Path) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]:
+    """Read the three tables the Step 8 QC products are built from.
+
+    Everything comes off disk (``photometry_index.csv``, the per-frame TSVs and
+    ``residual_meta_*.json``), so a headless run can produce the same QC output
+    as the window. The GUI calls this too — one code path, not two.
+
+    Returns ``(idx, all_df, meta_df)``; any of them may be empty.
+    """
+    psf_dir = Path(psf_dir)
+    idx_path = psf_dir / "photometry_index.csv"
+    idx = pd.read_csv(idx_path) if idx_path.exists() else pd.DataFrame()
+
+    tsv_files = sorted(psf_dir.glob("photometry_*.tsv"))
+    all_df = (
+        pd.concat([pd.read_csv(f, sep="\t") for f in tsv_files], ignore_index=True)
+        if tsv_files else pd.DataFrame()
+    )
+
+    meta_rows: list[dict] = []
+    for mf in sorted(psf_dir.glob("residual_meta_*.json")):
+        try:
+            m = json.loads(mf.read_text(encoding="utf-8"))
+        except Exception:
+            continue
+        core = m.get("core_cut", {}) if isinstance(m.get("core_cut", {}), dict) else {}
+        base_meta = {
+            "file": m.get("file", mf.name.replace("residual_meta_", "", 1).replace(".json", "")),
+            "filter": m.get("filter", "?"),
+            "core_cut_enabled": bool(core.get("enabled", False)),
+            "core_cut_x_px": core.get("center_x", np.nan),
+            "core_cut_y_px": core.get("center_y", np.nan),
+            "core_cut_radius_px": core.get("radius_px", np.nan),
+            "core_cut_method": core.get("method", ""),
+            "core_cut_reason": core.get("reason", ""),
+            "n_core_excluded_init": core.get("n_excluded_init", np.nan),
+            "n_core_excluded_redetect": core.get("n_excluded_redetect", np.nan),
+            "n_core_excluded_result": core.get("n_excluded_result", np.nan),
+        }
+        for it in m.get("iters", []):
+            meta_rows.append({
+                **base_meta,
+                "iter": it.get("iter"),
+                "phase": it.get("phase", "residual_fit"),
+                "residual_std": it.get("residual_std", np.nan),
+                "n_fit": it.get("n_fit", np.nan),
+                "n_new_raw": it.get("n_new_raw", np.nan),
+                "n_new_kept": it.get("n_new_kept", np.nan),
+                "n_candidates_raw": it.get("n_candidates_raw", np.nan),
+                "n_candidates_unique": it.get("n_candidates_unique", np.nan),
+                "n_candidates_accepted": it.get("n_candidates_accepted", np.nan),
+                "n_pruned": it.get("n_pruned", np.nan),
+                "median_qfit": it.get("median_qfit", np.nan),
+                "median_reduced_chi2": it.get("median_reduced_chi2", np.nan),
+                "elapsed_s": it.get("elapsed_s", np.nan),
+                "stop_reason": it.get("stop_reason", ""),
+            })
+    meta_df = pd.DataFrame(meta_rows) if meta_rows else pd.DataFrame()
+    return idx, all_df, meta_df
+
+
+def export_psf_qc_products(psf_dir: Path) -> list[Path]:
+    """Write the window-independent Step 8 QC products.
+
+    Covers the parts that need no Qt widget: the two QC tables and the
+    residual/core overview figure. The window additionally exports its own
+    plots (aperture-vs-PSF, final diagnostics) which are drawn from live
+    widget state; those stay in the window for now.
+    """
+    psf_dir = Path(psf_dir)
+    idx, all_df, meta_df = load_psf_qc_inputs(psf_dir)
+    if idx.empty and all_df.empty:
+        return []
+
+    saved: list[Path] = []
+    summary = _build_psf_qc_summary(idx, all_df, meta_df, None)
+    if not summary.empty:
+        p = psf_dir / "psf_qc_summary.csv"
+        summary.to_csv(p, index=False)
+        saved.append(p)
+
+    frame_qc = _build_psf_frame_qc_table(idx, meta_df)
+    if not frame_qc.empty:
+        p = psf_dir / "psf_frame_qc.csv"
+        frame_qc.to_csv(p, index=False)
+        saved.append(p)
+
+        fig = Figure(figsize=(10.5, 6.8), dpi=120)
+        if _draw_psf_frame_qc_overview(fig, frame_qc):
+            fp = psf_dir / "step8_residual_core_qc.png"
+            fig.savefig(fp, dpi=160, bbox_inches="tight")
+            saved.append(fp)
+    return saved
+
+
 def _build_psf_qc_summary(
     idx: pd.DataFrame,
     phot_df: pd.DataFrame,
@@ -6922,52 +7017,13 @@ class PSFPhotometryWindow(StepWindowBase):
             self._refresh_final_diagnostics()
             return
         try:
-            idx = pd.read_csv(idx_path)
-            tsv_files = sorted(psf_dir.glob("photometry_*.tsv"))
-            if not tsv_files:
+            # 헤드리스 러너와 **같은 함수**로 읽는다 — 창과 배치가 서로 다른
+            # 코드로 QC 를 만들면 둘의 산출물이 조용히 갈라진다.
+            idx, all_df, meta_df = load_psf_qc_inputs(psf_dir)
+            if all_df.empty:
                 self.qc_text.setPlainText("No photometry TSV files found.")
                 self._refresh_final_diagnostics()
                 return
-            all_df = pd.concat([pd.read_csv(f, sep="\t") for f in tsv_files], ignore_index=True)
-            meta_rows = []
-            for mf in sorted(psf_dir.glob("residual_meta_*.json")):
-                try:
-                    m = json.loads(mf.read_text(encoding="utf-8"))
-                    core = m.get("core_cut", {}) if isinstance(m.get("core_cut", {}), dict) else {}
-                    base_meta = {
-                        "file": m.get("file", mf.name.replace("residual_meta_", "", 1).replace(".json", "")),
-                        "filter": m.get("filter", "?"),
-                        "core_cut_enabled": bool(core.get("enabled", False)),
-                        "core_cut_x_px": core.get("center_x", np.nan),
-                        "core_cut_y_px": core.get("center_y", np.nan),
-                        "core_cut_radius_px": core.get("radius_px", np.nan),
-                        "core_cut_method": core.get("method", ""),
-                        "core_cut_reason": core.get("reason", ""),
-                        "n_core_excluded_init": core.get("n_excluded_init", np.nan),
-                        "n_core_excluded_redetect": core.get("n_excluded_redetect", np.nan),
-                        "n_core_excluded_result": core.get("n_excluded_result", np.nan),
-                    }
-                    for it in m.get("iters", []):
-                        meta_rows.append({
-                            **base_meta,
-                            "iter": it.get("iter"),
-                            "phase": it.get("phase", "residual_fit"),
-                            "residual_std": it.get("residual_std", np.nan),
-                            "n_fit": it.get("n_fit", np.nan),
-                            "n_new_raw": it.get("n_new_raw", np.nan),
-                            "n_new_kept": it.get("n_new_kept", np.nan),
-                            "n_candidates_raw": it.get("n_candidates_raw", np.nan),
-                            "n_candidates_unique": it.get("n_candidates_unique", np.nan),
-                            "n_candidates_accepted": it.get("n_candidates_accepted", np.nan),
-                            "n_pruned": it.get("n_pruned", np.nan),
-                            "median_qfit": it.get("median_qfit", np.nan),
-                            "median_reduced_chi2": it.get("median_reduced_chi2", np.nan),
-                            "elapsed_s": it.get("elapsed_s", np.nan),
-                            "stop_reason": it.get("stop_reason", ""),
-                        })
-                except Exception:
-                    pass
-            meta_df = pd.DataFrame(meta_rows) if meta_rows else pd.DataFrame()
 
             good = all_df[all_df["flags_psf"] == 0].copy() if "flags_psf" in all_df.columns else all_df.copy()
             filters = sorted(all_df["FILTER"].dropna().unique().tolist()) if "FILTER" in all_df.columns else []

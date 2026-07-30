@@ -39,6 +39,7 @@ def main() -> int:
     from apex.gui.workflow.cmd.step8_psf_photometry import (
         Step6PSFWorker,
         build_psf_output_signature,
+        export_psf_qc_products,
         write_psf_output_signature,
     )
 
@@ -94,6 +95,18 @@ def main() -> int:
             f"processed={done.get('processed', 0)}/{len(file_list)} "
             f"stopped={done.get('stopped', 0)}"
         )
+    # QC 산출물 — 창이 만드는 것과 같은 함수를 쓴다. Step 10 은 워커 안에서
+    # 내보내므로 헤드리스도 그림이 나오는데 Step 8 은 창에만 있어서 헤드리스
+    # 검증에 PSF 리포트가 하나도 안 남았다.
+    try:
+        qc_paths = export_psf_qc_products(result_dir / "cmd_psf")
+        for p in qc_paths:
+            print(f"[qc] {p.name}")
+        if not qc_paths:
+            print("[qc] 산출물 없음 (입력 표가 비었다)")
+    except Exception as exc:
+        print(f"[qc] 실패: {_console_text(exc)}")
+
     print(f"[done] elapsed {elapsed:.1f}s  keys={sorted(done)[:8]}")
     return 0 if complete else 1
 
