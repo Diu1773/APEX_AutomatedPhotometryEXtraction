@@ -64,6 +64,13 @@
   그림 생성 로직을 `apex/analysis` 로 빼야 한다.
 - **아직 CR 없이 남은 성단**: M67 · M3(오염 15.4%) · M5. M13·NGC6811 은 재처리
   완료(기존은 `result_nocr/`·`sci_nocr/` 로 보존).
+  → **사용자 결정 2026-07-30: CR 은 다른 세션에서 잡는다.**
+- **위치기반(공간 가변) EPSF — 향후 구현.** 지금은 프레임당 EPSF 하나이고
+  2.0°×1.3° 에서 가장자리 계통오차가 4.5 mmag 라 당장 필요하지 않다. 착수
+  조건과 구현 방향은 `validation/psf_crossinstrument/REPORT_WIDE_EPSF.md`
+  「향후 구현」절에 적었다 (grid_size 를 모델 단위로 승격 → `GriddedPSFModel`).
+- **이소크론 축퇴 — 위 작업들 뒤로.** U-B 로는 실패했고(Gaia→U σ=0.200),
+  U 표준등급(Landolt/Stetson) 확보가 선행 조건이다.
 
 **2026-07-29 PSF 완성 세션에서 끝난 것**
 
