@@ -66,11 +66,14 @@ M45 2.0°×1.3°(61.7 MP, 19프레임, 50,607 별):
   `np.argsort(flux)[::-1]` 로 밝기순 정렬한다(`detection.py:610, 783`). 어두운
   별부터 버리는 예측 가능한 절단이고 완전도 모델이 다루는 편향이다. M45 에서
   10/19 프레임이 걸렸을 때 y 분포가 정상이었던 것도 설계대로였다.
-- ~~Step 8 리포트가 헤드리스에서 안 나온다~~ → **해결.** `load_psf_qc_inputs` ·
-  `export_psf_qc_products` 를 모듈 함수로 빼고 창이 그것을 쓰게 했다(한
-  코드경로). 헤드리스도 `psf_qc_summary.csv` · `psf_frame_qc.csv` ·
-  `step8_residual_core_qc.png` 를 낸다. **남은 것**: 구경 vs PSF 비교와 최종
-  진단 그림은 살아 있는 위젯 상태에서 저장하므로 아직 창 전용이다.
+- ~~Step 8 리포트가 헤드리스에서 안 나온다~~ → **해결(전부).** 모듈 함수 넷을
+  빼고 창이 그것을 쓰게 했다 — `load_psf_qc_inputs` · `build_ap_psf_comparison` ·
+  `render_psf_final_diagnostics` · `export_psf_qc_products`. 헤드리스가 **6종**을
+  낸다: 비교표·QC요약·프레임QC·잔차/코어 그림·최종진단 그림·진단 JSON.
+- **그 과정에서 실제 버그 발견** — 비교 병합이 `mag_ap` 를 하드코딩했는데
+  Step 7 은 그 이름을 쓴 적이 없다(`mag_inst`). GUI 의 「구경 vs PSF」 탭이 늘
+  "All magnitudes are NaN" 만 띄우고 있었다. 폴백을 넣어 고쳤다 —
+  M13 12,892행 Δ +0.0754 · NGC6811 20,762행 Δ +0.0687.
 - **GUI 실구동 확인** — 코드 감사는 끝났고(파라미터 왕복 16/16 무손실) 실제
   구동은 보류.
 
