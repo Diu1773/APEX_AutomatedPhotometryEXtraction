@@ -228,6 +228,110 @@ def _filter_subset(df: pd.DataFrame, column: str, filt: str | None) -> pd.DataFr
     return df[keys == filt_key].copy()
 
 
+def build_ap_psf_comparison(params, result_dir: Path) -> tuple[pd.DataFrame, int]:
+    """Merge Step 7 aperture and Step 8 PSF magnitudes on ``det_uid``.
+
+    Reads only from disk, so the window and a headless run share this path.
+    Returns ``(merged, n_split_excluded)``.
+
+    Crowd-safe compare: when ``seed_uid`` + ``flux_psf_e`` exist, PSF components
+    that were split off one Step-4 seed are summed back to that seed before the
+    merge, and (by default) seeds that decomposed into more than one component
+    are dropped entirely — an aperture measurement of a blend cannot be
+    compared against one of its PSF pieces.
+    """
+    result_dir = Path(result_dir)
+    ap_dir = step7_forced_phot_dir(result_dir)
+    psf_dir = step8_psf_dir(result_dir)
+
+    merged_rows: list[pd.DataFrame] = []
+    split_excluded_total = 0
+    for psf_tsv in sorted(psf_dir.glob("photometry_*.tsv")):
+        fname_key = psf_tsv.name[len("photometry_"):]
+        ap_tsv = ap_dir / f"photometry_{fname_key}"
+        if not ap_tsv.exists():
+            continue
+        try:
+            df_ap = pd.read_csv(ap_tsv, sep="\t")
+            df_psf = pd.read_csv(psf_tsv, sep="\t")
+        except Exception:
+            continue
+        if "det_uid" not in df_ap.columns or "det_uid" not in df_psf.columns:
+            continue
+
+        # Step 7 writes the aperture magnitude as `mag_inst`; `mag_ap` has never
+        # existed in its output. Hard-coding `mag_ap` made every comparison come
+        # out empty ("All magnitudes are NaN") — the rest of the codebase already
+        # falls back through this list (photometry_loader, step10, extinction_fit).
+        ap_mag_col = next(
+            (c for c in ("mag_inst", "mag", "mag_ap", "mag_apcorr") if c in df_ap.columns),
+            None,
+        )
+        if ap_mag_col is None:
+            continue
+        ap_err_col = next(
+            (c for c in ("mag_err", "mag_inst_err", "mag_ap_err") if c in df_ap.columns),
+            None,
+        )
+        ap_cols = ["det_uid", ap_mag_col]
+        if ap_err_col:
+            ap_cols.append(ap_err_col)
+        if "r_ap_px" in df_ap.columns:
+            ap_cols.append("r_ap_px")
+        try:
+            if {"seed_uid", "flux_psf_e", "exptime"} <= set(df_psf.columns):
+                zp = _to_float(getattr(params.P, "zp_initial", 25.0), 25.0)
+                p = df_psf.copy()
+                for c in ("seed_uid", "flux_psf_e", "exptime"):
+                    p[c] = pd.to_numeric(p[c], errors="coerce")
+                p = p[
+                    np.isfinite(p["seed_uid"]) & (p["seed_uid"] >= 0)
+                    & np.isfinite(p["flux_psf_e"]) & (p["flux_psf_e"] > 0)
+                    & np.isfinite(p["exptime"]) & (p["exptime"] > 0)
+                ].copy()
+                if len(p) == 0:
+                    continue
+                agg_map = {"flux_psf_e": "sum", "exptime": "median"}
+                for c in ("FILTER", "qfit", "qfit_noise_ratio", "iter_found", "snr_psf", "flags_psf"):
+                    if c in p.columns:
+                        agg_map[c] = "median" if c in {"qfit", "qfit_noise_ratio", "iter_found"} else "first"
+                g = p.groupby("seed_uid", as_index=False).agg(agg_map)
+                comp = p.groupby("seed_uid", as_index=False).size().rename(columns={"size": "n_comp"})
+                g = g.merge(comp, on="seed_uid", how="left")
+                if bool(getattr(params.P, "step6_compare_exclude_split", True)):
+                    n_before_g = int(len(g))
+                    g = g[g["n_comp"] == 1].copy()
+                    split_excluded_total += max(0, n_before_g - int(len(g)))
+                    if len(g) == 0:
+                        continue
+                g["det_uid"] = g["seed_uid"].astype(int)
+                g["mag_psf"] = zp - 2.5 * np.log10(
+                    np.maximum(g["flux_psf_e"].to_numpy(float), 1e-30)
+                    / np.maximum(g["exptime"].to_numpy(float), 1e-30)
+                )
+                psf_cols = [c for c in ("det_uid", "mag_psf", "FILTER", "qfit", "qfit_noise_ratio",
+                                        "iter_found", "snr_psf", "flags_psf") if c in g.columns]
+                m = df_ap[ap_cols].merge(g[psf_cols], on="det_uid", how="inner")
+            else:
+                psf_cols = [c for c in ("det_uid", "mag_psf", "mag_psf_err", "FILTER", "qfit",
+                                        "qfit_noise_ratio", "iter_found", "snr_psf", "flags_psf")
+                            if c in df_psf.columns]
+                m = df_ap[ap_cols].merge(df_psf[psf_cols], on="det_uid", how="inner")
+            # Downstream (plot + stats) expects `mag_ap`/`mag_ap_err` names.
+            rename = {ap_mag_col: "mag_ap"}
+            if ap_err_col:
+                rename[ap_err_col] = "mag_ap_err"
+            m = m.rename(columns=rename)
+            # Strip .tsv so FRAME matches apcorr_summary.csv "file" column
+            m["FRAME"] = fname_key[:-4] if fname_key.endswith(".tsv") else fname_key
+            merged_rows.append(m)
+        except Exception:
+            continue
+
+    merged = pd.concat(merged_rows, ignore_index=True) if merged_rows else pd.DataFrame()
+    return merged, int(split_excluded_total)
+
+
 def load_psf_qc_inputs(psf_dir: Path) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]:
     """Read the three tables the Step 8 QC products are built from.
 
@@ -289,13 +393,13 @@ def load_psf_qc_inputs(psf_dir: Path) -> tuple[pd.DataFrame, pd.DataFrame, pd.Da
     return idx, all_df, meta_df
 
 
-def export_psf_qc_products(psf_dir: Path) -> list[Path]:
+def export_psf_qc_products(psf_dir: Path, params=None, result_dir: Path | None = None) -> list[Path]:
     """Write the window-independent Step 8 QC products.
 
-    Covers the parts that need no Qt widget: the two QC tables and the
-    residual/core overview figure. The window additionally exports its own
-    plots (aperture-vs-PSF, final diagnostics) which are drawn from live
-    widget state; those stay in the window for now.
+    Covers the parts that need no Qt widget: the two QC tables, the
+    residual/core overview figure, and — when ``params``/``result_dir`` are
+    given — the aperture-vs-PSF comparison table. The window additionally
+    renders its own interactive plots from live widget state.
     """
     psf_dir = Path(psf_dir)
     idx, all_df, meta_df = load_psf_qc_inputs(psf_dir)
@@ -303,7 +407,19 @@ def export_psf_qc_products(psf_dir: Path) -> list[Path]:
         return []
 
     saved: list[Path] = []
-    summary = _build_psf_qc_summary(idx, all_df, meta_df, None)
+
+    cmp_df = None
+    if params is not None and result_dir is not None:
+        try:
+            cmp_df, _n_split = build_ap_psf_comparison(params, result_dir)
+            if not cmp_df.empty:
+                p = psf_dir / "psf_ap_vs_psf.csv"
+                cmp_df.to_csv(p, index=False)
+                saved.append(p)
+        except Exception:
+            cmp_df = None
+
+    summary = _build_psf_qc_summary(idx, all_df, meta_df, cmp_df)
     if not summary.empty:
         p = psf_dir / "psf_qc_summary.csv"
         summary.to_csv(p, index=False)
@@ -7427,83 +7543,13 @@ class PSFPhotometryWindow(StepWindowBase):
             "v": "#bcbd22", "ha": "#e377c2",
         }
 
-        ap_dir = step7_forced_phot_dir(self.params.P.result_dir)
-        psf_dir = step8_psf_dir(self.params.P.result_dir)
-
-        # Load and merge TSVs — cached; only re-read from disk when _cmp_merged_df is None
-        # (Step 7 forced photometry already filters usable frames, so no extra filter needed here)
+        # 병합은 헤드리스와 **같은 함수**로 한다 — 창과 배치가 각자 병합하면
+        # 두 산출물이 조용히 갈라진다. 캐시(_cmp_merged_df)는 창 쪽 사정이다.
         if not hasattr(self, "_cmp_merged_df") or self._cmp_merged_df is None:
-            merged_rows = []
-            split_excluded_total = 0
-            for psf_tsv in sorted(psf_dir.glob("photometry_*.tsv")):
-                fname_key = psf_tsv.name[len("photometry_"):]
-                ap_tsv = ap_dir / f"photometry_{fname_key}"
-                if not ap_tsv.exists():
-                    continue
-                try:
-                    df_ap = pd.read_csv(ap_tsv, sep="\t")
-                    df_psf = pd.read_csv(psf_tsv, sep="\t")
-                except Exception:
-                    continue
-                if "det_uid" not in df_ap.columns or "det_uid" not in df_psf.columns:
-                    continue
-                ap_cols = [c for c in ("det_uid", "mag_ap", "mag_ap_err", "r_ap_px") if c in df_ap.columns]
-                try:
-                    # Crowd-safe compare path:
-                    # if seed_uid + flux_psf_e exist, aggregate all split PSF components
-                    # back to their original Step4 seed before AP-vs-PSF merge.
-                    if {"seed_uid", "flux_psf_e", "exptime"} <= set(df_psf.columns):
-                        zp = _to_float(getattr(self.params.P, "zp_initial", 25.0), 25.0)
-                        p = df_psf.copy()
-                        p["seed_uid"] = pd.to_numeric(p["seed_uid"], errors="coerce")
-                        p["flux_psf_e"] = pd.to_numeric(p["flux_psf_e"], errors="coerce")
-                        p["exptime"] = pd.to_numeric(p["exptime"], errors="coerce")
-                        p = p[
-                            np.isfinite(p["seed_uid"]) &
-                            (p["seed_uid"] >= 0) &
-                            np.isfinite(p["flux_psf_e"]) &
-                            (p["flux_psf_e"] > 0) &
-                            np.isfinite(p["exptime"]) &
-                            (p["exptime"] > 0)
-                        ].copy()
-                        if len(p) == 0:
-                            continue
-                        agg_map = {
-                            "flux_psf_e": "sum",
-                            "exptime": "median",
-                        }
-                        for c in ("FILTER", "qfit", "qfit_noise_ratio", "iter_found", "snr_psf", "flags_psf"):
-                            if c in p.columns:
-                                agg_map[c] = "median" if c in {"qfit", "qfit_noise_ratio", "iter_found"} else "first"
-                        g = p.groupby("seed_uid", as_index=False).agg(agg_map)
-                        comp = p.groupby("seed_uid", as_index=False).size().rename(columns={"size": "n_comp"})
-                        g = g.merge(comp, on="seed_uid", how="left")
-                        # Strict compare mode: for AP-vs-PSF calibration consistency,
-                        # exclude decomposed seeds (one AP seed split into multiple PSF components).
-                        if bool(getattr(self.params.P, "step6_compare_exclude_split", True)):
-                            n_before_g = int(len(g))
-                            g = g[g["n_comp"] == 1].copy()
-                            split_excluded_total += max(0, n_before_g - int(len(g)))
-                            if len(g) == 0:
-                                continue
-                        g["det_uid"] = g["seed_uid"].astype(int)
-                        g["mag_psf"] = zp - 2.5 * np.log10(
-                            np.maximum(g["flux_psf_e"].to_numpy(float), 1e-30)
-                            / np.maximum(g["exptime"].to_numpy(float), 1e-30)
-                        )
-                        psf_cols = [c for c in ("det_uid", "mag_psf", "FILTER", "qfit", "qfit_noise_ratio",
-                                                "iter_found", "snr_psf", "flags_psf") if c in g.columns]
-                        m = df_ap[ap_cols].merge(g[psf_cols], on="det_uid", how="inner")
-                    else:
-                        psf_cols = [c for c in ("det_uid", "mag_psf", "mag_psf_err", "FILTER", "qfit", "qfit_noise_ratio",
-                                                "iter_found", "snr_psf", "flags_psf") if c in df_psf.columns]
-                        m = df_ap[ap_cols].merge(df_psf[psf_cols], on="det_uid", how="inner")
-                    # Strip .tsv so FRAME matches apcorr_summary.csv "file" column (FITS filename)
-                    m["FRAME"] = fname_key[:-4] if fname_key.endswith(".tsv") else fname_key
-                    merged_rows.append(m)
-                except Exception:
-                    continue
-            self._cmp_merged_df = pd.concat(merged_rows, ignore_index=True) if merged_rows else pd.DataFrame()
+            merged, split_excluded_total = build_ap_psf_comparison(
+                self.params, self.params.P.result_dir
+            )
+            self._cmp_merged_df = merged
             self._cmp_split_excluded_total = int(split_excluded_total)
 
         self.cmp_fig.clf()

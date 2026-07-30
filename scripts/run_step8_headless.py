@@ -99,7 +99,9 @@ def main() -> int:
     # 내보내므로 헤드리스도 그림이 나오는데 Step 8 은 창에만 있어서 헤드리스
     # 검증에 PSF 리포트가 하나도 안 남았다.
     try:
-        qc_paths = export_psf_qc_products(result_dir / "cmd_psf")
+        qc_paths = export_psf_qc_products(
+            result_dir / "cmd_psf", params=params, result_dir=result_dir
+        )
         for p in qc_paths:
             print(f"[qc] {p.name}")
         if not qc_paths:
