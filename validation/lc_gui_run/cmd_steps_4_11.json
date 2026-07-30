@@ -1,0 +1,104 @@
+{
+  "mode": "cmd",
+  "params": "E:/APEX_validation/reprocess/M13/parameters.toml",
+  "result_dir": "E:\\APEX_validation\\reprocess\\M13\\result",
+  "boot_s": 4.14,
+  "steps": [
+    {
+      "index": 4,
+      "name": "WCS Plate Solving",
+      "open_s": 1.26,
+      "class": "WcsPlateSolvingWindow",
+      "load_s": 0.0,
+      "table": "15x6(1행채움 6) | 0x6(1행채움 0)",
+      "size": "752x510",
+      "status": "OK"
+    },
+    {
+      "index": 5,
+      "name": "Master Catalog Build",
+      "open_s": 1.18,
+      "class": "RefBuildWindow",
+      "load_s": 0.0,
+      "table": "0x0(1행채움 0) | 0x6(1행채움 0)",
+      "size": "752x510",
+      "tabs": [
+        "Summary",
+        "Stats",
+        "Plot"
+      ],
+      "status": "OK"
+    },
+    {
+      "index": 6,
+      "name": "Forced Aperture Phot",
+      "open_s": 0.23,
+      "class": "ForcedPhotWindow",
+      "load_s": 0.0,
+      "table": "0x12(1행채움 0) | 0x11(1행채움 0)",
+      "size": "752x510",
+      "tabs": [
+        "Stats",
+        "Apcorr",
+        "Results"
+      ],
+      "status": "OK"
+    },
+    {
+      "index": 7,
+      "name": "PSF Photometry",
+      "open_s": 2.03,
+      "class": "PSFPhotometryWindow",
+      "load_s": 17.8,
+      "table": "15x9(1행채움 9)",
+      "size": "752x510",
+      "status": "OK"
+    },
+    {
+      "index": 8,
+      "name": "Master ID Editor",
+      "open_s": 10.09,
+      "class": "MasterIdEditorWindow",
+      "load_s": 0.0,
+      "table": "1500x4(1행채움 4)",
+      "size": "752x510",
+      "status": "OK"
+    },
+    {
+      "index": 9,
+      "name": "Zeropoint Calibration",
+      "open_s": 0.28,
+      "class": "ZeropointCalibrationWindow",
+      "load_s": 0.0,
+      "table": "-",
+      "size": "752x510",
+      "status": "OK"
+    },
+    {
+      "index": 10,
+      "name": "CMD Plot",
+      "open_s": 0.6,
+      "class": "CmdPlotWindow",
+      "load_s": 0.0,
+      "table": "-",
+      "size": "752x510",
+      "status": "OK"
+    },
+    {
+      "index": 11,
+      "name": "Isochrone Model",
+      "open_s": 2.91,
+      "class": "IsochroneModelWindow",
+      "load_s": 0.34,
+      "table": "-",
+      "size": "752x510",
+      "tabs": [
+        "CMD Viewer",
+        "Color-Color",
+        "Quick Fit (grid)",
+        "Auto-fit (MCMC)"
+      ],
+      "status": "OK"
+    }
+  ]
+}

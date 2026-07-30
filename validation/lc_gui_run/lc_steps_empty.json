@@ -1,0 +1,148 @@
+{
+  "mode": "lc",
+  "params": "E:/APEX_validation/reprocess/YZBoo_20250430/parameters.toml",
+  "result_dir": "E:\\APEX_validation\\reprocess\\YZBoo_20250430\\result",
+  "boot_s": 12.56,
+  "steps": [
+    {
+      "index": 0,
+      "name": "File Selection",
+      "open_s": 18.05,
+      "class": "FileSelectionWindow",
+      "load_s": 0.0,
+      "table": "1x6(1행채움 5) | 25x10(1행채움 10)",
+      "size": "752x510",
+      "status": "OK"
+    },
+    {
+      "index": 1,
+      "name": "Image Crop",
+      "open_s": 5.8,
+      "class": "CropSelectorWindow",
+      "load_s": 0.0,
+      "table": "-",
+      "size": "752x510",
+      "status": "OK"
+    },
+    {
+      "index": 2,
+      "name": "Sky Preview & QC",
+      "open_s": 11.57,
+      "class": "SkyPreviewWindow",
+      "load_s": 0.0,
+      "table": "-",
+      "size": "752x510",
+      "status": "OK"
+    },
+    {
+      "index": 3,
+      "name": "Source Detection",
+      "open_s": 0.47,
+      "class": "SourceDetectionWindow",
+      "load_s": 0.0,
+      "table": "0x5(1행채움 0) | 0x7(1행채움 0)",
+      "size": "752x510",
+      "tabs": [
+        "Detection",
+        "QC"
+      ],
+      "status": "OK"
+    },
+    {
+      "index": 4,
+      "name": "WCS Plate Solving",
+      "open_s": 0.17,
+      "class": "WcsPlateSolvingWindow",
+      "load_s": 0.0,
+      "table": "0x6(1행채움 0) | 0x6(1행채움 0)",
+      "size": "752x510",
+      "status": "OK"
+    },
+    {
+      "index": 5,
+      "name": "Master Catalog Build",
+      "open_s": 0.26,
+      "class": "RefBuildWindow",
+      "load_s": 0.0,
+      "table": "0x0(1행채움 0) | 0x6(1행채움 0)",
+      "size": "752x510",
+      "tabs": [
+        "Summary",
+        "Stats",
+        "Plot"
+      ],
+      "status": "OK"
+    },
+    {
+      "index": 6,
+      "name": "Forced Aperture Phot",
+      "open_s": 0.25,
+      "class": "ForcedPhotWindow",
+      "load_s": 0.0,
+      "table": "0x12(1행채움 0) | 0x11(1행채움 0)",
+      "size": "752x510",
+      "tabs": [
+        "Stats",
+        "Apcorr",
+        "Results"
+      ],
+      "status": "OK"
+    },
+    {
+      "index": 7,
+      "name": "PSF Photometry",
+      "open_s": 0.73,
+      "class": "PSFPhotometryWindow",
+      "load_s": 0.0,
+      "table": "0x9(1행채움 0)",
+      "size": "752x510",
+      "status": "OK"
+    },
+    {
+      "index": 8,
+      "name": "Target/Comparison Selection",
+      "open_s": 5.45,
+      "class": "TargetComparisonSelectionWindow",
+      "load_s": 0.11,
+      "table": "0x10(1행채움 0)",
+      "size": "752x510",
+      "status": "OK"
+    },
+    {
+      "index": 9,
+      "name": "Light Curve Builder",
+      "open_s": 1.06,
+      "class": "LightCurveBuilderWindow",
+      "load_s": 0.0,
+      "table": "0x7(1행채움 0) | 0x5(1행채움 0)",
+      "size": "752x510",
+      "status": "OK"
+    },
+    {
+      "index": 10,
+      "name": "Detrend & Night Merge",
+      "open_s": 1.0,
+      "class": "DetrendNightMergeWindow",
+      "load_s": 0.04,
+      "table": "0x9(1행채움 0)",
+      "size": "752x510",
+      "status": "OK"
+    },
+    {
+      "index": 11,
+      "name": "Period Analysis",
+      "open_s": 2.64,
+      "class": "PeriodAnalysisWindow",
+      "load_s": 0.0,
+      "table": "0x7(1행채움 0) | 0x7(1행채움 0)",
+      "size": "752x510",
+      "tabs": [
+        "Summary",
+        "Periodogram",
+        "Phase Plot",
+        "Results"
+      ],
+      "status": "OK"
+    }
+  ]
+}
