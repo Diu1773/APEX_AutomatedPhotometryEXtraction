@@ -526,6 +526,12 @@ def export_psf_qc_products(psf_dir: Path, params=None, result_dir: Path | None =
                 p = psf_dir / "psf_ap_vs_psf.csv"
                 cmp_df.to_csv(p, index=False)
                 saved.append(p)
+                # 창이 이 표를 캐시로 재사용한다(_load_or_build_comparison).
+                # 병합만 10초대라 헤드리스가 남겨 두면 창이 즉시 열린다.
+                (psf_dir / "psf_ap_vs_psf_meta.json").write_text(
+                    json.dumps({"split_excluded_total": int(_n_split)}),
+                    encoding="utf-8",
+                )
         except Exception:
             cmp_df = None
 
@@ -7632,6 +7638,50 @@ class PSFPhotometryWindow(StepWindowBase):
 
     # ── Aperture vs PSF magnitude comparison ──────────────────────────────────
 
+    def _load_or_build_comparison(self) -> tuple[pd.DataFrame, int]:
+        """구경 vs PSF 병합표를 디스크 캐시에서 읽고, 없거나 낡았으면 다시 만든다.
+
+        이 병합은 프레임 수에 비례해 무겁다 — M13 15프레임에 **10.9초**이고,
+        창을 열 때마다 `_refresh_qc()` 가 캐시를 버리고 처음부터 다시 만든다.
+        그래서 Step 8 창 로드가 17.8초였다. Step 8 산출물이 그대로면 결과도
+        같으므로, `photometry_index.csv` 보다 새 캐시가 있으면 그것을 쓴다.
+        """
+        psf_dir = step8_psf_dir(self.params.P.result_dir)
+        cache_path = psf_dir / "psf_ap_vs_psf.csv"
+        meta_path = psf_dir / "psf_ap_vs_psf_meta.json"
+        index_path = psf_dir / "photometry_index.csv"
+        try:
+            if (
+                cache_path.exists()
+                and index_path.exists()
+                and cache_path.stat().st_mtime >= index_path.stat().st_mtime
+            ):
+                cached = pd.read_csv(cache_path)
+                n_split = 0
+                if meta_path.exists():
+                    n_split = int(
+                        json.loads(meta_path.read_text(encoding="utf-8")).get(
+                            "split_excluded_total", 0
+                        )
+                    )
+                return cached, n_split
+        except Exception:
+            pass
+
+        merged, split_excluded_total = build_ap_psf_comparison(
+            self.params, self.params.P.result_dir
+        )
+        try:
+            psf_dir.mkdir(parents=True, exist_ok=True)
+            merged.to_csv(cache_path, index=False)
+            meta_path.write_text(
+                json.dumps({"split_excluded_total": int(split_excluded_total)}),
+                encoding="utf-8",
+            )
+        except Exception:
+            pass
+        return merged, int(split_excluded_total)
+
     def _plot_mag_comparison(self):  # noqa: C901
         """Scatter: mag_ap (Step5) vs mag_psf (Step6), merged on det_uid."""
         if not hasattr(self, "cmp_fig"):
@@ -7646,9 +7696,7 @@ class PSFPhotometryWindow(StepWindowBase):
         # 병합은 헤드리스와 **같은 함수**로 한다 — 창과 배치가 각자 병합하면
         # 두 산출물이 조용히 갈라진다. 캐시(_cmp_merged_df)는 창 쪽 사정이다.
         if not hasattr(self, "_cmp_merged_df") or self._cmp_merged_df is None:
-            merged, split_excluded_total = build_ap_psf_comparison(
-                self.params, self.params.P.result_dir
-            )
+            merged, split_excluded_total = self._load_or_build_comparison()
             self._cmp_merged_df = merged
             self._cmp_split_excluded_total = int(split_excluded_total)
 
