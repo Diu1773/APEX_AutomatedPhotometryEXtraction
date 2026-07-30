@@ -393,6 +393,116 @@ def load_psf_qc_inputs(psf_dir: Path) -> tuple[pd.DataFrame, pd.DataFrame, pd.Da
     return idx, all_df, meta_df
 
 
+def render_psf_final_diagnostics(
+    fig,
+    params,
+    result_dir: Path,
+    fname: str,
+    *,
+    use_cropped: bool = False,
+) -> tuple[pd.DataFrame, dict]:
+    """Draw the Step 8 final-diagnostic panel for one frame onto ``fig``.
+
+    Assembles every input off disk (residual meta, ePSF model, reference-star
+    catalogue, frame FWHM, pixel scale) so the window and a headless run render
+    the same figure. Returns ``(data, summary)``.
+    """
+    result_dir = Path(result_dir)
+    psf_dir = step8_psf_dir(result_dir)
+    data = load_psf_final_diagnostic_data(result_dir, fname)
+
+    meta_path = psf_dir / f"residual_meta_{fname}.json"
+    meta: dict = {}
+    if meta_path.exists():
+        try:
+            loaded = json.loads(meta_path.read_text(encoding="utf-8"))
+            meta = loaded if isinstance(loaded, dict) else {}
+        except Exception:
+            meta = {}
+    core = meta.get("core_cut", {}) if isinstance(meta.get("core_cut", {}), dict) else {}
+
+    cache_dir = Path(getattr(params.P, "cache_dir", result_dir))
+    fwhm_px = _load_fwhm_from_meta(
+        fname, cache_dir, result_dir,
+        _to_float(getattr(params.P, "fwhm_pix_guess", 6.0), 6.0),
+    )
+
+    # pixel scale — from the frame WCS when it can be found
+    pixel_scale = np.nan
+    fits_path = None
+    if use_cropped and crop_is_active(result_dir):
+        cpath = step2_cropped_dir(result_dir) / fname
+        if cpath.exists():
+            fits_path = cpath
+    if fits_path is None:
+        cand = Path(getattr(params.P, "data_dir", "")) / fname
+        fits_path = cand if cand.exists() else None
+    if fits_path is not None:
+        try:
+            from astropy.wcs import WCS
+            from astropy.wcs.utils import proj_plane_pixel_scales
+            celestial = WCS(fits.getheader(fits_path)).celestial
+            scales = np.asarray(proj_plane_pixel_scales(celestial), dtype=float) * 3600.0
+            s = float(np.nanmedian(np.abs(scales)))
+            if np.isfinite(s) and s > 0:
+                pixel_scale = s
+        except Exception:
+            pass
+    if not np.isfinite(pixel_scale):
+        pixel_scale = _to_float(getattr(params.P, "pixel_scale_arcsec", np.nan), np.nan)
+
+    # ePSF model
+    filt = str(meta.get("filter", "")).strip()
+    stem = Path(fname).stem
+    epsf_model, epsf_path = None, None
+    cands: list[Path] = []
+    if filt:
+        for f in (filt, filt.lower(), filt.upper()):
+            cands += [psf_dir / f"epsf_model_{f}_{stem}.fits", psf_dir / f"epsf_model_{f}.fits"]
+    cands += sorted(psf_dir.glob(f"epsf_model_*_{stem}.fits"))
+    for c in cands:
+        if c.exists():
+            try:
+                epsf_model = fits.getdata(c).astype(float)
+                epsf_path = c
+                break
+            except Exception:
+                continue
+
+    # ePSF reference-star catalogue
+    reference = meta.get("epsf_reference", {})
+    cat_name = reference.get("catalog_path", "") if isinstance(reference, dict) else ""
+    cat_path = psf_dir / (str(cat_name).strip() or f"epsf_reference_{fname}.csv")
+    epsf_reference = pd.DataFrame()
+    if cat_path.exists():
+        try:
+            epsf_reference = pd.read_csv(cat_path)
+        except Exception:
+            pass
+
+    summary = draw_psf_final_diagnostics(
+        fig, data, epsf_model,
+        filename=fname,
+        fwhm_px=fwhm_px,
+        pixel_scale_arcsec=pixel_scale,
+        core_center=(_safe_float(core.get("center_x"), np.nan),
+                     _safe_float(core.get("center_y"), np.nan)),
+        core_radius_px=_safe_float(core.get("radius_px"), np.nan),
+        epsf_reference=epsf_reference,
+    )
+    if epsf_path is not None:
+        summary["epsf_file"] = epsf_path.name
+    flux_scale = meta.get("flux_scale", {})
+    if isinstance(flux_scale, dict):
+        summary["psf_aperture_scale"] = _safe_float(flux_scale.get("scale"), 1.0)
+        summary["psf_aperture_scale_applied"] = bool(flux_scale.get("applied", False))
+        summary["psf_aperture_scale_n"] = _to_int(flux_scale.get("n_used", 0), 0)
+        summary["psf_aperture_scale_raw_offset_mag"] = _safe_float(
+            flux_scale.get("median_delta_mag_raw"), np.nan
+        )
+    return data, summary
+
+
 def export_psf_qc_products(psf_dir: Path, params=None, result_dir: Path | None = None) -> list[Path]:
     """Write the window-independent Step 8 QC products.
 
@@ -436,6 +546,30 @@ def export_psf_qc_products(psf_dir: Path, params=None, result_dir: Path | None =
             fp = psf_dir / "step8_residual_core_qc.png"
             fig.savefig(fp, dpi=160, bbox_inches="tight")
             saved.append(fp)
+
+    # 최종 진단 — 대표 프레임 한 장. 창은 사용자가 고른 프레임을 그리지만
+    # 배치는 고를 사람이 없으므로 인덱스 첫 프레임을 쓴다.
+    if params is not None and result_dir is not None and not idx.empty:
+        try:
+            fname = Path(str(idx["file"].iloc[0])).name
+            fig = Figure(figsize=(12.0, 7.5), dpi=120)
+            data, summary = render_psf_final_diagnostics(
+                fig, params, Path(result_dir), fname
+            )
+            stem = Path(fname).stem
+            fp = psf_dir / f"step8_final_diagnostics_{stem}.png"
+            fig.savefig(fp, dpi=160, bbox_inches="tight")
+            saved.append(fp)
+
+            sp = psf_dir / f"psf_final_diagnostics_{stem}.json"
+            sp.write_text(
+                json.dumps(summary, ensure_ascii=False, indent=2,
+                           allow_nan=True, default=str),
+                encoding="utf-8",
+            )
+            saved.append(sp)
+        except Exception:
+            pass
     return saved
 
 
@@ -7381,49 +7515,15 @@ class PSFPhotometryWindow(StepWindowBase):
             return
 
         try:
-            result_dir = Path(self.params.P.result_dir)
-            data = load_psf_final_diagnostic_data(result_dir, fname)
-            meta = self._final_diagnostic_meta(fname)
-            core = meta.get("core_cut", {}) if isinstance(meta.get("core_cut", {}), dict) else {}
-            fwhm_px = _load_fwhm_from_meta(
-                fname,
-                self._cache_dir_path(),
-                result_dir,
-                _to_float(getattr(self.params.P, "fwhm_pix_guess", 6.0), 6.0),
-            )
-            pixel_scale = self._final_diagnostic_pixel_scale(fname)
-            epsf_model, epsf_path = self._final_diagnostic_epsf(fname, meta)
-            epsf_reference = self._final_diagnostic_reference_catalog(fname, meta)
-            summary = draw_psf_final_diagnostics(
+            # 헤드리스와 **같은 함수**로 그린다 — 조립을 창이 따로 하면 두
+            # 산출물이 갈라진다.
+            data, summary = render_psf_final_diagnostics(
                 self.final_diag_fig,
-                data,
-                epsf_model,
-                filename=fname,
-                fwhm_px=fwhm_px,
-                pixel_scale_arcsec=pixel_scale,
-                core_center=(
-                    _safe_float(core.get("center_x"), np.nan),
-                    _safe_float(core.get("center_y"), np.nan),
-                ),
-                core_radius_px=_safe_float(core.get("radius_px"), np.nan),
-                epsf_reference=epsf_reference,
+                self.params,
+                Path(self.params.P.result_dir),
+                fname,
+                use_cropped=bool(getattr(self, "use_cropped", False)),
             )
-            if epsf_path is not None:
-                summary["epsf_file"] = epsf_path.name
-            flux_scale = meta.get("flux_scale", {})
-            if isinstance(flux_scale, dict):
-                summary["psf_aperture_scale"] = _safe_float(
-                    flux_scale.get("scale"), 1.0
-                )
-                summary["psf_aperture_scale_applied"] = bool(
-                    flux_scale.get("applied", False)
-                )
-                summary["psf_aperture_scale_n"] = _to_int(
-                    flux_scale.get("n_used", 0), 0
-                )
-                summary["psf_aperture_scale_raw_offset_mag"] = _safe_float(
-                    flux_scale.get("median_delta_mag_raw"), np.nan
-                )
             self._final_diag_data = data
             self._final_diag_summary = summary
             status = str(summary.get("status", "CHECK"))
