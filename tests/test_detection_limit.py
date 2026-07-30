@@ -52,7 +52,10 @@ _FRAME_ROOT = Path(
 _CALIBRATION_RUNS = [
     ("data_realframe_M67i",           "M67/sci/pp_Messier67-0008-i.fit"),
     ("data_realframe_NGC6811R",       "NGC6811/sci/pp_NGC6811-0005-R.fit"),
-    ("data_realframe_M13V",           "M13/calibrated/20260515/pp_messier13-0001-V.fit"),
+    # sci/ 를 본다 — reprocess 의 reorg 단계가 calibrated/ 에서 sci/ 로 프레임을
+    # **이동**(복사 아님)하므로 재처리 후 calibrated/ 는 비어 있다. 나머지 6개는
+    # 원래 sci/ 를 보고 있었고 이 항목만 옛 경로에 남아 있었다 (2026-07-30).
+    ("data_realframe_M13V",           "M13/sci/pp_messier13-0001-V.fit"),
     ("data_realframe_M67r_mid",       "M67/sci/pp_Messier67-0003-r.fit"),
     ("data_realframe_M67g_broad",     "M67/sci/pp_Messier67-0004-g.fit"),
     ("data_realframe_NGC6811R_broad", "NGC6811/sci/pp_NGC6811-0008-R.fit"),
