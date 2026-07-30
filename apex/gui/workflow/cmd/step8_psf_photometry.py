@@ -5602,12 +5602,33 @@ class PSFPhotometryWindow(StepWindowBase):
         phot_tab = QWidget()
         phot_layout = QVBoxLayout(phot_tab)
         self.frame_table = QTableWidget()
-        self.frame_table.setColumnCount(8)
+        self.frame_table.setColumnCount(9)
         self.frame_table.setHorizontalHeaderLabels(
-            ["Frame", "Filter", "N_psf", "N_goodmag", "N_fail", "N_new_iter", "PSF QC", "Time"]
+            ["Frame", "Filter", "N_psf", "N_goodmag", "N_fail", "N_new_iter",
+             "Forced %", "PSF QC", "Time"]
         )
+        # Forced % 는 PSF 결과를 읽을 때 반드시 함께 봐야 하는 값이다. 강제 측광
+        # 위치(그 프레임에서 검출되지 않은 어두운 별)는 구경이 거의 0 을 재므로
+        # PSF/구경 비교가 그쪽에서 폭주한다. 이 값이 높은 프레임의 PSF vs 구경
+        # 통계는 검출된 별로만 걸러서 봐야 한다.
+        _ft_tips = [
+            "FITS 파일명", "필터명",
+            "PSF 적합 대상 소스 수",
+            "유효 등급을 얻은 수",
+            "적합 실패 수",
+            "잔차 재검출로 추가된 수",
+            "강제 측광 비율 = n_forced / N_psf.\n"
+            "그 프레임에서 검출되지 않아 마스터 위치로 강제 측광한 별의 비율.\n"
+            "노출이 짧거나 청색 필터일수록 높다(실측: 같은 밤 B 75% vs R 50%).\n"
+            "높으면 PSF/구경 플럭스 비교는 검출된 별로만 해야 한다.",
+            "PSF QC 판정", "프레임 처리 시간",
+        ]
+        for _c, _tip in enumerate(_ft_tips):
+            _it = self.frame_table.horizontalHeaderItem(_c)
+            if _it is not None:
+                _it.setToolTip(_tip)
         self.frame_table.horizontalHeader().setSectionResizeMode(0, QHeaderView.Stretch)
-        for c in range(1, 8):
+        for c in range(1, 9):
             self.frame_table.horizontalHeader().setSectionResizeMode(c, QHeaderView.ResizeToContents)
         self.frame_table.setSelectionBehavior(QAbstractItemView.SelectRows)
         phot_layout.addWidget(self.frame_table)
@@ -6850,13 +6871,26 @@ class PSFPhotometryWindow(StepWindowBase):
             self.frame_table.setItem(r, 3, QTableWidgetItem(str(int(_safe_float(getattr(row, "n_goodmag", 0), 0)))))
             self.frame_table.setItem(r, 4, QTableWidgetItem(str(int(_safe_float(getattr(row, "n_fail", 0), 0)))))
             self.frame_table.setItem(r, 5, QTableWidgetItem(str(int(_safe_float(getattr(row, "n_new_iter", 0), 0)))))
+            n_psf = _safe_float(getattr(row, "n", 0), 0)
+            n_forced = _safe_float(getattr(row, "n_forced", np.nan), np.nan)
+            if np.isfinite(n_forced) and n_psf > 0:
+                frac = 100.0 * n_forced / n_psf
+                fitem = QTableWidgetItem(f"{frac:.0f}%")
+                fitem.setToolTip(
+                    f"{int(n_forced)} / {int(n_psf)} — 그 프레임에서 검출되지 않아 "
+                    "마스터 위치로 강제 측광한 별.\n높으면 PSF vs 구경 비교를 "
+                    "검출된 별로만 해야 한다(강제 위치는 구경이 거의 0)."
+                )
+            else:
+                fitem = QTableWidgetItem("")
+            self.frame_table.setItem(r, 6, fitem)
             qc_status = str(getattr(row, "psf_qc_status", "") or "")
             qc_item = QTableWidgetItem(qc_status)
             qc_item.setToolTip(str(getattr(row, "psf_qc_reasons", "") or ""))
-            self.frame_table.setItem(r, 6, qc_item)
+            self.frame_table.setItem(r, 7, qc_item)
             elapsed = _safe_float(getattr(row, "frame_total_elapsed_s", np.nan), np.nan)
             self.frame_table.setItem(
-                r, 7, QTableWidgetItem(f"{elapsed:.1f} s" if np.isfinite(elapsed) else "")
+                r, 8, QTableWidgetItem(f"{elapsed:.1f} s" if np.isfinite(elapsed) else "")
             )
             if qc_status == "FAIL":
                 set_table_row_background(self.frame_table, r, status_row_background(False))
