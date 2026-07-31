@@ -72,6 +72,42 @@ def _pick_radec(frame: pd.DataFrame, names: tuple[str, ...]) -> pd.Series:
     return pd.Series(np.nan, index=frame.index, dtype="float64")
 
 
+def resolve_positional_pairs(
+    nn_sid: dict[int, int | None],
+    nn_sep: dict[int, float],
+    tol_arcsec: float,
+    taken: set[int] | None = None,
+) -> dict[int, int]:
+    """Assign each incoming row its canonical partner, closest pair first.
+
+    Row order used to decide who wins a contested canonical source: whichever
+    row happened to be iterated first claimed it, so in a crowded field a row
+    1.8" away could take the source that another row sat 0.3" from, and that
+    second row — never offered a runner-up — was written out as a brand new
+    star. Sorting the candidate pairs by separation makes the assignment
+    order-independent and gives every source to its nearest claimant.
+
+    Returns ``{row position: canonical source_id}`` for the pairs that are
+    within ``tol_arcsec``; rows left out are new sources.
+    """
+    used: set[int] = set(taken or ())
+    pairs = sorted(
+        (
+            (sep, pos, nn_sid[pos])
+            for pos, sep in nn_sep.items()
+            if nn_sid.get(pos) is not None and np.isfinite(sep) and sep <= tol_arcsec
+        ),
+        key=lambda item: (item[0], item[1]),
+    )
+    assigned: dict[int, int] = {}
+    for _sep, pos, sid in pairs:
+        if sid in used:
+            continue
+        used.add(int(sid))
+        assigned[int(pos)] = int(sid)
+    return assigned
+
+
 def _nearest_canon_matches(
     df: pd.DataFrame, canon: pd.DataFrame
 ) -> tuple[dict[int, int | None], dict[int, float]]:
@@ -273,6 +309,15 @@ def reconcile_workspace_catalogs(
             # so positionally match every incoming row against it in a single
             # vectorized pass instead of one SkyCoord build per row.
             pos_nn_sid, pos_nn_sep = _nearest_canon_matches(df, canon)
+            # Rows that already match a canonical source by Gaia source_id take
+            # it before the positional pass runs, so a positional candidate can
+            # never steal a source out from under an exact identity match.
+            exact_sids = {
+                int(sid) for sid in coerce_int64_source_id(df["source_id"]).dropna()
+                if int(sid) in canon_sid_map
+            } if "source_id" in df.columns else set()
+            pos_assigned = resolve_positional_pairs(
+                pos_nn_sid, pos_nn_sep, pos_tol_arcsec, taken=exact_sids)
 
             for pos, (_, row) in enumerate(df.iterrows()):
                 local_id = pd.to_numeric(pd.Series([row.get("ID")]), errors="coerce").iloc[0]
@@ -290,14 +335,9 @@ def reconcile_workspace_catalogs(
                     matched_sid = sid_int
                     match_method = "source_id"
                 else:
-                    cand_sid = pos_nn_sid.get(pos)
                     sep_arcsec = pos_nn_sep.get(pos, float("nan"))
-                    if (
-                        cand_sid is not None
-                        and np.isfinite(sep_arcsec)
-                        and sep_arcsec <= pos_tol_arcsec
-                        and cand_sid not in used_canonical_sids
-                    ):
+                    cand_sid = pos_assigned.get(pos)
+                    if cand_sid is not None and cand_sid not in used_canonical_sids:
                         matched_sid = cand_sid
                         match_method = "position"
                     else:
