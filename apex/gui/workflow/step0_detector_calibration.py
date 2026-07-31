@@ -627,16 +627,20 @@ class DetectorCalibrationWindow(ToolWindowBase):
         if sample is None:
             return ""
         tol = float(self._settings.get("temp_match_tol_c", 1.0))
+        library = group.get("dark_library")
         dm = scan.match_dark_detail(group["dark"], sample.exp, sample.temp, tol,
-                                    light=sample)
+                                    light=sample, fallback=library)
         ff = scan.match_flat(group["flat"], sample.filt, light=sample)
         if dm is None:
             # Distinguish "no dark at all" from "none of this geometry".
             blocked = bool(group["dark"]) and scan.match_dark_detail(
-                group["dark"], sample.exp, sample.temp, tol) is not None
+                group["dark"], sample.exp, sample.temp, tol,
+                fallback=library) is not None
             d = "no dark (geometry mismatch)" if blocked else "no dark"
         else:
             d = f"dark {dm.exp:g}s/{dm.temp_bucket}°C"
+            if dm.source == "library" and dm.night:
+                d += f" [{dm.night}]"        # not this night's own dark
             # Show the residual mismatch up front — the old preview implied an
             # exact match no matter how far off the nearest dark actually was.
             if dm.delta_temp_c is not None and not dm.within_temp_tol:

@@ -330,6 +330,68 @@ def test_overridden_frame_becomes_usable(tmp_path):
     assert cs.match_dark(g["dark"], 60.0, 5.0) == (60.0, 5)
 
 
+# --- shared dark library must not be shut out by a same-night dark ---------
+
+def _lib_frame(exp, temp, night):
+    return cs.FrameInfo(path=f"d_{night}_{exp}_{temp}.fit", ftype="dark",
+                        exp=exp, temp=temp, night=night)
+
+
+def test_library_dark_wins_on_temperature():
+    """A same-night dark 5 °C off must not beat a library dark that matches.
+    This is what put a -10 °C dark on YZ Boo's -5 °C night."""
+    night_darks = {(30.0, -10): [_lib_frame(30.0, -10.0, "20250430")]}
+    library = {(30.0, -5): [_lib_frame(30.0, -5.0, "20241004")]}
+
+    without = cs.match_dark_detail(night_darks, 30.0, -5.0, 1.0)
+    assert without.key == (30.0, -10) and not without.within_temp_tol
+
+    with_lib = cs.match_dark_detail(night_darks, 30.0, -5.0, 1.0, fallback=library)
+    assert with_lib.key == (30.0, -5)
+    assert with_lib.source == "library"
+    assert with_lib.night == "20241004"
+    assert with_lib.within_temp_tol
+
+
+def test_library_dark_wins_on_exposure():
+    """Same-night 40 s vs library 120 s for a 120 s light."""
+    night_darks = {(40.0, -10): [_lib_frame(40.0, -10.0, "20260325")]}
+    library = {(120.0, -10): [_lib_frame(120.0, -10.0, "20241106")]}
+    match = cs.match_dark_detail(night_darks, 120.0, -10.0, 1.0, fallback=library)
+    assert match.key == (120.0, -10)
+    assert match.delta_exp_s == 0.0
+
+
+def test_same_night_dark_wins_a_tie():
+    """Preferring the night is still right when both match equally well."""
+    night_darks = {(30.0, -10): [_lib_frame(30.0, -10.0, "20250430")]}
+    library = {(30.0, -10): [_lib_frame(30.0, -10.0, "20241106")]}
+    match = cs.match_dark_detail(night_darks, 30.0, -10.0, 1.0, fallback=library)
+    assert match.source == "night"
+    assert match.night == "20250430"
+
+
+def test_group_for_night_separates_the_library():
+    frames = [
+        _lib_frame(30.0, -10.0, "20250430"),
+        _lib_frame(30.0, -5.0, "20241004"),
+        cs.FrameInfo(path="l.fit", ftype="light", exp=30.0, temp=-5.0,
+                     filt="g", night="20250430"),
+    ]
+    g = cs.group_for_night(frames, "20250430")
+    assert set(g["dark"]) == {(30.0, -10)}              # this night's own
+    assert set(g["dark_library"]) == {(30.0, -5)}       # everything else
+    # Pools stay separate so a master is never stacked across epochs.
+    assert g["dark"][(30.0, -10)][0].night == "20250430"
+
+
+def test_match_frames_come_from_the_pool_that_won():
+    night_darks = {(30.0, -10): [_lib_frame(30.0, -10.0, "20250430")]}
+    library = {(30.0, -5): [_lib_frame(30.0, -5.0, "20241004")]}
+    match = cs.match_dark_detail(night_darks, 30.0, -5.0, 1.0, fallback=library)
+    assert [f.night for f in match.frames] == ["20241004"]
+
+
 def test_group_temperature_falls_back_to_bucket():
     assert cs.group_temperature([_dark_frame(60.0, -10.4)], (60.0, -10)) == pytest.approx(-10.4)
     assert cs.group_temperature([], (60.0, -10)) == pytest.approx(-10.0)

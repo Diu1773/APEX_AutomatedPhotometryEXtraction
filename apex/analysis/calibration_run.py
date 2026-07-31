@@ -129,7 +129,8 @@ def run_calibration(frames: List[FrameInfo], night: str, out_dir: Path,
             _write_master("master_bias.fits", master, prov, "master bias")
         return cache[key]
 
-    def _dark(paths, dark_key, master_bias, night_tag):
+    def _dark(frames_in, dark_key, master_bias, night_tag):
+        paths = [f.path for f in frames_in]
         if not paths:
             return None, 1.0
         key = ("dark", frozenset(paths))
@@ -180,12 +181,12 @@ def run_calibration(frames: List[FrameInfo], night: str, out_dir: Path,
             # raising a broadcast error mid-subtraction.
             master_bias = _bias([f.path for f in group["bias"]
                                  if scan.compatible_geometry(light, f)])
-            match = scan.match_dark_detail(group["dark"], light.exp, light.temp,
-                                           opts.temp_match_tol_c, light=light)
+            match = scan.match_dark_detail(
+                group["dark"], light.exp, light.temp, opts.temp_match_tol_c,
+                light=light, fallback=group.get("dark_library"))
             dark_key = accept_dark(match, light, opts, log, counters)
             master_dark, dark_exp = (
-                _dark([f.path for f in group["dark"][dark_key]], dark_key,
-                      master_bias, group["dark"][dark_key][0].night)
+                _dark(match.frames, dark_key, master_bias, match.night)
                 if dark_key else (None, 1.0))
             flat_filt = scan.match_flat(group["flat"], light.filt, light=light)
             master_flat = _flat(group["flat"][flat_filt], flat_filt, master_bias) \
@@ -207,9 +208,12 @@ def run_calibration(frames: List[FrameInfo], night: str, out_dir: Path,
                 "dark": f"{dark_key[0]:g}s/{dark_key[1]}C" if dark_key else None,
                 "flat": flat_filt,
                 # Provenance for the dark match: how far the chosen dark sat
-                # from this light in temperature and exposure.
+                # from this light in temperature and exposure, and whether it
+                # came from this night or from a shared dark library.
                 "dark_delta_temp_c": (match.delta_temp_c if match is not None else None),
                 "dark_delta_exp_s": (match.delta_exp_s if match is not None else None),
+                "dark_night": (match.night if match is not None else None),
+                "dark_source": (match.source if match is not None else None),
                 "median": qc.get("median"), "neg_pct": qc.get("neg_pct"),
             })
         summary["nights"][night_key] = {

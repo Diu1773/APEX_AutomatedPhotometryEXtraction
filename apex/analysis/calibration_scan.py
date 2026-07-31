@@ -365,6 +365,13 @@ def nights(frames: List[FrameInfo]) -> List[str]:
     return sorted(ns, reverse=True)
 
 
+def _by_exp_temp(frames: List[FrameInfo]) -> Dict[Tuple[float, Optional[int]], List[FrameInfo]]:
+    groups: Dict[Tuple[float, Optional[int]], List[FrameInfo]] = {}
+    for f in frames:
+        groups.setdefault((round(f.exp, 3), f.temp_bucket), []).append(f)
+    return groups
+
+
 def group_for_night(frames: List[FrameInfo], night: str) -> Dict:
     """Frames usable for calibrating ``night``.
 
@@ -372,20 +379,29 @@ def group_for_night(frames: List[FrameInfo], night: str) -> Dict:
     fall back to the global pool if the night has none. Returns a dict with
     ``bias`` (list), ``dark`` ({(exp,temp): list}), ``flat`` ({filter: list}),
     ``light`` (list for this night).
+
+    ``dark_library`` holds the darks that are *not* from this night, kept
+    separate so a same-night dark of the wrong exposure or temperature cannot
+    shut out a better one from a shared dark library: preferring the night is
+    right, but only among matches that are otherwise equally good.  Callers
+    pass it to :func:`match_dark_detail` as ``fallback``.  The pools stay
+    separate rather than merged so a master is never stacked from frames taken
+    months apart.
     """
     def _pool(ftype):
         same = [f for f in frames if f.ftype == ftype and f.night == night]
         return same if same else [f for f in frames if f.ftype == ftype]
 
     bias = _pool("bias")
-    darks: Dict[Tuple[float, Optional[int]], List[FrameInfo]] = {}
-    for f in _pool("dark"):
-        darks.setdefault((round(f.exp, 3), f.temp_bucket), []).append(f)
+    darks = _by_exp_temp(_pool("dark"))
+    library = _by_exp_temp([f for f in frames
+                            if f.ftype == "dark" and f.night != night])
     flats: Dict[str, List[FrameInfo]] = {}
     for f in _pool("flat"):
         flats.setdefault(f.filt, []).append(f)
     lights = [f for f in frames if f.ftype == "light" and f.night == night]
-    return {"bias": bias, "dark": darks, "flat": flats, "light": lights}
+    return {"bias": bias, "dark": darks, "dark_library": library,
+            "flat": flats, "light": lights}
 
 
 @dataclass(frozen=True)
@@ -396,6 +412,8 @@ class DarkMatch:
     delta_temp_c: Optional[float]     # |T_dark - T_light|, None if either unknown
     delta_exp_s: float                # |exp_dark - exp_light|
     within_temp_tol: bool             # False -> caller warns (or refuses)
+    frames: Tuple[FrameInfo, ...] = ()   # the darks themselves
+    source: str = "night"             # "night" | "library"
 
     @property
     def exp(self) -> float:
@@ -404,6 +422,19 @@ class DarkMatch:
     @property
     def temp_bucket(self) -> Optional[int]:
         return self.key[1]
+
+    @property
+    def night(self) -> str:
+        return self.frames[0].night if self.frames else ""
+
+    def rank(self) -> Tuple:
+        """Sort key for "which of two matches is better" (smaller is better)."""
+        return (
+            0 if self.delta_exp_s <= 1e-3 else 1,     # exposure-exact first
+            0 if self.within_temp_tol else 1,         # then temperature
+            self.delta_exp_s,
+            self.delta_temp_c if self.delta_temp_c is not None else 0.0,
+        )
 
 
 def group_temperature(frames: List[FrameInfo],
@@ -443,20 +474,7 @@ def _geometry_filtered(groups: Dict, light: Optional[FrameInfo]) -> Dict:
     return kept
 
 
-def match_dark_detail(darks: Dict[Tuple[float, Optional[int]], List[FrameInfo]],
-                      exp: float, temp: Optional[float],
-                      tol_c: float = 1.0,
-                      light: Optional[FrameInfo] = None) -> Optional[DarkMatch]:
-    """Pick the dark group best matching a light's exposure + temperature.
-
-    Prefers an exact exposure, then the nearest *actual* temperature. The
-    returned :class:`DarkMatch` reports the residual mismatch so the caller can
-    show it, log it, or refuse it (``strict_temp``) — silently accepting an
-    arbitrarily large ΔT was the old behaviour.
-
-    When ``light`` is given, darks of an incompatible geometry (different frame
-    size or binning) are excluded; ``None`` is returned if that leaves nothing.
-    """
+def _match_one_pool(darks, exp, temp, tol_c, light, source) -> Optional[DarkMatch]:
     if not darks:
         return None
     darks = _geometry_filtered(darks, light)
@@ -484,7 +502,38 @@ def match_dark_detail(darks: Dict[Tuple[float, Optional[int]], List[FrameInfo]],
         delta_temp_c=delta_temp,
         delta_exp_s=abs(best[0] - exp),
         within_temp_tol=(delta_temp is None or delta_temp <= float(tol_c)),
+        frames=tuple(darks.get(best) or ()),
+        source=source,
     )
+
+
+def match_dark_detail(darks: Dict[Tuple[float, Optional[int]], List[FrameInfo]],
+                      exp: float, temp: Optional[float],
+                      tol_c: float = 1.0,
+                      light: Optional[FrameInfo] = None,
+                      fallback: Optional[Dict] = None) -> Optional[DarkMatch]:
+    """Pick the dark group best matching a light's exposure + temperature.
+
+    Prefers an exact exposure, then the nearest *actual* temperature. The
+    returned :class:`DarkMatch` reports the residual mismatch so the caller can
+    show it, log it, or refuse it (``strict_temp``) — silently accepting an
+    arbitrarily large ΔT was the old behaviour.
+
+    When ``light`` is given, darks of an incompatible geometry (different frame
+    size or binning) are excluded; ``None`` is returned if that leaves nothing.
+
+    ``fallback`` (``group_for_night()["dark_library"]``) is consulted when it
+    offers a strictly better match than the night's own darks — a same-night
+    dark of the wrong exposure or temperature must not shut out a shared dark
+    library that has the right one. Ties go to the night's own darks.
+    """
+    primary = _match_one_pool(darks, exp, temp, tol_c, light, "night")
+    spare = _match_one_pool(fallback, exp, temp, tol_c, light, "library")
+    if primary is None:
+        return spare
+    if spare is not None and spare.rank() < primary.rank():
+        return spare
+    return primary
 
 
 def match_dark(darks: Dict[Tuple[float, Optional[int]], List[FrameInfo]],
