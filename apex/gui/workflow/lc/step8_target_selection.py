@@ -1032,7 +1032,17 @@ class TargetComparisonSelectionWindow(StepWindowBase):
 
         data_dir = state.get("data_dir")
         if data_dir:
-            self.params.P.data_dir = data_dir
+            # 지금 params 의 data_dir 이 멀쩡하면 그대로 둔다. 이 복원은 "재시작
+            # 후 경로가 비었을 때" 를 위한 것인데 무조건 덮어쓰고 있었다 —
+            # 그래서 다른 워크스페이스를 열어도 마지막에 GUI 로 연 프로젝트의
+            # 폴더로 되돌아갔고, 파일명이 안 맞아 Step 8 이 통째로 막혔다
+            # (`Cannot find …`, 표 0행).
+            try:
+                current = Path(getattr(self.params.P, "data_dir", "") or "")
+            except (TypeError, ValueError):
+                current = Path("")
+            if not (str(current) and current.is_dir()):
+                self.params.P.data_dir = data_dir
 
         prefix = state.get("filename_prefix")
         if prefix:
