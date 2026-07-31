@@ -30,7 +30,7 @@ from PyQt5.QtWidgets import (
     QAbstractItemView,
 )
 from PyQt5.QtCore import Qt, QThread, pyqtSignal
-from PyQt5.QtGui import QColor, QFont
+from PyQt5.QtGui import QColor
 
 from apex.analysis.merge.id_match import reconcile_workspace_catalogs
 from apex.analysis.merge.workspace_build import materialize_merged_workspace
@@ -45,6 +45,7 @@ from apex.analysis.merge.workspace_scan import (
 )
 from apex.core.project_state import ProjectState
 from apex.gui.layout_rules import AutoFitMixin
+from apex.gui.theme import Tokens, style_button
 from apex.utils.io_utils import (
     coerce_int64_source_id,
 )
@@ -58,11 +59,21 @@ from apex.utils.step_paths_lc import (
 
 def compute_selection_defaults(
     merged_catalogs: dict[str, pd.DataFrame],
-    base_selection_by_filter: dict[str, dict],
+    selection_payloads: "list[dict[str, dict]] | dict[str, dict]",
 ) -> tuple[dict[str, "int | None"], dict[str, "set[int]"], dict[str, "int | None"]]:
-    """Derive target/comparison/check selections per filter from the base
-    workspace's selection payloads, keeping only source_ids that survive into
-    the merged catalog. Pure — safe to run inside the merge worker thread."""
+    """Derive target/comparison/check selections per filter from the input
+    workspaces' selection payloads, keeping only source_ids that survive into
+    the merged catalog. Pure — safe to run inside the merge worker thread.
+
+    ``selection_payloads`` is the per-folder payload list in priority order
+    (base first). The base folder wins where it has a selection; a target or
+    check it lacks is taken from the next folder that has one, and comparison
+    stars are unioned — previously only the base folder was consulted, so a
+    target picked on the second night was silently dropped.
+    """
+    if isinstance(selection_payloads, dict):        # single-folder (legacy) form
+        selection_payloads = [selection_payloads]
+
     sel_t: dict[str, int | None] = {}
     sel_c: dict[str, set[int]] = {}
     sel_k: dict[str, int | None] = {}
@@ -73,24 +84,32 @@ def compute_selection_defaults(
             )
         else:
             available = set()
-        payload = base_selection_by_filter.get(flt, {})
-        target_sid = payload.get("target_source_id")
-        sel_t[flt] = (
-            int(target_sid)
-            if target_sid is not None and int(target_sid) in available
-            else None
-        )
+
+        def _keep(sid) -> "int | None":
+            if sid is None:
+                return None
+            try:
+                sid = int(sid)
+            except (TypeError, ValueError):
+                return None
+            return sid if sid in available else None
+
+        target: int | None = None
+        check: int | None = None
         comp_sids: set[int] = set()
-        for sid in payload.get("comparison_source_ids", []):
-            if sid is not None and int(sid) in available:
-                comp_sids.add(int(sid))
+        for payload_by_filter in selection_payloads:
+            payload = payload_by_filter.get(flt, {})
+            if target is None:
+                target = _keep(payload.get("target_source_id"))
+            if check is None:
+                check = _keep(payload.get("check_source_id"))
+            for sid in payload.get("comparison_source_ids", []) or ():
+                kept = _keep(sid)
+                if kept is not None:
+                    comp_sids.add(kept)
+        sel_t[flt] = target
         sel_c[flt] = comp_sids
-        check_sid = payload.get("check_source_id")
-        sel_k[flt] = (
-            int(check_sid)
-            if check_sid is not None and int(check_sid) in available
-            else None
-        )
+        sel_k[flt] = check
     return sel_t, sel_c, sel_k
 
 
@@ -286,25 +305,29 @@ class MultiNightMergerWindow(AutoFitMixin, QMainWindow):
         root.setSpacing(6)
 
         header = QHBoxLayout()
+        header.setSpacing(Tokens.GAP)
         btn_back = QPushButton("← 메인으로")
-        btn_back.setFixedWidth(110)
+        style_button(btn_back, height=Tokens.H_COMPACT)
+        # sizeHint, not a fixed 110 px: at that width the arrow was clipped.
+        back_width = btn_back.sizeHint().width()
+        btn_back.setFixedWidth(back_width)
         btn_back.clicked.connect(self._go_back)
         header.addWidget(btn_back)
 
         title = QLabel("Multi-Night Merger Workflow")
-        title.setFont(QFont("Arial", 14, QFont.Bold))
+        title.setProperty("role", "title")
         title.setAlignment(Qt.AlignCenter)
         header.addWidget(title, 1)
-        header.addSpacing(110)
+        header.addSpacing(back_width)     # keeps the title optically centred
         root.addLayout(header)
 
         step_bar = QHBoxLayout()
-        step_bar.setSpacing(2)
+        step_bar.setSpacing(Tokens.GAP // 2)
         self._step_btns: list[QPushButton] = []
         for i, text in enumerate(self.STEP_TITLES):
             btn = QPushButton(text)
             btn.setCheckable(True)
-            btn.setMinimumHeight(30)
+            style_button(btn, height=Tokens.H_BUTTON)
             btn.clicked.connect(lambda checked, idx=i: self._go_to_step(idx))
             step_bar.addWidget(btn)
             self._step_btns.append(btn)
@@ -328,14 +351,13 @@ class MultiNightMergerWindow(AutoFitMixin, QMainWindow):
         root.addWidget(self._page_container, 1)
 
         nav = QHBoxLayout()
+        nav.setSpacing(Tokens.GAP)
         self.btn_prev = QPushButton("◀ 이전")
+        style_button(self.btn_prev, height=Tokens.H_ACTION)
         self.btn_prev.clicked.connect(self._prev_step)
         self.btn_next = QPushButton("다음 ▶")
+        style_button(self.btn_next, "primary", height=Tokens.H_ACTION)
         self.btn_next.clicked.connect(self._next_step)
-        self.btn_next.setStyleSheet(
-            "QPushButton { background:#1565C0; color:white; font-weight:bold; padding:4px 16px; }"
-            "QPushButton:hover { background:#0D47A1; }"
-        )
         nav.addWidget(self.btn_prev)
         nav.addStretch()
         nav.addWidget(self.btn_next)
@@ -349,7 +371,12 @@ class MultiNightMergerWindow(AutoFitMixin, QMainWindow):
     def _make_info_label(self, text: str) -> QLabel:
         label = QLabel(text)
         label.setWordWrap(True)
-        label.setStyleSheet("QLabel { background:#E3F2FD; padding:8px; border-radius:4px; }")
+        label.setProperty("role", "info")     # themed chip, follows dark mode
+        return label
+
+    def _make_status_label(self, text: str) -> QLabel:
+        label = QLabel(text)
+        label.setProperty("role", "caption")
         return label
 
     def _make_step1(self) -> QWidget:
@@ -372,12 +399,16 @@ class MultiNightMergerWindow(AutoFitMixin, QMainWindow):
 
         btn_row = QHBoxLayout()
         btn_add = QPushButton("폴더 추가")
+        style_button(btn_add, height=Tokens.H_BUTTON)
         btn_add.clicked.connect(self._on_add_folder)
         btn_remove = QPushButton("선택 제거")
+        style_button(btn_remove, height=Tokens.H_BUTTON)
         btn_remove.clicked.connect(self._on_remove_folder)
         btn_up = QPushButton("위로")
+        style_button(btn_up, height=Tokens.H_BUTTON)
         btn_up.clicked.connect(lambda: self._move_selected_folder(-1))
         btn_down = QPushButton("아래로")
+        style_button(btn_down, height=Tokens.H_BUTTON)
         btn_down.clicked.connect(lambda: self._move_selected_folder(+1))
         btn_row.addWidget(btn_add)
         btn_row.addWidget(btn_remove)
@@ -391,6 +422,7 @@ class MultiNightMergerWindow(AutoFitMixin, QMainWindow):
         out_layout = QHBoxLayout(out_grp)
         self.output_dir_edit = QLineEdit()
         btn_browse_out = QPushButton("찾기...")
+        style_button(btn_browse_out, height=Tokens.H_BUTTON)
         btn_browse_out.clicked.connect(self._browse_output_dir)
         out_layout.addWidget(self.output_dir_edit, 1)
         out_layout.addWidget(btn_browse_out)
@@ -405,6 +437,7 @@ class MultiNightMergerWindow(AutoFitMixin, QMainWindow):
         self.folder_info_table.setMinimumHeight(180)
         info_layout.addWidget(self.folder_info_table)
         btn_scan = QPushButton("폴더 스캔")
+        style_button(btn_scan, height=Tokens.H_BUTTON)
         btn_scan.clicked.connect(self._scan_folders)
         info_layout.addWidget(btn_scan)
         layout.addWidget(info_grp)
@@ -429,12 +462,12 @@ class MultiNightMergerWindow(AutoFitMixin, QMainWindow):
         top.addWidget(self.match_radius_combo)
         top.addStretch()
         self.btn_match = QPushButton("ID 매칭 실행")
+        style_button(self.btn_match, "primary", height=Tokens.H_BUTTON)
         self.btn_match.clicked.connect(self._run_id_match)
         top.addWidget(self.btn_match)
         layout.addLayout(top)
 
-        self.match_status_label = QLabel("매칭 결과: 아직 실행 안 됨")
-        self.match_status_label.setStyleSheet("QLabel { background:#FAFAFA; padding:6px; border-radius:4px; }")
+        self.match_status_label = self._make_status_label("매칭 결과: 아직 실행 안 됨")
         layout.addWidget(self.match_status_label)
 
         self.match_table = QTableWidget(0, 7)
@@ -449,7 +482,7 @@ class MultiNightMergerWindow(AutoFitMixin, QMainWindow):
         self.match_log = QTextEdit()
         self.match_log.setReadOnly(True)
         self.match_log.setMinimumHeight(160)
-        self.match_log.setStyleSheet("font-size:8pt; font-family:monospace;")
+        self.match_log.setObjectName("Log")     # themed mono log surface
         layout.addWidget(self.match_log)
         return page
 
@@ -457,8 +490,7 @@ class MultiNightMergerWindow(AutoFitMixin, QMainWindow):
         page = QWidget()
         layout = QVBoxLayout(page)
         layout.addWidget(self._make_info_label(description))
-        status_label = QLabel("Merged workspace 없음")
-        status_label.setStyleSheet("QLabel { background:#FAFAFA; padding:6px; border-radius:4px; }")
+        status_label = self._make_status_label("Merged workspace 없음")
         layout.addWidget(status_label)
         setattr(self, status_attr, status_label)
 
@@ -507,7 +539,7 @@ class MultiNightMergerWindow(AutoFitMixin, QMainWindow):
             label = f"[BASE] {p}" if i == 0 else str(p)
             item = QListWidgetItem(label)
             if i == 0:
-                item.setForeground(QColor("#1565C0"))
+                item.setForeground(QColor(Tokens.ACCENT_TEXT))
             self.folder_list.addItem(item)
 
     def _invalidate_merger_state(self):
@@ -804,7 +836,7 @@ class MultiNightMergerWindow(AutoFitMixin, QMainWindow):
             for col_idx, key in enumerate(("has_step7", "has_step8", "has_step9"), start=5):
                 ok = bool(row_info[key])
                 item = QTableWidgetItem("OK" if ok else "없음")
-                item.setForeground(QColor("#2E7D32") if ok else QColor("#C62828"))
+                item.setForeground(QColor(Tokens.OK if ok else Tokens.ERROR))
                 self.folder_info_table.setItem(row, col_idx, item)
             filters = list(row_info.get("filters") or [])
             merge_ready = bool(row_info.get("merge_ready"))
@@ -813,14 +845,14 @@ class MultiNightMergerWindow(AutoFitMixin, QMainWindow):
             # curves — so its absence is a note, not a blocker.
             if merge_ready and not row_info.get("has_step9"):
                 status_item = QTableWidgetItem("사용 가능 (Step 9 없음)")
-                status_item.setForeground(QColor("#EF6C00"))
+                status_item.setForeground(QColor(Tokens.WARN))
                 status_item.setToolTip(
                     "Step 9 광곡선은 merge 에 필요하지 않습니다. "
                     "merged workspace 에서 다시 만듭니다."
                 )
             else:
                 status_item = QTableWidgetItem("사용 가능" if merge_ready else "입력 부족")
-                status_item.setForeground(QColor("#2E7D32") if merge_ready else QColor("#C62828"))
+                status_item.setForeground(QColor(Tokens.OK if merge_ready else Tokens.ERROR))
             self.folder_info_table.setItem(row, 9, status_item)
 
     def _validate_selected_workspaces(self) -> tuple[bool, str]:
@@ -878,8 +910,11 @@ class MultiNightMergerWindow(AutoFitMixin, QMainWindow):
             return
         out_dir = Path(output_dir_text)
 
-        base_folder = self.folders[0]
-        self.base_selection_by_filter = self._get_cached_selection_payloads(base_folder)
+        # Base folder first, then the rest: the base decides the target/check,
+        # but a selection only present on a later night is no longer lost.
+        selection_payloads = [self._get_cached_selection_payloads(folder)
+                              for folder in self.folders]
+        self.base_selection_by_filter = selection_payloads[0]
         catalogs_by_folder = {str(folder): self._get_cached_master_catalogs(folder) for folder in self.folders}
         self.folder_tags = {str(folder): _folder_tag(i, folder) for i, folder in enumerate(self.folders)}
 
@@ -905,7 +940,7 @@ class MultiNightMergerWindow(AutoFitMixin, QMainWindow):
             catalogs_by_folder=catalogs_by_folder,
             folder_tags=dict(self.folder_tags),
             match_radius=float(self.match_radius_combo.currentText()),
-            base_selection_by_filter=self.base_selection_by_filter,
+            base_selection_by_filter=selection_payloads,
             out_dir=out_dir,
             cached_reconcile=cached,
             parent=self,
@@ -968,7 +1003,8 @@ class MultiNightMergerWindow(AutoFitMixin, QMainWindow):
             self.match_table.setItem(row, 4, QTableWidgetItem(str(row_data["new"])))
             self.match_table.setItem(row, 5, QTableWidgetItem(str(row_data["total"])))
             status_item = QTableWidgetItem(str(row_data["status"]))
-            status_item.setForeground(QColor("#2E7D32") if row_data["status"] == "OK" or row_data["status"] == "base" else QColor("#C62828"))
+            ok = row_data["status"] in ("OK", "base")
+            status_item.setForeground(QColor(Tokens.OK if ok else Tokens.ERROR))
             self.match_table.setItem(row, 6, status_item)
 
     def _build_merged_runtime_context(self, night_assignments: dict[str, int], path_map: dict[str, str]):
@@ -1028,11 +1064,9 @@ class MultiNightMergerWindow(AutoFitMixin, QMainWindow):
     def _go_to_step(self, idx: int):
         for i, (page, btn) in enumerate(zip(self._pages, self._step_btns)):
             page.setVisible(i == idx)
+            # The checked state alone marks the current step; the theme paints
+            # it, so no per-button stylesheet is needed (and dark mode works).
             btn.setChecked(i == idx)
-            btn.setStyleSheet(
-                "QPushButton { background:#1565C0; color:white; font-weight:bold; }"
-                if i == idx else ""
-            )
         self._current_step = idx
         self.btn_prev.setEnabled(idx > 0)
         self.btn_next.setEnabled(idx < len(self._pages) - 1)

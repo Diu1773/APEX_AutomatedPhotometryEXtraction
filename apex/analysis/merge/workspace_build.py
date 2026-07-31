@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import time
+import warnings
 from pathlib import Path
 
 import numpy as np
@@ -16,7 +17,11 @@ from apex.utils.io_utils import (
     load_night_assignments,
 )
 from apex.utils.photometry_loader import _load_source_to_id_map, load_frame_photometry
-from apex.utils.run_workspace import infer_result_workspace_label, write_run_manifest
+from apex.utils.run_workspace import (
+    infer_result_workspace_label,
+    load_run_manifest,
+    write_run_manifest,
+)
 from apex.utils.step_paths_lc import (
     step1_dir,
     step7_forced_phot_dir,
@@ -26,6 +31,22 @@ from apex.utils.step_paths_lc import (
     step11_period_dir,
 )
 from .workspace_scan import normalize_filter_key, read_step7_index
+
+
+def overlapping_night_dates(folders: list[Path]) -> set[str]:
+    """Observing dates covered by more than one input workspace.
+
+    Reads each workspace's run manifest date range; workspaces without one
+    contribute nothing (no dates to compare, so no claim is made).
+    """
+    seen: dict[str, int] = {}
+    for folder in folders:
+        meta = load_run_manifest(Path(folder)) or {}
+        start = str(meta.get("date_start") or "").strip()
+        end = str(meta.get("date_end") or "").strip()
+        for date in {d for d in (start, end) if d and d != "—"}:
+            seen[date] = seen.get(date, 0) + 1
+    return {date for date, count in seen.items() if count > 1}
 
 
 def selection_to_id_map(
@@ -160,6 +181,20 @@ def materialize_merged_workspace(
     merged_path_map: dict[str, str] = {}
     merged_filter_frames: dict[str, list[str]] = {}
 
+    # Nights are renumbered per folder, so the same observing night present in
+    # two input workspaces becomes two merged nights and every per-night step
+    # (detrend, zeropoints) then treats one night as two.
+    overlap = overlapping_night_dates(folders)
+    if overlap:
+        warnings.warn(
+            "[workspace_build] the same observing date appears in more than one "
+            f"input workspace: {', '.join(sorted(overlap))}. Each copy becomes a "
+            "separate merged night — remove the duplicate workspace unless the "
+            "frames really are different.",
+            UserWarning,
+            stacklevel=3,
+        )
+
     next_merged_night = 1
     for folder in folders:
         folder_key = str(folder)
@@ -176,7 +211,6 @@ def materialize_merged_workspace(
             dup_mask = headers_df["Filename"].duplicated(keep=False)
             if dup_mask.any():
                 dup_names = sorted(headers_df.loc[dup_mask, "Filename"].astype(str).unique().tolist())
-                import warnings
                 warnings.warn(
                     f"[workspace_build] {folder.name}: {len(dup_names)} duplicate Filename(s) "
                     f"in headers.csv — keeping last occurrence. Duplicates: {dup_names[:5]}"
