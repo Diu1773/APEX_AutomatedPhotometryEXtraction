@@ -47,11 +47,15 @@ from apex.utils.step_paths import step0_calibration_dir
 
 class _ScanWorker(QThread):
     progress = pyqtSignal(int, int, str)
+    logline = pyqtSignal(str)
     done = pyqtSignal(list)                       # List[FrameInfo]
 
-    def __init__(self, roots: List[str]):
+    def __init__(self, roots: List[str], tz_offset_hours: Optional[float] = None):
         super().__init__()
         self.roots = roots
+        # Fallback local reference for the observing-night split when the FITS
+        # header carries no site longitude (apex.utils.night_utils).
+        self.tz_offset_hours = tz_offset_hours
 
     def run(self):
         frames: List[FrameInfo] = []
@@ -60,6 +64,8 @@ class _ScanWorker(QThread):
                 root,
                 progress=lambda i, t, m: self.progress.emit(i, t, m),
                 stop=self.isInterruptionRequested,
+                tz_offset_hours=self.tz_offset_hours,
+                warn=self.logline.emit,
             ))
         self.done.emit(frames)
 
@@ -334,6 +340,19 @@ class DetectorCalibrationWindow(ToolWindowBase):
 
     # -- helpers -----------------------------------------------------------
 
+    def _site_tz_offset(self) -> Optional[float]:
+        """Configured site tz offset, the civil fallback for the night split.
+
+        Used only when a frame's header has no site longitude; 0.0 (the config
+        default, indistinguishable from a genuine Greenwich site) is treated as
+        unset by :mod:`apex.utils.night_utils`.
+        """
+        P = getattr(self.params, "P", None)
+        try:
+            return float(getattr(P, "site_tz_offset_hours", 0.0) or 0.0)
+        except (TypeError, ValueError):
+            return None
+
     def _default_out_dir(self) -> Path:
         result_dir = getattr(getattr(self.params, "P", None), "result_dir", "") or ""
         base = Path(result_dir) if result_dir else Path.cwd()
@@ -474,8 +493,9 @@ class DetectorCalibrationWindow(ToolWindowBase):
         self.btn_add.setEnabled(False)
         self.scan_label.setText(f"Scanning {folder}…")
         self.log(f"Scanning {folder}")
-        self._scan_worker = _ScanWorker([folder])
+        self._scan_worker = _ScanWorker([folder], self._site_tz_offset())
         self._scan_worker.progress.connect(self._on_scan_progress)
+        self._scan_worker.logline.connect(self.log)
         self._scan_worker.done.connect(self._on_scan_done)
         self._scan_worker.start()
 

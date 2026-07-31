@@ -25,8 +25,16 @@ from PyQt5.QtWidgets import (
     QTreeView,
 )
 
+from apex.utils.night_utils import (
+    has_local_reference,
+    observing_night,
+    observing_night_from_jd,
+)
 from apex.utils.run_workspace import build_result_workspace_dir, write_run_manifest
 from apex.utils.step_paths_lc import step1_dir
+
+# night_id reserved for frames whose observing time could not be read at all.
+NIGHT_ID_UNKNOWN = 0
 
 
 LC_STEP1_GUIDE = (
@@ -38,7 +46,12 @@ LC_STEP1_GUIDE = (
 
 
 def _classify_nights_by_jd_gap(records: list, gap_hours: float = 8.0) -> list:
-    """Assign 1-based night_id values using sorted JD gaps."""
+    """Assign 1-based night_id values using sorted JD gaps.
+
+    Frames with no usable JD get :data:`NIGHT_ID_UNKNOWN` instead of being
+    folded into night 1 — a frame with an unreadable timestamp used to join the
+    first night silently and could contaminate that night's zeropoints.
+    """
     gap_days = gap_hours / 24.0
     valid = [(i, r) for i, r in enumerate(records) if r.get("jd") is not None]
     valid.sort(key=lambda x: x[1]["jd"])
@@ -52,7 +65,47 @@ def _classify_nights_by_jd_gap(records: list, gap_hours: float = 8.0) -> list:
         id_map[i] = night_id
         prev_jd = r["jd"]
 
-    return [{**r, "night_id": id_map.get(i, 1)} for i, r in enumerate(records)]
+    return [{**r, "night_id": id_map.get(i, NIGHT_ID_UNKNOWN)}
+            for i, r in enumerate(records)]
+
+
+def _night_key_for_record(record: dict, tz_offset_hours: float) -> str:
+    """Observing-night key (YYYYMMDD) for one scanned frame, '' if unknown."""
+    jd = record.get("jd")
+    if jd is not None:
+        key = observing_night_from_jd(jd, tz_offset_hours=tz_offset_hours)
+        if key:
+            return key
+    return observing_night(record.get("date_obs"), tz_offset_hours=tz_offset_hours)
+
+
+def _classify_nights_by_noon(records: list, tz_offset_hours: float) -> list:
+    """Assign 1-based night_id by the local-noon split (see night_utils).
+
+    The split falls while the Sun is up, so an evening and the pre-dawn hours
+    that follow it stay in one night no matter how the frames are spaced.
+    """
+    keys = [_night_key_for_record(r, tz_offset_hours) for r in records]
+    ordered = sorted({k for k in keys if k})
+    id_by_key = {key: i + 1 for i, key in enumerate(ordered)}
+    return [
+        {**r, "night_id": id_by_key.get(key, NIGHT_ID_UNKNOWN), "night_key": key}
+        for r, key in zip(records, keys)
+    ]
+
+
+def classify_nights(records: list, gap_hours: float = 8.0,
+                    tz_offset_hours: float = 0.0) -> list:
+    """Assign night_id to scanned frames.
+
+    Uses the shared local-noon split when a local reference is configured
+    (``[site] tz_offset_hours``); without one the noon split would degenerate
+    to the Greenwich rule and tear East-Asian evenings apart, so the JD-gap
+    classifier is kept instead.
+    """
+    if has_local_reference(tz_offset_hours=tz_offset_hours):
+        return _classify_nights_by_noon(records, tz_offset_hours)
+    return _classify_nights_by_jd_gap(records, gap_hours)
 
 
 def _build_night_summary(records_with_night: list, tz_offset_hours: float = 0.0) -> list:
@@ -98,14 +151,16 @@ def _build_night_summary(records_with_night: list, tz_offset_hours: float = 0.0)
         date_label = first.split(" ")[0] if " " in first else first
         time_range = f"{first.split(' ')[-1]} ~ {last.split(' ')[-1]}" if first != "?" else "?"
         filter_str = "  ".join(f"{k}:{v}" for k, v in sorted(night["filters"].items()))
+        unknown = int(night_id) == NIGHT_ID_UNKNOWN
         result.append({
             "night_id": night_id,
-            "label": f"N{night_id}",
-            "date": date_label,
+            "label": "N?" if unknown else f"N{night_id}",
+            "date": "관측시각 불명" if unknown else date_label,
             "time_range": time_range,
             "file_count": len(night["files"]),
             "filter_str": filter_str or "-",
             "filenames": night["files"],
+            "unknown": unknown,
         })
     return result
 
@@ -123,6 +178,7 @@ class LightCurveNightSetupMixin:
         self._manual_input_dirs: list[Path] = []
         self._night_records: list = []
         self._all_night_assignments: dict[str, int] = {}
+        self._night_dates: dict[int, str] = {}
         self._excluded_nights: set[int] = set()
         self._night_table_loading = False
 
@@ -448,17 +504,31 @@ class LightCurveNightSetupMixin:
                 "filter": filt,
             })
 
-        records_with_night = _classify_nights_by_jd_gap(
+        tz = float(getattr(self.params.P, "site_tz_offset_hours", 0.0))
+        records_with_night = classify_nights(
             records,
             self.night_gap_spinbox.value(),
+            tz_offset_hours=tz,
         )
         self._night_records = records_with_night
         self._all_night_assignments = {
             r["filename"]: r["night_id"] for r in records_with_night
         }
+        # night_id -> observing date, so downstream steps and the merger can
+        # print "Night 3 = 2026-05-14" instead of a bare index.
+        self._night_dates = {}
+        for r in records_with_night:
+            key = r.get("night_key")
+            if key and r["night_id"] != NIGHT_ID_UNKNOWN:
+                self._night_dates.setdefault(int(r["night_id"]), str(key))
         self.file_manager.night_assignments = dict(self._all_night_assignments)
 
-        tz = float(getattr(self.params.P, "site_tz_offset_hours", 0.0))
+        # Frames whose observing time could not be read start out excluded —
+        # they would otherwise ride along in whichever night they landed in.
+        if any(r["night_id"] == NIGHT_ID_UNKNOWN for r in records_with_night):
+            self._excluded_nights = set(self._excluded_nights) | {NIGHT_ID_UNKNOWN}
+            self.file_manager.excluded_nights = self._excluded_nights
+
         self._populate_night_table(_build_night_summary(records_with_night, tz_offset_hours=tz))
         self.populate_header_table(df_headers)
 
@@ -485,6 +555,14 @@ class LightCurveNightSetupMixin:
             self.night_table.setItem(row, 4, QTableWidgetItem(str(summary["file_count"])))
             self.night_table.setItem(row, 5, QTableWidgetItem(summary["filter_str"]))
 
+            if summary.get("unknown"):
+                warn = ("DATE-OBS/JD를 읽지 못한 프레임입니다. 기본으로 제외되며, "
+                        "Use를 켜면 포함할 수 있습니다.")
+                for col in range(self.night_table.columnCount()):
+                    item = self.night_table.item(row, col)
+                    if item is not None:
+                        item.setToolTip(warn)
+
         self.night_table.blockSignals(False)
         self._night_table_loading = False
 
@@ -502,7 +580,7 @@ class LightCurveNightSetupMixin:
             self.header_table.setItem(i, 0, use_item)
             values = {
                 "Filename": filename,
-                "Night": f"N{night_id}",
+                "Night": ("N?" if night_id == NIGHT_ID_UNKNOWN else f"N{night_id}"),
             }
             for label in self.header_labels:
                 values.setdefault(label, self._format_header_cell(row, label))
@@ -590,6 +668,9 @@ class LightCurveNightSetupMixin:
             "night_assignments": {
                 k: v for k, v in self.file_manager.night_assignments.items()
             },
+            "night_dates": {
+                str(k): v for k, v in sorted(getattr(self, "_night_dates", {}).items())
+            },
         }
 
     def restore_extra_state_before_load(self, state_data: dict) -> None:
@@ -606,6 +687,11 @@ class LightCurveNightSetupMixin:
         if "night_assignments" in state_data:
             self.file_manager.night_assignments = {
                 k: int(v) for k, v in state_data["night_assignments"].items()
+            }
+
+        if "night_dates" in state_data:
+            self._night_dates = {
+                int(k): str(v) for k, v in state_data["night_dates"].items()
             }
 
         self._manual_input_dirs = [
@@ -638,6 +724,11 @@ class LightCurveNightSetupMixin:
                     k: v for k, v in self.file_manager.night_assignments.items()
                 },
                 "excluded_nights": sorted(self._excluded_nights),
+                # night_id -> YYYYMMDD, so later steps can label a night by its
+                # observing date instead of a bare index.
+                "night_dates": {
+                    str(k): v for k, v in sorted(getattr(self, "_night_dates", {}).items())
+                },
             }
             (s1_dir / "night_assignments.json").write_text(
                 json.dumps(night_data, indent=2, ensure_ascii=False),

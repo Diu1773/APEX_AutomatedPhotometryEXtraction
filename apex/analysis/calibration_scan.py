@@ -18,7 +18,6 @@ from __future__ import annotations
 import os
 import re
 from dataclasses import dataclass, field
-from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Callable, Dict, List, Optional, Tuple
 
@@ -27,16 +26,22 @@ from astropy.io import fits
 from apex.utils.constants import (
     FITS_EXTENSIONS, FILTER_HEADER_KEYS, EXPTIME_HEADER_KEYS,
 )
+from apex.utils.night_utils import (
+    DATE_HEADER_KEYS as _DATE_KEYS,
+    LON_HEADER_KEYS as _LON_KEYS,
+    has_local_reference,
+    observing_night_detail,
+    parse_lon_east as _parse_lon_east,
+)
 
 FRAME_TYPES = ("bias", "dark", "flat", "light")
 
 _TEMP_KEYS = ("CCD-TEMP", "CCD_TEMP", "CCDTEMP", "SET-TEMP", "SETTEMP",
               "SENSORTEMP", "CAMTEMP", "TEMP")
 _IMAGETYP_KEYS = ("IMAGETYP", "IMGTYPE", "FRAMETYP", "OBSTYPE")
-_DATE_KEYS = ("DATE-OBS", "DATE", "DATEOBS")
-_LON_KEYS = ("SITELONG", "SITELON", "LONG-OBS", "LONGITUD", "OBSGEO-L",
-             "OBSLONG", "TELLONG")
 _PATH_DATE_RE = re.compile(r"(20\d{6})")
+
+NIGHT_METHOD_PATH = "path"
 
 
 # ---------------------------------------------------------------------------
@@ -80,52 +85,53 @@ def night_from_path(path: str) -> str:
     return ""
 
 
-def _parse_lon_east(val) -> Optional[float]:
-    """Parse a site-longitude header ('127 21 37', '127:21:37 E', or a float)
-    to signed degrees east; None if unparseable. West is negative."""
-    if val is None:
-        return None
-    if isinstance(val, (int, float)):
-        return float(val)
-    s = str(val).strip()
-    if not s:
-        return None
-    up = s.upper()
-    sign = -1.0 if (s[0] == "-" or "W" in up) else 1.0
-    nums = re.findall(r"\d+(?:\.\d+)?", s)
-    if not nums:
-        return None
-    nums = [float(x) for x in nums]
-    deg = nums[0] + (nums[1] / 60 if len(nums) > 1 else 0) \
-        + (nums[2] / 3600 if len(nums) > 2 else 0)
-    return sign * deg if abs(deg) <= 180 else None
-
-
 def night_from_dateobs(dateobs: Optional[str],
-                       lon_east_deg: Optional[float] = None) -> str:
+                       lon_east_deg: Optional[float] = None,
+                       tz_offset_hours: Optional[float] = None) -> str:
     """Observing night as YYYYMMDD from DATE-OBS, split at local noon.
 
-    Evening and the following pre-dawn hours share one night: the split is at
-    local noon, so a full night buckets to a single date. When ``lon_east_deg``
-    is given, DATE-OBS (UTC) is first shifted to local solar time
-    (UTC + lon/15 h) before the noon split — essential for East-Asian sites,
-    where the whole night sits around UTC noon and a plain −12 h (UTC) split
-    would tear evening frames off to the previous night. Without a longitude it
-    falls back to the −12 h rule (correct only near the Greenwich meridian).
+    Thin wrapper over :mod:`apex.utils.night_utils` — the single definition of
+    an observing night shared with LC Step 1.  Evening and the following
+    pre-dawn hours share one night because the cut falls at local noon (while
+    the Sun is up), never at midnight.
     """
-    if not dateobs:
-        return ""
-    s = str(dateobs).strip().replace("Z", "")
-    for fmt in ("%Y-%m-%dT%H:%M:%S.%f", "%Y-%m-%dT%H:%M:%S",
-                "%Y-%m-%dT%H:%M", "%Y-%m-%d"):
-        try:
-            dt = datetime.strptime(s.split(".")[0] if fmt.endswith("S") else s, fmt)
-        except ValueError:
-            continue
-        if lon_east_deg is not None:
-            dt = dt + timedelta(hours=lon_east_deg / 15.0)
-        return (dt - timedelta(hours=12)).strftime("%Y%m%d")
-    return ""
+    return observing_night_detail(dateobs, lon_east_deg, tz_offset_hours)[0]
+
+
+def resolve_night(path: str, header,
+                  tz_offset_hours: Optional[float] = None) -> Tuple[str, str, str]:
+    """Decide one frame's observing night.
+
+    Returns ``(night, method, conflicting_path_date)``.  Priority:
+
+    1. ``DATE-OBS`` + site longitude (header)      → local solar noon split
+    2. ``DATE-OBS`` + configured tz offset         → local civil noon split
+    3. a ``YYYYMMDD`` date in the file path
+    4. ``DATE-OBS`` − 12 h (Greenwich rule, last resort)
+
+    Steps 1-2 outrank the path date because capture software often stamps the
+    *next* day onto frames taken after midnight, which would tear one night in
+    two.  But they are only reachable when a real local reference exists — with
+    neither longitude nor tz offset the noon split degenerates to the Greenwich
+    rule, which mis-buckets East-Asian evenings, so the path date is preferred
+    over it.  ``conflicting_path_date`` is set when 1-2 succeeded and the path
+    disagrees, so the caller can warn.
+    """
+    lon = _parse_lon_east(_header_first(header, _LON_KEYS))
+    dateobs = _header_first(header, _DATE_KEYS)
+    path_night = night_from_path(path)
+
+    if has_local_reference(lon, tz_offset_hours):
+        night, method = observing_night_detail(dateobs, lon, tz_offset_hours)
+        if night:
+            conflict = path_night if (path_night and path_night != night) else ""
+            return night, method, conflict
+
+    if path_night:
+        return path_night, NIGHT_METHOD_PATH, ""
+
+    night, method = observing_night_detail(dateobs, lon, tz_offset_hours)
+    return night, method, ""
 
 
 def temp_bucket(temp_c: Optional[float]) -> Optional[int]:
@@ -159,14 +165,22 @@ class FrameInfo:
     night: str = ""                  # YYYYMMDD or "" (global)
     name: str = field(default="")
     is_master: bool = False          # pre-built master (IMAGETYP "MASTER …")
+    night_method: str = ""           # solar | civil | path | utc
+    night_conflict: str = ""         # path date that disagrees with 1-2, if any
 
     @property
     def temp_bucket(self) -> Optional[int]:
         return temp_bucket(self.temp)
 
 
-def read_frame_info(path: str) -> Optional[FrameInfo]:
-    """Read one FITS header and return its classified :class:`FrameInfo`."""
+def read_frame_info(path: str,
+                    tz_offset_hours: Optional[float] = None) -> Optional[FrameInfo]:
+    """Read one FITS header and return its classified :class:`FrameInfo`.
+
+    ``tz_offset_hours`` (``params.P.site_tz_offset_hours``) is the fallback
+    local reference for the observing-night split when the header carries no
+    site longitude — see :func:`resolve_night`.
+    """
     try:
         header = fits.getheader(path)
     except Exception:
@@ -177,13 +191,12 @@ def read_frame_info(path: str) -> Optional[FrameInfo]:
     exp = _to_float(_header_first(header, EXPTIME_HEADER_KEYS), 0.0) or 0.0
     temp = _to_float(_header_first(header, _TEMP_KEYS), None)
     filt = str(_header_first(header, FILTER_HEADER_KEYS, "") or "").strip()
-    lon = _parse_lon_east(_header_first(header, _LON_KEYS))
-    night = night_from_path(path) or night_from_dateobs(
-        _header_first(header, _DATE_KEYS), lon)
+    night, night_method, night_conflict = resolve_night(path, header, tz_offset_hours)
     is_master = "MASTER" in str(_header_first(header, _IMAGETYP_KEYS) or "").upper()
     return FrameInfo(path=str(path), ftype=ftype, exp=exp, temp=temp,
                      filt=filt, night=night, name=os.path.basename(path),
-                     is_master=is_master)
+                     is_master=is_master, night_method=night_method,
+                     night_conflict=night_conflict)
 
 
 def find_fits(root: str) -> List[str]:
@@ -198,8 +211,15 @@ def find_fits(root: str) -> List[str]:
 
 def scan_folder(root: str,
                 progress: Optional[Callable[[int, int, str], None]] = None,
-                stop: Optional[Callable[[], bool]] = None) -> List[FrameInfo]:
-    """Scan ``root`` and return classified :class:`FrameInfo` for every frame."""
+                stop: Optional[Callable[[], bool]] = None,
+                tz_offset_hours: Optional[float] = None,
+                warn: Optional[Callable[[str], None]] = None) -> List[FrameInfo]:
+    """Scan ``root`` and return classified :class:`FrameInfo` for every frame.
+
+    ``warn`` receives one line per scan-level anomaly (currently: frames whose
+    path date disagrees with the night derived from DATE-OBS, which is normal
+    for post-midnight frames but worth showing once).
+    """
     paths = find_fits(root)
     total = len(paths)
     frames: List[FrameInfo] = []
@@ -208,11 +228,18 @@ def scan_folder(root: str,
             break
         if progress is not None:
             progress(i, total, os.path.basename(p))
-        info = read_frame_info(p)
+        info = read_frame_info(p, tz_offset_hours)
         if info is not None:
             frames.append(info)
     if progress is not None:
         progress(total, total, "done")
+    if warn is not None:
+        conflicts = [f for f in frames if f.night_conflict]
+        if conflicts:
+            sample = conflicts[0]
+            warn(f"[night] {len(conflicts)} frame(s): path date differs from "
+                 f"DATE-OBS night (e.g. {sample.name}: path {sample.night_conflict} "
+                 f"→ night {sample.night}). Using DATE-OBS ({sample.night_method}).")
     return frames
 
 

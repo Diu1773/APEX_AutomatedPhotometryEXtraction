@@ -62,6 +62,61 @@ def test_night_rollover_uses_longitude():
     assert cs._parse_lon_east(-70.5) == -70.5
 
 
+def _header(dateobs=None, sitelong=None):
+    hdr = fits.Header()
+    if dateobs:
+        hdr["DATE-OBS"] = dateobs
+    if sitelong is not None:
+        hdr["SITELONG"] = sitelong
+    return hdr
+
+
+def test_resolve_night_dateobs_outranks_path_date():
+    """A post-midnight frame stamped with the NEXT day in its path must not
+    start a second night — DATE-OBS with a local reference wins."""
+    path = r"E:\obs\M13_20260516\light\L_0001.fit"
+    hdr = _header("2026-05-15T15:10:00", "127 21 37")     # ~00:10 local
+    night, method, conflict = cs.resolve_night(path, hdr)
+    assert night == "20260515"
+    assert method == "solar"
+    assert conflict == "20260516"                          # reported, not used
+
+
+def test_resolve_night_tz_offset_fallback():
+    """No SITELONG in the header: the configured tz offset carries the split."""
+    path = r"E:\obs\M13_20260516\light\L_0001.fit"
+    hdr = _header("2026-05-15T15:10:00")
+    night, method, _conflict = cs.resolve_night(path, hdr, tz_offset_hours=9.0)
+    assert (night, method) == ("20260515", "civil")
+
+
+def test_resolve_night_falls_back_to_path_without_local_reference():
+    """Without longitude or tz the noon split degenerates to the Greenwich rule,
+    which tears East-Asian evenings — so the path date is preferred over it."""
+    path = r"E:\obs\M13_20260515\flat\F_0001.fit"
+    hdr = _header("2026-05-15T10:47:00")                   # ~19:47 local
+    night, method, _conflict = cs.resolve_night(path, hdr)
+    assert (night, method) == ("20260515", "path")
+
+
+def test_resolve_night_last_resort_is_utc_rule():
+    hdr = _header("2026-05-15T20:00:00")
+    night, method, _conflict = cs.resolve_night(r"E:\obs\M13\x.fit", hdr)
+    assert (night, method) == ("20260515", "utc")
+
+
+def test_resolve_night_evening_and_dawn_share_one_night():
+    """The whole session buckets together regardless of the path dates."""
+    hdr_kwargs = {"sitelong": "127 21 37"}
+    flat = cs.resolve_night(r"E:\obs\20260515\f.fit",
+                            _header("2026-05-15T10:47:00", **hdr_kwargs))[0]
+    light = cs.resolve_night(r"E:\obs\20260516\l.fit",
+                             _header("2026-05-15T16:00:00", **hdr_kwargs))[0]
+    dawn = cs.resolve_night(r"E:\obs\20260516\d.fit",
+                            _header("2026-05-15T19:30:00", **hdr_kwargs))[0]
+    assert flat == light == dawn == "20260515"
+
+
 def test_temp_bucket():
     assert cs.temp_bucket(4.8) == 5
     assert cs.temp_bucket(-9.9) == -10

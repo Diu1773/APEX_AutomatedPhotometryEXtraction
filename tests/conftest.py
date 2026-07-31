@@ -23,6 +23,7 @@ _HAS_PYQT5 = importlib.util.find_spec("PyQt5") is not None
 _GUI_DEPENDENT_TESTS = [
     "test_iso_cache_worker.py",
     "test_isochrone_fitter_v2.py",
+    "test_lc_night_classification.py",
     "test_step10_nonlinearity.py",
     "test_step6_union_master.py",
     "test_step8_psf_detection_loader.py",
