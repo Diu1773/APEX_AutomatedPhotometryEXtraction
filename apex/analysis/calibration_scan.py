@@ -276,24 +276,89 @@ def group_for_night(frames: List[FrameInfo], night: str) -> Dict:
     return {"bias": bias, "dark": darks, "flat": flats, "light": lights}
 
 
-def match_dark(darks: Dict[Tuple[float, Optional[int]], List[FrameInfo]],
-               exp: float, temp: Optional[float]) -> Optional[Tuple]:
-    """Pick the dark group key best matching a light's exposure + temperature.
+@dataclass(frozen=True)
+class DarkMatch:
+    """The dark group chosen for one light, with how far off the match is."""
 
-    Prefers exact exposure and nearest temperature; falls back to nearest
-    exposure. Returns the group key or None.
+    key: Tuple[float, Optional[int]]
+    delta_temp_c: Optional[float]     # |T_dark - T_light|, None if either unknown
+    delta_exp_s: float                # |exp_dark - exp_light|
+    within_temp_tol: bool             # False -> caller warns (or refuses)
+
+    @property
+    def exp(self) -> float:
+        return self.key[0]
+
+    @property
+    def temp_bucket(self) -> Optional[int]:
+        return self.key[1]
+
+
+def group_temperature(frames: List[FrameInfo],
+                      key: Tuple[float, Optional[int]]) -> Optional[float]:
+    """Mean *actual* sensor temperature of a dark group.
+
+    The grouping key only carries the 1 °C display bucket, which is far coarser
+    than observers who care about dark current can accept, so matching reads the
+    frames' real temperatures and falls back to the bucket only when they are
+    missing.
+    """
+    temps: List[float] = []
+    for f in frames or ():
+        value = getattr(f, "temp", None)
+        if value is None:
+            continue
+        try:
+            temps.append(float(value))
+        except (TypeError, ValueError):
+            continue
+    if temps:
+        return sum(temps) / len(temps)
+    return float(key[1]) if key[1] is not None else None
+
+
+def match_dark_detail(darks: Dict[Tuple[float, Optional[int]], List[FrameInfo]],
+                      exp: float, temp: Optional[float],
+                      tol_c: float = 1.0) -> Optional[DarkMatch]:
+    """Pick the dark group best matching a light's exposure + temperature.
+
+    Prefers an exact exposure, then the nearest *actual* temperature. The
+    returned :class:`DarkMatch` reports the residual mismatch so the caller can
+    show it, log it, or refuse it (``strict_temp``) — silently accepting an
+    arbitrarily large ΔT was the old behaviour.
     """
     if not darks:
         return None
-    tb = temp_bucket(temp)
+
+    def _delta_temp(key) -> Optional[float]:
+        group_temp = group_temperature(darks.get(key), key)
+        if group_temp is None or temp is None:
+            return None
+        try:
+            return abs(group_temp - float(temp))
+        except (TypeError, ValueError):
+            return None
+
     exact = [k for k in darks if abs(k[0] - exp) < 1e-3]
-    if exact:
-        if tb is None:
-            return exact[0]
-        return min(exact, key=lambda k: abs((k[1] if k[1] is not None else tb) - tb))
-    # nearest exposure, then nearest temp
-    return min(darks, key=lambda k: (abs(k[0] - exp),
-                                     abs((k[1] if k[1] is not None else (tb or 0)) - (tb or 0))))
+    pool = exact or list(darks)
+    best = min(pool, key=lambda k: (
+        abs(k[0] - exp),
+        float("inf") if _delta_temp(k) is None else _delta_temp(k),
+    ))
+    delta_temp = _delta_temp(best)
+    return DarkMatch(
+        key=best,
+        delta_temp_c=delta_temp,
+        delta_exp_s=abs(best[0] - exp),
+        within_temp_tol=(delta_temp is None or delta_temp <= float(tol_c)),
+    )
+
+
+def match_dark(darks: Dict[Tuple[float, Optional[int]], List[FrameInfo]],
+               exp: float, temp: Optional[float]) -> Optional[Tuple]:
+    """Group key of the best dark match (see :func:`match_dark_detail`)."""
+    match = match_dark_detail(darks, exp, temp)
+    return match.key if match is not None else None
 
 
 def match_flat(flats: Dict[str, List[FrameInfo]], filt: str) -> Optional[str]:

@@ -66,6 +66,15 @@ class CalibrationOptions:
     # --- dark ---
     dark_scale: bool = True               # scale dark by exposure-time ratio
     dark_optimize: bool = False           # optional noise-min k-fit (off: imaging heuristic)
+    # How far a dark's sensor temperature may sit from the light's before the
+    # match is called into question. Dark current roughly doubles every ~6 C, so
+    # 1 C is a few percent — tolerable for most work, but observers chasing
+    # faint signal want it tighter, hence a configurable tolerance rather than
+    # the old fixed 1 C rounding bucket. Beyond the tolerance the match is
+    # reported (delta_T is logged and written to calibration.json) and, with
+    # strict_temp on, refused outright.
+    temp_match_tol_c: float = 1.0
+    strict_temp: bool = False
 
     # --- flat ---
     flat_min: float = 0.01                # flat values below this -> dead pixel (NaN)

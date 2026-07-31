@@ -152,3 +152,58 @@ def test_match_dark_nearest_exposure():
     darks = {(60.0, 5): [1], (120.0, 5): [1]}
     assert cs.match_dark(darks, 60.0, 5.0) == (60.0, 5)
     assert cs.match_dark(darks, 110.0, 5.0) == (120.0, 5)   # nearest exp
+
+
+# --- dark temperature tolerance (P2) ---------------------------------------
+
+def _dark_frame(exp, temp):
+    return cs.FrameInfo(path=f"d_{exp}_{temp}.fit", ftype="dark", exp=exp, temp=temp)
+
+
+def test_match_dark_uses_actual_temperature_not_the_bucket():
+    """-10.4 and -10.6 land in different 1 °C buckets but are 0.2 °C apart;
+    matching must rank on the real temperatures."""
+    darks = {
+        (60.0, -10): [_dark_frame(60.0, -10.4)],
+        (60.0, -11): [_dark_frame(60.0, -10.6)],
+    }
+    match = cs.match_dark_detail(darks, 60.0, -10.55)
+    assert match.key == (60.0, -11)                     # -10.6 is nearer
+    assert match.delta_temp_c == pytest.approx(0.05)
+    assert match.within_temp_tol
+
+
+def test_match_dark_reports_temperature_mismatch():
+    darks = {(60.0, 5): [_dark_frame(60.0, 5.0)]}
+    match = cs.match_dark_detail(darks, 60.0, -10.0, tol_c=1.0)
+    assert match.key == (60.0, 5)                       # still the only option
+    assert match.delta_temp_c == pytest.approx(15.0)
+    assert not match.within_temp_tol                    # caller warns / refuses
+
+
+def test_match_dark_tolerance_is_configurable():
+    darks = {(60.0, -10): [_dark_frame(60.0, -10.5)]}
+    tight = cs.match_dark_detail(darks, 60.0, -10.0, tol_c=0.1)
+    loose = cs.match_dark_detail(darks, 60.0, -10.0, tol_c=1.0)
+    assert tight.delta_temp_c == loose.delta_temp_c == pytest.approx(0.5)
+    assert not tight.within_temp_tol                    # 0.1 °C observer
+    assert loose.within_temp_tol
+
+
+def test_match_dark_reports_exposure_mismatch():
+    darks = {(300.0, 5): [_dark_frame(300.0, 5.0)]}
+    match = cs.match_dark_detail(darks, 10.0, 5.0)
+    assert match.delta_exp_s == pytest.approx(290.0)
+
+
+def test_match_dark_unknown_temperature_is_not_a_violation():
+    darks = {(60.0, None): [_dark_frame(60.0, None)]}
+    match = cs.match_dark_detail(darks, 60.0, None)
+    assert match.delta_temp_c is None
+    assert match.within_temp_tol                        # nothing to compare
+
+
+def test_group_temperature_falls_back_to_bucket():
+    assert cs.group_temperature([_dark_frame(60.0, -10.4)], (60.0, -10)) == pytest.approx(-10.4)
+    assert cs.group_temperature([], (60.0, -10)) == pytest.approx(-10.0)
+    assert cs.group_temperature([], (60.0, None)) is None

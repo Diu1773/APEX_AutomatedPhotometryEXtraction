@@ -90,8 +90,39 @@ class _CalibrationWorker(QThread):
         except Exception as exc:                  # pragma: no cover - surfaced to UI
             self.failed.emit(f"{type(exc).__name__}: {exc}")
 
+    def _accept_dark(self, match, light, opts):
+        """Apply the temperature/exposure policy to a dark match.
+
+        Returns the group key to use, or None to calibrate without a dark.
+        A mismatch is never silent: it is logged, and ``strict_temp`` turns the
+        warning into a refusal.
+        """
+        if match is None:
+            return None
+        if not match.within_temp_tol:
+            self._n_temp_mismatch += 1
+            verdict = "REFUSED (strict)" if opts.strict_temp else "used anyway"
+            self.logline.emit(
+                f"  [warn] {light.name}: nearest dark is ΔT="
+                f"{match.delta_temp_c:.2f}°C away (tolerance "
+                f"{opts.temp_match_tol_c:g}°C) — {verdict}")
+            if opts.strict_temp:
+                self._n_dark_refused += 1
+                return None
+        # A dark of a different exposure is only defensible if it gets scaled.
+        if match.delta_exp_s > 1e-3 and not opts.dark_scale:
+            self._n_exp_mismatch += 1
+            self.logline.emit(
+                f"  [warn] {light.name}: dark exposure {match.exp:g}s vs light "
+                f"{light.exp:g}s and dark scaling is OFF — dark is not "
+                f"exposure-matched")
+        return match.key
+
     def _run(self):
         opts = self.opts
+        self._n_temp_mismatch = 0
+        self._n_exp_mismatch = 0
+        self._n_dark_refused = 0
         masters_dir = self.out_dir / "masters"
         masters_dir.mkdir(parents=True, exist_ok=True)
 
@@ -183,7 +214,9 @@ class _CalibrationWorker(QThread):
                     self.logline.emit("Stopped by user.")
                     break
                 self.progress.emit(done, total, f"[{night}] {l.name}")
-                dk = scan.match_dark(g["dark"], l.exp, l.temp)
+                dm = scan.match_dark_detail(g["dark"], l.exp, l.temp,
+                                            opts.temp_match_tol_c)
+                dk = self._accept_dark(dm, l, opts)
                 md, dexp = (_dark([f.path for f in g["dark"][dk]], dk, mbias,
                                   g["dark"][dk][0].night) if dk else (None, 1.0))
                 ff = scan.match_flat(g["flat"], l.filt)
@@ -199,6 +232,10 @@ class _CalibrationWorker(QThread):
                 night_recs.append({
                     "input": l.name, "output": f"pp_{l.name}", "filter": l.filt,
                     "dark": f"{dk[0]:g}s/{dk[1]}C" if dk else None, "flat": ff,
+                    # Provenance for the dark match: how far the chosen dark sat
+                    # from this light in temperature and exposure.
+                    "dark_delta_temp_c": (dm.delta_temp_c if dm is not None else None),
+                    "dark_delta_exp_s": (dm.delta_exp_s if dm is not None else None),
                     "median": qc.get("median"), "neg_pct": qc.get("neg_pct"),
                 })
             summary["nights"][night] = {
@@ -209,6 +246,9 @@ class _CalibrationWorker(QThread):
 
         summary["n_calibrated"] = done
         summary["n_missing_flat"] = no_flat
+        summary["n_temp_mismatch"] = self._n_temp_mismatch
+        summary["n_exp_mismatch"] = self._n_exp_mismatch
+        summary["n_dark_refused"] = self._n_dark_refused
         summary["n_nights"] = len(nights)
         summary["calibrated_root"] = str(self.out_dir / "calibrated")
         (self.out_dir / "calibration.json").write_text(
@@ -414,7 +454,17 @@ class DetectorCalibrationWindow(ToolWindowBase):
         f = _group("Dark")
         w_dscale = QCheckBox("Scale master dark by exposure ratio"); w_dscale.setChecked(s["dark_scale"])
         w_dopt = QCheckBox("Optimise scale (noise-min k-fit)"); w_dopt.setChecked(s["dark_optimize"])
+        w_dtol = _dspin(0.1, 10.0, 0.1, 1, s["temp_match_tol_c"])
+        w_dtol.setToolTip(
+            "How far the dark's sensor temperature may sit from the light's.\n"
+            "Dark current roughly doubles every ~6 °C, so tighten this if you\n"
+            "are chasing faint signal. Exceeding it is always logged."
+        )
+        w_dstrict = QCheckBox("Refuse a dark outside the tolerance (no dark subtraction)")
+        w_dstrict.setChecked(s["strict_temp"])
         f.addRow(w_dscale); f.addRow(w_dopt)
+        f.addRow(_lbl("Temp tolerance (°C)"), w_dtol)
+        f.addRow(w_dstrict)
 
         # Flat
         f = _group("Flat")
@@ -467,6 +517,7 @@ class DetectorCalibrationWindow(ToolWindowBase):
                 "sigma_low": w_slow.value(), "sigma_high": w_shigh.value(),
                 "maxiters": w_iter.value(),
                 "dark_scale": w_dscale.isChecked(), "dark_optimize": w_dopt.isChecked(),
+                "temp_match_tol_c": w_dtol.value(), "strict_temp": w_dstrict.isChecked(),
                 "flat_min": w_fmin.value(),
                 "pedestal_mode": w_pmode.currentText(),
                 "pedestal_value": w_pval.value(), "pedestal_max": w_pmax.value(),
@@ -584,9 +635,19 @@ class DetectorCalibrationWindow(ToolWindowBase):
         sample = next((f for f in items if (f.filt or "(none)") == filt), None)
         if sample is None:
             return ""
-        dk = scan.match_dark(group["dark"], sample.exp, sample.temp)
+        tol = float(self._settings.get("temp_match_tol_c", 1.0))
+        dm = scan.match_dark_detail(group["dark"], sample.exp, sample.temp, tol)
         ff = scan.match_flat(group["flat"], sample.filt)
-        d = f"dark {dk[0]:g}s/{dk[1]}°C" if dk else "no dark"
+        if dm is None:
+            d = "no dark"
+        else:
+            d = f"dark {dm.exp:g}s/{dm.temp_bucket}°C"
+            # Show the residual mismatch up front — the old preview implied an
+            # exact match no matter how far off the nearest dark actually was.
+            if dm.delta_temp_c is not None and not dm.within_temp_tol:
+                d += f" [ΔT={dm.delta_temp_c:.2f}°C > {tol:g}]"
+            if dm.delta_exp_s > 1e-3:
+                d += f" [Δexp={dm.delta_exp_s:g}s]"
         fl = f"flat {ff}" if ff else "NO FLAT"
         return f"→ {d}, {fl}"
 
@@ -636,6 +697,8 @@ class DetectorCalibrationWindow(ToolWindowBase):
         n = summary.get("n_calibrated", 0)
         miss = summary.get("n_missing_flat", 0)
         nn = summary.get("n_nights", 1)
+        temp_miss = summary.get("n_temp_mismatch", 0)
+        refused = summary.get("n_dark_refused", 0)
         nights = summary.get("nights", {})
         # Single night → point File Selection at that night's folder; multi-night
         # → the calibrated root (per-night subfolders inside).
@@ -645,6 +708,9 @@ class DetectorCalibrationWindow(ToolWindowBase):
             calibrated_dir = summary.get("calibrated_root", "")
         self.log(f"Done — {n} frames across {nn} night(s) calibrated"
                  + (f" ({miss} without a matching flat)" if miss else "")
+                 + (f" ({temp_miss} with a dark outside the temperature tolerance"
+                    + (f", {refused} refused" if refused else "") + ")"
+                    if temp_miss else "")
                  + f" → {calibrated_dir}")
         if self.project_state is not None:
             self.project_state.mark_calibration("done")
@@ -653,7 +719,10 @@ class DetectorCalibrationWindow(ToolWindowBase):
             self, "Detector Calibration",
             f"Calibrated {n} frames"
             + (f" ({miss} had no matching flat)" if miss else "")
-            + ".\n\nUse the calibrated folder as the File-Selection input directory?",
+            + (f"\n{temp_miss} frame(s) had no dark within the temperature "
+               f"tolerance" + (f"; {refused} were calibrated without a dark."
+                               if refused else ".") if temp_miss else "")
+            + "\n\nUse the calibrated folder as the File-Selection input directory?",
             QMessageBox.Yes | QMessageBox.No, QMessageBox.Yes,
         )
         if resp == QMessageBox.Yes and calibrated_dir:
