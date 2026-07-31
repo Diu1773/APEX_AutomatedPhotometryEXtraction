@@ -14,6 +14,7 @@ import time
 import json
 import re
 import threading
+import traceback
 import webbrowser
 import urllib.request
 import urllib.parse
@@ -402,6 +403,10 @@ class _ComparisonAutomationWorker(QThread):
                 )
             except Exception as exc:
                 payload["errors"][flt] = str(exc)
+                # 메시지만 남기면 어디서 터졌는지 알 수 없다. 실제로
+                # "only 0-dimensional arrays can be converted to Python scalars"
+                # 한 줄만 보고는 원인을 못 찾아 단계별로 되짚어야 했다.
+                payload.setdefault("tracebacks", {})[flt] = traceback.format_exc()
                 self.progress.emit(
                     base + 5, total, f"{flt}: Failed", str(exc)
                 )
@@ -4642,9 +4647,15 @@ class TargetComparisonSelectionWindow(StepWindowBase):
         for source_id, (ra_deg, dec_deg) in source_radec.items():
             source_coord = SkyCoord(ra_deg * u.deg, dec_deg * u.deg, frame="icrs")
             index, separation, _ = source_coord.match_to_catalog_sky(simbad_coords)
-            if float(separation.arcsec) > 5.0:
+            # match_to_catalog_sky 는 좌표가 스칼라여도 1원소 **배열**을 돌려줄 수
+            # 있다. 그대로 float()/int() 하면 numpy 2.x 에서
+            # "only 0-dimensional arrays can be converted to Python scalars" 로
+            # 터지고, 그 예외가 비교성 자동선택 전체를 무산시켰다.
+            sep_arcsec = float(np.atleast_1d(separation.arcsec)[0])
+            match_index = int(np.atleast_1d(index)[0])
+            if sep_arcsec > 5.0:
                 continue
-            object_type = str(results.iloc[int(index)].get("otype", "")).strip()
+            object_type = str(results.iloc[match_index].get("otype", "")).strip()
             if object_type:
                 updates[
                     self._simbad_cache_key(int(source_id), flt=flt)
