@@ -6,7 +6,8 @@ Isochrone (step 12) left to the user. LC targets: Step 0 only.
 
 SAFETY (hard): never touch E:\\observe_raw_Analysis, E:\\observe_DSY,
 E:\\observed_Analysis. All output under E:\\APEX_validation\\reprocess\\<target>\\.
-Stop if E: free < 20 GB. Resumable: skip targets marked [DONE] in PROGRESS.md.
+Stops when E: free < 20 GB or C: free < 10 GB (checked between steps,
+not just between targets). Resumable: skip targets marked [DONE] in PROGRESS.md.
 """
 from __future__ import annotations
 
@@ -30,7 +31,14 @@ BIAS = r"E:\bias"
 DARKS = r"E:\darks"
 PROGRESS = REPROCESS / "PROGRESS.md"
 TEMPLATE = REPO / "parameters.toml"
-MIN_FREE_GB = 20.0
+
+# Disk floors. E: takes the calibrated output; C: holds the repo, the venv and
+# the pipeline's temporaries and is routinely the tighter of the two, so it is
+# guarded too — it used not to be, and nothing noticed.
+OUT_DRIVE = str(REPROCESS.anchor) or "E:\\"
+REPO_DRIVE = str(REPO.anchor) or "C:\\"
+MIN_FREE_GB = 20.0        # E:
+MIN_FREE_C_GB = 10.0      # C:
 
 # target -> (raw_dir, kind, ra_deg, dec_deg). kind: gc/oc (full CMD) or lc (Step 0 only).
 TARGETS = {
@@ -49,6 +57,39 @@ def free_gb(drive="E:\\") -> float:
     return shutil.disk_usage(drive).free / 1e9
 
 
+class DiskFull(RuntimeError):
+    """Raised when a guarded drive drops below its floor mid-run."""
+
+
+def check_disk(where: str) -> None:
+    """Abort before a step when either guarded drive is low on space.
+
+    Both drives matter: outputs land on E:, but the venv, the repo and the
+    temp files used by the pipeline live on C:, and C: is routinely the
+    tighter of the two.
+    """
+    for drive, floor in ((OUT_DRIVE, MIN_FREE_GB), (REPO_DRIVE, MIN_FREE_C_GB)):
+        free = free_gb(drive)
+        if free < floor:
+            raise DiskFull(f"{drive} free {free:.0f} GB < {floor:.0f} GB at {where}")
+
+
+def estimate_step0_gb(raw_dir: str) -> float:
+    """Rough size of the calibrated output: one float32 frame per raw light.
+
+    Cheap (stat only, no header reads) and deliberately generous — the point is
+    to refuse a target that obviously will not fit, not to predict exactly.
+    """
+    total = 0
+    try:
+        for p in Path(raw_dir).rglob("*.fit*"):
+            if p.is_file():
+                total += p.stat().st_size
+    except OSError:
+        return 0.0
+    return total / 1e9
+
+
 def log(msg: str):
     REPROCESS.mkdir(parents=True, exist_ok=True)
     with open(PROGRESS, "a", encoding="utf-8") as f:
@@ -65,11 +106,20 @@ def run_step0(target: str, raw_dir: str) -> Path:
     out = REPROCESS / target
     if list((out / "calibrated").rglob("pp_*.fit")):
         print(f"[{target}] Step 0 output exists — skip"); return out
+    # Refuse a target that plainly will not fit rather than filling the drive
+    # and failing three hours in. The floor is kept free on top of the estimate.
+    need = estimate_step0_gb(raw_dir)
+    have = free_gb(OUT_DRIVE)
+    if need and have < need + MIN_FREE_GB:
+        raise DiskFull(f"{target}: Step 0 needs ~{need:.0f} GB + {MIN_FREE_GB:.0f} GB "
+                       f"floor, {OUT_DRIVE} has {have:.0f} GB")
+    log(f"[{target}] Step 0: ~{need:.0f} GB estimated, {OUT_DRIVE} free {have:.0f} GB")
     r = subprocess.run([str(VENV_PY), "-X", "utf8",
                         str(REPO / "scripts" / "_reprocess_step0.py"), raw_dir, target],
                        cwd=str(REPO))
     if r.returncode != 0:
         raise RuntimeError(f"Step 0 failed for {target}")
+    check_disk(f"{target} after Step 0")
     return out
 
 
@@ -224,8 +274,10 @@ def run_one(target: str) -> bool:
     if not list(sci.glob("pp_*.fit")):
         log(f"[SKIP] {target}: no calibrated frames after reorg"); return False
     cfg = gen_config(target, sci, ra, dec)
+    check_disk(f"{target} before Steps 1-7")
     apex_run(cfg, "1-7", "cmd")
     log(f"[STEP1-7] {target}: forced photometry done -> {REPROCESS/target/'result'}")
+    check_disk(f"{target} before Step 10")
     new_cmd = run_step10(cfg)
     if not new_cmd.exists():
         log(f"[SKIP] {target}: step10 produced no CMD table"); return False
@@ -246,17 +298,23 @@ def main() -> int:
                          "default: LC calibrated output is ~180 GB and needs "
                          "E:\\observed_Analysis deleted first.")
     a = ap.parse_args()
-    log(f"# reprocess {time.strftime('%Y-%m-%d %H:%M')} — E: free {free_gb():.0f} GB")
+    log(f"# reprocess {time.strftime('%Y-%m-%d %H:%M')} — "
+        f"{OUT_DRIVE} free {free_gb(OUT_DRIVE):.0f} GB, "
+        f"{REPO_DRIVE} free {free_gb(REPO_DRIVE):.0f} GB")
     names = [a.only] if a.only else list(TARGETS)
     for t in names:
         if is_done(t):
             print(f"skip {t} (done)"); continue
         if TARGETS[t][1] == "lc" and not a.lc:
             print(f"skip {t} (lc deferred — pass --lc to run)"); continue
-        if free_gb() < MIN_FREE_GB:
-            log(f"[STOP] E: free {free_gb():.0f} GB < {MIN_FREE_GB} — halt."); break
         try:
+            check_disk(f"before {t}")
             run_one(t)
+        except DiskFull as e:
+            # Out of space is a stop condition, not a target failure: continuing
+            # would just fail every remaining target the same way.
+            log(f"[STOP] {e}")
+            break
         except Exception as e:
             log(f"[ERROR] {t}: {type(e).__name__}: {e}")
             break
