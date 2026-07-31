@@ -358,6 +358,9 @@ class MultiNightMergerWindow(AutoFitMixin, QMainWindow):
 
         layout.addWidget(self._make_info_label(
             "RESULT_* 또는 MERGED_* workspace 폴더들을 선택합니다.\n"
+            "각 폴더에 Step 7(forced photometry)과 Step 8(마스터 카탈로그·선택)이 "
+            "있으면 됩니다. Step 9 광곡선은 merged workspace에서 다시 만들므로 "
+            "밤마다 미리 돌릴 필요가 없습니다.\n"
             "이후 MERGED_<target>_<start>_<end> workspace를 새로 생성합니다."
         ))
 
@@ -806,8 +809,18 @@ class MultiNightMergerWindow(AutoFitMixin, QMainWindow):
             filters = list(row_info.get("filters") or [])
             merge_ready = bool(row_info.get("merge_ready"))
             self.folder_info_table.setItem(row, 8, QTableWidgetItem(", ".join(filters) if filters else "—"))
-            status_item = QTableWidgetItem("사용 가능" if merge_ready else "입력 부족")
-            status_item.setForeground(QColor("#2E7D32") if merge_ready else QColor("#C62828"))
+            # Step 9 is optional — the merged workspace rebuilds the light
+            # curves — so its absence is a note, not a blocker.
+            if merge_ready and not row_info.get("has_step9"):
+                status_item = QTableWidgetItem("사용 가능 (Step 9 없음)")
+                status_item.setForeground(QColor("#EF6C00"))
+                status_item.setToolTip(
+                    "Step 9 광곡선은 merge 에 필요하지 않습니다. "
+                    "merged workspace 에서 다시 만듭니다."
+                )
+            else:
+                status_item = QTableWidgetItem("사용 가능" if merge_ready else "입력 부족")
+                status_item.setForeground(QColor("#2E7D32") if merge_ready else QColor("#C62828"))
             self.folder_info_table.setItem(row, 9, status_item)
 
     def _validate_selected_workspaces(self) -> tuple[bool, str]:
@@ -817,7 +830,16 @@ class MultiNightMergerWindow(AutoFitMixin, QMainWindow):
             self._scan_folders()
         invalid_rows = [row for row in self.folder_scan_rows if not row.get("merge_ready")]
         if invalid_rows:
-            return False, "Step 7 / Step 8 / Step 9가 모두 있는 workspace만 머저할 수 있습니다."
+            missing = ", ".join(
+                f"{Path(row['folder']).name}("
+                + "+".join(
+                    step for step, key in (("Step 7", "has_step7"), ("Step 8", "has_step8"))
+                    if not row.get(key)
+                ) + " 없음)"
+                for row in invalid_rows
+            )
+            return False, ("Step 7(forced photometry)과 Step 8(마스터 카탈로그·선택)이 "
+                           f"있는 workspace만 머저할 수 있습니다.\n부족: {missing}")
         labels = []
         seen = set()
         for row in self.folder_scan_rows:

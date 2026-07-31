@@ -127,7 +127,15 @@ def _scan_filter_names(result_dir: Path) -> list[str]:
 
 
 def scan_merge_input_workspace(result_dir: Path) -> dict:
-    """Fast scan for Step 1 merger input validation without loading large TSVs."""
+    """Fast scan for Step 1 merger input validation without loading large TSVs.
+
+    ``merge_ready`` requires Step 7 (forced photometry) and Step 8 (master
+    catalog + selection) only. Step 9 light curves are *not* required: the
+    merge reads the Step 7 TSVs and the Step 8 catalogs, then the light curves
+    are rebuilt inside the merged workspace — demanding them per night forced
+    the user to run Step 9 on every night for nothing. Its absence is reported
+    so the folder-scan table can still flag it.
+    """
     meta = run_meta(result_dir)
     s7_idx = forced_phot_input_dir(result_dir) / "photometry_index.csv"
     filters = _scan_filter_names(result_dir)
@@ -137,7 +145,7 @@ def scan_merge_input_workspace(result_dir: Path) -> dict:
     has_master = any(selection_input_dir(result_dir).glob("master_catalog_*.tsv"))
     has_sel = any(selection_input_dir(result_dir).glob("selection_*.json"))
     has_step8_selection = bool(has_master and has_sel)
-    merge_ready = bool(has_step7_forced and has_step8_selection and has_step9_lc)
+    merge_ready = bool(has_step7_forced and has_step8_selection)
     return {
         "folder": Path(result_dir),
         "label": str(meta.get("label") or Path(result_dir).name),

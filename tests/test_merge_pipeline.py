@@ -250,6 +250,20 @@ def test_legacy_workspace_read_compat(tmp_path):
     assert sorted(df["source_id"].astype("int64").tolist()) == [1001, 1002]  # via cache/idmatch
     assert sorted(df["ID"].astype("int64").tolist()) == [5, 6]               # via selection master
 
+    # Step 9 is not a merge input: the merged workspace rebuilds the light
+    # curves, so requiring it per night was busywork.
+    for lc in (rd / "step10_lightcurve").glob("lightcurve_*.csv"):
+        lc.unlink()
+    info = scan_merge_input_workspace(rd)
+    assert info["merge_ready"]
+    assert not info["has_step9"]
+
+    # Step 7 and Step 8 remain hard requirements.
+    (rd / "step9_selection" / "master_catalog_V.tsv").unlink()
+    info = scan_merge_input_workspace(rd)
+    assert not info["merge_ready"]
+    assert info["has_step7"] and not info["has_step8"]
+
 
 def test_merge_worker_runs_full_chain_synchronously(merge_workspace):
     """Drive _MergeWorker.run() directly (no event loop): exercises the exact
