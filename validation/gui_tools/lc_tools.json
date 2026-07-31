@@ -1,0 +1,241 @@
+[
+  {
+    "id": "qa_report",
+    "label": "QA Reports",
+    "mode": "lc",
+    "open_s": 7.02,
+    "class": "QAReportWindow",
+    "run": "Generate QA Report 클릭",
+    "run_s": 33.3,
+    "size": "1398x1432",
+    "tables": [
+      "364x10",
+      "3x6"
+    ],
+    "canvases": 3,
+    "buttons": [
+      "QA Parameters",
+      "Help",
+      "Generate QA Report",
+      "Stop",
+      "Save All Plots",
+      "Export LaTeX",
+      "Check All",
+      "Uncheck Flagged",
+      "Apply & Regenerate",
+      "Reset All"
+    ],
+    "png": "lc_qa_report.png",
+    "status": "OK"
+  },
+  {
+    "id": "iraf_photometry",
+    "label": "IRAF/DAOPHOT Tool",
+    "mode": "lc",
+    "open_s": 8.09,
+    "class": "IRAFPhotometryWindow",
+    "run": "Run Comparison 클릭",
+    "run_s": 4.0,
+    "run_dialogs": [
+      "warning[Error] IRAF dir not found: E:\\APEX_validation\\reprocess\\YZBoo_2n\\result\\iraf_phot"
+    ],
+    "size": "1214x1015",
+    "tables": [
+      "0x13"
+    ],
+    "canvases": 1,
+    "buttons": [
+      "IRAF Parameters",
+      "Run Comparison",
+      "Export CSV",
+      "Log",
+      "Reload",
+      "Reset Zoom",
+      "Auto",
+      "Use Project Defaults",
+      "Sync From APEX Step 4/7",
+      "Browse",
+      "Browse",
+      "Browse"
+    ],
+    "png": "lc_iraf_photometry.png",
+    "status": "OK",
+    "dialogs": [
+      "warning[Error] IRAF dir not found: E:\\APEX_validation\\reprocess\\YZBoo_2n\\result\\iraf_phot"
+    ]
+  },
+  {
+    "id": "extinction_fit",
+    "label": "Extinction (Airmass Fit)",
+    "mode": "lc",
+    "open_s": 5.4,
+    "class": "ExtinctionFitWindow",
+    "run": "Run Fit 클릭",
+    "run_s": 8.0,
+    "run_dialogs": [
+      "critical[Error] Extinction fit failed:\nNo valid per-star extinction fits produced"
+    ],
+    "size": "1440x1432",
+    "tables": [
+      "0x11",
+      "0x11"
+    ],
+    "canvases": 2,
+    "buttons": [
+      "⚙︎ 파라미터",
+      "📜︎ Log",
+      "Run Fit",
+      "Save Plots",
+      "Auto Pick",
+      "Use",
+      "Reject",
+      "Reset",
+      "Clear Group",
+      "Copy Same Date",
+      "Copy All Groups",
+      "Auto"
+    ],
+    "png": "lc_extinction_fit.png",
+    "status": "OK",
+    "dialogs": [
+      "critical[Error] Extinction fit failed:\nNo valid per-star extinction fits produced"
+    ]
+  },
+  {
+    "id": "airmass_debug",
+    "label": "Airmass Header Debug",
+    "mode": "lc",
+    "open_s": 21.19,
+    "class": "AirmassHeaderDebugToolWindow",
+    "run": "Scan 클릭",
+    "run_s": 8.0,
+    "size": "1906x1111",
+    "canvases": 1,
+    "buttons": [
+      "Reload",
+      "Export CSV",
+      "Write AIRMASS"
+    ],
+    "png": "lc_airmass_debug.png",
+    "status": "OK"
+  },
+  {
+    "id": "multi_night_merger",
+    "label": "Multi-Night Light Curve Merger",
+    "mode": "lc",
+    "open_s": 5.36,
+    "class": "MultiNightMergerWindow",
+    "run": "버튼 없음/비활성: Merge",
+    "size": "1200x1055",
+    "tables": [
+      "0x10",
+      "0x7"
+    ],
+    "canvases": 0,
+    "buttons": [
+      "← 메인으로",
+      "Step 1  폴더 선택",
+      "Step 2  ID 매칭",
+      "Step 3  선택",
+      "Step 4  Light Curve",
+      "Step 5  Detrend",
+      "Step 6  Period",
+      "폴더 추가",
+      "선택 제거",
+      "위로",
+      "아래로",
+      "찾기..."
+    ],
+    "png": "lc_multi_night_merger.png",
+    "status": "OK"
+  },
+  {
+    "id": "variable_star",
+    "label": "Variable Star Analysis",
+    "mode": "lc",
+    "open_s": 7.25,
+    "class": "VariableStarToolWindow",
+    "run": "버튼 없음/비활성: Compute Periodogram",
+    "size": "1303x816",
+    "tables": [
+      "0x4",
+      "0x5",
+      "0x8"
+    ],
+    "canvases": 8,
+    "buttons": [
+      "Decompose",
+      "← Refined",
+      "Fit & Plot",
+      "Add",
+      "Del",
+      "Import CSV",
+      "Export CSV",
+      "Detect Residual Peaks",
+      "+ Selected Candidate",
+      "Adopt New Peaks",
+      "Restore Selected Step",
+      "Undo Last Change"
+    ],
+    "png": "lc_variable_star.png",
+    "status": "OK"
+  },
+  {
+    "id": "transit",
+    "label": "Exoplanet Transit Analysis",
+    "mode": "lc",
+    "open_s": 5.36,
+    "class": "TransitToolWindow",
+    "run": "버튼 없음/비활성: Fit Transit",
+    "size": "1300x1007",
+    "tables": [
+      "0x4"
+    ],
+    "canvases": 5,
+    "buttons": [
+      "← From Fit",
+      "Add",
+      "Del",
+      "Import CSV",
+      "Export CSV",
+      "Fetch",
+      "Browse…",
+      "Load",
+      "Apply Trim && Show",
+      "Scan Period",
+      "Batman Fit (least-squares)",
+      "MCMC (emcee)"
+    ],
+    "png": "lc_transit.png",
+    "status": "OK"
+  },
+  {
+    "id": "eclipsing_binary",
+    "label": "Eclipsing Binary Analysis",
+    "mode": "lc",
+    "open_s": 5.44,
+    "class": "EclipsingBinaryToolWindow",
+    "run": "버튼 없음/비활성: Run Fit",
+    "size": "1304x800",
+    "tables": [
+      "0x5"
+    ],
+    "canvases": 3,
+    "buttons": [
+      "Fit & Plot",
+      "Add",
+      "Del",
+      "Import CSV",
+      "Export CSV",
+      "Browse…",
+      "Load",
+      "Browse Colors / Visibility…",
+      "Scan",
+      "Detect Primary Min",
+      "Fit Eclipse (parabola)",
+      "Log ▼"
+    ],
+    "png": "lc_eclipsing_binary.png",
+    "status": "OK"
+  }
+]

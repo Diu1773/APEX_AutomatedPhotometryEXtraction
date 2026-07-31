@@ -1,0 +1,171 @@
+[
+  {
+    "id": "step12_isochrone",
+    "label": "Step 12 Isochrone Model",
+    "mode": "cmd",
+    "open_s": 9.2,
+    "class": "IsochroneModelWindow",
+    "run": "Run MCMC Auto-Fit 클릭",
+    "run_s": 240.1,
+    "size": "1200x950",
+    "canvases": 2,
+    "buttons": [
+      "ⓘ 가이드",
+      "Browse",
+      "Folder",
+      "detect",
+      "Run MCMC Auto-Fit",
+      "Save Figures",
+      "Use CMD viewer values as seed",
+      "Run Auto Fit Use after manual seed",
+      "Run Grid Scan Exhaustive age/[M/H] search",
+      "Apply to CMD Viewer",
+      "Export Results",
+      "Compute Membership"
+    ],
+    "png": "cmd_step12_isochrone.png",
+    "status": "OK"
+  },
+  {
+    "id": "qa_report",
+    "label": "QA Reports",
+    "mode": "cmd",
+    "open_s": 5.84,
+    "class": "QAReportWindow",
+    "run": "Generate QA Report 클릭",
+    "run_s": 8.5,
+    "size": "1398x1432",
+    "tables": [
+      "15x10",
+      "3x6"
+    ],
+    "canvases": 3,
+    "buttons": [
+      "QA Parameters",
+      "Help",
+      "Generate QA Report",
+      "Stop",
+      "Save All Plots",
+      "Export LaTeX",
+      "Check All",
+      "Uncheck Flagged",
+      "Apply & Regenerate",
+      "Reset All"
+    ],
+    "png": "cmd_qa_report.png",
+    "status": "OK"
+  },
+  {
+    "id": "iraf_photometry",
+    "label": "IRAF/DAOPHOT Tool",
+    "mode": "cmd",
+    "open_s": 7.35,
+    "class": "IRAFPhotometryWindow",
+    "run": "Run Comparison 클릭",
+    "run_s": 6.0,
+    "run_dialogs": [
+      "warning[Error] IRAF dir not found: E:\\APEX_validation\\reprocess\\M13\\result\\iraf_phot"
+    ],
+    "size": "1214x1015",
+    "tables": [
+      "0x13"
+    ],
+    "canvases": 1,
+    "buttons": [
+      "IRAF Parameters",
+      "Run Comparison",
+      "Export CSV",
+      "Log",
+      "Reload",
+      "Reset Zoom",
+      "Auto",
+      "Use Project Defaults",
+      "Sync From APEX Step 4/7",
+      "Browse",
+      "Browse",
+      "Browse"
+    ],
+    "png": "cmd_iraf_photometry.png",
+    "status": "OK",
+    "dialogs": [
+      "warning[Error] IRAF dir not found: E:\\APEX_validation\\reprocess\\M13\\result\\iraf_phot"
+    ]
+  },
+  {
+    "id": "extinction_fit",
+    "label": "Extinction (Airmass Fit)",
+    "mode": "cmd",
+    "open_s": 5.45,
+    "class": "ExtinctionFitWindow",
+    "run": "Run Fit 클릭",
+    "run_s": 4.0,
+    "run_dialogs": [
+      "critical[Error] Extinction fit failed:\nNo valid per-star extinction fits produced"
+    ],
+    "size": "1440x1432",
+    "tables": [
+      "0x11",
+      "0x11"
+    ],
+    "canvases": 2,
+    "buttons": [
+      "⚙︎ 파라미터",
+      "📜︎ Log",
+      "Run Fit",
+      "Save Plots",
+      "Auto Pick",
+      "Use",
+      "Reject",
+      "Reset",
+      "Clear Group",
+      "Copy Same Date",
+      "Copy All Groups",
+      "Auto"
+    ],
+    "png": "cmd_extinction_fit.png",
+    "status": "OK",
+    "dialogs": [
+      "critical[Error] Extinction fit failed:\nNo valid per-star extinction fits produced"
+    ]
+  },
+  {
+    "id": "gaia_3d_viewer",
+    "label": "Gaia 3D Cluster Viewer",
+    "mode": "cmd",
+    "open_s": 5.87,
+    "class": "Gaia3DViewerWindow",
+    "run": "Plot 클릭",
+    "run_s": 4.2,
+    "size": "1170x1149",
+    "canvases": 1,
+    "buttons": [
+      "Browse",
+      "Reload",
+      "🎬 Export Animation…",
+      "🌍 Earth View  (Sky 3D)",
+      "Plot",
+      "Save PNG"
+    ],
+    "png": "cmd_gaia_3d_viewer.png",
+    "status": "OK"
+  },
+  {
+    "id": "cluster_structure",
+    "label": "Analyze Cluster Structure",
+    "mode": "cmd",
+    "open_s": 7.11,
+    "class": "ClusterStructureWindow",
+    "run": "실행 버튼 미지정",
+    "size": "1280x1432",
+    "canvases": 3,
+    "buttons": [
+      "Run Profile/Fit",
+      "Save Results",
+      "Recompute Annuli",
+      "Clear Manual",
+      "Run Centering"
+    ],
+    "png": "cmd_cluster_structure.png",
+    "status": "OK"
+  }
+]

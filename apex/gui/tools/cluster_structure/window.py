@@ -407,7 +407,13 @@ class ClusterStructureWindow(ToolWindowBase):
             self.df_stars["x_pix"] = np.asarray(xpix, float)
             self.df_stars["y_pix"] = np.asarray(ypix, float)
 
-            has_mag = bool(self.star_meta.get("mag_col")) and np.isfinite(self.df_stars["mag"].to_numpy(float)).sum() > 5
+            # `A and B` 는 B 를 그대로 돌려주므로 뒤쪽 비교의 numpy.bool_ 이 남는다.
+            # PyQt5 의 setEnabled 는 파이썬 bool 만 받아 TypeError 로 죽고, 그러면
+            # load_inputs 전체가 실패해 창이 입력 없이 뜬다(실측: star_table_path "-").
+            has_mag = bool(
+                self.star_meta.get("mag_col")
+                and np.isfinite(self.df_stars["mag"].to_numpy(float)).sum() > 5
+            )
             self.chk_bright.setEnabled(has_mag)
             if has_mag:
                 mags = pd.to_numeric(self.df_stars["mag"], errors="coerce").to_numpy(float)

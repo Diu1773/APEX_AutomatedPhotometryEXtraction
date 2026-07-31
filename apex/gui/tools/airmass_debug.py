@@ -293,7 +293,15 @@ class AirmassHeaderDebugToolWindow(ToolWindowBase):
         data_dir = state_data.get("data_dir")
         if data_dir:
             self.params.P.data_dir = Path(data_dir)
-            self.params.P.result_dir = self.params.P.data_dir / "result"
+            # 저장된 result_dir 을 먼저 쓴다(main_window._bootstrap_file_selection_state
+            # 와 같은 규칙). 예전에는 무조건 data_dir/result 로 파생해서, 이 창을
+            # 한 번 열면 **params 가 통째로 바뀌어** 뒤이어 여는 도구들이 엉뚱한
+            # 폴더를 봤다 — variable_star 가 sci/result 에서 광곡선을 찾다 실패했다.
+            saved_result_dir = state_data.get("result_dir")
+            self.params.P.result_dir = (
+                Path(saved_result_dir) if saved_result_dir
+                else self.params.P.data_dir / "result"
+            )
             self.params.P.result_dir.mkdir(parents=True, exist_ok=True)
             self.params.P.cache_dir = self.params.P.result_dir / "cache"
             self.params.P.cache_dir.mkdir(parents=True, exist_ok=True)

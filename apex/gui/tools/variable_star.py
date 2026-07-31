@@ -3939,7 +3939,9 @@ class VariableStarToolWindow(ToolWindowBase):
             f"Step 12 P = {adopted_period:.8f} d | alias={alias_status} | "
             f"mode={diagnostic_status or 'UNASSESSED'}"
         )
-        self.btn_refine.setEnabled(np.isfinite(adopted_period) and adopted_period > 0)
+        # numpy 스칼라가 섞이면 `and` 가 numpy.bool_ 을 그대로 돌려주고 PyQt5 의
+        # setEnabled 는 그것을 거부한다(cluster_structure 에서 실제로 창이 죽었다).
+        self.btn_refine.setEnabled(bool(np.isfinite(adopted_period) and adopted_period > 0))
         self._draw_periodogram(scan_results)
         self._update_phase_plot()
         if workflow_step == "single":
