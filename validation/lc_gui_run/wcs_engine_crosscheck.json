@@ -1,0 +1,74 @@
+{
+  "M13": {
+    "internal": {
+      "n": 15,
+      "pass": 15,
+      "rms_px": 0.4267,
+      "resid_med_px": 0.3295,
+      "resid_p99_px": 2.7285,
+      "match_rate": 0.9989,
+      "n_match": 939.0,
+      "elapsed_s": 33.8,
+      "ok": true
+    },
+    "astnet": {
+      "n": 15,
+      "pass": 14,
+      "rms_px": 0.605,
+      "resid_med_px": 0.4791,
+      "resid_p99_px": 3.1624,
+      "match_rate": 0.9979,
+      "n_match": 938.0,
+      "elapsed_s": 13.4,
+      "ok": true
+    }
+  },
+  "NGC6811": {
+    "internal": {
+      "n": 21,
+      "pass": 21,
+      "rms_px": 0.3451,
+      "resid_med_px": 0.2884,
+      "resid_p99_px": 1.3997,
+      "match_rate": 0.9988,
+      "n_match": 881.0,
+      "elapsed_s": 63.5,
+      "ok": true
+    },
+    "astnet": {
+      "n": 21,
+      "pass": 19,
+      "rms_px": 1.5111,
+      "resid_med_px": 1.257,
+      "resid_p99_px": 3.281,
+      "match_rate": 0.998,
+      "n_match": 881.0,
+      "elapsed_s": 87.2,
+      "ok": true
+    }
+  },
+  "M67_LCO_QHY600": {
+    "internal": {
+      "n": 10,
+      "pass": 10,
+      "rms_px": 0.1906,
+      "resid_med_px": 0.1556,
+      "resid_p99_px": 1.0453,
+      "match_rate": 0.9947,
+      "n_match": 850.0,
+      "elapsed_s": 25.3,
+      "ok": true
+    },
+    "astnet": {
+      "n": 10,
+      "pass": 10,
+      "rms_px": 0.2529,
+      "resid_med_px": 0.2079,
+      "resid_p99_px": 1.1699,
+      "match_rate": 0.9947,
+      "n_match": 850.0,
+      "elapsed_s": 53.4,
+      "ok": true
+    }
+  }
+}
