@@ -33,6 +33,7 @@ from PyQt5.QtCore import Qt, QThread, pyqtSignal
 from PyQt5.QtGui import QColor
 
 from apex.analysis.merge.id_match import reconcile_workspace_catalogs
+from apex.analysis.merge.reference_store import STORAGE_FULL, STORAGE_REFERENCE
 from apex.analysis.merge.workspace_build import materialize_merged_workspace
 from apex.analysis.merge.workspace_scan import (
     default_merged_output_dir as _default_output_dir,
@@ -134,6 +135,7 @@ class _MergeWorker(QThread):
         base_selection_by_filter,
         out_dir,
         cached_reconcile,
+        storage_mode=STORAGE_FULL,
         parent=None,
     ):
         super().__init__(parent)
@@ -144,6 +146,7 @@ class _MergeWorker(QThread):
         self._base_selection = base_selection_by_filter
         self._out_dir = out_dir
         self._cached_reconcile = cached_reconcile
+        self._storage_mode = storage_mode
 
     def run(self):  # QThread entry point
         try:
@@ -170,6 +173,7 @@ class _MergeWorker(QThread):
                 selection_comp_by_filter=sel_c,
                 selection_check_by_filter=sel_k,
                 match_records=cached["match_records"],
+                storage_mode=self._storage_mode,
             )
             self.finished_ok.emit(
                 {
@@ -419,13 +423,34 @@ class MultiNightMergerWindow(AutoFitMixin, QMainWindow):
         layout.addWidget(grp)
 
         out_grp = QGroupBox("출력 merged result 폴더")
-        out_layout = QHBoxLayout(out_grp)
+        out_outer = QVBoxLayout(out_grp)
+        out_layout = QHBoxLayout()
         self.output_dir_edit = QLineEdit()
         btn_browse_out = QPushButton("찾기...")
         style_button(btn_browse_out, height=Tokens.H_BUTTON)
         btn_browse_out.clicked.connect(self._browse_output_dir)
         out_layout.addWidget(self.output_dir_edit, 1)
         out_layout.addWidget(btn_browse_out)
+        out_outer.addLayout(out_layout)
+
+        storage_row = QHBoxLayout()
+        storage_row.setSpacing(Tokens.GAP)
+        storage_row.addWidget(QLabel("측광 저장 방식:"))
+        self.storage_mode_combo = QComboBox()
+        self.storage_mode_combo.addItem("전체 복사 (독립 실행 가능)", STORAGE_FULL)
+        self.storage_mode_combo.addItem("원본 참조 (디스크 절약)", STORAGE_REFERENCE)
+        self.storage_mode_combo.setMinimumHeight(Tokens.H_BUTTON)
+        self.storage_mode_combo.setToolTip(
+            "전체 복사: 프레임별 측광 TSV를 merged workspace 안으로 복사합니다. "
+            "입력 폴더를 옮기거나 지워도 동작합니다.\n"
+            "원본 참조: 복사 대신 어느 입력 workspace에서 왔는지만 기록하고 "
+            "읽을 때 원본을 봅니다. 디스크를 아끼지만 "
+            "입력 폴더를 옮기면 깨집니다."
+        )
+        self.storage_mode_combo.currentIndexChanged.connect(
+            lambda _i: self._invalidate_merger_state())
+        storage_row.addWidget(self.storage_mode_combo, 1)
+        out_outer.addLayout(storage_row)
         layout.addWidget(out_grp)
 
         info_grp = QGroupBox("폴더 스캔")
@@ -943,6 +968,7 @@ class MultiNightMergerWindow(AutoFitMixin, QMainWindow):
             base_selection_by_filter=selection_payloads,
             out_dir=out_dir,
             cached_reconcile=cached,
+            storage_mode=self.storage_mode_combo.currentData(),
             parent=self,
         )
         worker.progress.connect(self.match_log.append)

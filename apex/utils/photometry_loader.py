@@ -56,6 +56,21 @@ def _resolve_photometry_path(result_dir: Path, fname: str) -> Path | None:
     return None
 
 
+def _resolve_reference_frame(result_dir: Path, fname: str):
+    """``(path, entry)`` for a frame stored by reference, else ``(None, None)``.
+
+    A merged workspace built in reference mode keeps no per-frame TSV of its
+    own; it points back at the input workspace it came from
+    (:mod:`apex.analysis.merge.reference_store`).
+    """
+    from apex.analysis.merge import reference_store
+
+    entry = reference_store.resolve_frame(Path(result_dir), fname)
+    if not entry:
+        return None, None
+    return reference_store.source_photometry_path(entry), entry
+
+
 def _resolve_idmatch_path(result_dir: Path, fname: str) -> Path | None:
     # New pipeline embeds source_id directly in the forced-phot TSV, so no
     # separate idmatch file is needed (callers use source_id straight from the
@@ -132,13 +147,25 @@ def load_frame_photometry(
     to mean "no enrichment" while still skipping the per-frame catalog read.
     """
 
+    reference_entry = None
     phot_path = _resolve_photometry_path(result_dir, fname)
+    if phot_path is None:
+        phot_path, reference_entry = _resolve_reference_frame(result_dir, fname)
     if phot_path is None:
         return None
 
     df = _read_table(phot_path)
     if df is None or df.empty:
         return df
+
+    if reference_entry is not None:
+        from apex.analysis.merge import reference_store
+
+        df = reference_store.apply_reference_remap(
+            df, reference_entry,
+            reference_store.read_source_id_remap(Path(result_dir)), fname)
+        if df.empty:
+            return df
 
     df = df.copy()
     if "id" in df.columns and "ID" not in df.columns:

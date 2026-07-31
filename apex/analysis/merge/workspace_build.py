@@ -30,6 +30,12 @@ from apex.utils.step_paths_lc import (
     step10_detrend_dir,
     step11_period_dir,
 )
+from .reference_store import (
+    ID_MAP_FILE,
+    STORAGE_FULL,
+    STORAGE_REFERENCE,
+    write_reference_index,
+)
 from .workspace_scan import normalize_filter_key, read_step7_index
 
 
@@ -164,7 +170,22 @@ def materialize_merged_workspace(
     selection_comp_by_filter: dict[str, set[int]],
     selection_check_by_filter: dict[str, int | None],
     match_records: list[dict],
+    storage_mode: str = STORAGE_FULL,
 ) -> dict:
+    """Build the merged workspace on disk.
+
+    ``storage_mode`` decides what happens to the per-frame photometry:
+    ``"full"`` copies every TSV into the merged workspace (self-contained, the
+    inputs can then be moved or deleted), ``"reference"`` records where each
+    frame came from and lets the loader read it in place (no duplication, but
+    the workspace breaks if an input folder moves).
+    """
+    storage_mode = str(storage_mode or STORAGE_FULL).lower()
+    if storage_mode not in (STORAGE_FULL, STORAGE_REFERENCE):
+        raise ValueError(f"unknown storage_mode: {storage_mode!r}")
+    by_reference = storage_mode == STORAGE_REFERENCE
+    reference_frames: dict[str, dict] = {}
+
     s1 = step1_dir(out_dir)
     forced_phot_dir = step7_forced_phot_dir(out_dir)
     selection_dir = step8_selection_dir(out_dir)
@@ -289,7 +310,15 @@ def materialize_merged_workspace(
             phot_df["original_file"] = fname
 
             out_phot_path = forced_phot_dir / f"photometry_{merged_fname}.tsv"
-            phot_df.to_csv(out_phot_path, sep="\t", index=False, na_rep="NaN")
+            if by_reference:
+                # Point at the input workspace instead of copying its TSV; the
+                # loader applies the same ID remap on read.
+                reference_frames[merged_fname] = {
+                    "dir": str(folder), "file": fname,
+                    "tag": folder_tag, "filter": flt,
+                }
+            else:
+                phot_df.to_csv(out_phot_path, sep="\t", index=False, na_rep="NaN")
 
             original_path = source_path_map.get(fname)
             if original_path:
@@ -392,23 +421,29 @@ def materialize_merged_workspace(
         "filters": sorted(merged_catalogs.keys()),
         "merged_result_dir": str(out_dir),
         "records": len(match_records),
+        "storage_mode": storage_mode,
     }
     (out_dir / "merge_manifest.json").write_text(
         json.dumps(manifest, indent=2, ensure_ascii=False),
         encoding="utf-8",
     )
-    pd.DataFrame(match_records).to_csv(out_dir / "merge_id_map.csv", index=False)
+    # merge_id_map.csv is the source_id remap the reference loader reads, so it
+    # must be on disk before the reference index claims the frames.
+    pd.DataFrame(match_records).to_csv(out_dir / ID_MAP_FILE, index=False)
+    if by_reference:
+        write_reference_index(out_dir, reference_frames)
     write_run_manifest(
         out_dir,
         run_type="merged",
         root_dir=out_dir.parent,
         input_result_dirs=folders,
         target_name=infer_result_workspace_label(folders),
-        storage_mode="full",
+        storage_mode=storage_mode,
     )
 
     return {
         "night_assignments": merged_night_assignments,
         "path_map": merged_path_map,
         "index_rows": merged_index_rows,
+        "storage_mode": storage_mode,
     }
