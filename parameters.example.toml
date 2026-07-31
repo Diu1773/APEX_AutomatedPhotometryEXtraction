@@ -334,6 +334,17 @@ match_tol_px = 1.5
 cutout_scale = 2.5
 
 [wcs]
+# 플레이트 솔버. "internal" = APEX 내장 파이썬 엔진(외부 실행파일 없음),
+# "astap" / "astnet" = 외부 솔버. 비워 두면 astap_enable → astnet_local_enable
+# 순으로 켜진 외부 솔버가 먼저 잡히므로, 기본을 명시해 둔다.
+#
+# 실측(검출기 2종·자료 4개, validation/lc_gui_run/GUI_RUN_REPORT.md §4.6):
+# 위치 잔차 rms 가 4/4 전부 internal 이 낮았다 —
+#   M13 0.427 vs 0.605 · NGC6811 0.345 vs 1.511 ·
+#   M67(LCO QHY600) 0.191 vs 0.253 · YZ Boo 0.895 vs 2.599 px.
+# 매칭한 별 수는 같은데(881/850) 해의 정밀도만 달랐다. 외부 솔버는 WSL·인덱스
+# 파일 같은 설치 의존성도 있어 기본으로 두기에 적절하지 않다.
+engine = "internal"
 do_plate_solve = true
 astap_exe = "C:/Program Files/astap/astap_cli.exe"
 astap_timeout_s = 120.0
@@ -349,7 +360,9 @@ timeout_s = 120.0
 refine_enable = true
 # One plate-solve subprocess per worker; 2 caps peak RAM on 16 GB laptops.
 max_workers = 2
-astnet_local_enable = true
+# astrometry.net(solve-field)은 WSL + 인덱스 파일이 갖춰진 환경에서만 쓸 수 있다.
+# 기본은 꺼 둔다 — 쓰려면 여기를 true 로 바꾸고 위 [wcs] engine 을 "astnet" 으로.
+astnet_local_enable = false
 astnet_local_use_wsl = true
 astnet_local_command = "solve-field"
 astnet_local_timeout_s = 300.0
