@@ -203,6 +203,64 @@ def test_match_dark_unknown_temperature_is_not_a_violation():
     assert match.within_temp_tol                        # nothing to compare
 
 
+# --- filter normalisation + detector geometry (P8a / P8b) ------------------
+
+def test_match_flat_uses_canonical_filter_keys():
+    """'HA' flats must serve 'Ha' lights — the rest of the pipeline canonicalises
+    filter names, so this matcher has to as well."""
+    flats = {"HA": [cs.FrameInfo(path="f.fit", ftype="flat", filt="HA")]}
+    assert cs.match_flat(flats, "Ha") == "HA"
+    assert cs.match_flat(flats, "V") is None          # a real mismatch still fails
+
+
+def _geom_frame(ftype, shape=None, binning=None, filt="V", exp=60.0, temp=-10.0):
+    return cs.FrameInfo(path=f"{ftype}.fit", ftype=ftype, exp=exp, temp=temp,
+                        filt=filt, shape=shape, binning=binning)
+
+
+def test_compatible_geometry():
+    a = _geom_frame("light", shape=(100, 200), binning=(1, 1))
+    assert cs.compatible_geometry(a, _geom_frame("dark", shape=(100, 200), binning=(1, 1)))
+    assert not cs.compatible_geometry(a, _geom_frame("dark", shape=(50, 100), binning=(2, 2)))
+    assert not cs.compatible_geometry(a, _geom_frame("dark", binning=(2, 2)))
+    # unknown geometry must never block a match
+    assert cs.compatible_geometry(a, _geom_frame("dark"))
+
+
+def test_match_dark_rejects_mismatched_binning():
+    """A 2x2 dark cannot be subtracted from a 1x1 light — numpy would raise
+    mid-run, so the match has to fail cleanly instead."""
+    light = _geom_frame("light", shape=(3194, 4788), binning=(1, 1))
+    binned = {(60.0, -10): [_geom_frame("dark", shape=(1597, 2394), binning=(2, 2))]}
+    assert cs.match_dark_detail(binned, 60.0, -10.0, light=light) is None
+    assert cs.match_dark_detail(binned, 60.0, -10.0) is not None   # unfiltered
+
+
+def test_match_dark_prefers_the_compatible_group():
+    light = _geom_frame("light", shape=(3194, 4788), binning=(1, 1))
+    darks = {
+        (60.0, -10): [_geom_frame("dark", shape=(1597, 2394), binning=(2, 2))],
+        (300.0, -10): [_geom_frame("dark", shape=(3194, 4788), binning=(1, 1), exp=300.0)],
+    }
+    match = cs.match_dark_detail(darks, 60.0, -10.0, light=light)
+    assert match.key == (300.0, -10)          # worse exposure, but usable
+    assert match.delta_exp_s == pytest.approx(240.0)
+
+
+def test_match_flat_rejects_mismatched_geometry():
+    light = _geom_frame("light", shape=(3194, 4788), binning=(1, 1))
+    flats = {"V": [_geom_frame("flat", shape=(1597, 2394), binning=(2, 2))]}
+    assert cs.match_flat(flats, "V", light=light) is None
+    assert cs.match_flat(flats, "V") == "V"
+
+
+def test_geometry_label():
+    assert _geom_frame("light", shape=(100, 200)).geometry_label == "200×100"
+    assert _geom_frame("light", shape=(100, 200), binning=(2, 2)).geometry_label == \
+        "200×100 bin2×2"
+    assert _geom_frame("light").geometry_label == ""
+
+
 def test_group_temperature_falls_back_to_bucket():
     assert cs.group_temperature([_dark_frame(60.0, -10.4)], (60.0, -10)) == pytest.approx(-10.4)
     assert cs.group_temperature([], (60.0, -10)) == pytest.approx(-10.0)

@@ -207,19 +207,25 @@ class _CalibrationWorker(QThread):
             g = scan.group_for_night(self.frames, night)
             calibrated_dir = self.out_dir / "calibrated" / (night or "undated")
             calibrated_dir.mkdir(parents=True, exist_ok=True)
-            mbias = _bias([f.path for f in g["bias"]])
+            # The bias pool is resolved per light (below), not once per night:
+            # a pool of mixed geometry cannot be stacked into one master.
             night_recs: List[Dict] = []
             for l in g["light"]:
                 if self.isInterruptionRequested():
                     self.logline.emit("Stopped by user.")
                     break
                 self.progress.emit(done, total, f"[{night}] {l.name}")
+                # Every calibration frame must share the light's geometry;
+                # mismatched binning/size is filtered out at match time rather
+                # than raising a broadcast error mid-subtraction.
+                mbias = _bias([f.path for f in g["bias"]
+                               if scan.compatible_geometry(l, f)])
                 dm = scan.match_dark_detail(g["dark"], l.exp, l.temp,
-                                            opts.temp_match_tol_c)
+                                            opts.temp_match_tol_c, light=l)
                 dk = self._accept_dark(dm, l, opts)
                 md, dexp = (_dark([f.path for f in g["dark"][dk]], dk, mbias,
                                   g["dark"][dk][0].night) if dk else (None, 1.0))
-                ff = scan.match_flat(g["flat"], l.filt)
+                ff = scan.match_flat(g["flat"], l.filt, light=l)
                 mf = _flat(g["flat"][ff], ff, mbias) if ff else None
                 if mf is None:
                     no_flat += 1
@@ -614,11 +620,15 @@ class DetectorCalibrationWindow(ToolWindowBase):
     def _add_subgroups(self, parent, ftype, items, group):
         if ftype == "dark":
             keys: Dict = {}
+            geoms: Dict = {}
             for f in items:
-                keys.setdefault((round(f.exp, 3), f.temp_bucket), 0)
-                keys[(round(f.exp, 3), f.temp_bucket)] += 1
+                key = (round(f.exp, 3), f.temp_bucket)
+                keys[key] = keys.get(key, 0) + 1
+                geoms.setdefault(key, set()).add(f.geometry_label)
             for (exp, tb), c in sorted(keys.items()):
-                parent.addChild(QTreeWidgetItem([f"{exp:g}s · {tb}°C", str(c), ""]))
+                labels = sorted(x for x in geoms[(exp, tb)] if x)
+                geom = " / ".join(labels) if len(labels) > 1 else (labels[0] if labels else "")
+                parent.addChild(QTreeWidgetItem([f"{exp:g}s · {tb}°C", str(c), geom]))
         elif ftype in ("flat", "light"):
             keys = {}
             for f in items:
@@ -636,10 +646,14 @@ class DetectorCalibrationWindow(ToolWindowBase):
         if sample is None:
             return ""
         tol = float(self._settings.get("temp_match_tol_c", 1.0))
-        dm = scan.match_dark_detail(group["dark"], sample.exp, sample.temp, tol)
-        ff = scan.match_flat(group["flat"], sample.filt)
+        dm = scan.match_dark_detail(group["dark"], sample.exp, sample.temp, tol,
+                                    light=sample)
+        ff = scan.match_flat(group["flat"], sample.filt, light=sample)
         if dm is None:
-            d = "no dark"
+            # Distinguish "no dark at all" from "none of this geometry".
+            blocked = bool(group["dark"]) and scan.match_dark_detail(
+                group["dark"], sample.exp, sample.temp, tol) is not None
+            d = "no dark (geometry mismatch)" if blocked else "no dark"
         else:
             d = f"dark {dm.exp:g}s/{dm.temp_bucket}°C"
             # Show the residual mismatch up front — the old preview implied an
@@ -667,6 +681,8 @@ class DetectorCalibrationWindow(ToolWindowBase):
                                 "with calibration frames (or a pre-built master).")
             return
         out_dir = Path(self.out_edit.text().strip() or self._default_out_dir())
+        if not self._confirm_rerun(out_dir):
+            return
 
         self.btn_run.setEnabled(False)
         self.btn_skip.setEnabled(False)
@@ -680,6 +696,31 @@ class DetectorCalibrationWindow(ToolWindowBase):
         self._worker.finished_ok.connect(self._on_finished)
         self._worker.failed.connect(self._on_failed)
         self._worker.start()
+
+    def _confirm_rerun(self, out_dir: Path) -> bool:
+        """Warn before overwriting a previous run in the same output folder.
+
+        Calibration is the slowest step in the chain (tens of minutes for a
+        night), so silently redoing it — or silently overwriting a good run —
+        is worth one question.
+        """
+        summary_path = out_dir / "calibration.json"
+        if not summary_path.exists():
+            return True
+        try:
+            prev = json.loads(summary_path.read_text(encoding="utf-8"))
+            n_prev = int(prev.get("n_calibrated", 0))
+            nights = ", ".join(sorted(prev.get("nights", {}))) or "?"
+        except Exception:
+            n_prev, nights = 0, "?"
+        resp = QMessageBox.question(
+            self, "Detector Calibration",
+            f"{out_dir} already holds a calibration run "
+            f"({n_prev} frame(s), night(s): {nights}).\n\n"
+            "Run again and overwrite it?",
+            QMessageBox.Yes | QMessageBox.No, QMessageBox.No,
+        )
+        return resp == QMessageBox.Yes
 
     def _on_progress(self, done: int, total: int, message: str):
         if total > 0:
@@ -742,12 +783,21 @@ class DetectorCalibrationWindow(ToolWindowBase):
 
     def _set_data_dir(self, calibrated_dir: str):
         P = getattr(self.params, "P", None)
-        if P is not None:
-            try:
-                setattr(P, "data_dir", calibrated_dir)
-                self.log(f"File-Selection input set to {calibrated_dir}")
-            except Exception:
-                pass
+        if P is None:
+            return
+        try:
+            setattr(P, "data_dir", calibrated_dir)
+            # Calibrated frames are written as ``pp_<original>``, so a prefix
+            # left over from the raw files matches nothing and Step 1 comes up
+            # with an empty file list. Keep it only if it still fits.
+            prefix = str(getattr(P, "filename_prefix", "") or "")
+            if prefix and not prefix.startswith("pp_"):
+                setattr(P, "filename_prefix", "")
+                self.log(f"Filename prefix '{prefix}' cleared "
+                         f"(calibrated frames are named pp_*)")
+            self.log(f"File-Selection input set to {calibrated_dir}")
+        except Exception:
+            pass
 
     def _refresh_main_window(self):
         mw = self.parent()

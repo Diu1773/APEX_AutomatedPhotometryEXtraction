@@ -23,6 +23,7 @@ from typing import Callable, Dict, List, Optional, Tuple
 
 from astropy.io import fits
 
+from apex.utils.common_helpers import normalize_filter_key
 from apex.utils.constants import (
     FITS_EXTENSIONS, FILTER_HEADER_KEYS, EXPTIME_HEADER_KEYS,
 )
@@ -151,6 +152,28 @@ def _to_float(val, default=None):
         return default
 
 
+def _to_int(val) -> Optional[int]:
+    try:
+        return int(round(float(val)))
+    except (TypeError, ValueError):
+        return None
+
+
+def _header_shape(header) -> Optional[Tuple[int, int]]:
+    """Detector geometry as ``(NAXIS2, NAXIS1)`` — numpy order, no data read."""
+    ny = _to_int(_header_first(header, ("NAXIS2",)))
+    nx = _to_int(_header_first(header, ("NAXIS1",)))
+    return (ny, nx) if (ny and nx) else None
+
+
+def _header_binning(header) -> Optional[Tuple[int, int]]:
+    bx = _to_int(_header_first(header, ("XBINNING", "BINX", "CCDXBIN", "BINNING")))
+    by = _to_int(_header_first(header, ("YBINNING", "BINY", "CCDYBIN")))
+    if bx and not by:
+        by = bx                       # square binning written once
+    return (bx, by) if (bx and by) else None
+
+
 # ---------------------------------------------------------------------------
 # scan
 # ---------------------------------------------------------------------------
@@ -167,10 +190,42 @@ class FrameInfo:
     is_master: bool = False          # pre-built master (IMAGETYP "MASTER …")
     night_method: str = ""           # solar | civil | path | utc
     night_conflict: str = ""         # path date that disagrees with 1-2, if any
+    shape: Optional[Tuple[int, int]] = None    # (NAXIS2, NAXIS1)
+    binning: Optional[Tuple[int, int]] = None  # (XBINNING, YBINNING)
 
     @property
     def temp_bucket(self) -> Optional[int]:
         return temp_bucket(self.temp)
+
+    @property
+    def geometry_label(self) -> str:
+        if self.shape:
+            base = f"{self.shape[1]}×{self.shape[0]}"
+        elif self.binning:
+            base = ""
+        else:
+            return ""
+        if self.binning:
+            binned = f"bin{self.binning[0]}×{self.binning[1]}"
+            return f"{base} {binned}".strip()
+        return base
+
+
+def compatible_geometry(a, b) -> bool:
+    """Can these two frames be combined pixel-for-pixel?
+
+    False only when both sides declare a geometry and it differs — a 2×2-binned
+    dark cannot be subtracted from a 1×1 light (numpy would raise mid-run, or
+    silently broadcast), so the mismatch has to be caught while matching.
+    Unknown geometry never blocks a match.
+    """
+    shape_a, shape_b = getattr(a, "shape", None), getattr(b, "shape", None)
+    if shape_a and shape_b and tuple(shape_a) != tuple(shape_b):
+        return False
+    bin_a, bin_b = getattr(a, "binning", None), getattr(b, "binning", None)
+    if bin_a and bin_b and tuple(bin_a) != tuple(bin_b):
+        return False
+    return True
 
 
 def read_frame_info(path: str,
@@ -196,7 +251,8 @@ def read_frame_info(path: str,
     return FrameInfo(path=str(path), ftype=ftype, exp=exp, temp=temp,
                      filt=filt, night=night, name=os.path.basename(path),
                      is_master=is_master, night_method=night_method,
-                     night_conflict=night_conflict)
+                     night_conflict=night_conflict,
+                     shape=_header_shape(header), binning=_header_binning(header))
 
 
 def find_fits(root: str) -> List[str]:
@@ -317,16 +373,37 @@ def group_temperature(frames: List[FrameInfo],
     return float(key[1]) if key[1] is not None else None
 
 
+def _geometry_filtered(groups: Dict, light: Optional[FrameInfo]) -> Dict:
+    """Drop calibration groups that cannot be combined with ``light``.
+
+    Returns the original mapping when the light's geometry is unknown or when
+    nothing survives (so the caller reports "no dark/flat" rather than picking
+    a frame that would blow up on subtraction).
+    """
+    if light is None:
+        return groups
+    kept = {k: v for k, v in groups.items()
+            if any(compatible_geometry(light, f) for f in (v or ()))}
+    return kept
+
+
 def match_dark_detail(darks: Dict[Tuple[float, Optional[int]], List[FrameInfo]],
                       exp: float, temp: Optional[float],
-                      tol_c: float = 1.0) -> Optional[DarkMatch]:
+                      tol_c: float = 1.0,
+                      light: Optional[FrameInfo] = None) -> Optional[DarkMatch]:
     """Pick the dark group best matching a light's exposure + temperature.
 
     Prefers an exact exposure, then the nearest *actual* temperature. The
     returned :class:`DarkMatch` reports the residual mismatch so the caller can
     show it, log it, or refuse it (``strict_temp``) — silently accepting an
     arbitrarily large ΔT was the old behaviour.
+
+    When ``light`` is given, darks of an incompatible geometry (different frame
+    size or binning) are excluded; ``None`` is returned if that leaves nothing.
     """
+    if not darks:
+        return None
+    darks = _geometry_filtered(darks, light)
     if not darks:
         return None
 
@@ -361,18 +438,33 @@ def match_dark(darks: Dict[Tuple[float, Optional[int]], List[FrameInfo]],
     return match.key if match is not None else None
 
 
-def match_flat(flats: Dict[str, List[FrameInfo]], filt: str) -> Optional[str]:
+def match_flat(flats: Dict[str, List[FrameInfo]], filt: str,
+               light: Optional[FrameInfo] = None) -> Optional[str]:
     """Pick the flat whose filter matches the light's filter.
 
     Flats MUST match by filter — a V flat cannot correct a B light — so there is
     no "use the only flat" fallback; an unmatched filter returns None and the
     caller skips flat-fielding for that light (with a warning).
+
+    Comparison goes through :func:`normalize_filter_key`, the same canonical
+    form the rest of the pipeline uses, so a header writing ``HA`` for the
+    flats and ``Ha`` for the lights still matches instead of reporting
+    "NO FLAT".  ``light`` additionally excludes flats of an incompatible
+    geometry (different frame size or binning).
     """
+    if not flats:
+        return None
+    flats = _geometry_filtered(flats, light)
     if not flats:
         return None
     if filt in flats:
         return filt
-    for k in flats:                       # case-insensitive
-        if k.lower() == str(filt).lower():
+    want = normalize_filter_key(filt)
+    if want:
+        for k in flats:
+            if normalize_filter_key(k) == want:
+                return k
+    for k in flats:                       # last resort: plain case-insensitive
+        if str(k).lower() == str(filt).lower():
             return k
     return None
