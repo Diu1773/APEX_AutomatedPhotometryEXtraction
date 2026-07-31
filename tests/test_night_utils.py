@@ -107,3 +107,15 @@ def test_observing_night_from_jd_matches_dateobs():
 def test_observing_night_from_jd_bad_input():
     assert nu.observing_night_from_jd(None) == ""
     assert nu.observing_night_from_jd("nonsense") == ""
+
+
+# --- epoch span -------------------------------------------------------------
+
+def test_night_span_days():
+    assert nu.night_span_days(["20250429", "20250430"]) == 1
+    assert nu.night_span_days(["20241106", "20250428"]) == 173
+    assert nu.night_span_days(["20250429"]) is None          # one epoch
+    assert nu.night_span_days([]) is None
+    assert nu.night_span_days(["garbage", "20250429"]) is None
+    # order must not matter
+    assert nu.night_span_days(["20250428", "20241106"]) == 173

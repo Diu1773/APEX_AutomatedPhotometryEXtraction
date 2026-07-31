@@ -45,6 +45,7 @@ __all__ = [
     "observing_night_detail",
     "observing_night_from_jd",
     "jd_to_datetime",
+    "night_span_days",
 ]
 
 LON_HEADER_KEYS = ("SITELONG", "SITELON", "LONG-OBS", "LONGITUD", "OBSGEO-L",
@@ -169,6 +170,24 @@ def has_local_reference(lon_east_deg=None, tz_offset_hours=None) -> bool:
     with another signal (path date, JD gaps) should use that instead.
     """
     return night_offset_hours(lon_east_deg, tz_offset_hours)[1] != METHOD_UTC
+
+
+def night_span_days(nights) -> Optional[int]:
+    """Days between the earliest and latest of a set of ``YYYYMMDD`` keys.
+
+    ``None`` when fewer than two are parseable. Used to tell "darks from two
+    adjacent nights of one run" (fine) from "darks stacked across months"
+    (the hot-pixel pattern drifts, so the master blurs).
+    """
+    parsed = []
+    for key in nights or ():
+        try:
+            parsed.append(datetime.strptime(str(key), "%Y%m%d"))
+        except (TypeError, ValueError):
+            continue
+    if len(parsed) < 2:
+        return None
+    return (max(parsed) - min(parsed)).days
 
 
 def _night_key(dt_utc: datetime, offset_hours: float) -> str:

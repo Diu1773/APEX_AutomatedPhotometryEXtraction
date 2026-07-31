@@ -22,12 +22,39 @@ from apex.analysis import calibration as cal
 from apex.analysis import calibration_scan as scan
 from apex.analysis.calibration import CalibrationOptions
 from apex.analysis.calibration_scan import FrameInfo
+from apex.utils.night_utils import night_span_days
 
 ProgressFn = Callable[[int, int, str], None]
 LogFn = Callable[[str], None]
 StopFn = Callable[[], bool]
 
 ALL_NIGHTS = "__all__"
+
+# A master built from calibration frames taken this many days apart is called
+# out. Two adjacent nights of one observing run are normal; months apart means
+# the hot-pixel pattern has drifted between them and the median blurs it, which
+# the old code did silently whenever a night fell back to the shared pool.
+EPOCH_WARN_DAYS = 30
+
+
+def epoch_info(frames: List[FrameInfo]) -> Dict:
+    """Which nights a set of calibration frames spans, and how far apart.
+
+    Returns ``{"nights": [...], "span_days": int|None, "mixed": bool}``.
+    """
+    counts: Dict[str, int] = {}
+    for frame in frames or ():
+        night = getattr(frame, "night", "") or ""
+        if night:
+            counts[night] = counts.get(night, 0) + 1
+    nights = sorted(counts)
+    span = night_span_days(nights)
+    return {
+        "nights": nights,
+        "counts": counts,
+        "span_days": span,
+        "mixed": bool(span is not None and span > EPOCH_WARN_DAYS),
+    }
 
 
 def _noop(*_args, **_kwargs) -> None:
@@ -98,9 +125,22 @@ def run_calibration(frames: List[FrameInfo], night: str, out_dir: Path,
     counters = {"temp_mismatch": 0, "exp_mismatch": 0, "dark_refused": 0}
     summary: Dict = {"nights": {}, "masters": [], "options": opts.to_mapping()}
 
-    def _write_master(fname, arr, prov, label, extra=None):
+    def _write_master(fname, arr, prov, label, extra=None, frames_in=None):
         if fname in written:
             return
+        # Say so when the frames behind this master span epochs — it happens
+        # silently whenever a night has no calibration frames of its own and
+        # falls back to the shared pool.
+        info = epoch_info(frames_in or [])
+        if info["nights"]:
+            prov = dict(prov)
+            prov["epoch_nights"] = info["nights"]
+            prov["epoch_span_days"] = info["span_days"]
+            if info["mixed"]:
+                spread = ", ".join(f"{n}×{info['counts'][n]}" for n in info["nights"])
+                log(f"  [warn] {label}: built from frames {info['span_days']} days "
+                    f"apart ({spread}) — the hot-pixel pattern drifts between "
+                    f"epochs, so this master is a blend")
         # Stamp a MASTER header so APEX's own masters are auto-detected and
         # reused verbatim on a later run (parity with AIPPI).
         hdr = fits.Header()
@@ -119,14 +159,16 @@ def run_calibration(frames: List[FrameInfo], night: str, out_dir: Path,
         tag = " [pre-built master, used directly]" if prov.get("master_input") else ""
         log(f"{label}: {prov['n_frames']} frame(s){tag} → {fname}")
 
-    def _bias(paths):
+    def _bias(bias_frames):
+        paths = [f.path for f in bias_frames]
         if not paths:
             return None
         key = ("bias", frozenset(paths))
         if key not in cache:
             master, prov = cal.build_master_bias(paths, opts)
             cache[key] = master
-            _write_master("master_bias.fits", master, prov, "master bias")
+            _write_master("master_bias.fits", master, prov, "master bias",
+                          frames_in=bias_frames)
         return cache[key]
 
     def _dark(frames_in, dark_key, master_bias, night_tag):
@@ -143,7 +185,7 @@ def run_calibration(frames: List[FrameInfo], night: str, out_dir: Path,
             extra = {"CCD-TEMP": float(bucket)} if bucket is not None else None
             _write_master(f"master_dark_{exp:g}s_{bucket}C_{tag}.fits", master,
                           prov, f"master dark {exp:g}s/{bucket}°C [{tag}]",
-                          extra=extra)
+                          extra=extra, frames_in=frames_in)
         return cache[key]
 
     def _flat(flat_frames, filt, master_bias):
@@ -156,7 +198,8 @@ def run_calibration(frames: List[FrameInfo], night: str, out_dir: Path,
             cache[key] = master
             tag = flat_frames[0].night or "global"    # the flats' own night
             _write_master(f"master_flat_{filt}_{tag}.fits", master, prov,
-                          f"master flat {filt} [{tag}]", extra={"FILTER": filt})
+                          f"master flat {filt} [{tag}]", extra={"FILTER": filt},
+                          frames_in=flat_frames)
         return cache[key]
 
     total = sum(len(scan.group_for_night(frames, n)["light"]) for n in nights)
@@ -179,7 +222,7 @@ def run_calibration(frames: List[FrameInfo], night: str, out_dir: Path,
             # Every calibration frame must share the light's geometry;
             # mismatched binning/size is filtered out at match time rather than
             # raising a broadcast error mid-subtraction.
-            master_bias = _bias([f.path for f in group["bias"]
+            master_bias = _bias([f for f in group["bias"]
                                  if scan.compatible_geometry(light, f)])
             match = scan.match_dark_detail(
                 group["dark"], light.exp, light.temp, opts.temp_match_tol_c,
