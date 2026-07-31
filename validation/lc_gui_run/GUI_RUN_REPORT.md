@@ -157,6 +157,56 @@ Step 0~11 **12/12 예외 없음**(빈 `result_dir` 기준). LC 고유 스텝은
 수정 3건(비교표 캐시 · `param_file` 존중 · 병렬화 되돌림) 뒤
 **625 passed, 0 failed** (16분 59초). 회귀 없음.
 
+## 4.5 WCS 병목의 진짜 원인 — 엔진을 잘못 골랐다 (2026-07-31 낮)
+
+「WCS 가 30분으로 전체의 80%」는 **엔진 선택 실수**였다. 헤드리스 엔진 우선순위는
+
+```
+wcs_engine 명시  →  astap_enable  →  astnet_local_enable  →  internal (기본)
+```
+
+인데(`resolve_wcs_engine`), M13 템플릿을 복사할 때 딸려 온
+`astnet_local_enable = true` 때문에 astrometry.net(WSL)이 선택됐다. `[wcs] engine`
+을 비워 두면 자체 엔진이 기본인데 그게 밀린 것이다.
+
+`engine = "internal"` 로 바꿔 같은 97장을 다시 풀었다.
+
+| Step 5 | 시간 | QC 통과 | match_rate | rms_px |
+|---|---:|---:|---:|---:|
+| astnet | 1796 s | **42**/97 | 0.971 | — |
+| **internal** | **398 s** | **97**/97 | **0.991** | 0.895 |
+| internal (캐시 적중) | **53 s** | 97/97 | | |
+
+측광도 따라 좋아진다 — 같은 Step 7 에서
+
+| | detected | forced | 투명도 QC |
+|---|---:|---:|---|
+| astnet | 8,760 | 10,931 | PASS 85 / REVIEW 11 / **FAIL 1** |
+| internal | **10,105** | **8,810** | PASS 90 / REVIEW 7 / **FAIL 0** |
+
+WCS 가 정확해지니 강제 측광이 줄고 실제 검출이 늘었다.
+
+### 그 과정에서 찾은 버그 — 자체 엔진이 `frame_wcs_qc.csv` 를 안 썼다
+
+`frame_wcs_qc.csv` 를 쓰는 곳은 `WcsWorkerBase`(ASTAP)와
+`AstrometryNetWorkerBase`(astnet) 둘뿐이고, **내부 엔진 경로
+(`_write_internal_summary_csv`)는 요약 CSV 만 쓰고 QC 파일을 남기지 않았다.**
+Step 6/7 은 이 파일로 프레임을 거르므로(`qc_utils.filter_files_by_wcs_qc`),
+자체 엔진이 97/97 을 통과시킨 뒤에도 **이전 솔버가 남긴 낡은 판정**
+(astnet 시절 `{False:55, True:42}`)이 그대로 읽혔다. 판정에 필요한 열은 이미
+요약 rows 에 다 있어서, 같은 스키마로 함께 내보내도록 고쳤다.
+
+> **다만 이 자료에서는 하류 결과가 바뀌지 않았다.** 낡은 QC(42통과)로 돌린
+> Step 6/7 과 새 QC(97통과)로 돌린 결과가 detected 10,105 / forced 8,810 으로
+> 동일하다. 구조적 결함이라 고치는 게 맞지만, **측광이 달라진다고 말할 근거는
+> 이 실험에 없다.**
+
+### 틀렸던 가설
+
+「마스터가 203개로 적은 것은 WCS-QC 가 42 라서」— **아니다.** QC 를 97 로 올려도
+**195개 그대로**다. 마스터 수는 QC 통과 프레임 수가 아니라 필드의 실제 별 수와
+refbuild 조건이 정한다.
+
 ## 5. LC Step 8 에서 걸린 것 — 토글과 지연 저장
 
 헤드리스로 몰 때 두 번 헛돌았다. 둘 다 **실제 GUI 사용에서는 문제가 아니지만**

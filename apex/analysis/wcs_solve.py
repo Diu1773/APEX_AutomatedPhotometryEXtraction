@@ -4757,6 +4757,41 @@ def _write_internal_summary_csv(result_dir, source_results, logger=None):
     if logger is not None:
         logger.info(f"[Internal WCS] Summary CSV: {len(df)} rows -> {out_path.name}")
 
+    # Step 6/7 은 frame_wcs_qc.csv 로 프레임을 거른다(qc_utils.filter_files_by_wcs_qc).
+    # ASTAP·astrometry.net 워커는 이 파일을 쓰는데 내부 엔진 경로만 빠져 있었다.
+    # 그래서 자체 엔진이 97/97 을 통과시킨 뒤에도 **이전 솔버가 남긴 낡은 판정**
+    # (astnet 시절 42/97)이 그대로 적용됐다. 판정에 필요한 열은 이미 위 rows 에
+    # 다 있으므로 같은 스키마로 함께 내보낸다.
+    try:
+        if "wcs_rot_deg" not in df.columns and "rotation_deg" in df.columns:
+            df["wcs_rot_deg"] = df["rotation_deg"]
+        if "pixscale" not in df.columns and "pix_scale_input_arcsec" in df.columns:
+            df["pixscale"] = df["pix_scale_input_arcsec"]
+        qc_cols = [
+            "file", "status", "fail_reason", "ok", "wcs_ok", "solver",
+            "elapsed", "elapsed_s", "n_detect", "n_catalog_in_fov",
+            "n_match", "n_inlier", "match_rate", "match_rate_cat",
+            "match_rate_eff", "match_radius_arcsec", "match_radius_px",
+            "dx_med_px", "dy_med_px", "resid_med_px", "resid_mad_px",
+            "resid_p99_px", "resid_peak_px", "rms_px", "inlier_rate",
+            "resid_vs_radius_slope", "edge_resid_ratio",
+            "pix_scale_input_arcsec", "pixscale", "pix_fit",
+            "scale_delta_pct", "wcs_rot_deg", "center_ra_deg",
+            "center_dec_deg", "center_offset_arcsec",
+            "wcs_qc_pass", "wcs_qc_reason",
+        ]
+        qc_df = df[[c for c in qc_cols if c in df.columns]].copy()
+        qc_path = step5_out / "frame_wcs_qc.csv"
+        qc_df.to_csv(qc_path, index=False)
+        if logger is not None:
+            n_pass = int(qc_df["wcs_qc_pass"].sum()) if "wcs_qc_pass" in qc_df else -1
+            logger.info(
+                f"[Internal WCS] QC CSV: {len(qc_df)} rows (pass={n_pass}) -> {qc_path.name}"
+            )
+    except Exception as exc:
+        if logger is not None:
+            logger.warning(f"[Internal WCS] QC CSV 실패: {exc}")
+
 
 def _normalize_engine(engine) -> str:
     s = str(engine or "internal").strip().lower()
