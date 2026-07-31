@@ -640,8 +640,9 @@ use_color_terms = false
 
 # ── Detector calibration (optional Step 0) ───────────────────────────────────
 # Builds master bias/dark/flat and applies them to raw science frames, turning
-# APEX into a raw->science tool. Mono science CCDs only (no debayer). The GUI
-# Step-0 window exposes these; values here are documentation/defaults.
+# APEX into a raw->science tool. Mono science CCDs only (no debayer).
+# These values are read at load time and seed the GUI Step-0 window; saving in
+# that window writes back here, so the settings survive a restart.
 [calibration]
 enabled = false            # opt-in; most users feed already-calibrated frames
 combine_method = "median"  # "median" | "mean" | "sigmaclip_mean"
@@ -651,14 +652,26 @@ maxiters = 5
 flat_min = 0.01           # flat values below this -> dead pixel (NaN)
 pedestal_mode = "adaptive" # "none" | "adaptive" | "fixed"
 pedestal_value = 100.0     # DN, used when pedestal_mode = "fixed"
+pedestal_max = 5000.0      # DN cap for pedestal_mode = "adaptive"
 dark_scale = true          # scale master dark by exposure-time ratio
 dark_optimize = false      # optional noise-min k-fit (imaging heuristic; off)
+# How far the dark's sensor temperature may sit from the light's. Dark current
+# roughly doubles every ~6 C, so tighten this when chasing faint signal. A dark
+# beyond the tolerance is always logged with its delta-T and recorded in
+# calibration.json; strict_temp turns that warning into a refusal (no dark).
+temp_match_tol_c = 1.0
+strict_temp = false
 # Cosmic-ray + hot-pixel removal (L.A.Cosmic via astroscrappy, star-protected).
-# Standard CCD reduction (van Dokkum 2001); off by default since it alters pixels.
-cosmetic_enable = false
+# Standard CCD reduction (van Dokkum 2001). ON by default: on CMOS detectors
+# 16-40% of detections are 1-pixel spikes, and they get picked as ePSF
+# reference stars, which collapsed the PSF (measured 2026-07-29, M67/QHY600).
+cosmetic_enable = true
 cr_sigclip = 4.5           # L.A.Cosmic detection sigma
 cr_objlim = 5.0            # contrast limit (protects real point sources)
 hot_sigma = 6.0            # hot-pixel threshold on the master dark
+# Skip frames whose header shows a prior pipeline already calibrated them
+# (CALBIAS/CALFLAT/CALSOFT); re-calibrating double-subtracts.
+skip_precalibrated = true
 
 [calibration.overscan]
 enable = false             # subtract row/column overscan bias before masters

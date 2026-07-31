@@ -21,8 +21,6 @@ from dataclasses import asdict
 from pathlib import Path
 from typing import Dict, List, Optional
 
-import numpy as np
-from astropy.io import fits
 from PyQt5.QtCore import Qt, QThread, pyqtSignal
 from PyQt5.QtWidgets import (
     QCheckBox, QComboBox, QDialogButtonBox, QDoubleSpinBox, QFileDialog,
@@ -31,13 +29,15 @@ from PyQt5.QtWidgets import (
     QTreeWidgetItem, QVBoxLayout, QWidget,
 )
 
-from apex.analysis import calibration as cal
 from apex.analysis import calibration_scan as scan
 from apex.analysis.calibration import CalibrationOptions
+from apex.analysis.calibration_run import run_calibration
 from apex.analysis.calibration_scan import FrameInfo
+from apex.config.calibration_section import calibration_toml_sections
 from apex.gui.layout_rules import FittedDialog
 from apex.gui.theme import ICON, Tokens, style_button
 from apex.gui.tools.tool_window_base import ToolWindowBase
+from apex.utils.param_file import update_param_file
 from apex.utils.step_paths import step0_calibration_dir
 
 
@@ -90,175 +90,16 @@ class _CalibrationWorker(QThread):
         except Exception as exc:                  # pragma: no cover - surfaced to UI
             self.failed.emit(f"{type(exc).__name__}: {exc}")
 
-    def _accept_dark(self, match, light, opts):
-        """Apply the temperature/exposure policy to a dark match.
-
-        Returns the group key to use, or None to calibrate without a dark.
-        A mismatch is never silent: it is logged, and ``strict_temp`` turns the
-        warning into a refusal.
-        """
-        if match is None:
-            return None
-        if not match.within_temp_tol:
-            self._n_temp_mismatch += 1
-            verdict = "REFUSED (strict)" if opts.strict_temp else "used anyway"
-            self.logline.emit(
-                f"  [warn] {light.name}: nearest dark is ΔT="
-                f"{match.delta_temp_c:.2f}°C away (tolerance "
-                f"{opts.temp_match_tol_c:g}°C) — {verdict}")
-            if opts.strict_temp:
-                self._n_dark_refused += 1
-                return None
-        # A dark of a different exposure is only defensible if it gets scaled.
-        if match.delta_exp_s > 1e-3 and not opts.dark_scale:
-            self._n_exp_mismatch += 1
-            self.logline.emit(
-                f"  [warn] {light.name}: dark exposure {match.exp:g}s vs light "
-                f"{light.exp:g}s and dark scaling is OFF — dark is not "
-                f"exposure-matched")
-        return match.key
-
     def _run(self):
-        opts = self.opts
-        self._n_temp_mismatch = 0
-        self._n_exp_mismatch = 0
-        self._n_dark_refused = 0
-        masters_dir = self.out_dir / "masters"
-        masters_dir.mkdir(parents=True, exist_ok=True)
-
-        nights = (scan.nights(self.frames) if self.night == "__all__"
-                  else [self.night])
-        nights = [n for n in nights
-                  if scan.group_for_night(self.frames, n)["light"]]
-        if not nights:
-            raise ValueError("No light frames found to calibrate")
-
-        # Master cache keyed by the exact source files, so a master built from a
-        # shared bias/dark pool (or a single pre-built master frame) is built
-        # ONCE and reused across every night; per-night flats build per night.
-        cache: Dict = {}
-        written: set = set()
-        summary: Dict = {"nights": {}, "masters": [], "options": opts.__dict__.copy()}
-
-        def _write_master(fname, arr, prov, label, extra=None):
-            if fname not in written:
-                # Stamp a MASTER header so APEX's own masters are auto-detected
-                # and reused verbatim on a later run (parity with AIPPI).
-                hdr = fits.Header()
-                kind = str(prov.get("type", "")).capitalize()
-                if kind:
-                    hdr["IMAGETYP"] = f"Master {kind}"
-                if prov.get("exptime") is not None:
-                    hdr["EXPTIME"] = float(prov["exptime"])
-                hdr["NCOMBINE"] = int(prov.get("n_frames", 1))
-                for k, v in (extra or {}).items():
-                    hdr[k] = v
-                fits.writeto(masters_dir / fname, arr.astype(np.float32),
-                             header=hdr, overwrite=True)
-                written.add(fname)
-                summary["masters"].append({"file": fname, **prov})
-                tag = " [pre-built master, used directly]" if prov.get("master_input") else ""
-                self.logline.emit(
-                    f"{label}: {prov['n_frames']} frame(s){tag} → {fname}")
-
-        def _bias(paths):
-            if not paths:
-                return None
-            key = ("bias", frozenset(paths))
-            if key not in cache:
-                mb, prov = cal.build_master_bias(paths, opts)
-                cache[key] = mb
-                _write_master("master_bias.fits", mb, prov, "master bias")
-            return cache[key]
-
-        def _dark(paths, dk, mbias, night_tag):
-            if not paths:
-                return None, 1.0
-            key = ("dark", frozenset(paths))
-            if key not in cache:
-                md, dexp, prov = cal.build_master_dark(paths, opts, master_bias=mbias)
-                cache[key] = (md, dexp)
-                exp, tb = dk
-                tag = night_tag or "global"   # keep per-night darks distinct on disk
-                extra = {"CCD-TEMP": float(tb)} if tb is not None else None
-                _write_master(f"master_dark_{exp:g}s_{tb}C_{tag}.fits", md, prov,
-                              f"master dark {exp:g}s/{tb}°C [{tag}]", extra=extra)
-            return cache[key]
-
-        def _flat(fis, filt, mbias):
-            if not fis:
-                return None
-            paths = [f.path for f in fis]
-            key = ("flat", frozenset(paths))
-            if key not in cache:
-                mf, prov = cal.build_master_flat(paths, opts, master_bias=mbias)
-                cache[key] = mf
-                tag = fis[0].night or "global"   # the flat frames' own night
-                _write_master(f"master_flat_{filt}_{tag}.fits", mf, prov,
-                              f"master flat {filt} [{tag}]", extra={"FILTER": filt})
-            return cache[key]
-
-        total = sum(len(scan.group_for_night(self.frames, n)["light"]) for n in nights)
-        done = 0
-        no_flat = 0
-        self.logline.emit(f"Calibrating {total} light frames across {len(nights)} night(s)…")
-
-        for night in nights:
-            g = scan.group_for_night(self.frames, night)
-            calibrated_dir = self.out_dir / "calibrated" / (night or "undated")
-            calibrated_dir.mkdir(parents=True, exist_ok=True)
-            # The bias pool is resolved per light (below), not once per night:
-            # a pool of mixed geometry cannot be stacked into one master.
-            night_recs: List[Dict] = []
-            for l in g["light"]:
-                if self.isInterruptionRequested():
-                    self.logline.emit("Stopped by user.")
-                    break
-                self.progress.emit(done, total, f"[{night}] {l.name}")
-                # Every calibration frame must share the light's geometry;
-                # mismatched binning/size is filtered out at match time rather
-                # than raising a broadcast error mid-subtraction.
-                mbias = _bias([f.path for f in g["bias"]
-                               if scan.compatible_geometry(l, f)])
-                dm = scan.match_dark_detail(g["dark"], l.exp, l.temp,
-                                            opts.temp_match_tol_c, light=l)
-                dk = self._accept_dark(dm, l, opts)
-                md, dexp = (_dark([f.path for f in g["dark"][dk]], dk, mbias,
-                                  g["dark"][dk][0].night) if dk else (None, 1.0))
-                ff = scan.match_flat(g["flat"], l.filt, light=l)
-                mf = _flat(g["flat"][ff], ff, mbias) if ff else None
-                if mf is None:
-                    no_flat += 1
-                    self.logline.emit(f"  [warn] {l.name}: no flat for '{l.filt}' — flat skipped")
-                data, header, qc = cal.calibrate_light_file(
-                    l.path, opts, master_bias=mbias, master_dark=md,
-                    dark_exp=dexp, master_flat=mf)
-                fits.writeto(calibrated_dir / f"pp_{l.name}", data, header=header, overwrite=True)
-                done += 1
-                night_recs.append({
-                    "input": l.name, "output": f"pp_{l.name}", "filter": l.filt,
-                    "dark": f"{dk[0]:g}s/{dk[1]}C" if dk else None, "flat": ff,
-                    # Provenance for the dark match: how far the chosen dark sat
-                    # from this light in temperature and exposure.
-                    "dark_delta_temp_c": (dm.delta_temp_c if dm is not None else None),
-                    "dark_delta_exp_s": (dm.delta_exp_s if dm is not None else None),
-                    "median": qc.get("median"), "neg_pct": qc.get("neg_pct"),
-                })
-            summary["nights"][night] = {
-                "calibrated_dir": str(calibrated_dir),
-                "n_calibrated": len(night_recs), "frames": night_recs,
-            }
-        self.progress.emit(total, total, "Done")
-
-        summary["n_calibrated"] = done
-        summary["n_missing_flat"] = no_flat
-        summary["n_temp_mismatch"] = self._n_temp_mismatch
-        summary["n_exp_mismatch"] = self._n_exp_mismatch
-        summary["n_dark_refused"] = self._n_dark_refused
-        summary["n_nights"] = len(nights)
-        summary["calibrated_root"] = str(self.out_dir / "calibrated")
-        (self.out_dir / "calibration.json").write_text(
-            json.dumps(summary, indent=2, default=float), encoding="utf-8")
+        # All the work lives in the Qt-free core, which the headless pipeline
+        # step and the reprocess scripts call too — one code path, so a batch
+        # run cannot drift from what this window shows.
+        summary = run_calibration(
+            self.frames, self.night, self.out_dir, self.opts,
+            progress=lambda done, total, msg: self.progress.emit(done, total, msg),
+            log=self.logline.emit,
+            stop=self.isInterruptionRequested,
+        )
         self.finished_ok.emit(summary)
 
 
@@ -280,11 +121,13 @@ class DetectorCalibrationWindow(ToolWindowBase):
         self._scan_worker: Optional[_ScanWorker] = None
         self._worker: Optional[_CalibrationWorker] = None
         # All calibration parameters live in one mutable holder, edited via the
-        # Parameters dialog (AIPPI-style single settings panel).
-        self._settings: Dict = asdict(CalibrationOptions())
+        # Parameters dialog (AIPPI-style single settings panel) and persisted
+        # back to the TOML's [calibration] table so they survive a restart.
+        P = getattr(params, "P", None)
+        self._settings: Dict = asdict(
+            CalibrationOptions.from_mapping(getattr(P, "calibration", None)))
         # Seed cosmetic's noise model from the CONFIGURED (measured) gain/read
         # noise, never the FITS EGAIN header (unreliable on this camera).
-        P = getattr(params, "P", None)
         if P is not None:
             try:
                 self._settings["gain"] = float(getattr(P, "gain_e_per_adu", 1.0) or 1.0)
@@ -406,6 +249,31 @@ class DetectorCalibrationWindow(ToolWindowBase):
 
     def _current_options(self) -> CalibrationOptions:
         return CalibrationOptions(**self._settings)
+
+    def _persist_settings(self) -> None:
+        """Write the settings back to the TOML's [calibration] table.
+
+        Without this the whole panel resets every time the window closes; the
+        section was also inert until the loader learned to read it.
+        """
+        P = getattr(self.params, "P", None)
+        if P is not None:
+            try:
+                P.calibration = dict(self._settings)
+            except Exception:
+                pass
+        # gain/readnoise come from [instrument]; writing them here too would
+        # create a second source of truth for the same numbers.
+        payload = {k: v for k, v in self._settings.items()
+                   if k not in ("gain", "readnoise")}
+        saved = update_param_file(
+            getattr(self.params, "param_file", None),
+            calibration_toml_sections(payload),
+            params=self.params,
+        )
+        self.log("Parameters updated and saved to the parameter file."
+                 if saved else
+                 "Parameters updated (this session only — no writable parameter file).")
 
     # -- parameters dialog (single settings panel) -------------------------
 
@@ -532,7 +400,7 @@ class DetectorCalibrationWindow(ToolWindowBase):
                 "cosmetic_enable": w_cc.isChecked(), "cr_sigclip": w_crs.value(),
                 "cr_objlim": w_cro.value(), "hot_sigma": w_hot.value(),
             })
-            self.log("Parameters updated.")
+            self._persist_settings()
 
     # -- scan flow ---------------------------------------------------------
 

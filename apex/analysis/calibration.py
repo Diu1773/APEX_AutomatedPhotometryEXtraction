@@ -26,7 +26,7 @@ and does not bias the measured magnitudes.
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, fields as dataclass_fields
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Sequence, Tuple
 
@@ -112,6 +112,50 @@ class CalibrationOptions:
     # run or an external pipeline like MaxIm/AstralImage). Re-calibrating them
     # double-subtracts bias/dark and double-divides by flat, producing artifacts.
     skip_precalibrated: bool = True
+
+    @classmethod
+    def field_names(cls) -> Tuple[str, ...]:
+        return tuple(f.name for f in dataclass_fields(cls))
+
+    @classmethod
+    def from_mapping(cls, mapping: Optional[Dict[str, Any]]) -> "CalibrationOptions":
+        """Build options from a plain dict, ignoring unknown keys.
+
+        The bridge between the TOML ``[calibration]`` table (or the GUI's
+        settings dict) and the analysis layer, which must not import the config
+        models.  Values that cannot be coerced fall back to the default rather
+        than raising, so one bad line in a hand-edited TOML cannot block a run.
+        """
+        if not mapping:
+            return cls()
+        defaults = cls()
+        kwargs: Dict[str, Any] = {}
+        for field in dataclass_fields(cls):
+            if field.name not in mapping:
+                continue
+            value = mapping[field.name]
+            if value is None:
+                continue
+            current = getattr(defaults, field.name)
+            try:
+                if isinstance(current, bool):
+                    if isinstance(value, str):
+                        value = value.strip().lower() in ("1", "true", "yes", "on")
+                    else:
+                        value = bool(value)
+                elif isinstance(current, int):
+                    value = int(float(value))
+                elif isinstance(current, float):
+                    value = float(value)
+                else:
+                    value = str(value)
+            except (TypeError, ValueError):
+                continue
+            kwargs[field.name] = value
+        return cls(**kwargs)
+
+    def to_mapping(self) -> Dict[str, Any]:
+        return {f.name: getattr(self, f.name) for f in dataclass_fields(self)}
 
 
 # ---------------------------------------------------------------------------

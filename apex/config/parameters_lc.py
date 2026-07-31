@@ -17,6 +17,7 @@ try:
 except Exception:
     tomli_w = None
 
+from apex.config.calibration_section import read_calibration_section
 from apex.config.parameter_map import (
     CANONICAL_SCHEMA_VERSION,
     LC_TOML_KEY_MAP,
@@ -413,6 +414,12 @@ def _read_toml(path: Path) -> Dict[str, Any]:
         set_if("site_alt_m", site.get("alt_m"))
         set_if("site_tz_offset_hours", site.get("tz_offset_hours"))
 
+    # [calibration] (+ [calibration.overscan]) — kept as a nested dict because
+    # its keys map 1:1 onto CalibrationOptions, which owns their defaults.
+    calibration = read_calibration_section(data)
+    if calibration:
+        raw["_calibration"] = calibration
+
     extra = _get_path(data, ("parameters",)) or {}
     if isinstance(extra, dict):
         for key, value in extra.items():
@@ -571,6 +578,10 @@ class Parameters:
             site_lon_deg=_getf(raw, "site_lon_deg", 0.0),
             site_alt_m=_getf(raw, "site_alt_m", 0.0),
             site_tz_offset_hours=_getf(raw, "site_tz_offset_hours", 0.0),
+
+            # Detector calibration (Step 0); CalibrationOptions owns the defaults
+            calibration=dict(raw.get("_calibration") or {}),
+
             lightcurve_color_index_by_filter=raw.get("lightcurve_color_index_by_filter", {}) or {},
             lightcurve_color_term_by_filter=raw.get("lightcurve_color_term_by_filter", {}) or {},
             extfit_order=_geti(raw, "extfit_order", 1),
