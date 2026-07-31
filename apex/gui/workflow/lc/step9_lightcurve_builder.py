@@ -3046,9 +3046,24 @@ class LightCurveBuilderWindow(StepWindowBase):
         site_lon = float(getattr(self.params.P, "site_lon_deg", np.nan))
         site_alt = float(getattr(self.params.P, "site_alt_m", 0.0))
         tgt_ra, tgt_dec = _load_target_radec(result_dir, target_id)
-        if not np.isfinite(tgt_ra) and hasattr(self.params.P, "target"):
-            tgt_ra = float(getattr(self.params.P.target, "ra_deg", np.nan) or np.nan)
-            tgt_dec = float(getattr(self.params.P.target, "dec_deg", np.nan) or np.nan)
+        if not np.isfinite(tgt_ra):
+            # 설정의 [target] 좌표로 폴백한다. 예전 코드는 `P.target.ra_deg` 를
+            # 봤는데 파라미터 모델은 그런 중첩 속성을 만들지 않는다
+            # (`P.target_ra_deg`) — hasattr 이 늘 False 라 **폴백이 죽어 있었다**.
+            # 그 탓에 Step 8 을 거치지 않은 워크스페이스에서는 설정에 좌표가
+            # 멀쩡히 있는데도 BJD_TDB 가 전부 NaN 으로 나왔다.
+            def _cfg(*names):
+                for n in names:
+                    try:
+                        v = float(getattr(self.params.P, n, np.nan))
+                    except (TypeError, ValueError):
+                        continue
+                    if np.isfinite(v):
+                        return v
+                return np.nan
+
+            tgt_ra = _cfg("target_ra_deg", "ra_deg")
+            tgt_dec = _cfg("target_dec_deg", "dec_deg")
         if np.isfinite(site_lat) and np.isfinite(site_lon) and np.isfinite(tgt_ra) and np.isfinite(tgt_dec):
             return compute_bjd_tdb_array(tarr, tgt_ra, tgt_dec, site_lat, site_lon, site_alt)
         return np.full(len(tarr), np.nan)
