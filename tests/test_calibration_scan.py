@@ -261,6 +261,75 @@ def test_geometry_label():
     assert _geom_frame("light").geometry_label == ""
 
 
+# --- unclassified frames + manual reclassification (P4) --------------------
+
+def test_unclassifiable_frame_is_kept_as_unknown(tmp_path):
+    """It used to be dropped silently, so a 3-file folder showed 2 and the user
+    had no way to notice, let alone fix it."""
+    _write(tmp_path / "mystery.fit", "SOMETHING ODD")
+    _write(tmp_path / "lightV.fit", "Light Frame", 60.0, filt="V")
+
+    warnings = []
+    frames = cs.scan_folder(str(tmp_path), warn=warnings.append)
+    assert len(frames) == 2
+    unknown = [f for f in frames if f.ftype == cs.TYPE_UNKNOWN]
+    assert [f.name for f in unknown] == ["mystery.fit"]
+    assert any("could not be classified" in w for w in warnings)
+
+
+def test_unknown_frames_stay_out_of_the_science_path(tmp_path):
+    _write(tmp_path / "mystery.fit", "SOMETHING ODD", 60.0)
+    _write(tmp_path / "lightV.fit", "Light Frame", 60.0, filt="V")
+    frames = cs.scan_folder(str(tmp_path))
+
+    g = cs.group_for_night(frames, "20260515")
+    assert len(g["light"]) == 1                      # the mystery file is inert
+    assert not g["bias"] and not g["dark"] and not g["flat"]
+
+
+def test_apply_overrides_reclassifies(tmp_path):
+    _write(tmp_path / "mystery.fit", "SOMETHING ODD", 60.0)
+    frames = cs.scan_folder(str(tmp_path))
+    path = frames[0].path
+
+    fixed = cs.apply_overrides(frames, {path: {"ftype": "dark"}})
+    assert fixed[0].ftype == "dark"
+    assert frames[0].ftype == cs.TYPE_UNKNOWN        # original left untouched
+
+    fixed = cs.apply_overrides(frames, {path: {"ftype": "flat", "filt": "V",
+                                               "night": "20260101"}})
+    assert (fixed[0].ftype, fixed[0].filt, fixed[0].night) == ("flat", "V", "20260101")
+
+
+def test_apply_overrides_ignores_junk(tmp_path):
+    _write(tmp_path / "lightV.fit", "Light Frame", 60.0, filt="V")
+    frames = cs.scan_folder(str(tmp_path))
+    path = frames[0].path
+    assert cs.apply_overrides(frames, {})[0].ftype == "light"
+    assert cs.apply_overrides(frames, {path: {"ftype": "nonsense"}})[0].ftype == "light"
+    assert cs.apply_overrides(frames, {"/other/file.fit": {"ftype": "dark"}})[0].ftype == "light"
+
+
+def test_overrides_round_trip(tmp_path):
+    path = tmp_path / "sub" / cs.OVERRIDES_FILENAME
+    overrides = {r"E:\raw\a.fit": {"ftype": "dark"}, r"E:\raw\b.fit": {"filt": "Ha"}}
+    cs.save_overrides(path, overrides)
+    assert cs.load_overrides(path) == overrides
+    assert cs.load_overrides(tmp_path / "missing.json") == {}
+
+
+def test_overridden_frame_becomes_usable(tmp_path):
+    """The point of the override: a mystery file becomes a real dark."""
+    _write(tmp_path / "mystery.fit", "SOMETHING ODD", 60.0, temp=5.0)
+    _write(tmp_path / "lightV.fit", "Light Frame", 60.0, filt="V", temp=5.0)
+    frames = cs.scan_folder(str(tmp_path))
+    mystery = next(f for f in frames if f.ftype == cs.TYPE_UNKNOWN)
+
+    fixed = cs.apply_overrides(frames, {mystery.path: {"ftype": "dark"}})
+    g = cs.group_for_night(fixed, "20260515")
+    assert cs.match_dark(g["dark"], 60.0, 5.0) == (60.0, 5)
+
+
 def test_group_temperature_falls_back_to_bucket():
     assert cs.group_temperature([_dark_frame(60.0, -10.4)], (60.0, -10)) == pytest.approx(-10.4)
     assert cs.group_temperature([], (60.0, -10)) == pytest.approx(-10.0)

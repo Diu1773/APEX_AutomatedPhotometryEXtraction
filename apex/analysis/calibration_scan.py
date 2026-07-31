@@ -15,9 +15,10 @@ Grouping keys (matched to AIPPI):
 
 from __future__ import annotations
 
+import json
 import os
 import re
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import Callable, Dict, List, Optional, Tuple
 
@@ -36,6 +37,11 @@ from apex.utils.night_utils import (
 )
 
 FRAME_TYPES = ("bias", "dark", "flat", "light")
+# Frames whose type could not be read. They used to be dropped from the scan
+# without a word, so a folder of 300 files could show 280 and the user had no
+# way to tell, let alone fix it.
+TYPE_UNKNOWN = "unknown"
+OVERRIDES_FILENAME = "classification_overrides.json"
 
 _TEMP_KEYS = ("CCD-TEMP", "CCD_TEMP", "CCDTEMP", "SET-TEMP", "SETTEMP",
               "SENSORTEMP", "CAMTEMP", "TEMP")
@@ -240,9 +246,10 @@ def read_frame_info(path: str,
         header = fits.getheader(path)
     except Exception:
         return None
-    ftype = classify_type(_header_first(header, _IMAGETYP_KEYS), path)
-    if ftype is None:
-        return None
+    # An unreadable IMAGETYP yields TYPE_UNKNOWN rather than dropping the frame:
+    # the GUI shows those in their own bucket so they can be reclassified by
+    # hand instead of vanishing from the scan.
+    ftype = classify_type(_header_first(header, _IMAGETYP_KEYS), path) or TYPE_UNKNOWN
     exp = _to_float(_header_first(header, EXPTIME_HEADER_KEYS), 0.0) or 0.0
     temp = _to_float(_header_first(header, _TEMP_KEYS), None)
     filt = str(_header_first(header, FILTER_HEADER_KEYS, "") or "").strip()
@@ -296,7 +303,56 @@ def scan_folder(root: str,
             warn(f"[night] {len(conflicts)} frame(s): path date differs from "
                  f"DATE-OBS night (e.g. {sample.name}: path {sample.night_conflict} "
                  f"→ night {sample.night}). Using DATE-OBS ({sample.night_method}).")
+        unknown = [f for f in frames if f.ftype == TYPE_UNKNOWN]
+        if unknown:
+            warn(f"[type] {len(unknown)} frame(s) could not be classified "
+                 f"(no usable IMAGETYP, no keyword in the filename) — "
+                 f"e.g. {unknown[0].name}. Set their type in the tree to use them.")
     return frames
+
+
+# ---------------------------------------------------------------------------
+# manual reclassification
+# ---------------------------------------------------------------------------
+
+def load_overrides(path) -> Dict[str, Dict]:
+    """Read the saved manual reclassifications, keyed by frame path."""
+    try:
+        data = json.loads(Path(path).read_text(encoding="utf-8"))
+    except Exception:
+        return {}
+    return data.get("overrides", {}) if isinstance(data, dict) else {}
+
+
+def save_overrides(path, overrides: Dict[str, Dict]) -> None:
+    """Persist manual reclassifications so a re-scan keeps them."""
+    path = Path(path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps({"overrides": overrides}, indent=2,
+                               ensure_ascii=False), encoding="utf-8")
+
+
+def apply_overrides(frames: List[FrameInfo],
+                    overrides: Dict[str, Dict]) -> List[FrameInfo]:
+    """Return ``frames`` with any saved manual type/filter/night applied."""
+    if not overrides:
+        return frames
+    out: List[FrameInfo] = []
+    for frame in frames:
+        override = overrides.get(frame.path)
+        if not override:
+            out.append(frame)
+            continue
+        ftype = str(override.get("ftype") or frame.ftype)
+        filt = override.get("filt")
+        night = override.get("night")
+        out.append(replace(
+            frame,
+            ftype=ftype if ftype in FRAME_TYPES or ftype == TYPE_UNKNOWN else frame.ftype,
+            filt=frame.filt if filt is None else str(filt),
+            night=frame.night if night is None else str(night),
+        ))
+    return out
 
 
 # ---------------------------------------------------------------------------

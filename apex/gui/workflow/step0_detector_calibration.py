@@ -24,9 +24,9 @@ from typing import Dict, List, Optional
 from PyQt5.QtCore import Qt, QThread, pyqtSignal
 from PyQt5.QtWidgets import (
     QCheckBox, QComboBox, QDialogButtonBox, QDoubleSpinBox, QFileDialog,
-    QFormLayout, QGroupBox, QHBoxLayout, QLabel, QLineEdit, QMessageBox,
-    QProgressBar, QPushButton, QScrollArea, QSpinBox, QTreeWidget,
-    QTreeWidgetItem, QVBoxLayout, QWidget,
+    QFormLayout, QGroupBox, QHBoxLayout, QInputDialog, QLabel, QLineEdit,
+    QMenu, QMessageBox, QProgressBar, QPushButton, QScrollArea, QSpinBox,
+    QTreeWidget, QTreeWidgetItem, QVBoxLayout, QWidget,
 )
 
 from apex.analysis import calibration_scan as scan
@@ -110,7 +110,7 @@ class _CalibrationWorker(QThread):
 class DetectorCalibrationWindow(ToolWindowBase):
     """Optional off-chain Step 0 window (detector calibration)."""
 
-    _TYPE_ORDER = ("bias", "dark", "flat", "light")
+    _TYPE_ORDER = ("bias", "dark", "flat", "light", scan.TYPE_UNKNOWN)
 
     def __init__(self, params, project_state, parent=None):
         super().__init__("Step 0: Detector Calibration", params=params,
@@ -120,6 +120,9 @@ class DetectorCalibrationWindow(ToolWindowBase):
         self._roots: List[str] = []
         self._scan_worker: Optional[_ScanWorker] = None
         self._worker: Optional[_CalibrationWorker] = None
+        # Manual type/filter/night fixes keyed by frame path, persisted so a
+        # re-scan of the same folder keeps them.
+        self._overrides: Dict[str, Dict] = {}
         # All calibration parameters live in one mutable holder, edited via the
         # Parameters dialog (AIPPI-style single settings panel) and persisted
         # back to the TOML's [calibration] table so they survive a restart.
@@ -181,6 +184,10 @@ class DetectorCalibrationWindow(ToolWindowBase):
         self.tree.header().setStretchLastSection(True)
         self.tree.setColumnWidth(0, 260)
         self.tree.setColumnWidth(1, 60)
+        self.tree.setContextMenuPolicy(Qt.CustomContextMenu)
+        self.tree.customContextMenuRequested.connect(self._on_tree_menu)
+        self.tree.setToolTip("Right-click a row to correct its frame type, "
+                             "filter or night when the FITS header is wrong.")
         v.addWidget(self.tree, 1)
 
         # process-night row (all tunables live in the Parameters dialog)
@@ -434,15 +441,98 @@ class DetectorCalibrationWindow(ToolWindowBase):
         self.btn_scan.setEnabled(True)
         self.btn_add.setEnabled(True)
         self._frames.extend(frames)
+        self._load_overrides()
+        self._apply_overrides()
         self.progress_bar.reset()
-        by_type = {t: sum(1 for f in self._frames if f.ftype == t) for t in self._TYPE_ORDER}
-        self.scan_label.setText(
-            f"{len(self._frames)} frames  ·  "
-            + "  ".join(f"{t} {by_type[t]}" for t in self._TYPE_ORDER)
-        )
+        self._refresh_scan_label()
         self.log(f"Scanned {len(frames)} new frames ({len(self._frames)} total)")
         self._populate_nights()
         self._rebuild_tree()
+
+    def _refresh_scan_label(self):
+        by_type = {t: sum(1 for f in self._frames if f.ftype == t)
+                   for t in self._TYPE_ORDER}
+        parts = [f"{t} {by_type[t]}" for t in self._TYPE_ORDER
+                 if t != scan.TYPE_UNKNOWN or by_type[t]]
+        self.scan_label.setText(f"{len(self._frames)} frames  ·  " + "  ".join(parts))
+
+    # -- manual reclassification -------------------------------------------
+
+    def _overrides_path(self) -> Path:
+        return Path(self.out_edit.text().strip() or self._default_out_dir()) \
+            / scan.OVERRIDES_FILENAME
+
+    def _load_overrides(self):
+        saved = scan.load_overrides(self._overrides_path())
+        if saved:
+            self._overrides.update(saved)
+            self.log(f"Loaded {len(saved)} saved classification override(s)")
+
+    def _apply_overrides(self):
+        self._frames = scan.apply_overrides(self._frames, self._overrides)
+
+    def _set_override(self, paths: List[str], **changes):
+        for path in paths:
+            entry = dict(self._overrides.get(path, {}))
+            entry.update({k: v for k, v in changes.items() if v is not None})
+            self._overrides[path] = entry
+        scan.save_overrides(self._overrides_path(), self._overrides)
+        self._apply_overrides()
+        self._refresh_scan_label()
+        self._populate_nights()
+        self._rebuild_tree()
+
+    def _clear_override(self, paths: List[str]):
+        removed = sum(1 for p in paths if self._overrides.pop(p, None) is not None)
+        if not removed:
+            return
+        scan.save_overrides(self._overrides_path(), self._overrides)
+        # The stored FrameInfo already carries the override, so re-read the
+        # headers of just those frames to get their original classification.
+        tz = self._site_tz_offset()
+        by_path = {p: scan.read_frame_info(p, tz) for p in paths}
+        self._frames = [by_path.get(f.path) or f for f in self._frames]
+        self._apply_overrides()
+        self.log(f"Cleared {removed} override(s)")
+        self._refresh_scan_label()
+        self._populate_nights()
+        self._rebuild_tree()
+
+    def _on_tree_menu(self, pos):
+        item = self.tree.itemAt(pos)
+        if item is None:
+            return
+        paths = item.data(0, Qt.UserRole) or []
+        if not paths:
+            return
+        n = len(paths)
+        menu = QMenu(self)
+        type_menu = menu.addMenu(f"Set frame type  ({n} frame(s))")
+        for ftype in scan.FRAME_TYPES:
+            action = type_menu.addAction(ftype.capitalize())
+            action.triggered.connect(
+                lambda _checked, t=ftype: self._set_override(paths, ftype=t))
+        act_filter = menu.addAction("Set filter…")
+        act_night = menu.addAction("Set night (YYYYMMDD)…")
+        menu.addSeparator()
+        act_clear = menu.addAction("Clear manual override")
+        act_clear.setEnabled(any(p in self._overrides for p in paths))
+
+        chosen = menu.exec_(self.tree.viewport().mapToGlobal(pos))
+        if chosen is act_filter:
+            current = next((f.filt for f in self._frames if f.path == paths[0]), "")
+            value, ok = QInputDialog.getText(self, "Set filter", "Filter name:",
+                                             text=current)
+            if ok:
+                self._set_override(paths, filt=value.strip())
+        elif chosen is act_night:
+            current = next((f.night for f in self._frames if f.path == paths[0]), "")
+            value, ok = QInputDialog.getText(
+                self, "Set night", "Observing night (YYYYMMDD):", text=current)
+            if ok:
+                self._set_override(paths, night=value.strip())
+        elif chosen is act_clear:
+            self._clear_override(paths)
 
     def _populate_nights(self):
         self.cmb_night.blockSignals(True)
@@ -472,20 +562,43 @@ class DetectorCalibrationWindow(ToolWindowBase):
             title = (f"Night {n}" if n else "Undated / global pool")
             node = QTreeWidgetItem([f"☾ {title}", "", f"{n_lights} lights" if n_lights else ""])
             self.tree.addTopLevelItem(node)
+            expand_unknown = False
             for t in self._TYPE_ORDER:
                 items = [f for f in self._frames if f.ftype == t and f.night == n]
                 if not items:
                     continue
-                n_master = sum(1 for f in items if getattr(f, "is_master", False))
-                hint = "pre-built master → used directly" if n_master else ""
-                type_node = QTreeWidgetItem([t.capitalize(), str(len(items)), hint])
+                if t == scan.TYPE_UNKNOWN:
+                    label = "Unclassified"
+                    hint = "right-click → Set type"
+                    expand_unknown = True
+                else:
+                    label = t.capitalize()
+                    n_master = sum(1 for f in items if getattr(f, "is_master", False))
+                    hint = "pre-built master → used directly" if n_master else ""
+                type_node = QTreeWidgetItem([label, str(len(items)), hint])
+                self._tag_paths(type_node, items)
                 node.addChild(type_node)
                 # Always pass the resolved pool so each night's light rows show
                 # which dark/flat (incl. shared/global) will be used.
                 self._add_subgroups(type_node, t, items, g)
-            node.setExpanded(expand_all or n == night)
+                if t == scan.TYPE_UNKNOWN:
+                    type_node.setExpanded(True)
+            node.setExpanded(expand_all or expand_unknown or n == night)
+
+    @staticmethod
+    def _tag_paths(item: QTreeWidgetItem, frames) -> None:
+        """Attach the frames a row stands for, so the context menu can act."""
+        item.setData(0, Qt.UserRole, [f.path for f in frames])
 
     def _add_subgroups(self, parent, ftype, items, group):
+        if ftype == scan.TYPE_UNKNOWN:
+            # One row per file: these need individual attention, and the user
+            # has to see the names to know what they are.
+            for f in sorted(items, key=lambda x: x.name):
+                child = QTreeWidgetItem([f.name, "1", f.geometry_label])
+                self._tag_paths(child, [f])
+                parent.addChild(child)
+            return
         if ftype == "dark":
             keys: Dict = {}
             geoms: Dict = {}
