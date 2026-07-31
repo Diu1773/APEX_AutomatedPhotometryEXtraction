@@ -1,6 +1,7 @@
 # 편의성 개선 계획 — Step 0 자동 분류·매칭 + 멀티나잇 전반
 
-> 2026-07-31 구조 검토 세션에서 도출. 절차: **이 계획 → 2차 검토(사용자) → Opus 구현**.
+> 2026-07-31 구조 검토 세션에서 도출. 절차: 계획 → 2차 검토 → Opus 구현.
+> **상태: 2차 검토 완료 (2026-07-31, 문서 말미 결과 참조) — 구현 착수 가능.**
 > 구현 세션은 이 문서만 읽고 착수할 수 있어야 한다. 검토 대상 코드:
 > `apex/analysis/calibration_scan.py`, `apex/gui/workflow/step0_detector_calibration.py`,
 > `apex/gui/workflow/lc/step1_night_setup.py`, `apex/core/file_manager.py`,
@@ -34,12 +35,23 @@
   DATE-OBS(UTC)를 경도 기반 지역 태양시(UTC + lon/15h)로 옮긴 뒤 **지역 정오에서 분할**.
   정오는 (극지 제외) 항상 일출~일몰 사이이므로 "낮에 자른다"는 요구를
   위도 정보·추가 의존성 없이 만족한다. 실제 태양고도 계산은 불필요 —
-  낮 시간대 어느 시각에 잘라도 밤 묶임 결과가 동일하다. (2차 검토 질문 Q1)
-- Step 0: 우선순위 반전 — **DATE-OBS 정오분할 우선**, 경로 날짜는 DATE-OBS 부재 시
-  폴백. 둘 다 있고 값이 다르면 스캔 로그에 경고 1줄.
+  낮 시간대 어느 시각에 잘라도 밤 묶임 결과가 동일하다. (Q1 — 2차 검토로 확정)
+- **[2차 검토 수정] 경도/시간대 정보가 없으면 DATE-OBS 우선이 오히려 위험하다.**
+  `night_from_dateobs` 의 경도-부재 폴백은 UTC −12h 규칙(그리니치 기준)이라
+  동아시아에서 한 밤을 찢는다(현재 코드 주석에도 명시). 확정 우선순위:
+  1. DATE-OBS + 경도(헤더 SITELONG 등 `_LON_KEYS`) → 태양시 정오분할
+  2. DATE-OBS + `params.P.site_tz_offset_hours`(TOML `[site] tz_offset_hours`,
+     GUI 설정에 이미 존재) → 시민시 정오분할. **Step 0 창도 params 접근이
+     가능하므로 이 폴백을 받는다** (현재 Step 0 는 헤더만 봄 — 갭).
+  3. 경로 8자리 날짜 (경도·tz 둘 다 없을 때만)
+  4. DATE-OBS −12h (최후 폴백)
+  1·2 가 가능한데 경로 날짜와 다르면 스캔 로그에 경고 1줄.
 - LC Step 1: 공용 유틸 기반 정오분할을 기본 분류로, JD-gap 은 DATE-OBS/JD 없는
-  프레임 폴백으로 강등 (2차 검토 질문 Q2). night_id 는 지금처럼 1-based 연속
+  프레임 폴백으로 강등 (Q2). 경도는 헤더 테이블에 안 남으므로(2차 검토 확인)
+  LC 쪽은 `site_tz_offset_hours` 를 쓴다. night_id 는 지금처럼 1-based 연속
   정수로 재매핑 → **산출물 스키마 불변**. `night_gap_hours` UI/파라미터는 유지.
+  ⚠️ `site_tz_offset_hours` 기본 0.0 인 채 정오분할하면 폴백 4 와 같아지므로,
+  tz 미설정 + 경도 부재면 **JD-gap 을 그대로 쓴다** (조용한 오분류 방지).
 - JD 도 DATE-OBS 도 없는 프레임: 현재 조용히 Night 1 (`id_map.get(i, 1)`) →
   **night 0 "불명"** 으로 분리하고 night 표에 경고 행 표시. 기본 제외 여부는 Q3.
 - `night_assignments.json` 에 night_id → 관측일(YYYYMMDD) 매핑을 함께 저장
@@ -71,11 +83,19 @@ nearest 폴백인데 `dark_scale=False` 면 10s light 에 300s dark 가 무경�
 
 **수정안**
 - `apex/config/schema.py` 에 CalibrationConfig 추가, `CalibrationOptions` 필드와
-  1:1 (+ P2 의 `temp_match_tol_c`, `strict_temp`). parameters_cmd/lc 양쪽 로드.
-- Step 0 GUI: 초기값을 TOML 에서 읽고, Parameters 저장 시 param 파일에 되쓰기
-  (Step 1 의 `_persist_param_file` 패턴 재사용).
-- 헤드리스 스텝 구현: scan → match → run 을 GUI `_CalibrationWorker._run` 과
-  **같은 코어 함수**로 (GUI-코어 동일경로 원칙). 배포 로드맵(Phase 1 이식)과 합류.
+  1:1 (+ P2 의 `temp_match_tol_c`, `strict_temp`). parameters_cmd/lc 양쪽 로드
+  (`parameter_map.py` 의 (("calibration", …), "…") 매핑 패턴 따름).
+- Step 0 GUI: 초기값을 TOML 에서 읽고, Parameters 저장 시 param 파일에 되쓰기.
+  **[2차 검토 확인]** `_persist_param_file` 은 Step 1 창
+  (`step1_file_selection_common.py:554`)에만 있고 Step 0 의 `ToolWindowBase`
+  에는 없다 — 유틸로 추출해 공용화하거나 Step 0 에 동등 메서드를 둔다.
+- **[2차 검토 발견] 헤드리스 Step 0 는 이미 실전 가동 중이다** —
+  `scripts/_reprocess_step0.py` 가 offscreen QApplication 으로 GUI 워커
+  (`_ScanWorker`/`_CalibrationWorker`)를 직접 구동한다(패리티 목적).
+  올바른 이식: `_CalibrationWorker._run` 본체를 Qt-free
+  `apex/analysis/calibration_run.py` (progress 콜백 인자)로 추출하고
+  **GUI 워커·pipeline 스텝·재처리 스크립트 3자가 그 한 함수를 호출** —
+  GUI-코어 동일경로 원칙을 지키면서 QApplication 의존을 없앤다.
 
 ## P4. 미분류 프레임 가시화 + 수동 재분류
 
@@ -116,13 +136,21 @@ workspace 에서 다시 만든다. **밤마다 Step 9 완주를 강제하는 헛
 자리표시자. full 모드의 존재 이유는 **이식성**(merged 폴더 단독으로 완결,
 원본 폴더를 옮기거나 지워도 동작)으로 추정된다.
 
-**수정안**
+**수정안 — [2차 검토로 설계 확정]**
 - `reference` 모드 추가(opt-in, 기본은 full 유지 — Q4): per-frame TSV 복사 생략.
-  매니페스트에 폴더별 원본 경로 + ID 리맵 테이블(`merge_id_map.csv` 활용)을 남기고,
-  `photometry_loader.load_frame_photometry` 가 merged workspace 에서는 원본 폴더
-  TSV 를 읽어 ID 를 on-the-fly 리맵.
-- **주의(구현 전 필수)**: 로더를 우회해 `step7_forced_phot/` 를 직접 glob 하는
-  코드가 있으면 깨진다. Step 9/10/11 + `_preload_photometry_cache` 경로 전수 확인.
+- **로더 중앙화가 성립한다** (호출부 전수조사 완료): TSV 경로 결정은
+  `photometry_loader._resolve_photometry_path` 단일 지점이고, LC 소비자 전원
+  (step8 selection·step9 builder·step10 detrend 의 `photometry_source_service`·
+  `photometric_qc`·extinction_fit·qa_report)이 `load_frame_photometry` 를 경유한다.
+  **step9 builder 는 `photometry_index.csv` 의 `path` 컬럼을 쓰지 않음**을 확인.
+- 구현: merged workspace 에서 파일이 없으면 `merge_manifest.json` 의
+  folder_tag→원본 result_dir 매핑으로 `F01_xxx__원본명` 을 파싱해 원본 TSV 를
+  읽고, `merge_id_map.csv` 의 (folder_tag, filter, local source_id →
+  merged source_id) 리맵을 적용(모듈 캐시). 이후의 sid_map(merged 카탈로그
+  기반 ID 부여)은 기존 코드 그대로 동작한다.
+- 알려진 열화: `qa_report.py` 는 `photometry_*.tsv` 를 직접 glob 하는 경로가
+  일부 있어 reference workspace 에서 빈 결과가 된다 — 해당 도구에
+  "reference merged workspace 미지원" 안내 1줄. CMD 전용 glob 은 무관.
 - 트레이드오프 명시: reference 모드는 원본 폴더 이동·삭제 시 깨짐 — UI 에 고지.
 - 규모 中. P1~P6 과 독립적이라 별도 커밋 단위로.
 
@@ -158,12 +186,33 @@ P1·P2 가 사용자 지시 직결 + 과학적 정합성. P7 은 독립 트랙�
 - P5: 실측 M5/M13 카탈로그로 merge 재실행 → 신규 생성 수 감소·sep 분포 개선 확인
 - P7: full vs reference 로 만든 merged workspace 의 Step 9 산출물 비트 동일성
 
-## 2차 검토 질문 (사용자 판단 필요)
+## 2차 검토 결과 (2026-07-31) — Q1~Q5 확정
 
-- **Q1** 밤 경계: 지역 정오분할로 충분한가, 실제 일출·일몰(태양고도) 계산까지 갈
-  것인가. **권고: 정오분할** — 밤 묶임 결과가 동일하고 의존성·위도 입력이 불필요.
-- **Q2** LC Step 1 에서 JD-gap 을 폴백으로 강등할지, 정오분할과 병행 표시할지.
-  **권고: 폴백 강등** (정의 단일화).
-- **Q3** JD 불명 프레임(night 0)의 기본 처리: 제외 vs 포함+경고. **권고: 제외 기본.**
-- **Q4** reference 모드 기본값: **권고 full 유지, reference 는 opt-in** (이식성 보존).
-- **Q5** `temp_match_tol_c` 기본 1.0 °C + strict off 가 적절한가.
+2차 검토(코드 대조 전수 확인)를 거쳐 권고안대로 확정한다. 구현 세션은 아래를
+기본값으로 진행하고, 사용자가 반대 의견을 주면 그때 수정한다.
+
+- **Q1 확정: 지역 정오분할.** 태양고도 계산 불필요 — 낮 어느 시각에 잘라도
+  결과 동일. 단, 경도·tz 둘 다 없으면 정오분할 자체를 포기하는 폴백 체인이
+  필수 (P1 의 [2차 검토 수정] 항목 — UTC −12h 는 동아시아에서 밤을 찢는다).
+- **Q2 확정: JD-gap 폴백 강등.** 단 tz 미설정 + 경도 부재 환경에서는 JD-gap 유지.
+- **Q3 확정: night 0(시각 불명) 기본 제외 + 표 경고행.**
+- **Q4 확정: full 기본 유지, reference 는 opt-in.** full 의 존재 이유(이식성)
+  확인. 로더 중앙화 성립도 확인(P7) — 구현 리스크 낮음.
+- **Q5 확정: `temp_match_tol_c` 기본 1.0 °C, `strict_temp` 기본 off.**
+  0.1 °C 민감 사용자는 tol 을 내리거나 strict 를 켠다 (GUI decimals=1, 하한 0.1).
+
+### 2차 검토에서 나온 계획 수정·보강 (구현 시 필독)
+
+1. **P1 우선순위 체인 수정** — "무조건 DATE-OBS 우선" 은 위험. 경도/tz 가용성에
+   따른 4단 폴백으로 확정 (P1 본문). Step 0 에 `site_tz_offset_hours` 폴백 추가.
+2. **P3 경로 구체화** — 헤드리스 Step 0 는 `scripts/_reprocess_step0.py` 로 이미
+   가동 중(GUI 워커를 offscreen 구동). `_CalibrationWorker._run` 을 Qt-free 로
+   추출해 GUI·pipeline·스크립트 3자 단일 경로화. `_persist_param_file` 은
+   Step 1 전용이라 공용 유틸로 추출 필요.
+3. **P7 설계 확정** — 로더 단일 지점(`_resolve_photometry_path`) 확인,
+   step9 는 index 의 `path` 컬럼 미사용, qa_report 직접 glob 만 알려진 열화.
+4. **P8c 참고** — prefix 초기화 패턴은 `step1_file_selection.py:485`
+   (`_persist_param_file(io_updates={"filename_prefix": ""})`) 재사용.
+5. **LC 헤더 테이블에는 SITELONG 이 안 남는다** — LC 정오분할의 경도 출처는
+   params 뿐. 헤더 스캔에 경도 키를 추가로 보존하는 확장은 선택 사항(비채택 —
+   tz 파라미터로 충분).
