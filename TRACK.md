@@ -305,6 +305,15 @@ esult`,
    직접 비교는 불가하고, 새 결과의 내적 일관성만 본다.
    그다음: `source_quality.py:115` All-NaN slice 경고 (테스트 4건)
 
+**백로그 — apex-paper 에서 이관 (2026-08-02, D-P02 닫으면서)**
+
+- **PSF 적합을 `apex/analysis` 로 옮겨 `apex.pipeline` 에 단계로 등록.**
+  지금 계산부는 `apex/gui/workflow/cmd/step8_psf_photometry.py`(8,589줄)에 있고
+  `scripts/run_step8_headless.py` 가 `Step6PSFWorker` 를 창 없이 돌려 준다 —
+  **동작에는 문제가 없다.** 어긋나는 것은 계층 규칙(analysis 는 Qt 비의존)뿐이다.
+  논문에는 영향이 없으므로 급하지 않다. 옮긴다면 §3.14 의 수치가 재현되는지
+  같은 6벌 자료로 확인할 것.
+
 ## 측정 완료 — `n_det_frames` 분포 · 두 성단 (2026-07-28)
 
 **데이터: M67 (Moravian C3-61000 · 2026-02-08 밤 · g′ 60 s × 10장 · `E:\APEX_validation\reprocess\M67\sci`)**
