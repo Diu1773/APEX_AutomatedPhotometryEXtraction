@@ -1,33 +1,46 @@
-"""Figure 3 — APEX parameter & observing-conditions sensitivity sweeps.
+"""Figure — pipeline-parameter and observing-condition sensitivity sweeps.
 
-Three 1x3 panels showing real monotonic trends of pipeline metrics as one knob
-is varied at a time:
+Full redesign (2026-08-02) of the trials=4 original. Every point is now an
+artificial-star benchmark of 30 trials x 40 injected stars run through the
+production code path (empirical-PSF injection -> Step-4 detection -> forced
+aperture photometry, `apex.benchmark.runner.run_benchmark`), with 95% CIs from
+a cluster bootstrap over trials. Twin y-axes are gone: one metric per panel,
+2x3 grid with a shared x per column.
 
-* (a) Aperture radius (`aperture_scale_fwhm`) on a single fixed synthetic frame:
-  photometric scatter (MAD, mag) + astrometric position RMSE vs aperture scale.
-  A minimum-scatter aperture near ~1.2x FWHM (too small loses flux/SNR, too
-  large admits sky noise).
-* (b) Sky background: a controlled synthetic frame is regenerated per background
-  level; 50% completeness depth (m50) + photometric scatter vs sky brightness.
-  Brighter sky -> shallower (brighter) m50 + larger scatter.
-* (c) Seeing (PSF FWHM): a controlled frame is regenerated per FWHM; m50 depth +
-  photometric scatter vs FWHM. Worse seeing -> shallower m50 + larger scatter.
+* Column 1 — aperture radius on ONE fixed frame (FWHM 6.0 px). The production
+  pipeline clamps the forced-aperture radius at `min_r_ap_px` = 4 px, so on the
+  old 3.5 px-FWHM frame every requested scale below ~1.1xFWHM collapsed onto
+  the same 4 px radius; the old panel drew those duplicate measurements as a
+  "flat" segment. The 6.0 px frame puts the whole 0.7-2.5xFWHM range above the
+  floor, so each point is a distinct aperture. One deliberately clamped request
+  (0.5xFWHM) is kept, plotted at its effective radius with an open marker.
+  Top: photometric scatter (MAD). Bottom: position RMSE (aperture-independent).
+* Column 2 — sky background: a controlled frame regenerated per level (only
+  the sky changes; star field, seed and all other knobs fixed).
+  Top: 50% completeness depth m50 (cluster-bootstrap CI from the production
+  completeness fit). Bottom: photometric scatter.
+* Column 3 — seeing (PSF FWHM): frame regenerated per value, same design.
+* Companion (reported in the caption, not drawn): detection threshold
+  `detect_sigma` swept 2.0-6.0 on the baseline frame.
 
-Experimental design note: panel (a) isolates a pure *pipeline* knob, so it reuses
-ONE fixed frame. Panels (b) and (c) study *observing conditions*, so the correct
-design is to regenerate a controlled frame per condition value (only that
-condition changes; the star field seed, count, and all other knobs are fixed).
+Distilled per-point metrics land in data_parameter_sweep/ so the figure can be
+rebuilt without the ~45 min of benchmark runs.
 
 Run with the deploy venv:
     .venv-deploy\\Scripts\\python.exe validation\\paper\\fig3_parameter_sweep.py
+        [--sweep aperture|background|seeing|threshold]   # run one sweep's points
+        [--figure-only]                                  # draw from distilled CSV
 """
 
-import sys
+from __future__ import annotations
+
+import argparse
 import json
 import shutil
+import sys
 from pathlib import Path
 
-REPO = Path(r"C:\Users\bmffr\Desktop\Result\Automated_Photometry_EXtraction")
+REPO = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(REPO))
 sys.path.insert(0, str(REPO / "validation" / "paper"))
 
@@ -35,7 +48,7 @@ import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
 
-from apex_paper_style import apply_paper_style, save_fig, C, PALETTE, SINGLE_COL, DOUBLE_COL
+from apex_paper_style import apply_paper_style, save_fig, C, PALETTE, DOUBLE_COL
 
 apply_paper_style()
 
@@ -47,19 +60,30 @@ from apex.benchmark.runner import BenchmarkConfig, run_benchmark
 PAPER_DIR = REPO / "validation" / "paper"
 FIG_DIR = PAPER_DIR / "figures"
 CAP_DIR = PAPER_DIR / "captions"
+DATA_DIR = PAPER_DIR / "data_parameter_sweep"
 # Short benchmark run root to stay under the Windows MAX_PATH (260) limit;
 # NOT under a deep AppData\Local\Temp\claude\... scratchpad path.
 SWEEP_ROOT = Path(r"C:\Users\bmffr\AppData\Local\Temp\apx_sweep")
 
 # ── fixed synthetic-frame + benchmark constants ──────────────────────────────
-SEED = 20260702
+SEED = 20260702          # frame seed AND benchmark base seed (trial t -> SEED+t)
+BOOT_SEED = 20260802     # cluster-bootstrap RNG for MAD / RMSE CIs
+TRIALS = 30
+STARS_PER_TRIAL = 40
+N_BOOT = 1000            # bootstrap resamples for MAD / RMSE
+M50_BOOT = 500           # completeness-fit cluster bootstrap (production code)
 PARAM_FILE = str(REPO / "parameters.toml")
 
 # Baseline synthetic-frame parameters (held fixed except the swept condition).
+# 1024 px / 435 stars keeps the star density of the old 640 px / 170-star frame
+# (4.15e-4 px^-2) while giving the injection sampler room: at FWHM 6 px the
+# min-separation constraint reaches ~62 px and 40 injections hit the random-
+# sequential jamming limit of a 640 px frame (placement failures on some
+# trial seeds — observed 2026-08-02).
 FRAME_BASE = dict(
     seed=SEED,
-    n_stars=170,
-    size=640,
+    n_stars=435,
+    size=1024,
     fwhm_px=3.5,
     zeropoint=25.0,
     background=150.0,
@@ -71,54 +95,68 @@ FRAME_BASE = dict(
     exptime=1.0,
 )
 
-# Pipeline default aperture (marked with a dashed guide line in panel a).
-DEFAULT_APERTURE_SCALE = 0.8   # forced_r_ap_scale default in the runner
+# Aperture sweep runs on a FWHM 6.0 px frame so every scale below maps to a
+# radius above the 4 px production floor (see module docstring).
+APERTURE_FRAME_FWHM = 6.0
+DEFAULT_APERTURE_SCALE = 0.8          # forced_r_ap_scale default
+MIN_R_AP_PX = 4.0                     # production min_r_ap_px (parameters_cmd)
 
-# Sweep grids.
-APERTURE_SCALES = [0.6, 0.8, 1.0, 1.2, 1.5, 2.0, 2.5]
-BACKGROUNDS = [50.0, 100.0, 150.0, 300.0, 600.0, 1000.0]   # ADU
-FWHMS = [2.5, 3.0, 3.5, 4.0, 5.0, 6.0]                     # px
+# Sweep grids. The seeing grid stays inside the production FWHM-QC window
+# ([fwhm] px_min = 3.0): below it the frame-FWHM estimator is out of its
+# envelope and returns garbage (true 2.5 px measured as 8.5 px from 5 stars,
+# observed 2026-08-02), so a 2.5 px point would not be a pipeline measurement.
+APERTURE_SCALES = [0.5, 0.7, 0.8, 0.9, 1.0, 1.1, 1.2, 1.4, 1.7, 2.0, 2.5]
+BACKGROUNDS = [50.0, 100.0, 150.0, 225.0, 300.0, 450.0, 600.0, 800.0, 1000.0]
+FWHMS = [3.0, 3.5, 4.0, 4.5, 5.0, 5.5, 6.0]
+DETECT_SIGMAS = [2.0, 3.2, 4.0, 5.0, 6.0]     # 3.2 = production default
 
-# The detection-threshold override key is a *positive* robustness result noted
-# in the caption (verified: `detect_sigma` is a Parameters.P dataclass field).
-DETECT_SIGMA_KEY = "detect_sigma"
+STARS_COLS = ["trial", "baseline_confounded", "recovered",
+              "forced_mag_error", "position_error_px"]
 
 
+# ── benchmark plumbing ───────────────────────────────────────────────────────
 def _make_frame(path: Path, **overrides) -> Path:
-    """Generate a controlled synthetic frame (baseline + per-sweep overrides)."""
+    """Generate a frame, or reuse the on-disk one if its parameters match.
+
+    Reuse matters for caching: the generator stamps a DATE header, so
+    regenerating an identical frame changes the file bytes and would
+    invalidate every cached benchmark point through the sha check.
+    """
     params = dict(FRAME_BASE)
     params.update(overrides)
-    return make_synthetic_reference_frame(path, **params)
-
-
-def _run_benchmark(
-    frame: Path,
-    out_dir: Path,
-    *,
-    aperture_scale,
-    detection_overrides,
-    magnitude_min,
-    magnitude_max,
-    reuse: bool,
-) -> dict:
-    """Run one benchmark (or reuse an existing valid run) and return summary.json."""
-    summary_path = out_dir / "summary.json"
-    if reuse and summary_path.exists():
+    meta_path = Path(str(path) + ".params.json")
+    if path.exists() and meta_path.exists():
         try:
-            return json.loads(summary_path.read_text(encoding="utf-8"))
+            if json.loads(meta_path.read_text(encoding="utf-8")) == json.loads(
+                    json.dumps(params)):
+                return path
         except Exception:
             pass
-    shutil.rmtree(out_dir, ignore_errors=True)
-    cfg = BenchmarkConfig(
+    out = make_synthetic_reference_frame(path, **params)
+    meta_path.write_text(json.dumps(params, sort_keys=True), encoding="utf-8")
+    return out
+
+
+def _n_baked(frame: Path) -> int:
+    """Stars actually placed in the frame (the generator can fall short of
+    n_stars near the packing limit; the header records the real count)."""
+    from astropy.io import fits
+    with fits.open(frame, memmap=False) as hdul:
+        return int(hdul[0].header.get("APEXNST", -1))
+
+
+def _config(frame: Path, *, aperture_scale, detection_overrides,
+            magnitude_min, magnitude_max, m50_boot) -> BenchmarkConfig:
+    return BenchmarkConfig(
         input_fits=str(frame),
         parameter_file=PARAM_FILE,
         seed=SEED,
-        trials=4,
-        stars_per_trial=40,
+        trials=TRIALS,
+        stars_per_trial=STARS_PER_TRIAL,
         magnitude_min=magnitude_min,
         magnitude_max=magnitude_max,
         magnitude_bin_width=1.0,
-        completeness_bootstrap_samples=100,
+        completeness_bootstrap_samples=m50_boot,
         save_injected_fits=False,
         zeropoint_mag=25.0,
         isolated_fraction=0.6,
@@ -126,312 +164,559 @@ def _run_benchmark(
         aperture_scale_fwhm=aperture_scale,
         detection_overrides=detection_overrides,
     )
-    run_dir = run_benchmark(cfg, input_override=frame, output_override=out_dir)
-    return json.loads((run_dir / "summary.json").read_text(encoding="utf-8"))
 
 
-# ── Sweep 1 — aperture radius (single fixed frame; reuse cached results) ──────
+# Cache key: the config fields that change the *measurements*. The bootstrap
+# sample count only changes CI availability and is deliberately excluded.
+_KEY_FIELDS = ("seed", "trials", "stars_per_trial", "magnitude_min",
+               "magnitude_max", "aperture_scale_fwhm", "detection_overrides",
+               "isolated_fraction")
+
+
+def _sha256(path: Path) -> str:
+    import hashlib
+    digest = hashlib.sha256()
+    with path.open("rb") as handle:
+        for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+def _cache_valid(out_dir: Path, cfg: BenchmarkConfig, frame: Path) -> bool:
+    manifest = out_dir / "manifest.json"
+    summary = out_dir / "summary.json"
+    stars = out_dir / "stars.csv"
+    if not (manifest.exists() and summary.exists() and stars.exists()):
+        return False
+    try:
+        mani = json.loads(manifest.read_text(encoding="utf-8"))
+        eff = mani["effective_config"]
+    except Exception:
+        return False
+    for field in _KEY_FIELDS:
+        if eff.get(field) != getattr(cfg, field):
+            return False
+    # the frame is regenerated deterministically every run; a changed frame
+    # definition (size, star count, ...) must invalidate the cached point
+    if mani.get("input_sha256") != _sha256(frame):
+        return False
+    return True
+
+
+def _run_point(frame: Path, out_dir: Path, cfg: BenchmarkConfig) -> dict:
+    """Run one benchmark point (or reuse a valid cached run)."""
+    if not _cache_valid(out_dir, cfg, frame):
+        shutil.rmtree(out_dir, ignore_errors=True)
+        run_benchmark(cfg, input_override=frame, output_override=out_dir)
+    summary = json.loads((out_dir / "summary.json").read_text(encoding="utf-8"))
+    summary["_run_dir"] = str(out_dir)
+    return summary
+
+
+# ── cluster bootstrap (over trials) for MAD / position RMSE ──────────────────
+# Statistics replicate apex.benchmark.metrics.summarize_results exactly:
+#   MAD  : 1.4826 * median|x - median(x)| of forced_mag_error,
+#          eligible (= not baseline-confounded) & finite
+#   RMSE : sqrt(mean(position_error_px^2)), eligible & recovered & finite
+def _point_stats(run_dir: Path) -> dict:
+    stars = pd.read_csv(Path(run_dir) / "stars.csv", usecols=STARS_COLS)
+    eligible = ~stars["baseline_confounded"].astype(bool)
+    recovered = stars["recovered"].astype(bool)
+    mag = pd.to_numeric(stars["forced_mag_error"], errors="coerce")
+    pos = pd.to_numeric(stars["position_error_px"], errors="coerce")
+
+    mad_by_trial, rmse_by_trial = [], []
+    for _t, idx in stars.groupby("trial").groups.items():
+        sel = stars.index.isin(idx)
+        mad_by_trial.append(mag[sel & eligible & np.isfinite(mag)].to_numpy(float))
+        rmse_by_trial.append(
+            pos[sel & eligible & recovered & np.isfinite(pos)].to_numpy(float))
+
+    def mad_of(values: np.ndarray) -> float:
+        if values.size == 0:
+            return np.nan
+        return float(1.4826 * np.median(np.abs(values - np.median(values))))
+
+    def rmse_of(values: np.ndarray) -> float:
+        if values.size == 0:
+            return np.nan
+        return float(np.sqrt(np.mean(values ** 2)))
+
+    rng = np.random.default_rng(BOOT_SEED)
+    n_tr = len(mad_by_trial)
+    boots_mad, boots_rmse = [], []
+    for _ in range(N_BOOT):
+        pick = rng.integers(0, n_tr, size=n_tr)
+        boots_mad.append(mad_of(np.concatenate([mad_by_trial[i] for i in pick])))
+        boots_rmse.append(rmse_of(np.concatenate([rmse_by_trial[i] for i in pick])))
+    boots_mad = np.asarray(boots_mad, float)
+    boots_rmse = np.asarray(boots_rmse, float)
+
+    out = {
+        "mad": mad_of(np.concatenate(mad_by_trial)),
+        "rmse": rmse_of(np.concatenate(rmse_by_trial)),
+        "n_mag": int(sum(v.size for v in mad_by_trial)),
+        "n_pos": int(sum(v.size for v in rmse_by_trial)),
+    }
+    for name, boots in (("mad", boots_mad), ("rmse", boots_rmse)):
+        good = boots[np.isfinite(boots)]
+        out[f"{name}_lo"] = float(np.percentile(good, 2.5)) if good.size else np.nan
+        out[f"{name}_hi"] = float(np.percentile(good, 97.5)) if good.size else np.nan
+    return out
+
+
+# ── sweeps ───────────────────────────────────────────────────────────────────
 def run_aperture_sweep() -> pd.DataFrame:
-    frame = _make_frame(PAPER_DIR / "_sweep_ref.fits")
+    frame = _make_frame(SWEEP_ROOT / "ap_ref.fits", fwhm_px=APERTURE_FRAME_FWHM)
     rows = []
     for scale in APERTURE_SCALES:
         tag = f"ap_{int(round(scale * 100)):04d}"
-        summary = _run_benchmark(
-            frame, SWEEP_ROOT / tag,
-            aperture_scale=scale, detection_overrides={},
-            magnitude_min=14.5, magnitude_max=19.0, reuse=True,
-        )
-        rows.append(
-            {
-                "aperture_scale": scale,
-                "scatter_mad": summary.get("forced_mag_scatter_mad"),
-                "position_rmse_px": summary.get("position_rmse_px"),
-            }
-        )
-        print(f"[aperture] scale={scale:.2f}  MAD={rows[-1]['scatter_mad']!r}  "
-              f"rmse={rows[-1]['position_rmse_px']!r}")
+        cfg = _config(frame, aperture_scale=scale, detection_overrides={},
+                      magnitude_min=14.5, magnitude_max=19.0, m50_boot=0)
+        summary = _run_point(frame, SWEEP_ROOT / tag, cfg)
+        stats = _point_stats(summary["_run_dir"])
+        r_ap = float(summary["aperture_radii_px"]["aperture"])
+        fwhm_det = float(summary["fwhm_px"])
+        rows.append({
+            "sweep": "aperture", "requested_scale": scale,
+            "r_ap_px": r_ap, "fwhm_det_px": fwhm_det,
+            "clamped": bool(r_ap > scale * fwhm_det + 1e-9),
+            "n_baked": _n_baked(frame), **stats,
+        })
+        print(f"[aperture] scale={scale:.2f} r_ap={r_ap:.2f}px "
+              f"clamped={rows[-1]['clamped']} MAD={stats['mad']:.4f} "
+              f"[{stats['mad_lo']:.4f},{stats['mad_hi']:.4f}] "
+              f"RMSE={stats['rmse']:.3f}px", flush=True)
     return pd.DataFrame(rows)
 
 
-# ── Sweep 2 — sky background (frame regenerated per value) ────────────────────
+def _condition_row(summary: dict, stats: dict, frame: Path) -> dict:
+    fit = summary.get("completeness_fit") or {}
+    return {
+        "m50": fit.get("m50"),
+        "m50_lo": fit.get("m50_ci95_low"),
+        "m50_hi": fit.get("m50_ci95_high"),
+        "false_detections": summary.get("new_false_detections"),
+        "r_ap_px": float(summary["aperture_radii_px"]["aperture"]),
+        "fwhm_det_px": float(summary["fwhm_px"]),
+        "n_baked": _n_baked(frame),
+        **stats,
+    }
+
+
 def run_background_sweep() -> pd.DataFrame:
     rows = []
     for bkg in BACKGROUNDS:
         tag = f"bkg_{int(round(bkg)):05d}"
         frame = _make_frame(SWEEP_ROOT / f"{tag}_ref.fits", background=bkg)
-        summary = _run_benchmark(
-            frame, SWEEP_ROOT / tag,
-            aperture_scale=None, detection_overrides={},
-            magnitude_min=14.0, magnitude_max=20.0, reuse=False,
-        )
-        fit = summary.get("completeness_fit") or {}
-        rows.append(
-            {
-                "background": bkg,
-                "m50": fit.get("m50"),
-                "scatter_mad": summary.get("forced_mag_scatter_mad"),
-                "completeness": summary.get("completeness"),
-            }
-        )
-        print(f"[background] sky={bkg:.0f} ADU  m50={rows[-1]['m50']!r}  "
-              f"MAD={rows[-1]['scatter_mad']!r}")
+        cfg = _config(frame, aperture_scale=None, detection_overrides={},
+                      magnitude_min=14.0, magnitude_max=20.0, m50_boot=M50_BOOT)
+        summary = _run_point(frame, SWEEP_ROOT / tag, cfg)
+        stats = _point_stats(summary["_run_dir"])
+        rows.append({"sweep": "background", "background": bkg,
+                     **_condition_row(summary, stats, frame)})
+        print(f"[background] sky={bkg:.0f} ADU m50={rows[-1]['m50']:.3f} "
+              f"[{rows[-1]['m50_lo']:.3f},{rows[-1]['m50_hi']:.3f}] "
+              f"MAD={stats['mad']:.4f}", flush=True)
     return pd.DataFrame(rows)
 
 
-# ── Sweep 3 — seeing / PSF FWHM (frame regenerated per value) ─────────────────
 def run_seeing_sweep() -> pd.DataFrame:
     rows = []
     for fwhm in FWHMS:
         tag = f"fwhm_{int(round(fwhm * 10)):03d}"
-        frame = _make_frame(SWEEP_ROOT / f"{tag}_ref.fits", fwhm_px=fwhm, background=150.0)
-        summary = _run_benchmark(
-            frame, SWEEP_ROOT / tag,
-            aperture_scale=None, detection_overrides={},
-            magnitude_min=14.0, magnitude_max=20.0, reuse=False,
-        )
-        fit = summary.get("completeness_fit") or {}
-        rows.append(
-            {
-                "fwhm_px": fwhm,
-                "m50": fit.get("m50"),
-                "scatter_mad": summary.get("forced_mag_scatter_mad"),
-                "completeness": summary.get("completeness"),
-            }
-        )
-        print(f"[seeing] fwhm={fwhm:.1f} px  m50={rows[-1]['m50']!r}  "
-              f"MAD={rows[-1]['scatter_mad']!r}")
+        frame = _make_frame(SWEEP_ROOT / f"{tag}_ref.fits", fwhm_px=fwhm)
+        cfg = _config(frame, aperture_scale=None, detection_overrides={},
+                      magnitude_min=14.0, magnitude_max=20.0, m50_boot=M50_BOOT)
+        summary = _run_point(frame, SWEEP_ROOT / tag, cfg)
+        stats = _point_stats(summary["_run_dir"])
+        rows.append({"sweep": "seeing", "fwhm_px": fwhm,
+                     **_condition_row(summary, stats, frame)})
+        print(f"[seeing] fwhm={fwhm:.1f}px m50={rows[-1]['m50']:.3f} "
+              f"[{rows[-1]['m50_lo']:.3f},{rows[-1]['m50_hi']:.3f}] "
+              f"MAD={stats['mad']:.4f}", flush=True)
     return pd.DataFrame(rows)
 
 
+def _sigma_actually_used(run_dir: Path) -> float:
+    """The sigma the detector really applied (from the baseline detect json).
+
+    Guard against silent no-op overrides: the live parameters.toml defines
+    per-filter sigmas ([detection.sigma_by_filter] / detect_sigma_r) which mask
+    a bare `detect_sigma` override — observed 2026-08-02: all five "swept"
+    thresholds ran at 3.2 and produced bit-identical results.
+    """
+    js = sorted(Path(run_dir).glob("baseline/step4_detection/detect_*.json"))
+    return float(json.loads(js[0].read_text(encoding="utf-8"))["sigma_used"])
+
+
+def run_threshold_sweep() -> pd.DataFrame:
+    frame = _make_frame(SWEEP_ROOT / "thr_ref.fits")
+    rows = []
+    for sig in DETECT_SIGMAS:
+        tag = f"thr_{int(round(sig * 10)):03d}"
+        # override the per-filter key too (the synthetic frame is filter "r");
+        # otherwise detect_sigma_r from parameters.toml masks the sweep value
+        cfg = _config(frame, aperture_scale=None,
+                      detection_overrides={"detect_sigma": sig,
+                                           "detect_sigma_r": sig},
+                      magnitude_min=14.0, magnitude_max=20.0, m50_boot=M50_BOOT)
+        summary = _run_point(frame, SWEEP_ROOT / tag, cfg)
+        stats = _point_stats(summary["_run_dir"])
+        used = _sigma_actually_used(summary["_run_dir"])
+        if abs(used - sig) > 1e-6:
+            raise RuntimeError(
+                f"threshold sweep is a no-op: requested {sig}, detector used {used}")
+        rows.append({"sweep": "threshold", "detect_sigma": sig,
+                     "sigma_used": used,
+                     **_condition_row(summary, stats, frame)})
+        print(f"[threshold] sigma={sig:.1f} (used {used:.1f}) "
+              f"m50={rows[-1]['m50']:.3f} "
+              f"false={rows[-1]['false_detections']}", flush=True)
+    return pd.DataFrame(rows)
+
+
+SWEEPS = {
+    "aperture": run_aperture_sweep,
+    "background": run_background_sweep,
+    "seeing": run_seeing_sweep,
+    "threshold": run_threshold_sweep,
+}
+
+
 # ── figure ───────────────────────────────────────────────────────────────────
-def _twin_depth_scatter(ax, x, m50, mad, xlabel, title):
-    """Shared drawing for panels (b)/(c): m50 depth (left) + MAD (right)."""
-    c_depth = C["data"]
-    c_scatter = C["accent"]
-    ax.plot(x, m50, marker="o", color=c_depth, label=r"Depth ($m_{50}$)")
-    ax.set_xlabel(xlabel)
-    ax.set_ylabel(r"$m_{50}$ depth (mag)", color=c_depth)
-    ax.tick_params(axis="y", colors=c_depth)
-    ax.set_title(title, loc="left")
-
-    ax2 = ax.twinx()
-    ax2.plot(x, mad, marker="s", color=c_scatter, label="Photometric scatter")
-    ax2.set_ylabel("Photometric scatter (MAD, mag)", color=c_scatter)
-    ax2.tick_params(axis="y", colors=c_scatter)
-    ax2.grid(False)
-
-    lines = ax.get_lines() + ax2.get_lines()
-    ax.legend(lines, [ln.get_label() for ln in lines],
-              loc="best", fontsize=7.0)
-    return ax2
+def _err(lo, hi, y):
+    y = np.asarray(y, float)
+    return np.vstack([y - np.asarray(lo, float), np.asarray(hi, float) - y])
 
 
-def make_figure(ap: pd.DataFrame, bg: pd.DataFrame, se: pd.DataFrame):
-    fig, (ax_a, ax_b, ax_c) = plt.subplots(1, 3, figsize=(DOUBLE_COL, 2.6))
+def make_figure(ap: pd.DataFrame, bg: pd.DataFrame, se: pd.DataFrame,
+                thr: pd.DataFrame) -> dict:
+    fig, axes = plt.subplots(2, 3, figsize=(DOUBLE_COL, 4.9), sharex="col")
+    (ax_a, ax_b, ax_c), (ax_d, ax_e, ax_f) = axes
+    TITLE_KW = dict(loc="left", fontsize=8.4)
 
-    # ── (a) Aperture radius — KEEP unchanged ─────────────────────────────────
-    c_scatter = C["data"]
-    c_rmse = C["accent"]
-    ax_a.plot(ap["aperture_scale"], ap["scatter_mad"],
-              marker="o", color=c_scatter, label="Photometric scatter")
-    ax_a.set_xlabel(r"Aperture radius / FWHM")
-    ax_a.set_ylabel("Photometric scatter (MAD, mag)", color=c_scatter)
-    ax_a.tick_params(axis="y", colors=c_scatter)
+    # ── column 1: aperture radius (fixed frame, FWHM 6 px) ──────────────────
+    fwhm_det = float(ap["fwhm_det_px"].iloc[0])
+    solid = ap[~ap["clamped"]]
+    clamp = ap[ap["clamped"]]
+    x_s = solid["r_ap_px"] / fwhm_det
+    x_c = clamp["r_ap_px"] / fwhm_det
 
-    ax_a2 = ax_a.twinx()
-    ax_a2.plot(ap["aperture_scale"], ap["position_rmse_px"],
-               marker="s", color=c_rmse, label="Position RMSE")
-    ax_a2.set_ylabel("Position RMSE (px)", color=c_rmse)
-    ax_a2.tick_params(axis="y", colors=c_rmse)
-    ax_a2.grid(False)
-    rmse_vals = pd.to_numeric(ap["position_rmse_px"], errors="coerce").dropna()
-    if len(rmse_vals):
-        ax_a2.set_ylim(0.0, max(0.3, 2.0 * float(rmse_vals.median())))
+    opt = solid.loc[solid["mad"].idxmin()]
+    x_opt = float(opt["r_ap_px"]) / fwhm_det
 
-    ap_valid = ap.dropna(subset=["scatter_mad"])
-    opt_row = ap_valid.loc[ap_valid["scatter_mad"].idxmin()]
-    opt_scale = float(opt_row["aperture_scale"])
-    ax_a.axvline(DEFAULT_APERTURE_SCALE, color=C["floor"], linestyle="--",
-                 linewidth=1.0, label=f"Default ({DEFAULT_APERTURE_SCALE:g})")
-    ax_a.axvline(opt_scale, color=C["good"], linestyle=":", linewidth=1.2,
-                 label=f"Optimum ({opt_scale:g})")
-    ax_a.set_title("(a) Aperture radius", loc="left")
-    lines_a = ax_a.get_lines() + ax_a2.get_lines()
-    ax_a.legend(lines_a, [ln.get_label() for ln in lines_a],
-                loc="upper center", fontsize=6.5)
+    for ax in (ax_a, ax_d):
+        ax.axvspan(0.5, MIN_R_AP_PX / fwhm_det, color=PALETTE["grey"], alpha=0.15,
+                   lw=0)
+        ax.axvline(DEFAULT_APERTURE_SCALE, color=PALETTE["grey"], ls="--", lw=0.9)
+    ax_a.text(MIN_R_AP_PX / fwhm_det - 0.02, 0.185, "4 px floor",
+              fontsize=6.0, color=PALETTE["grey"], ha="right", va="top",
+              rotation=90)
+    ax_a.text(DEFAULT_APERTURE_SCALE + 0.02, 0.185,
+              f"default {DEFAULT_APERTURE_SCALE:g}", fontsize=6.0,
+              color=PALETTE["grey"], ha="left", va="top", rotation=90)
 
-    # ── (b) Sky background — depth + scatter ─────────────────────────────────
-    _twin_depth_scatter(
-        ax_b, bg["background"], bg["m50"], bg["scatter_mad"],
-        r"Sky background (ADU)", "(b) Sky background",
+    ax_a.errorbar(x_s, solid["mad"], yerr=_err(solid["mad_lo"], solid["mad_hi"],
+                                               solid["mad"]),
+                  fmt="o-", ms=3.4, lw=1.1, capsize=2, color=C["data"])
+    ax_a.errorbar(x_c, clamp["mad"], yerr=_err(clamp["mad_lo"], clamp["mad_hi"],
+                                               clamp["mad"]),
+                  fmt="o", ms=4.2, mfc="none", color=C["data"])
+    for _i, row in clamp.iterrows():
+        ax_a.annotate(f"{row['requested_scale']:g}$\\times$ requested\n"
+                      "$\\to$ clamped to 4 px",
+                      (row["r_ap_px"] / fwhm_det, row["mad"]),
+                      textcoords="offset points", xytext=(-6, 30), fontsize=6.0,
+                      color=C["data"], ha="left",
+                      arrowprops=dict(arrowstyle="-", lw=0.6, color=C["data"]))
+    ax_a.annotate(f"min {opt['mad']:.3f} mag at {x_opt:.2f}$\\times$FWHM",
+                  (x_opt, float(opt["mad"])), textcoords="offset points",
+                  xytext=(24, -6), fontsize=6.4, color=C["model"],
+                  arrowprops=dict(arrowstyle="-", lw=0.7, color=C["model"]))
+    ax_a.set_ylim(0.03, 0.22)
+    ax_a.set_ylabel("scatter MAD (mag)")
+    ax_a.set_title(f"(a) scatter min at {x_opt:.2f}$\\times$FWHM", **TITLE_KW)
+
+    rmse_med = float(np.median(solid["rmse"]))
+    ax_d.errorbar(x_s, solid["rmse"], yerr=_err(solid["rmse_lo"],
+                                                solid["rmse_hi"], solid["rmse"]),
+                  fmt="s-", ms=3.0, lw=1.1, capsize=2, color=C["accent"])
+    ax_d.errorbar(x_c, clamp["rmse"], yerr=_err(clamp["rmse_lo"],
+                                                clamp["rmse_hi"], clamp["rmse"]),
+                  fmt="s", ms=3.8, mfc="none", color=C["accent"])
+    ax_d.axhline(rmse_med, color=PALETTE["grey"], lw=0.7, ls=":")
+    ax_d.text(0.98, 0.90, f"median {rmse_med:.2f} px",
+              transform=ax_d.transAxes, fontsize=6.4, ha="right",
+              color=PALETTE["grey"])
+    ax_d.set_xlabel("aperture radius / FWHM")
+    ax_d.text(0.03, 0.06, f"frame FWHM {fwhm_det:.1f} px",
+              transform=ax_d.transAxes, fontsize=6.0, color=PALETTE["grey"])
+    ax_d.set_ylabel("position RMSE (px)")
+    ax_d.set_ylim(0, max(0.6, 1.6 * float(solid["rmse"].max())))
+    ax_d.set_title("(b) astrometry: aperture-independent", **TITLE_KW)
+
+    # ── columns 2-3: observing conditions ───────────────────────────────────
+    def depth_panel(ax, x, d, title, logx=False, end_off=(-8, -15)):
+        ax.errorbar(x, d["m50"], yerr=_err(d["m50_lo"], d["m50_hi"], d["m50"]),
+                    fmt="o-", ms=3.4, lw=1.1, capsize=2, color=C["data"])
+        if logx:
+            ax.set_xscale("log")
+        # normal axis: larger m50 (fainter limit, deeper) plots upward
+        ax.set_ylabel(r"depth $m_{50}$ (mag)")
+        ax.set_title(title, **TITLE_KW)
+        ax.annotate(f"{d['m50'].iloc[0]:.2f}", (x.iloc[0], d["m50"].iloc[0]),
+                    textcoords="offset points", xytext=(6, 2), fontsize=6.4,
+                    color=C["data"])
+        ax.annotate(f"{d['m50'].iloc[-1]:.2f}", (x.iloc[-1], d["m50"].iloc[-1]),
+                    textcoords="offset points", xytext=end_off, fontsize=6.4,
+                    color=C["data"])
+
+    def scatter_panel(ax, x, d, xlabel, title, logx=False):
+        ax.errorbar(x, d["mad"], yerr=_err(d["mad_lo"], d["mad_hi"], d["mad"]),
+                    fmt="s-", ms=3.0, lw=1.1, capsize=2, color=C["accent"])
+        if logx:
+            ax.set_xscale("log")
+        ax.set_xlabel(xlabel)
+        ax.set_ylabel("scatter MAD (mag)")
+        ax.set_title(title, **TITLE_KW)
+
+    # panel letters run down each column: aperture (a,b) / sky (c,d) / seeing (e,f)
+    d_bg = float(bg["m50"].iloc[0] - bg["m50"].iloc[-1])
+    depth_panel(ax_b, bg["background"], bg,
+                f"(c) sky 50$\\to$1000 ADU: $-${d_bg:.2f} mag",
+                logx=True, end_off=(-40, 2))
+    ax_b.set_xlim(38, 1300)
+    scatter_panel(ax_e, bg["background"], bg, "sky background (ADU)",
+                  f"(d) sky: scatter {bg['mad'].iloc[0] * 1000:.0f}$\\to$"
+                  f"{bg['mad'].iloc[-1] * 1000:.0f} mmag", logx=True)
+
+    d_se = float(se["m50"].iloc[0] - se["m50"].iloc[-1])
+    se_lo, se_hi = float(se["fwhm_px"].iloc[0]), float(se["fwhm_px"].iloc[-1])
+    depth_panel(ax_c, se["fwhm_px"], se,
+                f"(e) seeing {se_lo:g}$\\to${se_hi:g} px: "
+                f"$-${d_se:.2f} mag", end_off=(-38, 0))
+    scatter_panel(ax_f, se["fwhm_px"], se, "seeing FWHM (px)",
+                  f"(f) seeing: scatter {se['mad'].iloc[0] * 1000:.0f}$\\to$"
+                  f"{se['mad'].iloc[-1] * 1000:.0f} mmag")
+
+    # ── in-figure data provenance (mandatory since FIGURE_REBUILD_PLAN) ─────
+    baked = sorted(set(int(n) for d in (ap, bg, se, thr) for n in d["n_baked"]))
+    baked_txt = f"{baked[0]}" if len(baked) == 1 else f"{min(baked)}-{max(baked)}"
+    prov = (
+        "Synthetic frames: APEX generator (apex.benchmark.synthetic_frame), seed "
+        f"{SEED} \u00b7 {FRAME_BASE['size']}$^2$ px \u00b7 {baked_txt} field stars "
+        "\u00b7 gain 1.5 e$^-$/ADU \u00b7 "
+        "RN 5 e$^-$ \u00b7 ZP 25 \u00b7 r. (a,b): one fixed frame, FWHM "
+        f"{APERTURE_FRAME_FWHM:g} px, sky 150 ADU; "
+        "(c-f): frame regenerated per condition from the FWHM 3.5 px / sky 150 ADU baseline.\n"
+        f"Each point: {TRIALS} trials $\\times$ {STARS_PER_TRIAL} injected stars "
+        "(empirical-PSF injection $\\to$ production Step-4 detection $\\to$ forced aperture "
+        "photometry). Bars: 95% CI, cluster bootstrap over trials; depth CI from the "
+        "production completeness fit."
     )
+    fig.tight_layout(pad=0.5, h_pad=1.0, w_pad=1.2, rect=(0, 0.075, 1, 1))
+    fig.text(0.005, 0.005, prov, fontsize=5.6, color=PALETTE["grey"], va="bottom")
 
-    # ── (c) Seeing / FWHM — depth + scatter ──────────────────────────────────
-    _twin_depth_scatter(
-        ax_c, se["fwhm_px"], se["m50"], se["scatter_mad"],
-        r"Seeing FWHM (px)", "(c) Seeing (PSF FWHM)",
-    )
-
-    fig.tight_layout()
     paths = save_fig(fig, "fig3_parameter_sweep", FIG_DIR)
     plt.close(fig)
-
-    optima = {
-        "aperture": {
-            "optimal_scale": opt_scale,
-            "min_scatter_mad": float(opt_row["scatter_mad"]),
-            "default_scale": DEFAULT_APERTURE_SCALE,
-        },
-    }
-    return paths, optima
+    return paths
 
 
 # ── caption ──────────────────────────────────────────────────────────────────
-def write_caption(ap, bg, se, optima) -> Path:
+def write_caption(ap, bg, se, thr) -> Path:
     CAP_DIR.mkdir(parents=True, exist_ok=True)
     cap_path = CAP_DIR / "fig3_parameter_sweep.md"
-    opt = optima["aperture"]
 
-    def _trend(df, xcol, ycol):
-        d = df.dropna(subset=[ycol])
-        lo = d.loc[d[xcol].idxmin()]
-        hi = d.loc[d[xcol].idxmax()]
-        return lo, hi
+    fwhm_det = float(ap["fwhm_det_px"].iloc[0])
+    solid = ap[~ap["clamped"]]
+    clamp = ap[ap["clamped"]]
+    opt = solid.loc[solid["mad"].idxmin()]
+    x_opt = float(opt["r_ap_px"]) / fwhm_det
+    rmse_med = float(np.median(solid["rmse"]))
 
-    bg_lo, bg_hi = _trend(bg, "background", "m50")
-    se_lo, se_hi = _trend(se, "fwhm_px", "m50")
+    def tbl(df, cols, fmts):
+        head = "| " + " | ".join(cols) + " |"
+        sep = "|" + "|".join(["---"] * len(cols)) + "|"
+        lines = [head, sep]
+        for _i, r in df.iterrows():
+            lines.append("| " + " | ".join(f.format(r[c])
+                                           for c, f in zip(cols, fmts)) + " |")
+        return "\n".join(lines)
 
-    ap_tbl = "\n".join(
-        f"| {r.aperture_scale:.2f} | {r.scatter_mad:.4f} | {r.position_rmse_px:.4f} |"
-        for r in ap.itertuples()
-    )
-    bg_tbl = "\n".join(
-        f"| {r.background:.0f} | "
-        f"{('%.4f' % r.m50) if pd.notna(r.m50) else 'n/a'} | "
-        f"{('%.4f' % r.scatter_mad) if pd.notna(r.scatter_mad) else 'n/a'} |"
-        for r in bg.itertuples()
-    )
-    se_tbl = "\n".join(
-        f"| {r.fwhm_px:.1f} | "
-        f"{('%.4f' % r.m50) if pd.notna(r.m50) else 'n/a'} | "
-        f"{('%.4f' % r.scatter_mad) if pd.notna(r.scatter_mad) else 'n/a'} |"
-        for r in se.itertuples()
-    )
+    # monotonicity verdict for the scatter trends (the old trials=4 sawtooth)
+    def verdict(d):
+        diffs = np.diff(d["mad"].to_numpy(float))
+        half = 0.5 * (d["mad_hi"] - d["mad_lo"]).to_numpy(float)
+        wobble = float(np.max(np.abs(diffs[diffs < 0]))) if (diffs < 0).any() else 0.0
+        return wobble, float(np.median(half))
 
-    text = f"""# Figure 3 — Parameter & observing-conditions sensitivity
+    bg_wob, bg_ci = verdict(bg)
+    se_wob, se_ci = verdict(se)
 
-**Sensitivity of APEX pipeline metrics to one pipeline parameter and two
-observing conditions, each swept independently.** Every point is an
-artificial-star benchmark (empirical-PSF injection, production Step 4 detection,
-and forced aperture photometry) with 4 trials of 40 injected stars; the modest
-trial count keeps the sweep fast at the cost of per-point Monte-Carlo noise.
-Panel (a) isolates a pure pipeline knob on a single fixed synthetic frame; for
-the observing-condition panels (b, c) a controlled synthetic frame is
-regenerated per value (fixed star-field seed {SEED}, {FRAME_BASE['n_stars']}
-stars, {FRAME_BASE['size']}x{FRAME_BASE['size']} px, gain
-{FRAME_BASE['gain']} e-/ADU, read noise {FRAME_BASE['read_noise']} e-, zero
-point {FRAME_BASE['zeropoint']:.1f} mag), changing only the swept condition.
+    thr_lo = thr.loc[thr["detect_sigma"].idxmin()]
+    thr_hi = thr.loc[thr["detect_sigma"].idxmax()]
+    thr_false_max = int(thr["false_detections"].max())
 
-**(a) Aperture radius.** Photometric scatter (median absolute deviation of the
-recovered magnitude, blue, left axis) and astrometric position RMSE (orange,
-right axis) versus aperture radius in units of the PSF FWHM
-(`aperture_scale_fwhm`), on the fixed frame (sky {FRAME_BASE['background']:.0f}
-ADU, FWHM {FRAME_BASE['fwhm_px']} px). Scatter is minimized at
-**{opt['optimal_scale']:g}x FWHM** (MAD = {opt['min_scatter_mad']:.4f} mag):
-smaller apertures lose source flux and SNR, larger apertures admit sky noise.
-Position RMSE is essentially aperture-independent (~{ap['position_rmse_px'].median():.3f}
-px) because the centroid comes from detection, not the aperture. Dashed grey =
-pipeline default ({opt['default_scale']:g}x FWHM); dotted green = recovered
-optimum.
+    text = f"""# Figure — parameter & observing-conditions sensitivity (rebuilt 2026-08-02)
 
-**(b) Sky background.** 50% completeness depth *m*<sub>50</sub> (blue, left axis)
-and photometric scatter (orange, right axis) versus sky background, with a frame
-regenerated at each level (injection window widened to 14.0-20.0 mag so
-*m*<sub>50</sub> stays in range). As the sky brightens from
-{bg_lo['background']:.0f} to {bg_hi['background']:.0f} ADU the depth becomes
-shallower (brighter), *m*<sub>50</sub> = {bg_lo['m50']:.3f} -> {bg_hi['m50']:.3f}
-mag, and the photometric scatter grows
-({bg_lo['scatter_mad']:.4f} -> {bg_hi['scatter_mad']:.4f} mag): a brighter sky
-raises the shot-noise floor, so faint sources drop below the detection/SNR
-limit — a clean monotonic trend.
+**Data: synthetic only.** APEX synthetic generator
+(`apex.benchmark.synthetic_frame`), seed {SEED};
+{FRAME_BASE['size']}x{FRAME_BASE['size']} px,
+{int(ap['n_baked'].iloc[0])} field stars (star density matches the old 640 px
+/ 170-star frame), gain 1.5 e-/ADU, read noise 5 e-, zero point 25.0, r band.
+Every point is an
+artificial-star benchmark through the production code path (empirical-PSF
+injection -> Step-4 detection -> forced aperture photometry;
+`apex.benchmark.runner.run_benchmark`) with **{TRIALS} trials x
+{STARS_PER_TRIAL} injected stars = {TRIALS * STARS_PER_TRIAL} injections per
+point** (the old figure used 4 trials; its sawtooth was Monte-Carlo noise, see
+verdict below). Error bars are 95% CIs from a cluster bootstrap over trials
+({N_BOOT} resamples for MAD/RMSE; the depth CI comes from the production
+completeness fit's own {M50_BOOT}-sample cluster bootstrap). Reproduce:
+`validation/paper/fig3_parameter_sweep.py` (distilled numbers in
+`validation/paper/data_parameter_sweep/`).
 
-**(c) Seeing (PSF FWHM).** *m*<sub>50</sub> depth (blue, left axis) and
-photometric scatter (orange, right axis) versus PSF FWHM (seeing), frame
-regenerated per value at fixed sky {FRAME_BASE['background']:.0f} ADU. Worse
-seeing spreads source flux over more pixels, lowering peak SNR: from FWHM
-{se_lo['fwhm_px']:.1f} to {se_hi['fwhm_px']:.1f} px the depth becomes shallower
-(*m*<sub>50</sub> = {se_lo['m50']:.3f} -> {se_hi['m50']:.3f} mag) and the
-photometric scatter increases
-({se_lo['scatter_mad']:.4f} -> {se_hi['scatter_mad']:.4f} mag).
+**(a) Aperture radius — scatter minimum at {x_opt:.2f}xFWHM.** One fixed frame
+with FWHM {APERTURE_FRAME_FWHM:.1f} px (detected {fwhm_det:.2f} px), sky 150
+ADU, injections 14.5-19.0 mag. The forced-aperture radius is
+`max(min_r_ap_px = 4 px, scale x FWHM)`. **Why FWHM 6 px:** on the old 3.5 px
+frame every requested scale <= 1.1xFWHM collapsed onto the same 4 px floor
+radius, and the old panel drew those duplicate measurements as a "flat"
+segment — a clamp artifact, not physics. On this frame the floor sits at
+{MIN_R_AP_PX / fwhm_det:.2f}xFWHM, so 0.7-2.5xFWHM are all distinct apertures.
+The one deliberately clamped request (0.5xFWHM -> 4 px, open marker) lands on
+the floor. Scatter (MAD of the forced-photometry magnitude error) is minimized
+at {x_opt:.2f}xFWHM with MAD {opt['mad']:.4f} mag
+[{opt['mad_lo']:.4f}, {opt['mad_hi']:.4f}]; larger apertures admit sky noise
+({solid['mad'].iloc[-1]:.3f} mag at 2.5xFWHM). The grey band marks radii the
+production pipeline cannot reach (below the 4 px floor); the dashed line is
+the default scale {DEFAULT_APERTURE_SCALE:g}.
 
-**Detection-threshold robustness (not shown).** A companion sweep of the
-detection threshold `detect_sigma` over 2.0-6.0 sigma on the clean fixed frame
-left both the depth (*m*<sub>50</sub> constant to < 0.01 mag) and the purity
-(zero spurious detections at every threshold) flat: for bright, well-sampled,
-isolated sources the production segmentation detector is threshold-robust and
-the recovery limit is SNR-set, not threshold-set. This is a desirable stability
-property rather than a trend, so it is reported here instead of as a panel.
+**(b) Position RMSE is aperture-independent.** Median {rmse_med:.2f} px across
+all unclamped apertures; the centroid comes from Step-4 detection, which does
+not use the photometry aperture.
 
-## Numeric optima and trends
+**(c,d) Sky background** (frame regenerated per level, injections 14.0-20.0
+mag, log x): sky 50 -> 1000 ADU makes the 50% completeness depth
+{bg['m50'].iloc[0]:.2f} -> {bg['m50'].iloc[-1]:.2f} mag
+({float(bg['m50'].iloc[0] - bg['m50'].iloc[-1]):.2f} mag shallower) and the
+scatter {bg['mad'].iloc[0]:.3f} -> {bg['mad'].iloc[-1]:.3f} mag: a brighter sky
+raises the shot-noise floor.
 
-- **Optimal aperture scale (minimum photometric scatter):**
-  {opt['optimal_scale']:g}x FWHM, MAD = {opt['min_scatter_mad']:.4f} mag.
-- **Depth vs sky background:** m50 {bg_lo['m50']:.3f} mag at
-  {bg_lo['background']:.0f} ADU -> {bg_hi['m50']:.3f} mag at
-  {bg_hi['background']:.0f} ADU (shallower with brighter sky).
-- **Depth vs seeing:** m50 {se_lo['m50']:.3f} mag at FWHM {se_lo['fwhm_px']:.1f}
-  px -> {se_hi['m50']:.3f} mag at {se_hi['fwhm_px']:.1f} px (shallower with worse
-  seeing).
-- **Detection-threshold override key used:** `{DETECT_SIGMA_KEY}` (robustness
-  companion sweep).
+**(e,f) Seeing** (frame regenerated per FWHM, sky 150 ADU): FWHM
+{se['fwhm_px'].iloc[0]:g} -> {se['fwhm_px'].iloc[-1]:g} px makes the depth
+{se['m50'].iloc[0]:.2f} -> {se['m50'].iloc[-1]:.2f} mag
+({float(se['m50'].iloc[0] - se['m50'].iloc[-1]):.2f} mag shallower) and the
+scatter {se['mad'].iloc[0]:.3f} -> {se['mad'].iloc[-1]:.3f} mag: the same flux
+spreads over more pixels, lowering peak SNR. The grid stays inside the
+production FWHM-QC window (`[fwhm] px_min = 3.0`): below it the frame-FWHM
+estimator is outside its envelope (a true 2.5 px frame was measured as 8.5 px
+from 5 stars), so a 2.5 px point would not be a pipeline measurement.
 
-## Sweep 1 — aperture radius (fixed frame)
+**Sawtooth verdict (old R5 defect).** With 4 trials the scatter curves wobbled
+non-monotonically. At 30 trials the largest remaining downward step between
+adjacent scatter points is {bg_wob * 1000:.1f} mmag (sky) / {se_wob * 1000:.1f}
+mmag (seeing) against median CI half-widths of {bg_ci * 1000:.1f} /
+{se_ci * 1000:.1f} mmag — the old sawtooth was Monte-Carlo noise, not
+structure. What survives at 30 trials is consistent with monotone trends
+within the CIs.
 
-| aperture / FWHM | scatter MAD (mag) | position RMSE (px) |
-|---|---|---|
-{ap_tbl}
+**Detection-threshold companion sweep (not drawn) — the old "threshold-robust"
+claim was a no-op artifact.** The old run overrode only `detect_sigma`, which
+the per-filter `detect_sigma_r` in parameters.toml silently masks, so all five
+"swept" thresholds ran at 3.2-sigma and returned bit-identical results; the
+"depth constant to < 0.01 mag over 2-6 sigma" sentence measured nothing. With
+the per-filter key overridden too (each point's `sigma_used` is verified equal
+to the requested value), the threshold sets the depth directly: m50
+{thr_lo['m50']:.2f} at {thr_lo['detect_sigma']:g} sigma ->
+{thr_hi['m50']:.2f} at {thr_hi['detect_sigma']:g} sigma
+({float(thr_lo['m50'] - thr_hi['m50']):.2f} mag), while false detections stay
+at <= {thr_false_max} per {TRIALS}-trial point on this clean low-crowding
+field. Lowering the threshold is therefore free depth *on this field*; the
+real-frame cost side (false-detection contamination vs threshold) is measured
+on real frames in the detection-threshold section (its own figure).
+Production default: 3.2 sigma.
+
+## Sweep 1 — aperture (fixed frame, FWHM {APERTURE_FRAME_FWHM:.1f} px)
+
+{tbl(ap, ["requested_scale", "r_ap_px", "mad", "mad_lo", "mad_hi", "rmse"],
+     ["{:.2f}", "{:.2f}", "{:.4f}", "{:.4f}", "{:.4f}", "{:.3f}"])}
 
 ## Sweep 2 — sky background (frame per value)
 
-| sky background (ADU) | m50 (mag) | scatter MAD (mag) |
-|---|---|---|
-{bg_tbl}
+{tbl(bg, ["background", "m50", "m50_lo", "m50_hi", "mad", "mad_lo", "mad_hi"],
+     ["{:.0f}", "{:.3f}", "{:.3f}", "{:.3f}", "{:.4f}", "{:.4f}", "{:.4f}"])}
 
 ## Sweep 3 — seeing / PSF FWHM (frame per value)
 
-| FWHM (px) | m50 (mag) | scatter MAD (mag) |
-|---|---|---|
-{se_tbl}
+{tbl(se, ["fwhm_px", "m50", "m50_lo", "m50_hi", "mad", "mad_lo", "mad_hi"],
+     ["{:.1f}", "{:.3f}", "{:.3f}", "{:.3f}", "{:.4f}", "{:.4f}", "{:.4f}"])}
 
-*Benchmark: 4 trials x 40 stars per point; seed {SEED}; trials=4 chosen for
-sweep speed. Panel (a) reuses one fixed frame; panels (b)/(c) regenerate a
-controlled frame per condition value.*
+## Sweep 4 — detection threshold (companion, not drawn)
+
+{tbl(thr, ["detect_sigma", "sigma_used", "m50", "m50_lo", "m50_hi",
+           "false_detections"],
+     ["{:.1f}", "{:.1f}", "{:.3f}", "{:.3f}", "{:.3f}", "{:.0f}"])}
 """
     cap_path.write_text(text, encoding="utf-8")
     return cap_path
 
 
+# ── main ─────────────────────────────────────────────────────────────────────
 def main() -> int:
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--sweep", choices=sorted(SWEEPS), default=None,
+                        help="run only this sweep's benchmark points (no figure)")
+    parser.add_argument("--figure-only", action="store_true",
+                        help="draw from the distilled CSV without benchmarks")
+    args = parser.parse_args()
+
     SWEEP_ROOT.mkdir(parents=True, exist_ok=True)
+    DATA_DIR.mkdir(parents=True, exist_ok=True)
+    csv_path = DATA_DIR / "sweep_points.csv"
 
-    print("== Sweep 1: aperture radius (fixed frame) ==")
-    ap = run_aperture_sweep()
-    print("== Sweep 2: sky background (frame per value) ==")
-    bg = run_background_sweep()
-    print("== Sweep 3: seeing / FWHM (frame per value) ==")
-    se = run_seeing_sweep()
+    if args.sweep:
+        SWEEPS[args.sweep]()
+        print(f"[done] sweep '{args.sweep}' points cached under {SWEEP_ROOT}")
+        return 0
 
-    paths, optima = make_figure(ap, bg, se)
-    cap_path = write_caption(ap, bg, se, optima)
+    if args.figure_only and csv_path.exists():
+        allpts = pd.read_csv(csv_path)
+        # bool column survives the CSV round-trip as object ("True"/nan)
+        allpts["clamped"] = allpts["clamped"].map(
+            lambda v: str(v).strip().lower() == "true")
+        ap = allpts[allpts["sweep"] == "aperture"].reset_index(drop=True)
+        bg = allpts[allpts["sweep"] == "background"].reset_index(drop=True)
+        se = allpts[allpts["sweep"] == "seeing"].reset_index(drop=True)
+        thr = allpts[allpts["sweep"] == "threshold"].reset_index(drop=True)
+    else:
+        print("== Sweep 1: aperture radius (fixed frame, FWHM 6 px) ==")
+        ap = run_aperture_sweep()
+        print("== Sweep 2: sky background (frame per value) ==")
+        bg = run_background_sweep()
+        print("== Sweep 3: seeing / FWHM (frame per value) ==")
+        se = run_seeing_sweep()
+        print("== Sweep 4: detection threshold (companion) ==")
+        thr = run_threshold_sweep()
+        allpts = pd.concat([ap, bg, se, thr], ignore_index=True)
+        allpts.to_csv(csv_path, index=False)
+        (DATA_DIR / "meta.json").write_text(json.dumps({
+            "seed": SEED, "boot_seed": BOOT_SEED, "trials": TRIALS,
+            "stars_per_trial": STARS_PER_TRIAL, "n_boot": N_BOOT,
+            "m50_boot": M50_BOOT, "frame_base": FRAME_BASE,
+            "aperture_frame_fwhm": APERTURE_FRAME_FWHM,
+            "grids": {"aperture": APERTURE_SCALES, "background": BACKGROUNDS,
+                      "seeing": FWHMS, "detect_sigma": DETECT_SIGMAS},
+        }, indent=1), encoding="utf-8")
 
+    paths = make_figure(ap, bg, se, thr)
+    cap_path = write_caption(ap, bg, se, thr)
     print("Wrote:")
     for ext, path in paths.items():
-        print(f"  {ext}: {path}  exists={path.exists()}")
-    print(f"  caption: {cap_path}  exists={cap_path.exists()}")
-    print(f"OPTIMAL aperture scale (min scatter): {optima['aperture']['optimal_scale']:g}x FWHM "
-          f"(MAD={optima['aperture']['min_scatter_mad']:.4f} mag)")
-    print("BACKGROUND m50:", list(zip(bg['background'], bg['m50'])))
-    print("SEEING m50:", list(zip(se['fwhm_px'], se['m50'])))
+        print(f"  {ext}: {path}")
+    print(f"  caption: {cap_path}")
+    print(f"  distilled: {csv_path}")
     return 0
 
 

@@ -1,0 +1,65 @@
+{
+ "seed": 20260702,
+ "boot_seed": 20260802,
+ "trials": 30,
+ "stars_per_trial": 40,
+ "n_boot": 1000,
+ "m50_boot": 500,
+ "frame_base": {
+  "seed": 20260702,
+  "n_stars": 435,
+  "size": 1024,
+  "fwhm_px": 3.5,
+  "zeropoint": 25.0,
+  "background": 150.0,
+  "read_noise": 5.0,
+  "gain": 1.5,
+  "mag_min": 13.5,
+  "mag_max": 19.0,
+  "filter_name": "r",
+  "exptime": 1.0
+ },
+ "aperture_frame_fwhm": 6.0,
+ "grids": {
+  "aperture": [
+   0.5,
+   0.7,
+   0.8,
+   0.9,
+   1.0,
+   1.1,
+   1.2,
+   1.4,
+   1.7,
+   2.0,
+   2.5
+  ],
+  "background": [
+   50.0,
+   100.0,
+   150.0,
+   225.0,
+   300.0,
+   450.0,
+   600.0,
+   800.0,
+   1000.0
+  ],
+  "seeing": [
+   3.0,
+   3.5,
+   4.0,
+   4.5,
+   5.0,
+   5.5,
+   6.0
+  ],
+  "detect_sigma": [
+   2.0,
+   3.2,
+   4.0,
+   5.0,
+   6.0
+  ]
+ }
+}
