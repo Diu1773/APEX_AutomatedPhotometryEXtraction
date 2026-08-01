@@ -3,10 +3,10 @@
     "id": "qa_report",
     "label": "QA Reports",
     "mode": "lc",
-    "open_s": 7.02,
+    "open_s": 7.65,
     "class": "QAReportWindow",
     "run": "Generate QA Report 클릭",
-    "run_s": 33.3,
+    "run_s": 62.3,
     "size": "1398x1432",
     "tables": [
       "364x10",
@@ -32,10 +32,10 @@
     "id": "iraf_photometry",
     "label": "IRAF/DAOPHOT Tool",
     "mode": "lc",
-    "open_s": 8.09,
+    "open_s": 9.25,
     "class": "IRAFPhotometryWindow",
     "run": "Run Comparison 클릭",
-    "run_s": 4.0,
+    "run_s": 6.0,
     "run_dialogs": [
       "warning[Error] IRAF dir not found: E:\\APEX_validation\\reprocess\\YZBoo_2n\\result\\iraf_phot"
     ],
@@ -68,12 +68,12 @@
     "id": "extinction_fit",
     "label": "Extinction (Airmass Fit)",
     "mode": "lc",
-    "open_s": 5.4,
+    "open_s": 6.41,
     "class": "ExtinctionFitWindow",
     "run": "Run Fit 클릭",
-    "run_s": 8.0,
+    "run_s": 6.0,
     "run_dialogs": [
-      "critical[Error] Extinction fit failed:\nNo valid per-star extinction fits produced"
+      "critical[Error] Extinction fit failed:\nNo valid per-star extinction fits produced\n관측 airmass 는 0.9997~1.2165 (폭 0.2168) 입니다.\n소광계수는 airmass 에 대한 기울기라, 이렇게 폭이 좁으면 결정할 수 없습니다. 고도차가 큰 프레임(보통 X=1~2)이 필요합니다."
     ],
     "size": "1440x1432",
     "tables": [
@@ -98,17 +98,17 @@
     "png": "lc_extinction_fit.png",
     "status": "OK",
     "dialogs": [
-      "critical[Error] Extinction fit failed:\nNo valid per-star extinction fits produced"
+      "critical[Error] Extinction fit failed:\nNo valid per-star extinction fits produced\n관측 airmass 는 0.9997~1.2165 (폭 0.2168) 입니다.\n소광계수는 airmass 에 대한 기울기라, 이렇게 폭이 좁으면 결정할 수 없습니다. 고도차가 큰 프레임(보통 X=1~2)이 필요합니다."
     ]
   },
   {
     "id": "airmass_debug",
     "label": "Airmass Header Debug",
     "mode": "lc",
-    "open_s": 21.19,
+    "open_s": 27.55,
     "class": "AirmassHeaderDebugToolWindow",
     "run": "Scan 클릭",
-    "run_s": 8.0,
+    "run_s": 8.1,
     "size": "1906x1111",
     "canvases": 1,
     "buttons": [
@@ -123,7 +123,7 @@
     "id": "multi_night_merger",
     "label": "Multi-Night Light Curve Merger",
     "mode": "lc",
-    "open_s": 5.36,
+    "open_s": 6.36,
     "class": "MultiNightMergerWindow",
     "run": "버튼 없음/비활성: Merge",
     "size": "1200x1055",
@@ -153,7 +153,7 @@
     "id": "variable_star",
     "label": "Variable Star Analysis",
     "mode": "lc",
-    "open_s": 7.25,
+    "open_s": 9.44,
     "class": "VariableStarToolWindow",
     "run": "버튼 없음/비활성: Compute Periodogram",
     "size": "1303x816",
@@ -184,7 +184,7 @@
     "id": "transit",
     "label": "Exoplanet Transit Analysis",
     "mode": "lc",
-    "open_s": 5.36,
+    "open_s": 6.59,
     "class": "TransitToolWindow",
     "run": "버튼 없음/비활성: Fit Transit",
     "size": "1300x1007",
@@ -213,7 +213,7 @@
     "id": "eclipsing_binary",
     "label": "Eclipsing Binary Analysis",
     "mode": "lc",
-    "open_s": 5.44,
+    "open_s": 6.68,
     "class": "EclipsingBinaryToolWindow",
     "run": "버튼 없음/비활성: Run Fit",
     "size": "1304x800",

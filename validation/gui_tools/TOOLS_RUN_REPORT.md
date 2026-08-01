@@ -179,6 +179,65 @@ Step 10 `offset` 디트렌드 → Step 11 (필터 `all`, 364점) 결과다.
 확정이 아니다. 처리 경로도 다르다(파이프라인은 밤별 offset 디트렌드, 손 계산은
 필터별 중앙값 정규화).
 
+### 6.5 릴리스 게이트를 열었다 — SIMBAD 수정의 진짜 값어치
+
+LC 도구(variable_star · transit · eclipsing_binary)의 Run 버튼은
+`variable_analysis_bundle.json` 의 `release.status` 가 걸어 잠근다. 처음엔
+**BLOCKED** 였고 사유가 이랬다.
+
+```
+g: comparison selection metadata is missing
+g: no check star is selected
+g: comparison stability metadata is missing        (i, r 도 동일)
+```
+
+셋 다 **Step 8 자동선택이 만드는 것**이다. 즉 §2.1 에서 고친 SIMBAD 예외
+(`_match_simbad_types` 의 numpy.bool_)가 살아 있는 동안에는 자동선택이 죽고 →
+체크성이 안 정해지고 → **릴리스가 구조적으로 영원히 BLOCKED** 였다. 도구 세 개를
+아예 못 쓰는 상태였다는 뜻이다.
+
+고친 코드로 전 필터 자동선택을 돌리니 73.8초에 끝났다.
+
+| 필터 | 비교성 | 체크성 | 후보 |
+|---|---:|---:|---:|
+| g | 6 | 187 | 30 |
+| i | 9 | 182 | — |
+| r | 3 | 273 | — |
+
+이어서 Step 9(광곡선, 체크성 광곡선 4종 포함) → Step 10(디트렌드) →
+Step 11(주기)을 정식 경로로 돌리자 **`release status: APPROVED`** 가 됐다.
+
+> 그 과정에서 내 헤드리스 러너의 결함도 하나 고쳤다 — `lc_step9.py` 가 인자를
+> 안 주면 기본값(타깃 115)을 쓰고 있어 엉뚱한 별로 광곡선을 만들었다. 인자를
+> 비우면 `lc_selection` 의 저장된 선택을 그대로 쓰도록 바꿨다.
+
+### 6.6 Run 버튼이 계속 비활성이던 이유 — 버그가 아니라 설계다
+
+릴리스가 APPROVED 인데도 `variable_star` 의 Run 이 비활성이었다. 추적해 보니
+
+```python
+def open_variable_star_tool(self, handoff: dict | None = None):
+    ...
+    if handoff:
+        self.varstar_window.apply_period_handoff(handoff)
+```
+
+**메뉴에서 열면 `handoff=None`** 이라 standalone(미검증) 모드로 뜬다. 검증된
+릴리스를 물고 열려면 Step 11 의 **`Open in Variable Star Tool`** 버튼을 거쳐야
+한다 — 「검증되지 않은 자료로 고급 분석을 돌리지 못하게」 하는 의도된 게이트다.
+
+번들을 넘겨 직접 확인했다.
+
+```
+release: APPROVED
+handoff_bundle: ValidatedLightCurveBundle
+버튼 [Run] enabled=True          ← 활성화
+```
+
+`lc_variable_star_handoff.png` 가 그 상태의 캡처다. 즉 **메뉴로 연 창의 Run 이
+비활성인 것은 정상**이고, 앞 절들에서 「Run 비활성」으로 적은 것들도 같은
+이유다(transit · eclipsing_binary 동일).
+
 ## 7. 산출물
 
 ```
