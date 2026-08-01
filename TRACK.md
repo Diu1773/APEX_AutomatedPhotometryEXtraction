@@ -26,6 +26,23 @@
 - 오라클 **722 passed, 0 failed** (2026-08-01, 5분 21초). 7-31 아침 625 → +97
 - 하네스: `AGENTS.md` 에 세션 시작 동기화 + 종료 프로토콜. Stop hook 이 이 파일 갱신을 검사
 
+**2026-08-01 함정 — WCS 해는 `data_dir` 의 FITS 헤더에 쓴다 (사고 + 복구 완료)**
+
+- 엔진 교차검증을 하려고 `run_wcs_solve` 를 엔진별로 **`result_dir` 만 분리**해
+  세 번 돌렸다. **소용없다.** 해는 `result_dir` 이 아니라 **`data_dir` 의 원본
+  FITS 헤더에 직접 쓰인다.** 세 엔진이 같은 15장을 순차로 덮어썼고, M13 sci 의
+  WCS 가 원래 해에서 **270–408 초각**(4.5–6.8 arcmin) 어긋났다.
+- **복구 완료.** 원래와 같은 설정(`engine="internal"`, 원래 `result_dir`)으로
+  캐시를 지우고 15장 재계산(42 s). 원래 `frame_wcs_qc.csv` 와 대조해
+  **15/15 가 1초각 이내, 최대 0.340"** (픽셀 0.395"/px 이므로 1픽셀 미만).
+  원본 QC·캐시는 `E:\APEX_validation\_wcs_repair_backup\` 에 백업.
+- **다음에 이 실험을 하려면 `data_dir` 도 엔진별 복사본으로 분리해야 한다.**
+  8장 × 61 MB × 3 = 1.5 GB.
+- 실험 자체는 세 엔진 다 해를 풀었다(status `ok`/`solved`). 실패가 아니라
+  **해가 한 파일에 겹쳐 써져서 비교가 불가능**했던 것이다. 캐시도 대체가 안 된다
+  — 엔진마다 저장 위치·필드가 다르다(astap 만 `cache/wcs_solve/*.json`, 게다가
+  `rms_arcsec` 가 비어 있다).
+
 **2026-08-01 검출 임계 sigma 조사 — 코드는 안 건드리기로 결정**
 `validation/gui_tools/SIGMA_QC_REPORT.md` · 커밋 `56c6a41`·`69ac32a`·`a1101d5`·`9828cd7`
 

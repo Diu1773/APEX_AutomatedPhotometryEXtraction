@@ -1,0 +1,226 @@
+{
+ "files": [
+  "pp_messier13-0001-B.fit",
+  "pp_messier13-0001-R.fit",
+  "pp_messier13-0001-V.fit",
+  "pp_messier13-0002-B.fit",
+  "pp_messier13-0002-R.fit",
+  "pp_messier13-0002-V.fit",
+  "pp_messier13-0003-B.fit",
+  "pp_messier13-0003-R.fit"
+ ],
+ "timing": {
+  "internal": {
+   "engine": "internal",
+   "seconds": 102.6450442000023,
+   "result": {
+    "total": 8,
+    "ok": 8,
+    "wcs_qc_pass": 8,
+    "wcs_qc_not_evaluated": 0,
+    "stopped": false
+   }
+  },
+  "astap": {
+   "engine": "astap",
+   "seconds": 102.96581400000287,
+   "result": {
+    "total": 8,
+    "ok": 8,
+    "wcs_qc_pass": 0,
+    "wcs_qc_not_evaluated": 0,
+    "stopped": false
+   }
+  },
+  "astnet": {
+   "engine": "astnet",
+   "seconds": 452.42918930000087,
+   "result": {
+    "total": 8,
+    "ok": 8,
+    "wcs_qc_pass": 0,
+    "wcs_qc_not_evaluated": 0,
+    "stopped": false
+   }
+  }
+ },
+ "compare": {
+  "frames": [
+   {
+    "file": "pp_messier13-0001-B.fit",
+    "engines": [],
+    "note": "too few"
+   },
+   {
+    "file": "pp_messier13-0001-R.fit",
+    "engines": [],
+    "note": "too few"
+   },
+   {
+    "file": "pp_messier13-0001-V.fit",
+    "engines": [],
+    "note": "too few"
+   },
+   {
+    "file": "pp_messier13-0002-B.fit",
+    "engines": [],
+    "note": "too few"
+   },
+   {
+    "file": "pp_messier13-0002-R.fit",
+    "engines": [],
+    "note": "too few"
+   },
+   {
+    "file": "pp_messier13-0002-V.fit",
+    "engines": [],
+    "note": "too few"
+   },
+   {
+    "file": "pp_messier13-0003-B.fit",
+    "engines": [],
+    "note": "too few"
+   },
+   {
+    "file": "pp_messier13-0003-R.fit",
+    "engines": [],
+    "note": "too few"
+   }
+  ]
+ },
+ "qc": {
+  "internal": {
+   "n_rows": 8,
+   "rms_median": 0.4455776388848498,
+   "rms_max": 0.5961420388721018,
+   "n_match_median": 879.0,
+   "columns": [
+    "file",
+    "status",
+    "ok",
+    "wcs_ok",
+    "solver",
+    "elapsed",
+    "elapsed_s",
+    "n_detect",
+    "n_catalog_in_fov",
+    "n_match",
+    "n_inlier",
+    "match_rate",
+    "match_rate_cat",
+    "match_rate_eff",
+    "match_radius_arcsec",
+    "match_radius_px",
+    "dx_med_px",
+    "dy_med_px",
+    "resid_med_px",
+    "resid_mad_px",
+    "resid_p99_px",
+    "resid_peak_px",
+    "rms_px",
+    "inlier_rate",
+    "resid_vs_radius_slope",
+    "edge_resid_ratio",
+    "pix_scale_input_arcsec",
+    "pixscale",
+    "pix_fit",
+    "scale_delta_pct",
+    "wcs_rot_deg",
+    "center_ra_deg",
+    "center_dec_deg",
+    "center_offset_arcsec",
+    "wcs_qc_pass",
+    "wcs_qc_reason"
+   ]
+  },
+  "astap": {
+   "n_rows": 8,
+   "rms_median": null,
+   "rms_max": null,
+   "n_match_median": 0.0,
+   "columns": [
+    "file",
+    "status",
+    "fail_reason",
+    "ok",
+    "wcs_ok",
+    "solver",
+    "elapsed",
+    "n_detect",
+    "n_catalog_in_fov",
+    "n_match",
+    "n_inlier",
+    "match_rate",
+    "match_rate_cat",
+    "match_rate_eff",
+    "match_radius_arcsec",
+    "match_radius_px",
+    "dx_med_px",
+    "dy_med_px",
+    "resid_med_px",
+    "resid_mad_px",
+    "resid_p99_px",
+    "resid_peak_px",
+    "rms_px",
+    "inlier_rate",
+    "resid_vs_radius_slope",
+    "edge_resid_ratio",
+    "pix_scale_input_arcsec",
+    "pix_scale_fit_arcsec",
+    "scale_delta_pct",
+    "wcs_rot_deg",
+    "center_ra_deg",
+    "center_dec_deg",
+    "center_offset_arcsec",
+    "sip_order",
+    "wcs_qc_pass",
+    "wcs_qc_reason"
+   ]
+  },
+  "astnet": {
+   "n_rows": 8,
+   "rms_median": null,
+   "rms_max": null,
+   "n_match_median": 0.0,
+   "columns": [
+    "file",
+    "status",
+    "fail_reason",
+    "ok",
+    "wcs_ok",
+    "solver",
+    "elapsed",
+    "elapsed_s",
+    "n_detect",
+    "n_catalog_in_fov",
+    "n_match",
+    "n_inlier",
+    "match_rate",
+    "match_rate_cat",
+    "match_rate_eff",
+    "match_radius_arcsec",
+    "match_radius_px",
+    "dx_med_px",
+    "dy_med_px",
+    "resid_med_px",
+    "resid_mad_px",
+    "resid_p99_px",
+    "resid_peak_px",
+    "rms_px",
+    "inlier_rate",
+    "resid_vs_radius_slope",
+    "edge_resid_ratio",
+    "pix_scale_input_arcsec",
+    "pixscale",
+    "pix_fit",
+    "scale_delta_pct",
+    "wcs_rot_deg",
+    "center_ra_deg",
+    "center_dec_deg",
+    "center_offset_arcsec",
+    "wcs_qc_pass",
+    "wcs_qc_reason"
+   ]
+  }
+ }
+}
