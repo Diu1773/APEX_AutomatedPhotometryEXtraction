@@ -25,7 +25,7 @@ import json
 import sys
 from pathlib import Path
 
-REPO = Path(r"C:\Users\bmffr\Desktop\Result\Automated_Photometry_EXtraction")
+REPO = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(REPO / "validation" / "paper"))
 
 import numpy as np
@@ -91,7 +91,15 @@ def main() -> int:
     ax.legend(fontsize=6.4, loc="upper right", handlelength=1.6)
     ax.set_title("(b) Gaia residual, one procedure for all", loc="left", fontsize=9)
 
-    fig.tight_layout(pad=0.5, w_pad=1.6)
+    prov = (
+        "Real data: M13, eight 60 s single exposures (B 1-3, R 1-3, V 1-2), "
+        "Moravian C3-61000, bin 2, 0.395\"/px, 2026-05-15.\n"
+        "One copy tree per engine, the same Step-4 detection list shared by all "
+        "three; engines: built-in quad solver, ASTAP, astrometry.net. "
+        "Source: validation/paper/data_wcs_engines (run_wcs_engine_cross.py)."
+    )
+    fig.tight_layout(pad=0.5, w_pad=1.6, rect=(0, 0.11, 1, 1))
+    fig.text(0.005, 0.005, prov, fontsize=5.6, color=PALETTE["grey"], va="bottom")
     for ext, p in save_fig(fig, "fig_wcs_engines", OUTDIR).items():
         print(f"[saved] {p}")
 

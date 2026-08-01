@@ -33,7 +33,7 @@ import json
 import sys
 from pathlib import Path
 
-REPO = Path(r"C:\Users\bmffr\Desktop\Result\Automated_Photometry_EXtraction")
+REPO = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(REPO))
 sys.path.insert(0, str(REPO / "validation" / "paper"))
 
@@ -193,7 +193,7 @@ def main() -> int:
                    indent=1), encoding="utf-8")
     (DATADIR / "sysrem.json").write_text(json.dumps(sr, indent=1), encoding="utf-8")
 
-    fig, axes = plt.subplots(1, 3, figsize=(DOUBLE_COL, 2.5))
+    fig, axes = plt.subplots(1, 3, figsize=(DOUBLE_COL, 2.8))
 
     # (a) PDM relative error vs noise, one line per period
     ax = axes[0]
@@ -251,10 +251,23 @@ def main() -> int:
     ax.set_xlabel("time (h)")
     ax.set_ylabel("differential magnitude")
     ax.invert_yaxis()
-    ax.legend(fontsize=6.0, loc="lower right", handletextpad=0.4)
+    ax.legend(fontsize=6.0, loc="lower right", handletextpad=0.4,
+              frameon=True, framealpha=0.85, edgecolor="none",
+              facecolor="white")
     ax.set_title("(c) SYSREM keeps the variable", loc="left", fontsize=9)
 
-    fig.tight_layout(pad=0.5, w_pad=1.6)
+    prov = (
+        f"Synthetic only, fixed seed {SEED}, no external data. Series on the Section-4 "
+        f"observing pattern (one night, {SPAN_HOURS:g} h, {N_POINTS} points), analysed "
+        "through the production LC entry points (run_period_analysis: PDM + astropy "
+        "Lomb-Scargle; sysrem).\n"
+        f"(a,b): P = {PERIODS[0]:g}-{PERIODS[-1]:g} d $\\times$ noise "
+        f"{NOISE[0] * 1000:g}-{NOISE[-1] * 1000:g} mmag $\\times$ {N_TRIAL} realizations "
+        f"= {len(PERIODS) * len(NOISE) * N_TRIAL} series; (c): 60 stars $\\times$ 120 "
+        "frames, one injected variable (P = 0.104092 d, amplitude 0.21 mag)."
+    )
+    fig.tight_layout(pad=0.5, w_pad=1.6, rect=(0, 0.115, 1, 1))
+    fig.text(0.005, 0.005, prov, fontsize=5.6, color=PALETTE["grey"], va="bottom")
     for ext, p in save_fig(fig, "fig_timeseries_validation", OUTDIR).items():
         print(f"[saved] {p}")
 
