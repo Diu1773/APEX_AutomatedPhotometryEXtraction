@@ -1,0 +1,56 @@
+[
+ {
+  "key": "M13",
+  "camera": "C3-61000",
+  "n_frames": 15,
+  "n_stars": 11216,
+  "mad_mag": 0.03968706186603944,
+  "offset_med": -0.07769694440245978,
+  "offset_spread": 0.05051237391148786
+ },
+ {
+  "key": "NGC6811",
+  "camera": "C3-61000",
+  "n_frames": 21,
+  "n_stars": 18686,
+  "mad_mag": 0.028349986598645575,
+  "offset_med": -0.0722352066603058,
+  "offset_spread": 0.05858429087121357
+ },
+ {
+  "key": "M67",
+  "camera": "QHY600",
+  "n_frames": 10,
+  "n_stars": 7353,
+  "mad_mag": 0.0073445729417641594,
+  "offset_med": 0.021605921113101445,
+  "offset_spread": 0.044797656625172405
+ },
+ {
+  "key": "Proxima",
+  "camera": "QHY600",
+  "n_frames": 1,
+  "n_stars": 1775,
+  "mad_mag": 0.03911797114973111,
+  "offset_med": 0.15675135470771906,
+  "offset_spread": 0.0
+ },
+ {
+  "key": "M45",
+  "camera": "QHY600",
+  "n_frames": 19,
+  "n_stars": 50607,
+  "mad_mag": 0.028262681712486186,
+  "offset_med": -0.033498826933165304,
+  "offset_spread": 0.009319921880075323
+ },
+ {
+  "key": "N5985",
+  "camera": "Sinistro",
+  "n_frames": 1,
+  "n_stars": 564,
+  "mad_mag": 0.026720533558156515,
+  "offset_med": 0.05262511499629241,
+  "offset_spread": 0.0
+ }
+]
