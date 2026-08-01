@@ -24,6 +24,11 @@
 
 - 마지막 커밋: `HEAD` 2026-08-01 — fix(wcs): pixel_scale_arcsec 미설정 시 float(None) 크래시
 - 오라클 **722 passed, 0 failed** (2026-08-01, 5분 21초). 7-31 아침 625 → +97
+- 2026-08-02 워크트리(`claude2/festive-merkle-659e92`, 논문 fig 재작업 세션)에서
+  재실행: **721 passed, 1 skipped, 0 failed** (3분 48초). skip 은
+  `test_predicted_m50_reproduces_injection_calibration_set` — 로컬 보정 런
+  데이터(`benchmark/runs` 미추적물)가 워크트리에 없어 건너뜀. 코드 회귀 아님
+  (이번 세션은 `apex/` 무변경, `validation/paper/` 스크립트만 수정).
 - 하네스: `AGENTS.md` 에 세션 시작 동기화 + 종료 프로토콜. Stop hook 이 이 파일 갱신을 검사
 
 **2026-08-01 함정 — WCS 해는 `data_dir` 의 FITS 헤더에 쓴다 (사고 + 복구 완료)**
