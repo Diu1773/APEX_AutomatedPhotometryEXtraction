@@ -22,9 +22,25 @@
 
 ## 지금
 
-- 마지막 커밋: `2e4d6f3` 2026-07-31 — docs(validation): 실 GUI 구동 계측
-- 오라클 **625 passed, 0 failed** (2026-07-31, 16분 59초)
+- 마지막 커밋: `HEAD` 2026-08-01 — fix(wcs): pixel_scale_arcsec 미설정 시 float(None) 크래시
+- 오라클 **722 passed, 0 failed** (2026-08-01, 5분 21초). 7-31 아침 625 → +97
 - 하네스: `AGENTS.md` 에 세션 시작 동기화 + 종료 프로토콜. Stop hook 이 이 파일 갱신을 검사
+
+**2026-08-01 Step 0 dark 매칭 — 결함 2건 수정, 전 타겟 감사, YZ Boo 재처리**
+
+- **같은 밤 dark 가 공용 라이브러리를 막고 있었다** (`8cd2f7f`). `group_for_night`
+  이 그 밤 dark 가 하나라도 있으면 전역 풀을 통째로 배제해서, `E:\darks` 에
+  딱 맞는 dark 가 있어도 절대 안 뽑혔다. YZ Boo 20250430 의 283장이 −5 °C 인데
+  −10 °C dark 를 쓴 진짜 원인. `dark_library` 폴백 + `DarkMatch.frames/source`.
+- **YZ Boo 2밤 재처리·교체 완료** (D-006). ΔT 5.01 → 0.101. 옛 트리 삭제로
+  45.4 GB 회수. 산출 프레임 차이는 sky 중앙값 −0.03 ADU(불변)에
+  **밝은 픽셀 median Δ=0.000** — 변화가 hot pixel 꼬리에만 몰린 의도한 결과.
+- **전 타겟 감사 결과 논문 성단은 무사** (D-008). M3 에서 60장이 ΔT 5.01 °C 로
+  같은 결함을 겪었지만 전부 SDSS g/i/r 라 `FILTER_ALLOW={b,v,r}` 에 걸려
+  `sci/` 에 못 들어갔다. **잘못된 dark 가 과학 산출물에 들어간 건 0건.**
+- **마스터 에폭 혼합 경고** (D-007, `04b1391`) · **디스크 가드 C: 검사**(`5195016`)
+- 재현 스크립트 일습: `E:\APEX_validation\_session_20260731_step0_multinight\`
+  (`DISK_NOTES.md` 에 디스크 실태와 함정 정리)
 
 **2026-07-31 편의성 개선 P1~P8 구현 완료 — `docs/convenience-step0-multinight-plan.md`**
 
@@ -191,16 +207,10 @@
 
 ## 다음 3개
 
-1. **헤드리스 wcs 스텝 버그** — `wcs_solve.py:4092` 가 `pixel_scale_arcsec=None` 이면
-   `float(None)` 으로 죽는다. `getattr(P, "pixel_scale_arcsec", np.nan)` 은 키가
-   **None 으로 존재하면** 기본값이 안 먹는다.
-   고칠 것: `float(getattr(...) or np.nan)` 한 줄 + 회귀 테스트 1건.
-   재현: `parameters.example.toml` 기반 config 로 `apex run --mode lc --steps 5`.
-   (2026-07-28 M67 측정 때 이 버그로 step5 를 우회했다 — 「함정」 참조)
-2. **4000프레임 재검출** — 원본 계수(`n_raw_detections`)가 이제 기록되므로
+1. **4000프레임 재검출** — 원본 계수(`n_raw_detections`)가 이제 기록되므로
    재실행하면 실제 숫자가 남는다. `TRACK_PAPER.md` §3 의 사례 수를 채운다.
    ⚠️ 시작 전 `[parallel]`·`[wcs]` 의 `max_workers` 를 확인할 것 — 1 이면 안 끝난다(함정).
-3. **남은 성단 CR 재처리** — M3(오염 15.4%, 가장 심함) · M67 · M5 가 아직 CR 없이
+2. **남은 성단 CR 재처리** — M3(오염 15.4%, 가장 심함) · M67 · M5 가 아직 CR 없이
    만든 산출물이다. 방법은 M13·NGC6811 에서 확립됐다: `sci`·`result` 를
    `sci_nocr`·`result_nocr` 로 옮기고 → `_reprocess_step0.py` → `reorg_per_object` →
    steps 1-7 → step8 → step10 → `compare_cr_effect.py <target>`.
@@ -208,6 +218,12 @@
 
    (PSF 다중프레임 반복성은 M13 15장·NGC6811 21장·M67 LCO 10장으로 채워졌다 —
    M67 LCO 는 CR 켠 뒤 MAD 0.0074 · 프레임간 rms 0.045 로 최고값)
+3. **새 YZ Boo LC 결과 검증** — 2026-08-01 다른 세션이 재보정 프레임으로
+   Steps 1-11 을 완주했다(`E:\APEX_validationeprocess\YZBoo_2nesult`,
+   `lc_selection` 11:55 까지). 확인할 것: ① i 필터 산포가 g/r 보다 큰지
+   (sky 13.8 ADU 로 sky-limited 하한 근처 — 예측대로면 커야 한다)
+   ② dark 수정이 광곡선 산포에 남긴 흔적. 기존 LC 는 −10 °C dark 산출이라
+   직접 비교는 불가하고, 새 결과의 내적 일관성만 본다.
    그다음: `source_quality.py:115` All-NaN slice 경고 (테스트 4건)
 
 ## 측정 완료 — `n_det_frames` 분포 · 두 성단 (2026-07-28)
@@ -344,9 +360,10 @@
 - **바뀐 정도(실측)**: sky 중앙값 −0.03 ADU(−0.02 e-)로 사실상 불변,
   **밝은 픽셀 median Δ = 0.000** (실제 별 보존). 변화는 hot pixel 꼬리에 집중
   (20250430 p99.9 ≈ 21~35 ADU, 20250429 ≈ 8~11 ADU) — 의도한 그대로다.
-- **⚠️ 남은 것**: **Steps 1–11 은 새 프레임으로 안 돌렸다.** 옛 `result/` 는
-  옛 보정 기반이라 옛 트리와 함께 삭제됐다. LC 결과가 필요하면 재실행해야 한다
-  (약 2시간). 폴더 안 `REPROCESS_NOTE.md`·`SWAPPED.md` 에 명시.
+- **Steps 1–11**: 2026-08-01 **다른 세션이 새 프레임으로 완주**했다
+  (`result/` 에 step1~7 · lc_lightcurve · lc_detrend · lc_period · lc_selection ·
+  qa_report, 11:55 까지). 결과 검증은 아직 — 「다음 3개」 3번.
+  폴더 안 `REPROCESS_NOTE.md` 의 "Steps 1-11 미실행" 문구는 이제 낡았다.
 - 재현 스크립트: `E:\APEX_validation\_session_20260731_step0_multinight\`
   (`reprocess_yzboo_2n.py`, `swap_yzboo_2n.py`, `compare_old_new.py`)
 

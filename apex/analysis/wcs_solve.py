@@ -107,6 +107,23 @@ if sys.platform == "win32":
     _SUBPROCESS_TEXT_KWARGS["stdin"] = subprocess.DEVNULL
 
 
+def configured_pixel_scale(P) -> float:
+    """Configured pixel scale in arcsec/px, or NaN when it is not usable.
+
+    ``pixel_scale_arcsec`` is parsed with ``_as_float_or_none``, so an unset
+    value is present-as-``None`` rather than absent — ``getattr(P, ..., np.nan)``
+    then returns ``None``, not the default, and ``float(None)`` raises. Every
+    caller guards on ``> 0`` / ``isfinite``, so NaN routes them to their own
+    "not set" message instead of a TypeError from inside the worker.
+    """
+    value = getattr(P, "pixel_scale_arcsec", None)
+    try:
+        scale = float(value)
+    except (TypeError, ValueError):
+        return float("nan")
+    return scale if scale > 0 else float("nan")
+
+
 def _tail_text(value: str | None, limit: int = 800, max_lines: int = 8) -> str:
     if value is None:
         return ""
@@ -1581,7 +1598,7 @@ class WcsWorkerBase:
         w2 = WCS(hdr, relax=True)
         pix_fit = self._pixscale_from_wcs(w2)
         if not np.isfinite(pix_fit):
-            pix_fit = float(getattr(self.params.P, "pixel_scale_arcsec", np.nan))
+            pix_fit = configured_pixel_scale(self.params.P)
 
         resid_arc = np.hypot(dx - dx_med, dy - dy_med) * float(pix_fit)
         resid_med = float(np.median(resid_arc)) if resid_arc.size else np.nan
@@ -1680,7 +1697,7 @@ class WcsWorkerBase:
             results = []
             files = list(self.file_list)
             total = len(files)
-            pix_arc = float(getattr(self.params.P, "pixel_scale_arcsec", np.nan))
+            pix_arc = configured_pixel_scale(self.params.P)
             if not np.isfinite(pix_arc) or pix_arc <= 0:
                 raise RuntimeError("pixel_scale_arcsec is not set; run instrument setup first.")
 
@@ -2653,7 +2670,7 @@ class InternalWcsWorkerBase:
         step5_out.mkdir(parents=True, exist_ok=True)
 
         # ── Pixel scale ───────────────────────────────────────────────────
-        approx_scale = float(getattr(P, "pixel_scale_arcsec", 0.0))
+        approx_scale = configured_pixel_scale(P)
         if not (approx_scale > 0):
             self.error.emit(
                 "pixel_scale_arcsec not set in parameters.\n"
@@ -3765,7 +3782,7 @@ class AstrometryNetWorkerBase:
         w2 = WCS(hdr, relax=True)
         pix_fit = self._pixscale_from_wcs(w2)
         if not np.isfinite(pix_fit):
-            pix_fit = float(getattr(self.params.P, "pixel_scale_arcsec", np.nan))
+            pix_fit = configured_pixel_scale(self.params.P)
 
         resid_arc = np.hypot(dx - dx_med, dy - dy_med) * float(pix_fit)
         resid_med = float(np.median(resid_arc)) if resid_arc.size else np.nan
@@ -4089,7 +4106,7 @@ class AstrometryNetWorkerBase:
         total = len(self.file_list)
 
         # --- load parameters ---
-        pix_arc = float(getattr(self.params.P, "pixel_scale_arcsec", np.nan))
+        pix_arc = configured_pixel_scale(self.params.P)
         if not np.isfinite(pix_arc) or pix_arc <= 0:
             self.error.emit("WORKER", "pixel_scale_arcsec is not set; run instrument setup first.")
             self.finished.emit({})
