@@ -24,6 +24,30 @@
 외부 카탈로그도 이론 모델도 WCS 도 필요 없다. **Step 5(해맞춤) 전인 Step 4 에서
 그대로 돌아간다.** 프레임 자신의 잡음 통계만 쓰므로 기기·하늘 상태에 자동으로 맞는다.
 
+### 선행 연구
+
+새 방법이 아니다. 「잡음은 0 에 대칭이고 실제 천체는 양수 플럭스」라는 가정에서
+음수 검출로 가짜를 세는 것은 확립된 기법이다.
+
+- **Serra, Jurek & Flöer 2012, PASA 29, 296** — *Using Negative Detections to
+  Estimate Source-Finder Reliability*. 방법론 원전. 음수 검출로 각 양수 검출에
+  실재 확률(reliability)을 부여한다.
+- **Serra et al. 2015, MNRAS 448, 1922** — SoFiA. 위 방법이 reliability 필터로
+  구현되어 WALLABY(ASKAP) HI 서베이 파이프라인의 표준이 됐다.
+- **Molino et al. 2014, MNRAS 441, 2891** — ALHAMBRA. **광학에서 정확히 같은
+  방식**: 반전 영상에 SExtractor 를 돌려 가짜 오염이 3% 를 넘지 않는 검출 임계를
+  고른다 (`DETECT_MINAREA` = 2×FWHM).
+
+혼동하면 안 되는 것: **Weiß et al. 2009, ApJ 707, 1201** (LABOCA/APEX ECDFS) 과
+**Minowa et al. 2005, ApJ 629, 29** (Subaru SDF) 는 개별 스캔·노출의 절반을 부호
+반전해 합친 **jackknife 잡음 지도**를 쓴다. 단일 프레임 반전이 아니라 다른
+기법이다. (Weiß+2009 의 APEX 는 Atacama Pathfinder EXperiment 망원경으로, 이
+소프트웨어와 무관하다 — 논문에서 인용할 때 표기 주의.)
+
+**이 작업이 선행 연구와 다른 점**: ALHAMBRA 는 임계를 *고르는 데* 한 번 쓰지만,
+여기서는 **매 프레임 QC 지표로** 쓴다. 하한이 프레임마다 다르다는 걸 실측했으므로
+(아래) 한 번 고른 임계를 전 프레임에 적용하는 것으로는 부족하다.
+
 ## 검증 — Gaia DR3 실측과 대조
 
 검출을 Gaia 와 2.0″ 로 매칭해 진짜/가짜를 가른 값과 비교했다.
