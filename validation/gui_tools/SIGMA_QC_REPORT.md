@@ -30,13 +30,31 @@
 음수 검출로 가짜를 세는 것은 확립된 기법이다.
 
 - **Serra, Jurek & Flöer 2012, PASA 29, 296** — *Using Negative Detections to
-  Estimate Source-Finder Reliability*. 방법론 원전. 음수 검출로 각 양수 검출에
-  실재 확률(reliability)을 부여한다.
+  Estimate Source-Finder Reliability*. 방법론 원전.
 - **Serra et al. 2015, MNRAS 448, 1922** — SoFiA. 위 방법이 reliability 필터로
   구현되어 WALLABY(ASKAP) HI 서베이 파이프라인의 표준이 됐다.
+  후속: **Westmeier et al. 2021, MNRAS 506, 3962** (SoFiA 2).
 - **Molino et al. 2014, MNRAS 441, 2891** — ALHAMBRA. **광학에서 정확히 같은
   방식**: 반전 영상에 SExtractor 를 돌려 가짜 오염이 3% 를 넘지 않는 검출 임계를
   고른다 (`DETECT_MINAREA` = 2×FWHM).
+
+**SoFiA 의 공식은 이 문서의 순도 추정과 같다.**
+
+```text
+R = (N_pos − N_neg) / N_pos
+```
+
+양수만 있으면 R=1, 양수와 음수가 같은 수면 R=0. 다만 SoFiA 는 이 밀도비를 **3차원
+매개변수 공간** `(s_max, s_sum, s_mean)` 에서 가우시안 KDE 로 국소적으로 재
+(`s_max = S_max/σ_rms`, `s_sum = S_sum/σ_rms`, `s_mean = s_sum/n_pix`),
+**검출 하나하나에** 실재 확률을 매긴다. 여기서는 같은 공식을 **프레임 전체의
+스칼라 하나**로 쓴다.
+
+**음수 검출을 얻는 방법도 다르다.** SoFiA 는 한 번의 실행에서 **총 플럭스가 음수인
+검출**을 그대로 쓴다 — 전파 큐브는 배경이 0 중심이라 임계를 `|flux|` 로 걸면 음수
+검출이 자연히 나온다. 광학 CCD 에서 `sep.extract` 는 양수만 찾으므로 **부호를
+뒤집어 다시 검출**해야 한다. ALHAMBRA 가 쓴 방식이고 이 문서도 그렇게 했다.
+도구의 차이일 뿐 논리는 같다.
 
 혼동하면 안 되는 것: **Weiß et al. 2009, ApJ 707, 1201** (LABOCA/APEX ECDFS) 과
 **Minowa et al. 2005, ApJ 629, 29** (Subaru SDF) 는 개별 스캔·노출의 절반을 부호
@@ -47,6 +65,11 @@
 **이 작업이 선행 연구와 다른 점**: ALHAMBRA 는 임계를 *고르는 데* 한 번 쓰지만,
 여기서는 **매 프레임 QC 지표로** 쓴다. 하한이 프레임마다 다르다는 걸 실측했으므로
 (아래) 한 번 고른 임계를 전 프레임에 적용하는 것으로는 부족하다.
+
+**아직 안 가져온 것**: SoFiA 의 매개변수 공간 KDE. 지금은 프레임당 스칼라 하나라
+「이 프레임이 오염됐다」까지만 말할 수 있고 「이 검출이 가짜다」는 못 한다.
+`(peak, flux, npix)` 로 같은 밀도비를 재면 검출별로 거를 수 있다 — Step 6 마스터
+카탈로그 품질에 직접 영향.
 
 ## 검증 — Gaia DR3 실측과 대조
 
