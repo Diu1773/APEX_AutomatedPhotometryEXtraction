@@ -399,7 +399,10 @@ class ClusterStructureWindow(ToolWindowBase):
                 sc = proj_plane_pixel_scales(self.ref_wcs.celestial) * 3600.0
                 self.pixel_scale_arcsec = float(np.nanmean(sc))
             except Exception:
-                self.pixel_scale_arcsec = float(getattr(self.params.P, "pixel_scale_arcsec", np.nan))
+                # 미설정이면 키가 None 으로 존재해 float(None) 이 터진다 —
+                # 그러면 이 except 블록 안에서 다시 예외가 나 load_inputs 가 죽는다.
+                from apex.analysis.wcs_solve import configured_pixel_scale
+                self.pixel_scale_arcsec = configured_pixel_scale(self.params.P)
 
             ra = self.df_stars["ra"].to_numpy(float)
             dec = self.df_stars["dec"].to_numpy(float)

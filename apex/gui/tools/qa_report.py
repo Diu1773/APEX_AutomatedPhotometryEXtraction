@@ -24,6 +24,7 @@ from typing import Optional, Dict, List, Tuple, Any
 import numpy as np
 import pandas as pd
 
+from apex.analysis.wcs_solve import configured_pixel_scale
 from apex.gui.tools.tool_window_base import ToolWindowBase
 from apex.utils.common_helpers import normalize_filter_key
 from apex.utils.constants import MAD_TO_SIGMA
@@ -2115,7 +2116,9 @@ QA가 PASS라고 해서 표준성 보정, extinction/color-term 보정, 시간�
             self.qa_params["skip_frame_flagging"] = False
 
         worker_params = dict(self.qa_params)
-        worker_params["pixel_scale_arcsec"] = float(getattr(self.params.P, "pixel_scale_arcsec", np.nan))
+        # pixel_scale_arcsec 은 미설정일 때 **키가 None 으로 존재**한다. 그러면
+        # getattr 의 기본값이 안 먹고 float(None) 이 TypeError 를 낸다.
+        worker_params["pixel_scale_arcsec"] = configured_pixel_scale(self.params.P)
 
         self.log(f"Parameters: {worker_params}")
 
@@ -2438,7 +2441,7 @@ Outliers:
 
                 # Column 7: FWHM
                 fwhm_px = row.get("fwhm_used", np.nan)
-                pixscale = float(getattr(self.params.P, "pixel_scale_arcsec", np.nan))
+                pixscale = configured_pixel_scale(self.params.P)
                 if np.isfinite(fwhm_px):
                     if np.isfinite(pixscale) and pixscale > 0:
                         fwhm_arcsec = fwhm_px * pixscale

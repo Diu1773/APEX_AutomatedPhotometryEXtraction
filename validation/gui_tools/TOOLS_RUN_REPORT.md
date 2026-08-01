@@ -238,6 +238,61 @@ handoff_bundle: ValidatedLightCurveBundle
 비활성인 것은 정상**이고, 앞 절들에서 「Run 비활성」으로 적은 것들도 같은
 이유다(transit · eclipsing_binary 동일).
 
+## 6.7 후속 세 건 — 하나는 이미 고쳐져 있었고, 하나는 자료가 막는다
+
+### `pixel_scale_arcsec = None` 크래시 — 절반은 이미 처리, 나머지 3곳을 마저
+
+TRACK 「다음 3개」 1번이다. 확인해 보니 `wcs_solve.py` 는 **이미 고쳐져 있었다** —
+병렬 세션이 `configured_pixel_scale(P)` 헬퍼를 만들었고 docstring 이 원인을 정확히
+적어 두었다(미설정이면 키가 **None 으로 존재**해 `getattr` 기본값이 안 먹는다).
+
+같은 패턴이 남은 곳을 훑어 세 군데를 헬퍼로 통일했다.
+
+| 위치 | 상태 |
+|---|---|
+| `qa_report.py` (worker_params) | 방어 없음 → 수정 |
+| `qa_report.py` (FWHM 열) | 방어 없음 → 수정 |
+| `cluster_structure/window.py` | except 블록 **안**이라 터지면 load_inputs 가 죽는다 → 수정 |
+| `detection.py:1076` | **이미 안전**(try/except + 0.4 폴백) — 손대지 않음 |
+| `step10_zeropoint_calibration.py` | **이미 안전**(`or 0.0`) |
+
+검증: `parameters.example.toml` 로 옛 방식은 `TypeError`, 헬퍼는 `nan`(isfinite=False).
+
+### `cluster_structure` 의 pmem 부재 — 도구가 아니라 입력이 없다
+
+창은 살아났지만 로그에 `no finite pmem values found` 가 남아 centering 이 안 된다.
+추적하니 pmem 은 **Step 10 이 계산해 `gaia_pmem` 으로 넣거나
+`step5_wcs/gaia_derived.csv` 에 있어야** 하는데 M13 에는 둘 다 없다.
+`median_by_ID_filter_wide_cmd.csv` 에는 `parallax`·`pmra`·`pmdec` 원재료만 있다.
+
+M13 설정은 `pmem_method="gmm3d"` · `pmem_min_valid=30` 인데 **M13 은 7 kpc
+구상성단이라 Gaia 시차(~0.1 mas)로 3D 멤버십을 뽑기 어렵다.** 도구의 안내
+(`Provide membership table/key mapping first`)도 정확하다 — 입력 부재이고
+`extinction_fit` 과 같은 범주다.
+
+### 별칭 확정용 밤 추가 — 기대만큼 안 된다 (정직 기록)
+
+남은 두 밤을 확인했다.
+
+| 밤 | 라이트 | 노출 | 자체 dark |
+|---|---|---|---|
+| 20260326 | g 31 · r 31 · i 31 | 50 / 40 / 120 s | 없음 |
+| 20260328 | g 113 · r 110 · i 109 | 30 / 30 / 60 s | 없음 |
+
+`E:\darks` 커버리지는 30 s ○ · 40 s ○ · **50 s ✗** · 60 s ○ · 120 s ○ 이라
+20260328 은 전 필터 가능하고 20260326 은 g 가 막힌다.
+
+**하지만 근본 문제가 따로 있다.**
+- 기존 세트(2025-04-29/30)와는 **11개월** 떨어져 있어, 주기 불확실도 9.5% 로는
+  약 3,200 사이클을 셀 수 없다 — 합치면 오히려 모호해진다.
+- 두 새 밤끼리는 **2일 간격**이라 별칭 간격이 0.5 c/d 로 **더 촘촘해진다.**
+  1일 간격(20250429+30)보다 나아지지 않는다.
+
+→ 「한 밤만 더하면 별칭이 확실해진다」던 앞선 제안은 **틀렸다.** 이 문제는
+**연속된 밤이 여러 개** 있어야 풀린다. 새 자료를 넣는 것으로 우회할 수 없다.
+쓸 수 있는 방향은 20260326+20260328 을 **독립 세트로 처리해 2025 결과와 대조**
+하는 것이고(두 독립 측정의 일치 여부), 그건 별칭 해소가 아니라 재현성 확인이다.
+
 ## 7. 산출물
 
 ```
