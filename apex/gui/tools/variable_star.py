@@ -318,12 +318,41 @@ from PyQt5.QtWidgets import (
     QCheckBox, QTabWidget, QTextEdit, QTableWidget, QTableWidgetItem,
     QHeaderView, QFileDialog, QSplitter, QMessageBox, QComboBox, QLineEdit,
     QColorDialog, QDialog, QGridLayout, QScrollArea, QFrame,
-    QProgressBar, QSizePolicy, QStyle,
+    QProgressBar, QSizePolicy,
 )
 from PyQt5.QtCore import Qt, QThread, QTimer, pyqtSignal
 from PyQt5.QtGui import QColor
 
 from apex.gui.layout_rules import FittedDialog, prevent_collapse, scroll_wrap, tame_canvas
+from apex.gui.theme import Tokens, style_button
+
+
+def _repolish(widget) -> None:
+    """Re-evaluate the theme QSS after a dynamic property change."""
+    style = widget.style()
+    style.unpolish(widget)
+    style.polish(widget)
+
+
+def _set_role(widget, prop: str, value) -> None:
+    """Set a theme role property (role= / banner= / status=) and repolish."""
+    widget.setProperty(prop, value)
+    _repolish(widget)
+
+
+def _mono_note_style() -> str:
+    """Result-callout look for monospace summaries (O-C fit, Fourier, MM).
+
+    Built from the live Tokens so every theme keeps its own surface/border;
+    no theme property exists for a mono QLabel, hence the one f-string.
+    """
+    return (
+        f"QLabel {{ background: {Tokens.SURFACE_ALT}; color: {Tokens.TEXT}; "
+        f"padding: {Tokens.GAP}px; border: 1px solid {Tokens.BORDER}; "
+        f"border-radius: {Tokens.RADIUS_SM}px; "
+        f"font-family: 'Cascadia Mono', 'Consolas', monospace; "
+        f"font-size: {Tokens.FS_CAPTION}px; }}"
+    )
 
 rcParams["axes.unicode_minus"] = False
 
@@ -1277,12 +1306,8 @@ class VariableStarToolWindow(ToolWindowBase):
         # Validated, one-click analysis supplied by Main Step 12.
         self.auto_group = QGroupBox("Validated Analysis")
         self.auto_group.setSizePolicy(QSizePolicy.Preferred, QSizePolicy.Maximum)
-        self.auto_group.setStyleSheet(
-            "QGroupBox { color: #263238; font-weight: bold; }"
-            "QLabel, QCheckBox, QComboBox, QProgressBar { color: #263238; font-weight: normal; }"
-            "QPushButton { color: #263238; font-weight: normal; min-height: 24px; }"
-            "QPushButton:disabled { color: #90A4AE; }"
-        )
+        # No blanket stylesheet: the old fixed #263238 text turned dark-on-dark
+        # in every dark theme; the theme QSS already colours all of these.
         auto_layout = QVBoxLayout(self.auto_group)
         auto_layout.setContentsMargins(8, 8, 8, 8)
         auto_layout.setSpacing(6)
@@ -1292,10 +1317,7 @@ class VariableStarToolWindow(ToolWindowBase):
         self.auto_release_label.setWordWrap(True)
         self.auto_release_label.setMinimumHeight(78)
         self.auto_release_label.setAlignment(Qt.AlignLeft | Qt.AlignVCenter)
-        self.auto_release_label.setStyleSheet(
-            "QLabel { color: #263238; background: #ECEFF1; padding: 7px; "
-            "border: 1px solid #CFD8DC; font-size: 9pt; }"
-        )
+        self._set_release_banner("neutral")
         auto_layout.addWidget(self.auto_release_label)
 
         mode_row = QHBoxLayout()
@@ -1318,22 +1340,22 @@ class VariableStarToolWindow(ToolWindowBase):
         auto_layout.addWidget(self.auto_candidate_row)
 
         action_row = QHBoxLayout()
-        # Tight column: without a floor the layout shrinks these below their
-        # icon+label and the text is cut mid-word.
+        # Tight column: no icons here — at the 330 px panel floor, icon +
+        # theme padding squeezed the labels to "Rur"/"Stoc"/"Savi".
         action_row.setSpacing(4)
         self.btn_auto_run = QPushButton("Run")
-        self.btn_auto_run.setIcon(self.style().standardIcon(QStyle.SP_MediaPlay))
+        style_button(self.btn_auto_run, "primary", height=Tokens.H_BUTTON)
         self.btn_auto_run.setEnabled(False)
         self.btn_auto_run.clicked.connect(self._run_automated_analysis)
         action_row.addWidget(self.btn_auto_run)
         self.btn_auto_cancel = QPushButton("Stop")
-        self.btn_auto_cancel.setIcon(self.style().standardIcon(QStyle.SP_BrowserStop))
+        style_button(self.btn_auto_cancel, "danger", height=Tokens.H_BUTTON)
         self.btn_auto_cancel.setToolTip("Cancel the running analysis")
         self.btn_auto_cancel.setEnabled(False)
         self.btn_auto_cancel.clicked.connect(self._cancel_automated_analysis)
         action_row.addWidget(self.btn_auto_cancel)
         self.btn_auto_export = QPushButton("Save")
-        self.btn_auto_export.setIcon(self.style().standardIcon(QStyle.SP_DialogSaveButton))
+        style_button(self.btn_auto_export, height=Tokens.H_BUTTON)
         self.btn_auto_export.setToolTip("Save the complete analysis result")
         self.btn_auto_export.setEnabled(False)
         self.btn_auto_export.clicked.connect(self._export_automated_result)
@@ -1347,7 +1369,7 @@ class VariableStarToolWindow(ToolWindowBase):
         auto_layout.addWidget(self.auto_progress)
         self.auto_status_label = QLabel("Load a validated Step 12 release to run.")
         self.auto_status_label.setWordWrap(True)
-        self.auto_status_label.setStyleSheet("font-size: 8pt; color: #455A64; font-weight: normal;")
+        self.auto_status_label.setProperty("role", "caption")
         auto_layout.addWidget(self.auto_status_label)
         self.auto_advanced_chk = QCheckBox("Advanced manual controls")
         self.auto_advanced_chk.setChecked(True)
@@ -1408,9 +1430,7 @@ class VariableStarToolWindow(ToolWindowBase):
 
         self.workflow_status_label = QLabel("Load a light curve to begin.")
         self.workflow_status_label.setWordWrap(True)
-        self.workflow_status_label.setStyleSheet(
-            "QLabel { background: #ECEFF1; padding: 8px; border-radius: 4px; font-size: 8pt; }"
-        )
+        self.workflow_status_label.setProperty("role", "info")
         workflow_layout.addWidget(self.workflow_status_label)
 
         workflow_btn_layout = QGridLayout()
@@ -1461,13 +1481,11 @@ class VariableStarToolWindow(ToolWindowBase):
         self.pdm_bins.setRange(5, 50); self.pdm_bins.setValue(10)
         scan_form.addRow("PDM bins:", self.pdm_bins)
         btn_scan = QPushButton("Scan")
-        btn_scan.setStyleSheet(
-            "QPushButton { background: #1976D2; color: white; font-weight: bold; padding: 6px; }"
-        )
+        style_button(btn_scan, "primary", height=Tokens.H_ACTION)
         btn_scan.clicked.connect(self._run_scan)
         scan_form.addRow(btn_scan)
         self.scan_status = QLabel("")
-        self.scan_status.setStyleSheet("font-size: 8pt; color: #555;")
+        self.scan_status.setProperty("role", "caption")
         scan_form.addRow(self.scan_status)
         left_layout.addWidget(self.scan_group)
 
@@ -1475,9 +1493,7 @@ class VariableStarToolWindow(ToolWindowBase):
         route_form = QFormLayout(self.route_group)
         self.route_recommend_label = QLabel("Run a scan to get a single/multi recommendation.")
         self.route_recommend_label.setWordWrap(True)
-        self.route_recommend_label.setStyleSheet(
-            "QLabel { background: #FFF8E1; padding: 8px; border-radius: 4px; font-size: 8pt; }"
-        )
+        self.route_recommend_label.setProperty("role", "info")
         route_form.addRow("Recommendation:", self.route_recommend_label)
         route_btn_row = QHBoxLayout()
         self.btn_route_single = QPushButton("Single-period")
@@ -1517,15 +1533,12 @@ class VariableStarToolWindow(ToolWindowBase):
         self.btn_refine.setToolTip(
             "Runs a fine search and fixed-timestamp residual bootstrap around the selected period."
         )
-        self.btn_refine.setStyleSheet(
-            "QPushButton { background: #7B1FA2; color: white; font-weight: bold; padding: 6px; }"
-            "QPushButton:disabled { background: #BDBDBD; }"
-        )
+        style_button(self.btn_refine, "primary", height=Tokens.H_ACTION)
         self.btn_refine.setEnabled(False)
         self.btn_refine.clicked.connect(self._run_refine)
         refine_form.addRow(self.btn_refine)
         self.refine_status = QLabel("")
-        self.refine_status.setStyleSheet("font-size: 8pt; color: #555;")
+        self.refine_status.setProperty("role", "caption")
         refine_form.addRow(self.refine_status)
         left_layout.addWidget(self.refine_group)
 
@@ -1593,13 +1606,11 @@ class VariableStarToolWindow(ToolWindowBase):
         mm_form.addRow(self.mm_overlay_chk)
         self.mm_overlay_chk.hide()
         self.btn_multimode_fit = QPushButton("Fit Multi-Mode")
-        self.btn_multimode_fit.setStyleSheet(
-            "QPushButton { background: #455A64; color: white; font-weight: bold; padding: 6px; }"
-        )
+        style_button(self.btn_multimode_fit, "primary", height=Tokens.H_ACTION)
         self.btn_multimode_fit.clicked.connect(self._run_multimode_fit)
         mm_form.addRow(self.btn_multimode_fit)
         self.mm_status = QLabel("")
-        self.mm_status.setStyleSheet("font-size: 8pt; color: #555;")
+        self.mm_status.setProperty("role", "caption")
         self.mm_status.setWordWrap(True)
         mm_form.addRow(self.mm_status)
         left_layout.addWidget(self.mm_group)
@@ -1660,15 +1671,13 @@ class VariableStarToolWindow(ToolWindowBase):
         self.btn_log_toggle = QPushButton("Log ▼")
         self.btn_log_toggle.setCheckable(True)
         self.btn_log_toggle.setChecked(False)
-        self.btn_log_toggle.setStyleSheet(
-            "QPushButton { text-align: left; font-size: 8pt; padding: 2px 6px; }"
-        )
+        style_button(self.btn_log_toggle, "ghost", height=Tokens.H_COMPACT)
         self.btn_log_toggle.toggled.connect(self._toggle_log)
         left_layout.addWidget(self.btn_log_toggle)
         self.log_box = QTextEdit()
         self.log_box.setReadOnly(True)
         self.log_box.setMaximumHeight(150)
-        self.log_box.setStyleSheet("font-family: monospace; font-size: 8pt;")
+        self.log_box.setObjectName("Log")
         self.log_box.hide()
         left_layout.addWidget(self.log_box)
 
@@ -1695,9 +1704,7 @@ class VariableStarToolWindow(ToolWindowBase):
         ref_tab = QWidget()
         ref_layout = QVBoxLayout(ref_tab)
         self.refine_label = QLabel("Select a resolved period candidate, then refine its local precision.")
-        self.refine_label.setStyleSheet(
-            "QLabel { background: #F3E5F5; padding: 8px; border-radius: 4px; font-weight: bold; }"
-        )
+        self.refine_label.setProperty("role", "info")
         ref_layout.addWidget(self.refine_label)
         self.refine_result_tabs = QTabWidget()
         ref_left = QWidget()
@@ -1827,23 +1834,15 @@ class VariableStarToolWindow(ToolWindowBase):
                 key == "analysis" and self.workflow_step in {"single", "multi"}
             )
             btn.setChecked(is_current)
-            if is_current:
-                btn.setStyleSheet(
-                    "QPushButton { background: #1565C0; color: white; font-weight: bold; }"
-                )
-            else:
-                btn.setStyleSheet("")
+            # The checked state alone marks the current stage; the theme
+            # paints it, so no per-state stylesheet (and dark mode works).
             btn.blockSignals(False)
 
         if hasattr(self, "route_recommend_label"):
-            route_style = "#FFF8E1"
-            if self.recommended_mode == "single":
-                route_style = "#E8F5E9"
-            elif self.recommended_mode == "multi":
-                route_style = "#FFF3E0"
-            self.route_recommend_label.setStyleSheet(
-                f"QLabel {{ background: {route_style}; padding: 8px; border-radius: 4px; font-size: 8pt; }}"
-            )
+            banner = {"single": "ok", "multi": "warn"}.get(self.recommended_mode)
+            self.route_recommend_label.setProperty("role", None if banner else "info")
+            self.route_recommend_label.setProperty("banner", banner)
+            _repolish(self.route_recommend_label)
             self.route_recommend_label.setText(self.recommendation_text)
 
         if hasattr(self, "btn_route_single"):
@@ -1937,21 +1936,24 @@ class VariableStarToolWindow(ToolWindowBase):
             f"ID {bundle.target_id} | {filter_label} | P={bundle.adopted_period:.8f} d"
         )
         if bundle.release_status in {"APPROVED", "OVERRIDDEN"}:
-            self.auto_release_label.setStyleSheet(
-                "QLabel { color: #1B5E20; background: #E8F5E9; padding: 7px; "
-                "border: 1px solid #A5D6A7; font-weight: normal; font-size: 9pt; }"
-            )
+            self._set_release_banner("ok")
             self.auto_status_label.setText("Ready to run the validated advanced analysis.")
         else:
-            self.auto_release_label.setStyleSheet(
-                "QLabel { color: #7A4F01; background: #FFF8E1; padding: 7px; "
-                "border: 1px solid #FFE082; font-weight: normal; font-size: 9pt; }"
-            )
+            self._set_release_banner("warn")
             self.auto_status_label.setText(
                 "This legacy handoff is unverified. Review provenance before using its result."
             )
         self.auto_advanced_chk.setChecked(False)
         self._refresh_tool_workflow_ui()
+
+    def _set_release_banner(self, kind: str) -> None:
+        """Release-state banner via theme roles: neutral -> info chip,
+        ok -> green banner, warn -> amber banner. Dark-theme safe, unlike the
+        old fixed light-pastel stylesheets."""
+        label = self.auto_release_label
+        label.setProperty("role", "info" if kind == "neutral" else None)
+        label.setProperty("banner", kind if kind in ("ok", "warn") else None)
+        _repolish(label)
 
     def _selected_review_periods(self) -> tuple[float | None, float | None]:
         if not self.auto_candidate_row.isVisible():
@@ -2195,7 +2197,8 @@ class VariableStarToolWindow(ToolWindowBase):
         hdr = QHBoxLayout()
         hdr.addWidget(QLabel("Event:"))
         self.oc_event_label = QLabel("Maximum light")
-        self.oc_event_label.setStyleSheet("font-weight: bold;")
+        _f = self.oc_event_label.font(); _f.setBold(True)
+        self.oc_event_label.setFont(_f)
         hdr.addWidget(self.oc_event_label)
         hdr.addWidget(QLabel("T₀ (BJD):"))
         self.oc_t0 = QDoubleSpinBox()
@@ -2219,9 +2222,7 @@ class VariableStarToolWindow(ToolWindowBase):
             "especially across long gaps."
         )
         oc_note.setWordWrap(True)
-        oc_note.setStyleSheet(
-            "QLabel { background: #FFF8E1; padding: 6px; border: 1px solid #FFE082; }"
-        )
+        oc_note.setProperty("banner", "warn")
         layout.addWidget(oc_note)
 
         splitter = QSplitter(Qt.Horizontal)
@@ -2267,10 +2268,7 @@ class VariableStarToolWindow(ToolWindowBase):
         rl.addLayout(fit_row)
         self.oc_fit_label = QLabel("")
         self.oc_fit_label.setWordWrap(True)
-        self.oc_fit_label.setStyleSheet(
-            "QLabel { background: #E8F5E9; padding: 6px; border-radius: 4px; "
-            "font-family: monospace; font-size: 9pt; }"
-        )
+        self.oc_fit_label.setStyleSheet(_mono_note_style())
         rl.addWidget(self.oc_fit_label)
         splitter.addWidget(right)
         splitter.setSizes([330, 670])
@@ -2294,9 +2292,7 @@ class VariableStarToolWindow(ToolWindowBase):
         self.fourier_filter_combo.addItem("All data", "__all__")
         ctrl.addWidget(self.fourier_filter_combo)
         btn_fourier = QPushButton("Decompose")
-        btn_fourier.setStyleSheet(
-            "QPushButton { background: #00796B; color: white; font-weight: bold; padding: 6px 12px; }"
-        )
+        style_button(btn_fourier, "primary", height=Tokens.H_BUTTON)
         btn_fourier.clicked.connect(self._run_fourier)
         ctrl.addWidget(btn_fourier)
         ctrl.addStretch()
@@ -2310,17 +2306,11 @@ class VariableStarToolWindow(ToolWindowBase):
         )
         help_label = QLabel(help_text)
         help_label.setWordWrap(True)
-        help_label.setStyleSheet(
-            "QLabel { background: #FFF8E1; padding: 8px; border-radius: 4px; "
-            "font-size: 8pt; border: 1px solid #FFE082; }"
-        )
+        help_label.setProperty("role", "info")
         layout.addWidget(help_label)
 
         self.fourier_label = QLabel("")
-        self.fourier_label.setStyleSheet(
-            "QLabel { background: #E0F2F1; padding: 8px; border-radius: 4px; "
-            "font-family: monospace; font-size: 9pt; }"
-        )
+        self.fourier_label.setStyleSheet(_mono_note_style())
         self.fourier_label.setWordWrap(True)
         layout.addWidget(self.fourier_label)
 
@@ -2340,18 +2330,12 @@ class VariableStarToolWindow(ToolWindowBase):
             "각 모드별 분리 phase curve를 확인합니다."
         )
         help_label.setWordWrap(True)
-        help_label.setStyleSheet(
-            "QLabel { background: #FFF3E0; padding: 8px; border-radius: 4px; "
-            "font-size: 8pt; border: 1px solid #FFCC80; }"
-        )
+        help_label.setProperty("role", "info")
         layout.addWidget(help_label)
 
         self.mm_summary_label = QLabel("Set periods and run Fit Multi-Mode.")
         self.mm_summary_label.setWordWrap(True)
-        self.mm_summary_label.setStyleSheet(
-            "QLabel { background: #ECEFF1; padding: 8px; border-radius: 4px; "
-            "font-family: monospace; font-size: 9pt; }"
-        )
+        self.mm_summary_label.setStyleSheet(_mono_note_style())
         layout.addWidget(self.mm_summary_label)
 
         candidate_ctrl = QHBoxLayout()
@@ -2369,9 +2353,7 @@ class VariableStarToolWindow(ToolWindowBase):
 
         self.mm_candidate_status = QLabel("Candidate detection not run yet.")
         self.mm_candidate_status.setWordWrap(True)
-        self.mm_candidate_status.setStyleSheet(
-            "QLabel { background: #F5F5F5; padding: 6px; border-radius: 4px; font-size: 8pt; }"
-        )
+        self.mm_candidate_status.setProperty("role", "caption")
         layout.addWidget(self.mm_candidate_status)
 
         self.mm_candidate_table = QTableWidget()
@@ -2385,9 +2367,7 @@ class VariableStarToolWindow(ToolWindowBase):
 
         self.mm_mode_status = QLabel("No joint-fit mode classification yet.")
         self.mm_mode_status.setWordWrap(True)
-        self.mm_mode_status.setStyleSheet(
-            "QLabel { background: #F1F8E9; padding: 6px; border-radius: 4px; font-size: 8pt; }"
-        )
+        self.mm_mode_status.setProperty("role", "caption")
         layout.addWidget(self.mm_mode_status)
 
         self.mm_mode_table = QTableWidget()
@@ -2415,9 +2395,7 @@ class VariableStarToolWindow(ToolWindowBase):
 
         self.mm_history_status = QLabel("Prewhitening history is empty.")
         self.mm_history_status.setWordWrap(True)
-        self.mm_history_status.setStyleSheet(
-            "QLabel { background: #ECEFF1; padding: 6px; border-radius: 4px; font-size: 8pt; }"
-        )
+        self.mm_history_status.setProperty("role", "caption")
         layout.addWidget(self.mm_history_status)
 
         self.mm_history_table = QTableWidget()
@@ -3994,15 +3972,12 @@ class VariableStarToolWindow(ToolWindowBase):
         self.analysis_filter_combo.setEnabled(False)
         self.analysis_filter_combo.blockSignals(False)
         self.lc_status.setText(status)
-        self.lc_status.setStyleSheet("color: #C62828;")
+        _set_role(self.lc_status, "status", "error")
         if hasattr(self, "auto_release_label"):
             self.auto_release_label.setText(
                 "No Main-workflow release is loaded. Standalone data is unvalidated."
             )
-            self.auto_release_label.setStyleSheet(
-                "QLabel { color: #263238; background: #ECEFF1; padding: 7px; "
-                "border: 1px solid #CFD8DC; font-weight: normal; font-size: 9pt; }"
-            )
+            self._set_release_banner("neutral")
             self.auto_status_label.setText("Load a validated Step 12 release to run.")
             self.auto_progress.setValue(0)
             self.btn_auto_run.setEnabled(False)
@@ -4263,7 +4238,7 @@ class VariableStarToolWindow(ToolWindowBase):
         self.lc_status.setText(
             f"{workspace_name}{workspace_type}\n{self.lc_data['source']}\n{n} pts{corr_line}\n{self.mag_col_combo.currentText()}"
         )
-        self.lc_status.setStyleSheet("color: green;")
+        _set_role(self.lc_status, "status", "ok")
         filt_label = self.lc_data.get("analysis_filter", "__all__")
         filt_info = f", filter={filt_label}" if filt_label and filt_label != "__all__" else ""
         self.log(
@@ -5274,10 +5249,13 @@ class VariableStarToolWindow(ToolWindowBase):
     # ------------------------------------------------------------------
 
     def _apply_filter_swatch_style(self, button, color: str):
+        # The background IS the data (the filter's plot colour) — the one
+        # legitimate per-button background. Borders come from the theme.
         button.setStyleSheet(
-            f"QPushButton {{ background-color: {color}; border: 1px solid #455A64; "
+            f"QPushButton {{ background-color: {color}; "
+            f"border: 1px solid {Tokens.BORDER_STRONG}; "
             f"border-radius: 3px; min-width: 28px; min-height: 20px; }}"
-            "QPushButton:hover { border: 2px solid #263238; }"
+            f"QPushButton:hover {{ border: 2px solid {Tokens.ACCENT}; }}"
         )
 
     def show_filter_color_browser(self):
@@ -5303,7 +5281,7 @@ class VariableStarToolWindow(ToolWindowBase):
         layout = QVBoxLayout(dialog)
 
         info = QLabel("필터별 색상을 변경하거나 표시/숨김을 설정합니다.\n변경 즉시 위상 그래프에 반영됩니다.")
-        info.setStyleSheet("color: #455A64; font-size: 8pt;")
+        info.setProperty("role", "caption")
         info.setWordWrap(True)
         layout.addWidget(info)
 
@@ -5317,7 +5295,7 @@ class VariableStarToolWindow(ToolWindowBase):
             # Visibility checkbox
             chk = QCheckBox(key)
             chk.setChecked(self.filter_visibility.get(key, True))
-            chk.setStyleSheet("font-weight: bold;")
+            _f = chk.font(); _f.setBold(True); chk.setFont(_f)
             def _on_vis(state, k=key):
                 self.filter_visibility[k] = bool(state)
                 self._update_phase_plot()
