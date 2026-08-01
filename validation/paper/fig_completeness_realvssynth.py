@@ -48,14 +48,25 @@ GAIN = 0.689  # e-/ADU (PTC-measured, C3-61000)
 
 # All real-frame injections — every entry is ONE single exposure (no stacks).
 # hero=True → completeness curve in panel (a); all frames enter panel (b).
+#
+# Frame provenance (2026-08-02).  The injection runs are dated 2026-07-23/24.
+# Since then two things moved the files this script reads:
+#   * the per-target reorg *moved* M13's frames out of calibrated/<night>/ into
+#     sci/, leaving calibrated/ empty — the old M13 V path raised FileNotFoundError;
+#   * M13 and NGC 6811 were re-reduced with cosmic-ray rejection (2026-07-31 and
+#     08-01), so sci/ no longer holds the frames the injections actually ran on.
+# The injection-era frames survive in sci_nocr/, so M13 and NGC 6811 read from
+# there.  This is not cosmetic: sigma_e is the denominator of peak S/N, so the
+# wrong frame shifts S/N50 and its correlation with FWHM.  M67 was never
+# re-reduced, so its sci/ files are unchanged.
 FRAMES = [
-    ("M67 i",      "60 s",  "data_realframe_M67i",           REPRO/"M67/sci/pp_Messier67-0008-i.fit",          "data",      "-o", True),
-    ("NGC 6811 R", "120 s", "data_realframe_NGC6811R",        REPRO/"NGC6811/sci/pp_NGC6811-0005-R.fit",        "reference", "-s", True),
-    ("M13 V",      "60 s",  "data_realframe_M13V",            REPRO/"M13/calibrated/20260515/pp_messier13-0001-V.fit", "accent", "-D", True),
-    ("M67 r",      "60 s",  "data_realframe_M67r_mid",        REPRO/"M67/sci/pp_Messier67-0003-r.fit",          None, None, False),
-    ("M67 g",      "60 s",  "data_realframe_M67g_broad",      REPRO/"M67/sci/pp_Messier67-0004-g.fit",          None, None, False),
-    ("NGC 6811 R (soft)", "480 s", "data_realframe_NGC6811R_broad", REPRO/"NGC6811/sci/pp_NGC6811-0008-R.fit",  None, None, False),
-    ("M13 R",      "60 s",  "data_realframe_M13R_sharp",      REPRO/"M13/sci/pp_messier13-0004-R.fit",          None, None, False),
+    ("M67 i",      "60 s",  "data_realframe_M67i",           REPRO/"M67/sci/pp_Messier67-0008-i.fit",               "data",      "-o", True),
+    ("NGC 6811 R", "120 s", "data_realframe_NGC6811R",        REPRO/"NGC6811/sci_nocr/pp_NGC6811-0005-R.fit",        "reference", "-s", True),
+    ("M13 V",      "60 s",  "data_realframe_M13V",            REPRO/"M13/sci_nocr/pp_messier13-0001-V.fit",          "accent",    "-D", True),
+    ("M67 r",      "60 s",  "data_realframe_M67r_mid",        REPRO/"M67/sci/pp_Messier67-0003-r.fit",               None, None, False),
+    ("M67 g",      "60 s",  "data_realframe_M67g_broad",      REPRO/"M67/sci/pp_Messier67-0004-g.fit",               None, None, False),
+    ("NGC 6811 R (soft)", "480 s", "data_realframe_NGC6811R_broad", REPRO/"NGC6811/sci_nocr/pp_NGC6811-0008-R.fit",  None, None, False),
+    ("M13 R",      "60 s",  "data_realframe_M13R_sharp",      REPRO/"M13/sci_nocr/pp_messier13-0004-R.fit",          None, None, False),
 ]
 
 
