@@ -32,6 +32,38 @@ BibTeX in [`references.bib`](references.bib). Zero fabricated DOIs. Corrections 
 | 20 | `astropy2018` | Astropy v2.0 — AJ 156, 123 | ✅ VERIFIED |
 | 21 | `astropy2022` | Astropy v5.0 — ApJ 935, 167 | ✅ VERIFIED |
 
+## §3.12 additions (2026-08-01) — detection-threshold contamination
+
+Added for the sign-flipped contamination measurement (Section~\ref{sec:threshold}).
+Every DOI below was resolved and the landing page checked against the title;
+one initial guess (`10.1086/339315` for `hopkins2002`) turned out to be a
+different paper and was discarded rather than shipped.
+
+| # | Key | Reference | Status |
+|---|---|---|---|
+| 22 | `serra2012` | Using Negative Detections to Estimate Source-Finder Reliability — PASA 29, 296 | ✅ VERIFIED (10.1071/AS11065) |
+| 23 | `serra2015` | SoFiA: a flexible source finder for 3D spectral line data — MNRAS 448, 1922 | ✅ VERIFIED (10.1093/mnras/stv079) |
+| 24 | `molino2014` | The ALHAMBRA Survey: Bayesian photometric redshifts — MNRAS 441, 2891 | ✅ VERIFIED (10.1093/mnras/stu387) |
+| 25 | `hopkins2002` | A New Source Detection Algorithm Using the False-Discovery Rate — AJ 123, 1086 | ✅ VERIFIED (10.1086/338316) |
+
+- **`serra2012`** — the method's origin: negative detections give each positive
+  detection a probability of being real, on the assumption that the noise is
+  symmetric and real sources have positive flux. APEX uses the same ratio
+  $(N_+-N_-)/N_+$ but as one number per frame, not per detection.
+- **`serra2015` (SoFiA)** — the implementation that made it standard (WALLABY).
+  Cited to show the method is established practice, and to mark what APEX does
+  *not* borrow: SoFiA's kernel-density estimate over a 3-D parameter space needs
+  hundreds of negative detections, which a single 2-D optical frame does not
+  supply (NGC 6811 yields none at $3.2\sigma$).
+- **`molino2014` (ALHAMBRA)** — the optical precedent, and the closest prior
+  work: SExtractor run on the inverted image to pick a threshold at 3 per cent
+  contamination. The difference APEX reports is that the safe floor moves frame
+  to frame, so one threshold chosen once is not sufficient.
+- **`hopkins2002` (FDR)** — the alternative way to set a threshold statistically
+  (Benjamini--Hochberg multiple-testing control, implemented in SFIND 2.0).
+  Cited as the road not taken: it operates per pixel and does not compose with
+  a minimum-connected-area criterion.
+
 ## Annotations & section mapping
 
 ### Tooling landscape → §1 Introduction (contrast set that defines the niche)
