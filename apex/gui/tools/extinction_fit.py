@@ -1120,7 +1120,30 @@ class ExtinctionFitWorker(QThread):
                       f"stars={len(k_list)}, frames={int(sub_good['file'].nunique())}")
 
         if not fit_rows:
-            raise RuntimeError("No valid per-star extinction fits produced")
+            # 왜 하나도 안 나왔는지 알려준다. 대부분은 airmass 가 거의 고정이라
+            # 기울기를 잴 수 없는 경우다(소광계수 k 는 m = m0 + k·X 의 기울기).
+            # 예전에는 "No valid per-star extinction fits produced" 만 띄워서
+            # 자료를 더 모아야 하는지 설정을 고쳐야 하는지 알 수 없었다.
+            detail = ""
+            try:
+                X = pd.to_numeric(phot_df.get("airmass"), errors="coerce").dropna()
+                if len(X):
+                    span = float(X.max() - X.min())
+                    detail = (
+                        f"\n관측 airmass 는 {X.min():.4f}~{X.max():.4f} "
+                        f"(폭 {span:.4f}) 입니다."
+                    )
+                    if span < 0.3:
+                        detail += (
+                            "\n소광계수는 airmass 에 대한 기울기라, 이렇게 폭이 좁으면"
+                            " 결정할 수 없습니다. 고도차가 큰 프레임(보통 X=1~2)이"
+                            " 필요합니다."
+                        )
+                else:
+                    detail = "\nairmass 값이 하나도 없습니다 — frame_airmass.csv 를 확인하세요."
+            except Exception:
+                pass
+            raise RuntimeError("No valid per-star extinction fits produced" + detail)
 
         fit_df = pd.DataFrame(fit_rows)
         points_df = pd.DataFrame(point_rows)

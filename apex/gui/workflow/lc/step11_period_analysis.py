@@ -54,6 +54,7 @@ from apex.analysis.light_curve.period_alias_service import (
 )
 from apex.analysis.light_curve.period_io_service import (
     ALL_FILTER_KEY,
+    corr_mode_label,
     detect_corr_mode_from_df,
     load_period_lightcurve_csv,
     save_period_analysis_outputs,
@@ -679,7 +680,7 @@ class PeriodAnalysisWindow(StepWindowBase):
             mode_key, mode_label = _detect_corr_mode(lc_path.name)
             pref = load_detrend_preference(result_dir, target_id)
             if pref:
-                mode_label = _CORR_MODE_LABELS.get(pref, mode_label)
+                mode_label = corr_mode_label(pref, mode_label)
             self.source_label.setText(mode_label)
 
             # Scan filters

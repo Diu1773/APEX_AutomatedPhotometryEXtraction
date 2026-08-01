@@ -123,7 +123,63 @@ eclipsing_binary)가 **100×30 또는 0×0** 으로 나와 「창을 못 연다�
 이 시스템 폰트를 못 읽고, `apply_theme(app)` 도 빠뜨렸기 때문이다. 실제 앱은
 세 진입점 모두 `apply_theme` 를 부른다 — 그걸 안 부르면 캡처가 실사용과 다르다.
 
-## 6. 산출물
+## 6. 후속 (2026-08-01) — 남은 세 가지를 다 처리했다
+
+### 6.1 타깃 이름이 틀린 워크스페이스 3개
+
+좌표로 확인해 보니 **M13 · M3 · M67 셋 다 `[target] name` 이 `NGC6811`** 이었다
+(좌표는 각각 250.421 / 205.548 / 132.825 로 정확하다 — NGC6811 설정을 복사해
+좌표만 고친 흔적). 그림·창 제목에 그대로 박히므로 각각 제 이름으로 고쳤다.
+확인: `cluster_structure` 제목이 `M13 - Analyze Cluster Structure` 로 바뀐다.
+
+### 6.2 `extinction_fit` 에러가 원인을 말해 준다
+
+`No valid per-star extinction fits produced` 뒤에 실제 airmass 범위와 폭을
+붙이고, 폭이 0.3 미만이면 「소광계수는 airmass 기울기라 이 폭으로는 결정할 수
+없다」고 알려 준다. 자료를 더 모아야 하는지 설정 문제인지 바로 갈린다.
+
+### 6.3 Step 10 → 11 을 완주시키다 **치명적 회귀**를 찾았다
+
+LC 도구들이 요구하는 「validated Step 12 release」를 만들려고 Step 10(디트렌드)
+을 돌리고 Step 11 로 넘어갔더니 **창이 아예 안 열렸다.**
+
+```
+step11_period_analysis.py:682
+    mode_label = _CORR_MODE_LABELS.get(pref, mode_label)
+NameError: name '_CORR_MODE_LABELS' is not defined
+```
+
+`_CORR_MODE_LABELS` 는 `period_io_service.py` 에 있는데 step11 이 import 하지
+않는다(언더스코어라 자동으로 안 온다).
+
+> **발현 조건이 핵심이다.** 그 줄은 `load_detrend_preference()` 가 값을 돌려줄
+> 때만 탄다 — 즉 **Step 10 을 거친 뒤에만 죽는다.** 어제 YZBoo_g 는 Step 10 을
+> 안 돌려 preference 가 없어 통과했고, 오늘 Step 10 을 돌리자 막혔다.
+> **LC 를 정석대로(10 → 11) 진행하면 반드시 걸리는 버그**다.
+
+언더스코어 이름을 남의 모듈에서 끌어쓰는 대신 `corr_mode_label(key, default)`
+공개 함수를 만들어 연결했다. 고친 뒤 Step 11 이 열리고
+`lc_detrend/lightcurve_ID153_offset.csv` 를 읽어 `lc_period/` 를 낸다.
+
+### 6.4 그런데 파이프라인 주기는 별칭을 집는다 (자료 한계)
+
+Step 10 `offset` 디트렌드 → Step 11 (필터 `all`, 364점) 결과다.
+
+| 방법 | 주기 | 문헌 대비 |
+|---|---:|---:|
+| raw_ls | 0.094468 | **−9.25%** (1일 별칭) |
+| corr_ls | 0.095289 | −8.46% (별칭) |
+| raw_pdm | 0.130339 | +25.21% |
+| **corr_pdm** | **0.105297** | **+1.16%** |
+| (손으로 g+r+i 정규화 후 합침) | 0.104550 | +0.44% |
+
+`GUI_RUN_REPORT.md` §4.8 에 적은 「진짜 피크와 1일 별칭의 power 차이가 0.72%
+뿐」이 그대로 발현된 것이다 — **방법이 조금만 달라도 다른 피크를 집는다.**
+버그가 아니라 기저선 1.1일이 만드는 한계이고, 밤을 더 넣기 전에는 어느 값도
+확정이 아니다. 처리 경로도 다르다(파이프라인은 밤별 offset 디트렌드, 손 계산은
+필터별 중앙값 정규화).
+
+## 7. 산출물
 
 ```
 validation/gui_tools/

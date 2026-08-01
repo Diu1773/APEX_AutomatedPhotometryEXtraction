@@ -24,6 +24,16 @@ _CORR_MODE_LABELS = {
 ALL_FILTER_KEY = "all"
 
 
+def corr_mode_label(key: str, default: str = "") -> str:
+    """보정 모드 키를 사람이 읽는 라벨로 바꾼다.
+
+    저장된 선호 모드(detrend preference)처럼 **파일명이 아니라 키**를 들고 있을
+    때 쓴다. `detect_corr_mode()` 는 파일명에서 뽑는 용도라 이 경우엔 못 쓴다.
+    """
+    text = str(key or "").strip().lower()
+    return _CORR_MODE_LABELS.get(text, default or str(key))
+
+
 def _is_all_filter_selection(flt: str) -> bool:
     value = str(flt or "").strip().lower()
     return value in {ALL_FILTER_KEY, "__all__", "all filters", "all-filters"}
