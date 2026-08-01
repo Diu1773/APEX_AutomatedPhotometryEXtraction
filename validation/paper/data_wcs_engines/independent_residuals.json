@@ -1,0 +1,128 @@
+{
+ "internal": [
+  {
+   "file": "pp_messier13-0001-B.fit",
+   "n": 672,
+   "rms_px": 0.8659322731670832
+  },
+  {
+   "file": "pp_messier13-0001-R.fit",
+   "n": 938,
+   "rms_px": 0.7537165627321428
+  },
+  {
+   "file": "pp_messier13-0001-V.fit",
+   "n": 873,
+   "rms_px": 0.7307460149338109
+  },
+  {
+   "file": "pp_messier13-0002-B.fit",
+   "n": 676,
+   "rms_px": 0.8728568164910033
+  },
+  {
+   "file": "pp_messier13-0002-R.fit",
+   "n": 992,
+   "rms_px": 0.7049616572640499
+  },
+  {
+   "file": "pp_messier13-0002-V.fit",
+   "n": 881,
+   "rms_px": 0.775909394807189
+  },
+  {
+   "file": "pp_messier13-0003-B.fit",
+   "n": 806,
+   "rms_px": 0.83715033609026
+  },
+  {
+   "file": "pp_messier13-0003-R.fit",
+   "n": 1146,
+   "rms_px": 0.6676583673035855
+  }
+ ],
+ "astap": [
+  {
+   "file": "pp_messier13-0001-B.fit",
+   "n": 661,
+   "rms_px": 1.4369841141960955
+  },
+  {
+   "file": "pp_messier13-0001-R.fit",
+   "n": 938,
+   "rms_px": 1.0963422971703085
+  },
+  {
+   "file": "pp_messier13-0001-V.fit",
+   "n": 874,
+   "rms_px": 1.1063755024996242
+  },
+  {
+   "file": "pp_messier13-0002-B.fit",
+   "n": 664,
+   "rms_px": 2.046621191201225
+  },
+  {
+   "file": "pp_messier13-0002-R.fit",
+   "n": 993,
+   "rms_px": 1.0815525466919165
+  },
+  {
+   "file": "pp_messier13-0002-V.fit",
+   "n": 882,
+   "rms_px": 1.1270055695506855
+  },
+  {
+   "file": "pp_messier13-0003-B.fit",
+   "n": 806,
+   "rms_px": 1.0257889063896077
+  },
+  {
+   "file": "pp_messier13-0003-R.fit",
+   "n": 1146,
+   "rms_px": 1.0694617069094419
+  }
+ ],
+ "astnet": [
+  {
+   "file": "pp_messier13-0001-B.fit",
+   "n": 661,
+   "rms_px": 1.4292880732304427
+  },
+  {
+   "file": "pp_messier13-0001-R.fit",
+   "n": 938,
+   "rms_px": 0.903791576462858
+  },
+  {
+   "file": "pp_messier13-0001-V.fit",
+   "n": 873,
+   "rms_px": 0.9321185541890864
+  },
+  {
+   "file": "pp_messier13-0002-B.fit",
+   "n": 668,
+   "rms_px": 1.4617205899286567
+  },
+  {
+   "file": "pp_messier13-0002-R.fit",
+   "n": 993,
+   "rms_px": 0.9288394571915817
+  },
+  {
+   "file": "pp_messier13-0002-V.fit",
+   "n": 881,
+   "rms_px": 0.9399995661585281
+  },
+  {
+   "file": "pp_messier13-0003-B.fit",
+   "n": 806,
+   "rms_px": 0.8733749284215491
+  },
+  {
+   "file": "pp_messier13-0003-R.fit",
+   "n": 1146,
+   "rms_px": 0.8762977636515143
+  }
+ ]
+}

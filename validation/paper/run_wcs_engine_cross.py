@@ -49,14 +49,39 @@ def load_params():
 
 
 def solve(engine: str, files: list[str], P) -> dict:
+    """Each engine gets its own copy of the frames.
+
+    The solution is written into the FITS header of the file in *data_dir*, not
+    into result_dir, so engines sharing a data_dir overwrite each other. Copying
+    is the whole fix.
+    """
     from apex.analysis.wcs_solve import run_wcs_solve
     rdir = OUT / engine
     if rdir.exists():
         shutil.rmtree(rdir)
-    rdir.mkdir(parents=True, exist_ok=True)
+    ddir = rdir / "sci"
+    ddir.mkdir(parents=True, exist_ok=True)
+    for f in files:
+        shutil.copy2(SRC / "sci" / f, ddir / f)
+    # The solver reads detections from step4_dir(result_dir); without them it
+    # falls back to the configured target coordinate and never actually solves.
+    # Sharing one detection set is also what we want: same sources, three engines.
+    det_src = SRC / "result" / "step4_detection"
+    det_dst = rdir / "step4_detection"
+    det_dst.mkdir(parents=True, exist_ok=True)
+    n_det = 0
+    for f in files:
+        for ext in (".csv", ".json"):
+            p = det_src / f"detect_{f}{ext}"
+            if p.exists():
+                shutil.copy2(p, det_dst / p.name)
+                n_det += ext == ".csv"
+    print(f"  [{engine}] 프레임 {len(files)}장 + 검출 {n_det}건 복사", flush=True)
+    if n_det < len(files):
+        raise RuntimeError(f"검출 결과가 부족하다 ({n_det}/{len(files)}) — 풀 수 없다")
     t0 = time.perf_counter()
     res = run_wcs_solve(
-        files, P, str(SRC / "sci"), str(rdir), str(rdir / "cache"),
+        files, P, str(ddir), str(rdir), str(rdir / "cache"),
         engine=engine, use_cropped=False,
     )
     dt = time.perf_counter() - t0
@@ -72,9 +97,7 @@ def compare(files: list[str]) -> dict:
     for fname in files:
         wcs = {}
         for e in ENGINES:
-            p = OUT / e / "wcs" / fname
-            if not p.exists():
-                p = OUT / e / fname
+            p = OUT / e / "sci" / fname     # the engine's own copy carries its solution
             if not p.exists():
                 continue
             try:

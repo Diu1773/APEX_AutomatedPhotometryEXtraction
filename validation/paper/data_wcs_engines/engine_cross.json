@@ -12,7 +12,7 @@
  "timing": {
   "internal": {
    "engine": "internal",
-   "seconds": 102.6450442000023,
+   "seconds": 102.26015879999977,
    "result": {
     "total": 8,
     "ok": 8,
@@ -23,22 +23,22 @@
   },
   "astap": {
    "engine": "astap",
-   "seconds": 102.96581400000287,
+   "seconds": 104.34524809999857,
    "result": {
     "total": 8,
     "ok": 8,
-    "wcs_qc_pass": 0,
+    "wcs_qc_pass": 8,
     "wcs_qc_not_evaluated": 0,
     "stopped": false
    }
   },
   "astnet": {
    "engine": "astnet",
-   "seconds": 452.42918930000087,
+   "seconds": 367.646160100001,
    "result": {
     "total": 8,
     "ok": 8,
-    "wcs_qc_pass": 0,
+    "wcs_qc_pass": 7,
     "wcs_qc_not_evaluated": 0,
     "stopped": false
    }
@@ -48,43 +48,179 @@
   "frames": [
    {
     "file": "pp_messier13-0001-B.fit",
-    "engines": [],
-    "note": "too few"
+    "engines": [
+     "internal",
+     "astap",
+     "astnet"
+    ],
+    "pairs": {
+     "internal|astap": {
+      "median": 0.8947452535062451,
+      "max": 1.4810277075806455
+     },
+     "internal|astnet": {
+      "median": 0.9524457531240778,
+      "max": 1.4437731681720523
+     },
+     "astap|astnet": {
+      "median": 0.05925976908162086,
+      "max": 0.05926017738463754
+     }
+    }
    },
    {
     "file": "pp_messier13-0001-R.fit",
-    "engines": [],
-    "note": "too few"
+    "engines": [
+     "internal",
+     "astap",
+     "astnet"
+    ],
+    "pairs": {
+     "internal|astap": {
+      "median": 0.40397027393840856,
+      "max": 0.627986780916941
+     },
+     "internal|astnet": {
+      "median": 0.20337401234370334,
+      "max": 0.4074540351853031
+     },
+     "astap|astnet": {
+      "median": 0.23850182394661068,
+      "max": 0.23850389986984658
+     }
+    }
    },
    {
     "file": "pp_messier13-0001-V.fit",
-    "engines": [],
-    "note": "too few"
+    "engines": [
+     "internal",
+     "astap",
+     "astnet"
+    ],
+    "pairs": {
+     "internal|astap": {
+      "median": 0.41589109663906676,
+      "max": 0.646170403744979
+     },
+     "internal|astnet": {
+      "median": 0.2251386321906316,
+      "max": 0.43130712028146256
+     },
+     "astap|astnet": {
+      "median": 0.2378191137459499,
+      "max": 0.2378211963653458
+     }
+    }
    },
    {
     "file": "pp_messier13-0002-B.fit",
-    "engines": [],
-    "note": "too few"
+    "engines": [
+     "internal",
+     "astap",
+     "astnet"
+    ],
+    "pairs": {
+     "internal|astap": {
+      "median": 1.018881150379558,
+      "max": 2.051045282038607
+     },
+     "internal|astnet": {
+      "median": 0.8419800073752276,
+      "max": 1.5428726329173517
+     },
+     "astap|astnet": {
+      "median": 0.5783235768243996,
+      "max": 0.5783276470725977
+     }
+    }
    },
    {
     "file": "pp_messier13-0002-R.fit",
-    "engines": [],
-    "note": "too few"
+    "engines": [
+     "internal",
+     "astap",
+     "astnet"
+    ],
+    "pairs": {
+     "internal|astap": {
+      "median": 0.3782262095360656,
+      "max": 0.6057914253081376
+     },
+     "internal|astnet": {
+      "median": 0.209760496743461,
+      "max": 0.41941802821864266
+     },
+     "astap|astnet": {
+      "median": 0.21334193354628556,
+      "max": 0.21334373851815336
+     }
+    }
    },
    {
     "file": "pp_messier13-0002-V.fit",
-    "engines": [],
-    "note": "too few"
+    "engines": [
+     "internal",
+     "astap",
+     "astnet"
+    ],
+    "pairs": {
+     "internal|astap": {
+      "median": 0.40044126897158594,
+      "max": 0.6384814846890952
+     },
+     "internal|astnet": {
+      "median": 0.22023965448230637,
+      "max": 0.4079760082060339
+     },
+     "astap|astnet": {
+      "median": 0.2505513925814192,
+      "max": 0.25055362152685207
+     }
+    }
    },
    {
     "file": "pp_messier13-0003-B.fit",
-    "engines": [],
-    "note": "too few"
+    "engines": [
+     "internal",
+     "astap",
+     "astnet"
+    ],
+    "pairs": {
+     "internal|astap": {
+      "median": 0.3216803805795967,
+      "max": 0.4918101633454597
+     },
+     "internal|astnet": {
+      "median": 0.2209983151596666,
+      "max": 0.32998762561974143
+     },
+     "astap|astnet": {
+      "median": 0.1856178090974361,
+      "max": 0.1856193506683867
+     }
+    }
    },
    {
     "file": "pp_messier13-0003-R.fit",
-    "engines": [],
-    "note": "too few"
+    "engines": [
+     "internal",
+     "astap",
+     "astnet"
+    ],
+    "pairs": {
+     "internal|astap": {
+      "median": 0.41947557460162316,
+      "max": 0.6626523510089665
+     },
+     "internal|astnet": {
+      "median": 0.2565573100241132,
+      "max": 0.4648335827278001
+     },
+     "astap|astnet": {
+      "median": 0.2165437678428322,
+      "max": 0.21654560554905883
+     }
+    }
    }
   ]
  },
@@ -135,9 +271,9 @@
   },
   "astap": {
    "n_rows": 8,
-   "rms_median": null,
-   "rms_max": null,
-   "n_match_median": 0.0,
+   "rms_median": 0.6276536907568747,
+   "rms_max": 1.1916159040047287,
+   "n_match_median": 878.0,
    "columns": [
     "file",
     "status",
@@ -179,9 +315,9 @@
   },
   "astnet": {
    "n_rows": 8,
-   "rms_median": null,
-   "rms_max": null,
-   "n_match_median": 0.0,
+   "rms_median": 0.6276536907568747,
+   "rms_max": 1.2406294571623806,
+   "n_match_median": 878.0,
    "columns": [
     "file",
     "status",
