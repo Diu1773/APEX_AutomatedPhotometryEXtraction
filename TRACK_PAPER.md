@@ -114,13 +114,15 @@
 
 ## 다음 3개
 
-1. **ko→tex 이식: 빠진 검증 하위절 6개** — Step 0 보정 · 검출기 특성화 · ccdproc ·
-   교차기기 보정 · astrometry · 시계열 코어. `MANUSCRIPT_ko.md` 가 원본이다.
-   (`6e7860d` 판단: 개별 그림 수정보다 우선. LCO 데이터의 자리도 여기다)
-2. **fig 재작업 — `FIGURE_REBUILD_PLAN.md` 의 실행 순서대로.** T-001 기준
-   (그림이 자기 데이터 출처를 그림 안에서 말하는가) 점검을 겸한다.
-   원문 179건: `Main/harvest/corrections_fig.md`
-3. `references.bib` 43건 최종 검증 (`/ars-citation-check`)
+1. **fig 재작업 — 사용자가 승인한 템플릿으로 5건** (2026-08-02 승격).
+   `validation/paper/논문작업/FIGURE_REBUILD_PLAN.md` 말미 「승인된 템플릿」 절이
+   기준이다: 템플릿 = `fig_psf_validation.py`, 우선순위 표(민감도 → 오차모형 →
+   SEP → IRAF → WCS·시계열 명세줄). 사용자 원문 *"다른 fig도 이렇게 만들어도
+   ㄱㅊ을듯"*. 원문 179건: `Main/harvest/corrections_fig.md`
+2. **ko→tex 이식** — 국문이 정본. 2026-08-02 기준 국문에만 있는 것:
+   재배열된 3절 구조 + 3.9(WCS 3엔진)·3.14(PSF)·3.17(검출 문턱)·3.18(시계열)
+   + 2.4/Software 의 "내장 솔버 기본" 수정. `MANUSCRIPT_ko.md` 가 원본이다.
+3. `references.bib` 50건 최종 검증 (`/ars-citation-check`)
 
 ## 사용자 판단 필요
 
