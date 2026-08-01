@@ -95,6 +95,40 @@ R = (N_pos − N_neg) / N_pos
 3차원으로 밀도를 나누려면 음수 표본이 수백 개 필요한데 정상 프레임에는 한
 자릿수뿐이다. 실익 문제가 아니라 작동 자체가 안 된다.
 
+### 임계를 바꿔가며 재는 것 자체의 선행 연구
+
+「검출 임계를 스캔해 완전도와 순도를 본다」는 발상도 새롭지 않다. 세 갈래가 있다.
+
+**A. 임계를 스캔해 completeness–reliability 를 비교**
+- **Huynh et al. 2012, PASA 29, 229** — *The Completeness and Reliability of
+  Threshold and False-discovery Rate Source Extraction Algorithms for Compact
+  Continuum Sources*. 전파 continuum, **시뮬레이션** 기반. SExtractor·Selavy·
+  sfind 를 임계·배경추정·FDR 설정을 바꿔가며 비교.
+- **Annunziatella et al. 2013, PASP 125, 68** — SExtractor+PSFEx 대 DAOPHOT+
+  ALLSTAR 를 시뮬레이션 영상으로 비교.
+
+**B. 반전 영상으로 임계를 고른다** — 이 문서와 같은 방법
+- **Molino et al. 2014, MNRAS 441, 2891** (ALHAMBRA). 광학, **실데이터**,
+  서베이 전체에 한 번 적용해 오염 3% 지점을 고른다.
+
+**C. 임계를 통계적으로 자동 결정한다 (FDR)**
+- **Miller et al. 2001, AJ 122, 3492** — *Controlling the False-Discovery Rate
+  in Astrophysical Data Analysis*. Benjamini–Hochberg 의 다중검정 보정을 천문에
+  도입.
+- **Hopkins et al. 2002, AJ 123, 1086** — *A New Source Detection Algorithm
+  Using the False-Discovery Rate*. sigma 를 사람이 정하지 않고 **「가짜 비율을
+  α% 이하로」만 지정하면 임계가 데이터에서 자동으로 나온다.** SFIND 2.0 에 구현.
+
+C 가 가장 우아하지만 픽셀 단위 다중검정이라 `minarea` 같은 연결성 조건과 바로
+맞물리지 않는다. Huynh+2012 는 같은 완전도에서 FDR 쪽이 더 신뢰할 만한 카탈로그를
+준다고 보고했다.
+
+**그래서 이 작업의 새로움은 방법이 아니다.** A·B 는 모두 **임계 하나를 골라
+전체에 적용**하는 것을 전제한다. 여기서 실측한 것은 **그 전제가 흔들린다**는
+사실이다 — 안전 하한이 NGC6811 1.5 부터 M3 2.2 까지 벌어지고, **같은 M13 안에서도
+R 2.0 · B 1.8** 로 갈린다. 하나의 임계로는 어느 프레임에선 과하고 어느
+프레임에선 모자란다.
+
 ### 용어 — 「순도」가 아니다
 
 이 문서가 순도(purity) 라 부른 값은 **잡음 기원 가짜 검출만** 센다. CR·hot pixel
