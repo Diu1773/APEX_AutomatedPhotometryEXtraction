@@ -28,7 +28,7 @@ from __future__ import annotations
 import sys
 from pathlib import Path
 
-REPO = Path(r"C:\Users\bmffr\Desktop\Result\Automated_Photometry_EXtraction")
+REPO = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(REPO))
 sys.path.insert(0, str(REPO / "validation" / "paper"))
 
@@ -238,10 +238,13 @@ def make_figure(res):
     fine_mags = np.linspace(MAG_LADDER.min(), MAG_LADDER.max(), 200)
     sigma_theory, _ = _ccd_sigma_theory(fine_mags, res["n_pix_ap"])
 
-    fig, axes = plt.subplots(2, 2, figsize=(DOUBLE_COL, 5.2))
+    fig, axes = plt.subplots(2, 2, figsize=(DOUBLE_COL, 5.4))
     (ax_a, ax_b), (ax_c, ax_d) = axes
 
     # ── (a) Bias ─────────────────────────────────────────────────────────────
+    # faintest ladder step whose mean bias is still below 5 mmag
+    small = np.abs(mean_bias) <= 0.005
+    m_zero = float(mags[np.max(np.nonzero(small))]) if small.any() else float("nan")
     ax_a.axhline(0.0, color=C["floor"], lw=1.0, ls="--", zorder=1)
     ax_a.scatter(res["m_true"], res["dmag"], s=3, alpha=0.06,
                  color=C["data"], edgecolors="none", rasterized=True, zorder=2)
@@ -249,52 +252,83 @@ def make_figure(res):
     ax_a.plot(rmx, rmy, color=C["model"], lw=1.6, zorder=4, label="running median")
     ax_a.set_xlabel(r"$m_{\rm true}$ (mag)")
     ax_a.set_ylabel(r"$m_{\rm meas}-m_{\rm true}$ (mag)")
-    ax_a.set_title("(a) Photometric bias", loc="left")
     lim = np.percentile(np.abs(res["dmag"]), 99.0)
+    n_out = int((np.abs(res["dmag"]) > lim).sum())
     ax_a.set_ylim(-lim, lim)
-    ax_a.legend(loc="upper left")
+    # honesty: the axis range hides the extreme faint-end tail — say so
+    ax_a.text(0.02, 0.03,
+              f"{n_out:,}/{res['dmag'].size:,} points beyond $\\pm${lim:.2f} "
+              "mag not shown",
+              transform=ax_a.transAxes, fontsize=6.0, color=PALETTE["grey"])
+    ax_a.annotate(f"median {rmy[-1] * 1000:+.0f} mmag\nat m = {rmx[-1]:.1f}",
+                  (rmx[-1], rmy[-1]), textcoords="offset points",
+                  xytext=(-64, 26), fontsize=6.4, color=C["model"],
+                  arrowprops=dict(arrowstyle="-", lw=0.7, color=C["model"]))
+    ax_a.set_title(f"(a) bias consistent with zero to m $\\approx$ {m_zero:.1f}",
+                   loc="left", fontsize=9)
+    ax_a.legend(loc="upper left", fontsize=6.8)
 
     # ── (b) Scatter vs magnitude ─────────────────────────────────────────────
+    decades = np.log10(emp_rms.max() / emp_rms.min())
     ax_b.plot(fine_mags, sigma_theory, color=C["model"], lw=1.6,
-              label=r"CCD eq. $1.0857/{\rm SNR}$", zorder=3)
+              label=r"CCD eq. $\sigma_m = 1.0857/\mathrm{SNR}$", zorder=3)
     ax_b.scatter(mags, emp_rms, s=22, color=C["data"], zorder=4,
                  label="empirical RMS", edgecolors="white", linewidths=0.5)
     ax_b.set_yscale("log")
     ax_b.set_xlabel(r"$m_{\rm true}$ (mag)")
     ax_b.set_ylabel(r"$\sigma_m$ (mag)")
-    ax_b.set_title("(b) Scatter vs magnitude", loc="left")
-    ax_b.legend(loc="upper left")
+    ax_b.annotate(f"{emp_rms[0] * 1000:.1f} mmag", (mags[0], emp_rms[0]),
+                  textcoords="offset points", xytext=(6, -3), fontsize=6.4,
+                  color=C["data"])
+    ax_b.annotate(f"{emp_rms[-1]:.2f} mag", (mags[-1], emp_rms[-1]),
+                  textcoords="offset points", xytext=(-42, 2), fontsize=6.4,
+                  color=C["data"])
+    ax_b.set_title(f"(b) scatter follows the CCD equation over "
+                   f"{decades:.1f} dex", loc="left", fontsize=9)
+    ax_b.legend(loc="upper left", fontsize=6.8)
 
     # ── (c) Pull distribution (SNR > 5) ──────────────────────────────────────
     sel = res["snr"] > 5.0
     pull = res["pull"][sel]
     p_mean, p_std, p_n = float(np.mean(pull)), float(np.std(pull, ddof=1)), int(pull.size)
+    n_pull_out = int((np.abs(pull) > 5).sum())
     bins = np.linspace(-5, 5, 61)
     ax_c.hist(pull, bins=bins, density=True, color=C["data"], alpha=0.55,
               edgecolor="white", linewidth=0.3, label="APEX pull")
     xg = np.linspace(-5, 5, 400)
     ax_c.plot(xg, np.exp(-xg ** 2 / 2) / np.sqrt(2 * np.pi),
               color=C["model"], lw=1.6, label=r"$\mathcal{N}(0,1)$")
-    ax_c.set_xlabel(r"pull $=(m_{\rm meas}-m_{\rm true})/\sigma_m$")
+    ax_c.set_xlabel(r"pull $=(m_{\rm meas}-m_{\rm true})/\sigma_m$  (SNR $>$ 5)")
     ax_c.set_ylabel("density")
-    ax_c.set_title("(c) Pull distribution", loc="left")
     ax_c.set_xlim(-5, 5)
     ax_c.text(0.03, 0.97,
-              f"mean = {p_mean:+.3f}\nstd = {p_std:.3f}\nN = {p_n:,}",
-              transform=ax_c.transAxes, va="top", ha="left", fontsize=8,
+              f"mean = {p_mean:+.3f}\nstd = {p_std:.3f}\nN = {p_n:,}"
+              + (f"\n{n_pull_out} beyond $\\pm$5" if n_pull_out else ""),
+              transform=ax_c.transAxes, va="top", ha="left", fontsize=7.6,
               bbox=dict(boxstyle="round,pad=0.35", fc="white", ec=C["floor"], lw=0.6))
-    ax_c.legend(loc="upper right")
+    ax_c.set_title(f"(c) reported $\\sigma$ is honest: pull std "
+                   f"{p_std:.3f}", loc="left", fontsize=9)
+    ax_c.legend(loc="upper right", fontsize=6.8)
 
     # ── (d) Reliability: reported sigma vs empirical RMS ─────────────────────
+    ratio = rep_sigma / emp_rms
+    med_ratio = float(np.median(ratio))
+    worst_i = int(np.argmin(ratio))
     lo = min(rep_sigma.min(), emp_rms.min()) * 0.8
     hi = max(rep_sigma.max(), emp_rms.max()) * 1.2
     ax_d.plot([lo, hi], [lo, hi], color=C["floor"], lw=1.0, ls="--",
-              label=r"$y=x$ (honest)", zorder=1)
+              label=r"$y=x$", zorder=1)
     sc = ax_d.scatter(rep_sigma, emp_rms, c=mags, cmap="viridis", s=28,
                       zorder=3, edgecolors="white", linewidths=0.5)
     cb = fig.colorbar(sc, ax=ax_d, pad=0.02, fraction=0.05)
     cb.set_label(r"$m_{\rm true}$ (mag)", fontsize=8)
     cb.ax.tick_params(labelsize=7)
+    ax_d.annotate(
+        f"m = {mags[worst_i]:.1f}: reported\n{(1 - ratio[worst_i]) * 100:.0f}% "
+        "below empirical",
+        (rep_sigma[worst_i], emp_rms[worst_i]), textcoords="offset points",
+        xytext=(-104, -30), fontsize=6.4, color=C["model"],
+        arrowprops=dict(arrowstyle="-", lw=0.7, color=C["model"]))
     ax_d.set_xscale("log")
     ax_d.set_yscale("log")
     ax_d.set_xlim(lo, hi)
@@ -302,10 +336,25 @@ def make_figure(res):
     ax_d.set_aspect("equal", adjustable="box")
     ax_d.set_xlabel(r"APEX-reported median $\sigma_m$ (mag)")
     ax_d.set_ylabel(r"empirical RMS (mag)")
-    ax_d.set_title("(d) Error reliability", loc="left")
-    ax_d.legend(loc="upper left")
+    ax_d.set_title(f"(d) reported vs empirical: median ratio "
+                   f"{med_ratio:.2f}", loc="left", fontsize=9)
+    ax_d.legend(loc="upper left", fontsize=6.8)
 
-    fig.tight_layout(pad=0.6)
+    # ── in-figure data provenance ────────────────────────────────────────────
+    prov = (
+        "Synthetic Monte-Carlo, no external data: noise model of "
+        "apex.benchmark.synthetic_frame (gain 1.5 e$^-$/ADU · RN 5 e$^-$ · sky 150 ADU · "
+        f"ZP 25 · Gaussian PSF FWHM {FWHM:g} px), measured with APEX's production "
+        "photometry (apex.utils.photometry_utils.phot_vectorized; "
+        f"$r_{{\\rm ap}}$ {R_AP:g} px = 1.0$\\times$FWHM, annulus {R_IN:g}-{R_OUT:g} px).\n"
+        f"Ladder m = {MAG_LADDER.min():.1f}-{MAG_LADDER.max():.1f} in 0.5-mag steps "
+        f"$\\times$ {STARS_PER_FRAME} isolated grid stars $\\times$ {N_REALIZATIONS} "
+        f"noise realizations, seed {BASE_SEED}; aperture correction "
+        f"{res['apcorr']:+.4f} mag measured on a noiseless frame with the same "
+        "aperture."
+    )
+    fig.tight_layout(pad=0.6, rect=(0, 0.055, 1, 1))
+    fig.text(0.005, 0.005, prov, fontsize=5.6, color=PALETTE["grey"], va="bottom")
 
     stats = {
         "pull_mean": p_mean, "pull_std": p_std, "pull_n": p_n,
@@ -314,6 +363,9 @@ def make_figure(res):
         "mean_bias": mean_bias,
         "n_total": int(res["m_true"].size),
         "flux_frac": float(res["flux_frac"]), "apcorr": float(res["apcorr"]),
+        "m_zero_bias": m_zero, "median_ratio": med_ratio,
+        "worst_mag": float(mags[worst_i]),
+        "worst_deficit_pct": float((1 - ratio[worst_i]) * 100),
     }
     return fig, stats
 
@@ -341,6 +393,9 @@ def main():
     print(f"pull N    (SNR>5) = {stats['pull_n']}")
     print(f"mag range = {stats['mag_min']:.1f} .. {stats['mag_max']:.1f}  "
           f"(N_total = {stats['n_total']})")
+    print(f"bias consistent with zero (|bias| <= 5 mmag) to m = {stats['m_zero_bias']:.1f}")
+    print(f"median reported/empirical = {stats['median_ratio']:.3f}; worst bin "
+          f"m={stats['worst_mag']:.1f} reported {stats['worst_deficit_pct']:.0f}% low")
     ratio = stats["rep_sigma"] / stats["emp_rms"]
     print("per-mag reported/empirical sigma ratio (panel d):")
     for m, rr in zip(stats["mags"], ratio):
