@@ -30,7 +30,7 @@ from __future__ import annotations
 import sys
 from pathlib import Path
 
-REPO = Path(r"C:\Users\bmffr\Desktop\Result\Automated_Photometry_EXtraction")
+REPO = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(REPO))
 sys.path.insert(0, str(REPO / "validation" / "paper"))
 
@@ -227,8 +227,10 @@ def main() -> int:
     # sep magnitudes aligned to the APEX zeropoint for panel (a)
     ms_aligned = ms + offset
 
+    n_dropped = int(len(true_mag) - n)
+
     # ── figure: 1x2, double-column width ──────────────────────────────────────
-    fig, (ax_a, ax_b) = plt.subplots(1, 2, figsize=(DOUBLE_COL, 3.1))
+    fig, (ax_a, ax_b) = plt.subplots(1, 2, figsize=(DOUBLE_COL, 3.4))
 
     # (a) mag_apex vs mag_sep (ZP-aligned) with y=x
     lo = float(min(ma.min(), ms_aligned.min()))
@@ -256,7 +258,8 @@ def main() -> int:
         bbox={"boxstyle": "round,pad=0.3", "facecolor": "white",
               "alpha": 0.85, "edgecolor": PALETTE["grey"]},
     )
-    ax_a.set_title("(a) APEX vs sep", loc="left")
+    ax_a.set_title(f"(a) two engines, same {n} stars: $r = {pearson_r:.5f}$",
+                   loc="left", fontsize=9)
 
     # (b) residual (ZP-aligned) vs true mag, with +/- MAD band + median line
     ax_b.axhspan(
@@ -279,9 +282,28 @@ def main() -> int:
               "alpha": 0.85, "edgecolor": PALETTE["grey"]},
     )
     ax_b.legend(loc="lower left", fontsize=7.5, ncol=2)
-    ax_b.set_title("(b) ZP-aligned residuals", loc="left")
+    ax_b.text(0.04, 0.14,
+              f"{n_dropped}/{len(true_mag)} injected stars dropped:\n"
+              f"APEX SNR $\\leq$ {SNR_MIN:.0f} or flagged in either engine\n"
+              f"(kept stars span $m$ = {mt.min():.1f}-{mt.max():.1f})",
+              transform=ax_b.transAxes, fontsize=6.0, color=PALETTE["grey"],
+              ha="left", va="bottom")
+    ax_b.set_title(f"(b) residuals flat over $m$ = {mt.min():.1f}-{mt.max():.1f}: "
+                   f"MAD {mad * 1000:.1f} mmag", loc="left", fontsize=9)
 
-    fig.tight_layout()
+    prov = (
+        "Synthetic frame, no external data: noise model of apex.benchmark.synthetic_frame "
+        f"(seed {SEED} · {FRAME_SIZE}$^2$ px · {N_STARS} isolated stars, sep $\\geq$ 8$\\times$FWHM · "
+        f"Gaussian PSF FWHM {FWHM_PX:g} px · gain {GAIN:g} e$^-$/ADU · RN {READ_NOISE_E:g} e$^-$ · "
+        f"sky {SKY_ADU:.0f} ADU · true m = {MAG_MIN:.0f}-{MAG_MAX:.0f}).\n"
+        "Both engines integrate the same aperture "
+        f"($r_{{\\rm ap}}$ = {R_AP:g} px = 1.0$\\times$FWHM) at the same known centres: "
+        "APEX phot_vectorized (local annulus sky) vs sep "
+        f"v{sep.__version__} Background + sum_circle (global sky). "
+        "One median zeropoint alignment; no per-star fitting."
+    )
+    fig.tight_layout(pad=0.6, rect=(0, 0.09, 1, 1))
+    fig.text(0.005, 0.005, prov, fontsize=5.6, color=PALETTE["grey"], va="bottom")
     paths = save_fig(fig, "fig4_crosscheck_sep", OUTDIR)
     plt.close(fig)
 
@@ -296,7 +318,7 @@ def main() -> int:
     caption = f"""# Figure 4 — Independent cross-check: APEX vs the `sep` C library
 
 **Figure.** Agreement between APEX aperture photometry and the independent
-`sep` (SExtractor SEP backend, v1.4.1) engine measuring the **same {n} stars**
+`sep` (SExtractor SEP backend, v{sep.__version__}) engine measuring the **same {n} stars**
 in the **same synthetic frame** with the **same aperture**
 ($r_{{\\mathrm{{ap}}}} = 1.0\\,\\mathrm{{FWHM}} = {R_AP:.2f}$ px).
 The frame is a {FRAME_SIZE}x{FRAME_SIZE} px field of {N_STARS} isolated stars
