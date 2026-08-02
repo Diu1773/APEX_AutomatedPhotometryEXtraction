@@ -39,6 +39,22 @@ from apex.gui.workflow.step_window_base import StepWindowBase
 from apex.analysis.light_curve.photometry_source_service import (
     resolve_lightcurve_photometry_source,
 )
+from apex.gui.theme import mono_note_style
+
+
+def _set_label_role(label, prop: str, value) -> None:
+    """Swap a theme role property at runtime and repolish so the QSS re-runs.
+
+    Roles are static in QSS; a label whose meaning changes (ROI set vs unset)
+    must clear the other property or both selectors stay live.
+    """
+    for name in ("role", "status", "banner"):
+        label.setProperty(name, value if name == prop else None)
+    style = label.style()
+    style.unpolish(label)
+    style.polish(label)
+
+
 from apex.gui.workflow.run_control import RunControlBar
 from apex.gui.workflow.log_panel import WorkflowLogWindow, WorkerStatusPanel, append_timestamped_log, show_raised
 from apex.gui.workflow.ui_helpers import (
@@ -3195,20 +3211,20 @@ class CmdViewerWindow(QWidget):
         self.photometry_source_label = QLabel(
             format_photometry_provenance(self.photometry_provenance)
         )
-        self.photometry_source_label.setStyleSheet(
-            "QLabel { color: #455A64; font-weight: bold; }"
-        )
+        self.photometry_source_label.setProperty("role", "caption")
+        _f = self.photometry_source_label.font(); _f.setBold(True)
+        self.photometry_source_label.setFont(_f)
         controls_row2.addWidget(self.photometry_source_label)
 
         self.view_label = QLabel("View: Instrumental")
-        self.view_label.setStyleSheet("QLabel { color: #2196F3; font-weight: bold; }")
+        self.view_label.setProperty("role", "info")
         controls_row2.addWidget(self.view_label)
         layout.addLayout(controls_row2)
 
         self.info_text = QTextEdit()
         self.info_text.setReadOnly(True)
         self.info_text.setFixedHeight(90)
-        self.info_text.setStyleSheet("QTextEdit { font-family: monospace; font-size: 9pt; }")
+        self.info_text.setObjectName("Log")     # themed mono surface
         layout.addWidget(self.info_text)
 
         # 10×6 instead of 12×6 — the wider aspect made the CMD look stretched
@@ -3282,10 +3298,12 @@ class CmdViewerWindow(QWidget):
         self.roi_check.setToolTip("Filter CMD sources by the spatial ROI circle set in Step 9.\nDoes not affect ZP calibration.")
         controls2.addWidget(self.roi_check)
         self.roi_info_label = QLabel("(no ROI)")
-        self.roi_info_label.setStyleSheet("QLabel { color: #90A4AE; font-size: 9pt; }")
+        self.roi_info_label.setProperty("role", "caption")
         controls2.addWidget(self.roi_info_label)
         self.btn_reload_roi = QPushButton("Reload")
-        self.btn_reload_roi.setFixedWidth(56)
+        # sizeHint, not a hard 56 px: with the theme's button padding that
+        # width clipped the label to "elo:".
+        self.btn_reload_roi.setFixedWidth(self.btn_reload_roi.sizeHint().width())
         self.btn_reload_roi.setToolTip("Re-read cmd_roi.json from Step 9 output directory")
         controls2.addWidget(self.btn_reload_roi)
         controls2.addStretch()
@@ -3367,10 +3385,10 @@ class CmdViewerWindow(QWidget):
                 dec = self._roi_data.get("dec_deg", 0.0)
                 r = self._roi_data.get("radius_arcsec", 0.0)
                 self.roi_info_label.setText(f"RA={ra:.4f} Dec={dec:.4f}  r={r:.0f}\"")
-                self.roi_info_label.setStyleSheet("QLabel { color: #00E5FF; font-size: 9pt; }")
+                _set_label_role(self.roi_info_label, "status", "ok")
             else:
                 self.roi_info_label.setText("(no ROI)")
-                self.roi_info_label.setStyleSheet("QLabel { color: #90A4AE; font-size: 9pt; }")
+                _set_label_role(self.roi_info_label, "role", "caption")
 
     def _on_reload_roi(self):
         self._load_roi()
@@ -4514,10 +4532,7 @@ class ZPFitPlotWidget(QWidget):
         layout.addWidget(self._canvas, 1)
 
         self._info_label = QLabel("Click a data point to see star info.")
-        self._info_label.setStyleSheet(
-            "QLabel { font-family: monospace; font-size: 9pt; "
-            "background: #F5F5F5; padding: 4px; border: 1px solid #CCC; }"
-        )
+        self._info_label.setStyleSheet(mono_note_style())
         layout.addWidget(self._info_label)
 
     def reload(self, result_dir: Path = None):
@@ -4931,13 +4946,13 @@ class ZeropointCalibrationWindow(StepWindowBase):
     def setup_step_ui(self):
         # ── Controls ─────────────────────────────────────────────────────────
         info = QLabel("Build per-frame ZP calibration and standardized catalogs.")
-        info.setStyleSheet("QLabel { background-color: #E3F2FD; padding: 10px; border-radius: 5px; }")
+        info.setProperty("role", "info")
         self.content_layout.addWidget(info)
 
         self.photometry_source_label = QLabel()
-        self.photometry_source_label.setStyleSheet(
-            "QLabel { color: #455A64; font-weight: bold; padding: 2px 4px; }"
-        )
+        self.photometry_source_label.setProperty("role", "caption")
+        _f = self.photometry_source_label.font(); _f.setBold(True)
+        self.photometry_source_label.setFont(_f)
         self.content_layout.addWidget(self.photometry_source_label)
         self._refresh_photometry_source_label()
 
