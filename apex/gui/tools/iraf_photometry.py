@@ -48,6 +48,7 @@ from PyQt5.QtWidgets import (
 from apex.gui.layout_rules import AutoFitMixin, FittedDialog, clamp_to_screen, tame_canvas
 from apex.gui.widgets.fits_viewer import FITSViewerWidget, OverlayMarker
 from apex.gui.workflow.run_control import RunControlBar
+from apex.gui.theme import Tokens, mono_note_style
 from apex.gui.workflow.ui_helpers import create_cache_action_button, create_parameter_button
 from apex.utils.common_helpers import normalize_filter_key
 from apex.utils.step_paths import step4_dir, step7_forced_phot_dir
@@ -1810,7 +1811,7 @@ class IRAFPhotometryWindow(AutoFitMixin, QMainWindow):
         self.check_env_btn.clicked.connect(self.check_iraf_environment)
         btn_row.addWidget(self.check_env_btn)
         self.env_summary_label = QLabel("Run this before photometry on a new PC or after changing paths.")
-        self.env_summary_label.setStyleSheet("color: #555;")
+        self.env_summary_label.setProperty("role", "caption")
         btn_row.addWidget(self.env_summary_label, stretch=1)
         layout.addLayout(btn_row)
         return group
@@ -1821,12 +1822,14 @@ class IRAFPhotometryWindow(AutoFitMixin, QMainWindow):
             return
         title = dict(self.env_status_defs).get(key, key)
         state_key = str(state or "pending").lower()
+        # State colours from the live theme tokens — the fixed light pastels
+        # glared on every dark preset.
         palette = {
-            "ok": ("#E7F6EC", "#1E7F3B", "OK"),
-            "fail": ("#FDEAEA", "#B42318", "FAIL"),
-            "warn": ("#FFF4E5", "#B54708", "CHECK"),
-            "running": ("#E8F1FF", "#175CD3", "CHECKING"),
-            "pending": ("#F2F4F7", "#667085", "NOT CHECKED"),
+            "ok": (Tokens.OK_SOFT, Tokens.OK, "OK"),
+            "fail": (Tokens.ERROR_SOFT, Tokens.ERROR, "FAIL"),
+            "warn": (Tokens.WARN_SOFT, Tokens.WARN, "CHECK"),
+            "running": (Tokens.ACCENT_SOFT, Tokens.ACCENT_TEXT, "CHECKING"),
+            "pending": (Tokens.SURFACE_ALT, Tokens.TEXT_MUTED, "NOT CHECKED"),
         }
         bg, fg, status_text = palette.get(state_key, palette["pending"])
         label.setText(f"{title}\n{status_text}: {message}")
@@ -1881,7 +1884,7 @@ class IRAFPhotometryWindow(AutoFitMixin, QMainWindow):
             "Run IRAF DAOPHOT photometry via PyRAF (WSL python3 on Windows, local python3 otherwise).\n"
             "Configure parameters in the 'IRAF Parameters' tab before running."
         )
-        info.setStyleSheet("color: #555; font-style: italic; padding: 5px;")
+        info.setProperty("role", "caption")
         layout.addWidget(info)
 
         controls = QHBoxLayout()
@@ -1895,10 +1898,7 @@ class IRAFPhotometryWindow(AutoFitMixin, QMainWindow):
         paths_layout = QVBoxLayout(paths_group)
         self.run_path_summary = QLabel()
         self.run_path_summary.setTextInteractionFlags(Qt.TextSelectableByMouse)
-        self.run_path_summary.setStyleSheet(
-            "QLabel { font-family: Consolas, 'Courier New', monospace; "
-            "background: #F5F5F5; padding: 8px; border: 1px solid #D0D7DE; }"
-        )
+        self.run_path_summary.setStyleSheet(mono_note_style())
         paths_layout.addWidget(self.run_path_summary)
         layout.addWidget(paths_group)
 
@@ -1928,6 +1928,7 @@ class IRAFPhotometryWindow(AutoFitMixin, QMainWindow):
         log_group = QGroupBox("Execution Log")
         log_layout = QVBoxLayout()
         self.log_text = QTextEdit()
+        self.log_text.setObjectName("Log")     # themed mono surface
         self.log_text.setReadOnly(True)
         self.log_text.setMinimumHeight(300)
         log_layout.addWidget(self.log_text)
@@ -1960,7 +1961,7 @@ class IRAFPhotometryWindow(AutoFitMixin, QMainWindow):
         btn_layout = QHBoxLayout()
 
         note = QLabel("Parameters auto-save on run/close.")
-        note.setStyleSheet("color: #555; font-style: italic;")
+        note.setProperty("role", "caption")
         btn_layout.addWidget(note)
         btn_layout.addStretch()
 
@@ -1997,7 +1998,7 @@ class IRAFPhotometryWindow(AutoFitMixin, QMainWindow):
         project_layout.addRow("", btn_sync)
         self.apex_sync_status = QLabel("Step 4/7 sync has not been run in this session.")
         self.apex_sync_status.setWordWrap(True)
-        self.apex_sync_status.setStyleSheet("color: #555;")
+        self.apex_sync_status.setProperty("role", "caption")
         project_layout.addRow("APEX Sync:", self.apex_sync_status)
         layout.addWidget(project_group)
 
@@ -3091,17 +3092,15 @@ class IRAFPhotometryWindow(AutoFitMixin, QMainWindow):
         paths_layout.setContentsMargins(8, 4, 8, 4)
         self.cmp_path_summary = QLabel()
         self.cmp_path_summary.setTextInteractionFlags(Qt.TextSelectableByMouse)
-        self.cmp_path_summary.setStyleSheet(
-            "QLabel { font-family: Consolas, 'Courier New', monospace; "
-            "font-size: 8pt; background: #F5F5F5; padding: 3px; border: 1px solid #D0D7DE; }"
-        )
+        self.cmp_path_summary.setStyleSheet(mono_note_style())
         paths_layout.addWidget(self.cmp_path_summary)
         layout.addWidget(paths_group)
         self._refresh_path_summaries()
 
         # Summary
         self.cmp_summary = QLabel("No comparison run yet.")
-        self.cmp_summary.setStyleSheet("font-weight: bold; padding: 5px;")
+        _f = self.cmp_summary.font(); _f.setBold(True)
+        self.cmp_summary.setFont(_f)
         self.cmp_summary.setMaximumHeight(30)
         layout.addWidget(self.cmp_summary)
 
@@ -3159,7 +3158,7 @@ class IRAFPhotometryWindow(AutoFitMixin, QMainWindow):
         log_layout = QVBoxLayout(log_tab)
         self.cmp_log_text = QTextEdit()
         self.cmp_log_text.setReadOnly(True)
-        self.cmp_log_text.setStyleSheet("QTextEdit { font-family: monospace; font-size: 9pt; }")
+        self.cmp_log_text.setObjectName("Log")
         log_layout.addWidget(self.cmp_log_text)
         tabs.addTab(log_tab, "Log")
 
@@ -3224,7 +3223,7 @@ class IRAFPhotometryWindow(AutoFitMixin, QMainWindow):
         layout.addWidget(self.overlay_viewer, stretch=1)
 
         self.overlay_status = QLabel("No frame loaded.")
-        self.overlay_status.setStyleSheet("QLabel { color: #555; padding: 4px; }")
+        self.overlay_status.setProperty("role", "caption")
         self.overlay_status.setMaximumHeight(28)
         layout.addWidget(self.overlay_status)
 
@@ -3744,9 +3743,7 @@ class IRAFPhotometryWindow(AutoFitMixin, QMainWindow):
         layout = QVBoxLayout(self.overlay_stretch_plot_dialog)
 
         self.overlay_stretch_plot_info_label = QLabel("Drag min/max markers to adjust stretch")
-        self.overlay_stretch_plot_info_label.setStyleSheet(
-            "QLabel { padding: 5px; background-color: #E3F2FD; border-radius: 3px; }"
-        )
+        self.overlay_stretch_plot_info_label.setProperty("role", "info")
         layout.addWidget(self.overlay_stretch_plot_info_label)
 
         self.overlay_stretch_plot_fig = Figure(figsize=(6, 2.5))
@@ -3761,7 +3758,7 @@ class IRAFPhotometryWindow(AutoFitMixin, QMainWindow):
         layout.addWidget(tame_canvas(self.overlay_stretch_plot_canvas, min_h=140), 1)
 
         hint_label = QLabel("Click and drag < > markers to adjust min/max | Changes apply in real-time")
-        hint_label.setStyleSheet("QLabel { color: #666; font-size: 10px; }")
+        hint_label.setProperty("role", "caption")
         layout.addWidget(hint_label)
 
         self.overlay_stretch_plot_dialog.show()
@@ -4183,7 +4180,7 @@ class IRAFPhotometryWindow(AutoFitMixin, QMainWindow):
             layout = QVBoxLayout(self.run_log_window)
             self.run_log_text = QTextEdit(self.run_log_window)
             self.run_log_text.setReadOnly(True)
-            self.run_log_text.setStyleSheet("QTextEdit { font-family: monospace; font-size: 9pt; }")
+            self.run_log_text.setObjectName("Log")
             layout.addWidget(self.run_log_text)
         if self.run_log_text is not None and hasattr(self, "log_text"):
             self.run_log_text.setPlainText(self.log_text.toPlainText())

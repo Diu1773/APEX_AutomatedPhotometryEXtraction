@@ -324,7 +324,7 @@ from PyQt5.QtCore import Qt, QThread, QTimer, pyqtSignal
 from PyQt5.QtGui import QColor
 
 from apex.gui.layout_rules import FittedDialog, prevent_collapse, scroll_wrap, tame_canvas
-from apex.gui.theme import Tokens, style_button
+from apex.gui.theme import Tokens, mono_note_style, style_button
 
 
 def _repolish(widget) -> None:
@@ -341,18 +341,8 @@ def _set_role(widget, prop: str, value) -> None:
 
 
 def _mono_note_style() -> str:
-    """Result-callout look for monospace summaries (O-C fit, Fourier, MM).
-
-    Built from the live Tokens so every theme keeps its own surface/border;
-    no theme property exists for a mono QLabel, hence the one f-string.
-    """
-    return (
-        f"QLabel {{ background: {Tokens.SURFACE_ALT}; color: {Tokens.TEXT}; "
-        f"padding: {Tokens.GAP}px; border: 1px solid {Tokens.BORDER}; "
-        f"border-radius: {Tokens.RADIUS_SM}px; "
-        f"font-family: 'Cascadia Mono', 'Consolas', monospace; "
-        f"font-size: {Tokens.FS_CAPTION}px; }}"
-    )
+    """Result-callout look for monospace summaries — the shared theme style."""
+    return mono_note_style()
 
 rcParams["axes.unicode_minus"] = False
 

@@ -514,6 +514,23 @@ def refresh(widget) -> None:
     widget.update()
 
 
+def mono_note_style() -> str:
+    """Stylesheet for a monospace note/summary QLabel (paths, fit results).
+
+    Built from the live Tokens so every preset keeps its own surface and
+    border; no QSS property exists for a mono QLabel, hence the one sanctioned
+    f-string. Windows re-apply it on reopen after a theme switch.
+    """
+    t = Tokens
+    return (
+        f"QLabel {{ background: {t.SURFACE_ALT}; color: {t.TEXT}; "
+        f"padding: {t.GAP}px; border: 1px solid {t.BORDER}; "
+        f"border-radius: {t.RADIUS_SM}px; "
+        f"font-family: 'Cascadia Mono', 'Consolas', monospace; "
+        f"font-size: {t.FS_CAPTION}px; }}"
+    )
+
+
 def style_button(btn, variant: str | None = None, *, height: int | None = None):
     """Apply the standard button role + height to *btn*.
 
