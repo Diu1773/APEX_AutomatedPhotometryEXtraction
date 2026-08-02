@@ -65,7 +65,26 @@ from PyQt5.QtGui import QKeySequence, QColor
 from PyQt5.QtCore import Qt, QThread, QTimer, pyqtSignal
 
 from apex.gui.layout_rules import FittedDialog, tame_canvas
-from apex.gui.theme import Tokens, style_button
+from apex.gui.theme import Tokens, readable_on, style_button
+
+
+def _swatch_style(color: str, widget: str = "QLabel") -> str:
+    """Colour chip whose fill IS the data (an overlay marker colour).
+
+    Only the border comes from the theme, so the chip keeps meaning while its
+    outline follows light/dark presets.
+    """
+    return (f"{widget} {{ background-color: {color}; "
+            f"border: 1px solid {Tokens.BORDER_STRONG}; }}")
+
+
+def _set_status(label, state: str) -> None:
+    """Set a QLabel's status pill role (ok/warn/error/idle) and repolish."""
+    label.setProperty("status", state)
+    style = label.style()
+    style.unpolish(label)
+    style.polish(label)
+
 from apex.gui.workflow.step_window_base import StepWindowBase
 from apex.utils.step_paths_lc import (
     step2_cropped_dir,
@@ -635,6 +654,25 @@ class TargetComparisonSelectionWindow(StepWindowBase):
         sc_preview.activated.connect(self.show_selected_lightcurve_preview)
         self._shortcuts.append(sc_preview)
 
+    def _refresh_role_label_colors(self) -> None:
+        """Tint the Target/Comps/Check summary labels with their marker colours.
+
+        They are a legend for the overlay, so they follow ``_overlay_colors``
+        and stay correct after the user recolours a role. Bold weight comes
+        from the font, not the sheet, so only the colour is hand-set.
+        """
+        for attr, key in (("target_label", "target"),
+                          ("comparison_label", "comparison"),
+                          ("check_label", "check")):
+            label = getattr(self, attr, None)
+            if label is None:
+                continue
+            color = readable_on(self._overlay_colors.get(key, Tokens.TEXT))
+            label.setStyleSheet(f"QLabel {{ color: {color}; }}")
+            font = label.font()
+            font.setBold(True)
+            label.setFont(font)
+
     def setup_step_ui(self):
         # ── Row 0: Filter + Frame + Status (한 줄) ──
         top_bar = QHBoxLayout()
@@ -677,17 +715,19 @@ class TargetComparisonSelectionWindow(StepWindowBase):
         action_row1 = QHBoxLayout()
         action_row1.setSpacing(8)
 
+        # These three read as a legend for the overlay markers, so they take
+        # their colour from the same map the markers do — previously they were
+        # hardcoded and drifted the moment a user recoloured an overlay (the
+        # check label was already #8A6A00 against a #FFD700 marker).
         self.target_label = QLabel("Target: (none)")
-        self.target_label.setStyleSheet("font-weight: bold; color: #C62828;")
         action_row1.addWidget(self.target_label)
 
         self.comparison_label = QLabel("Comps: 0")
-        self.comparison_label.setStyleSheet("font-weight: bold; color: #D32F2F;")
         action_row1.addWidget(self.comparison_label)
 
         self.check_label = QLabel("Check: (none)")
-        self.check_label.setStyleSheet("font-weight: bold; color: #8A6A00;")
         action_row1.addWidget(self.check_label)
+        self._refresh_role_label_colors()
 
         action_row1.addStretch()
 
@@ -713,7 +753,7 @@ class TargetComparisonSelectionWindow(StepWindowBase):
         action_row2.setSpacing(8)
 
         self.selected_label = QLabel("Selected: (none)")
-        self.selected_label.setStyleSheet("color: #555;")
+        self.selected_label.setProperty("role", "caption")
         action_row2.addWidget(self.selected_label)
 
         action_row2.addStretch()
@@ -774,9 +814,7 @@ class TargetComparisonSelectionWindow(StepWindowBase):
             actual_color = self._overlay_colors.get(key, color)
             swatch = QLabel()
             swatch.setFixedSize(12, 12)
-            swatch.setStyleSheet(
-                f"QLabel {{ background-color: {actual_color}; border: 1px solid #555; }}"
-            )
+            swatch.setStyleSheet(_swatch_style(actual_color))
             self._overlay_color_swatches[key] = swatch
             label = QLabel(text)
             row = QHBoxLayout()
@@ -892,7 +930,7 @@ class TargetComparisonSelectionWindow(StepWindowBase):
         log_layout = QVBoxLayout(self.log_window)
         self.log_text = QTextEdit()
         self.log_text.setReadOnly(True)
-        self.log_text.setStyleSheet("QTextEdit { font-family: monospace; font-size: 9pt; }")
+        self.log_text.setObjectName("Log")     # themed mono surface
         log_layout.addWidget(self.log_text)
 
         # 초기화
@@ -1093,12 +1131,12 @@ class TargetComparisonSelectionWindow(StepWindowBase):
                 idx_path = forced_out / "photometry_index.csv"
                 if not idx_path.exists():
                     self.step7_status_label.setText("Forced photometry not complete. Run Forced Aperture Phot first.")
-                    self.step7_status_label.setStyleSheet("color: red;")
+                    _set_status(self.step7_status_label, "error")
                     return
                 idx_df = pd.read_csv(idx_path)
                 if "file" not in idx_df.columns:
                     self.step7_status_label.setText("Forced photometry index is missing file column.")
-                    self.step7_status_label.setStyleSheet("color: red;")
+                    _set_status(self.step7_status_label, "error")
                     return
                 filt_col = "filter" if "filter" in idx_df.columns else ("FILTER" if "FILTER" in idx_df.columns else None)
                 for _, row in idx_df.iterrows():
@@ -1108,12 +1146,12 @@ class TargetComparisonSelectionWindow(StepWindowBase):
             filters = list(self.filter_frames.keys())
             if not filters:
                 self.step7_status_label.setText("No filters found in forced photometry output")
-                self.step7_status_label.setStyleSheet("color: red;")
+                _set_status(self.step7_status_label, "error")
                 return
         except Exception as e:
             self.log(f"Filter frames load error: {e}")
             self.step7_status_label.setText(f"Load error: {e}")
-            self.step7_status_label.setStyleSheet("color: red;")
+            _set_status(self.step7_status_label, "error")
             return
 
         try:
@@ -1160,12 +1198,12 @@ class TargetComparisonSelectionWindow(StepWindowBase):
             if refbuild_available:
                 total_sources = sum(len(cat) for cat in self.filter_catalogs.values())
                 self.step7_status_label.setText(f"{n_filters} filters, {total_sources} catalog sources")
-                self.step7_status_label.setStyleSheet("color: green;")
+                _set_status(self.step7_status_label, "ok")
             else:
                 self.step7_status_label.setText(
                     f"{n_filters} filters (Master Catalog Build skipped - all detections available)"
                 )
-                self.step7_status_label.setStyleSheet("color: #FF9800;")  # Orange
+                _set_status(self.step7_status_label, "warn")
 
             self._enrich_filter_catalogs_with_gaia()
 
@@ -1176,7 +1214,7 @@ class TargetComparisonSelectionWindow(StepWindowBase):
 
         except Exception as e:
             self.step7_status_label.setText(f"Error: {e}")
-            self.step7_status_label.setStyleSheet("color: red;")
+            _set_status(self.step7_status_label, "error")
             self.log(f"Error loading data: {e}")
 
     def load_selections(self):
@@ -3483,7 +3521,7 @@ class TargetComparisonSelectionWindow(StepWindowBase):
 
             btn_swatch = QPushButton()
             btn_swatch.setFixedSize(24, 24)
-            btn_swatch.setStyleSheet(f"QPushButton {{ background-color: {color}; border: 1px solid #555; }}")
+            btn_swatch.setStyleSheet(_swatch_style(color, "QPushButton"))
             dlg_swatch_buttons[key] = btn_swatch
 
             def _make_color_click(k, btn):
@@ -3494,12 +3532,14 @@ class TargetComparisonSelectionWindow(StepWindowBase):
                         return
                     hex_color = chosen.name()
                     self._overlay_colors[k] = hex_color
-                    btn.setStyleSheet(f"QPushButton {{ background-color: {hex_color}; border: 1px solid #555; }}")
+                    btn.setStyleSheet(_swatch_style(hex_color, "QPushButton"))
                     # Update legend swatch
                     if k in self._overlay_color_swatches:
                         self._overlay_color_swatches[k].setStyleSheet(
-                            f"QLabel {{ background-color: {hex_color}; border: 1px solid #555; }}"
+                            _swatch_style(hex_color)
                         )
+                    # The role summary labels are part of the same legend.
+                    self._refresh_role_label_colors()
                     # Rebuild overlay with updated colors
                     self.update_overlay()
                 return _on_click
@@ -5232,9 +5272,7 @@ class TargetComparisonSelectionWindow(StepWindowBase):
         layout = QVBoxLayout(self.stretch_plot_dialog)
 
         self.stretch_plot_info_label = QLabel("Drag min/max markers to adjust stretch")
-        self.stretch_plot_info_label.setStyleSheet(
-            "QLabel { padding: 5px; background-color: #E3F2FD; border-radius: 3px; }"
-        )
+        self.stretch_plot_info_label.setProperty("role", "info")
         layout.addWidget(self.stretch_plot_info_label)
 
         self.stretch_plot_fig = Figure(figsize=(6, 2.5))
@@ -5249,7 +5287,7 @@ class TargetComparisonSelectionWindow(StepWindowBase):
         layout.addWidget(tame_canvas(self.stretch_plot_canvas, min_h=140), 1)
 
         hint_label = QLabel("Click and drag < > markers to adjust min/max | Changes apply in real-time")
-        hint_label.setStyleSheet("QLabel { color: #666; font-size: 10px; }")
+        hint_label.setProperty("role", "caption")
         layout.addWidget(hint_label)
 
         self.stretch_plot_dialog.show()

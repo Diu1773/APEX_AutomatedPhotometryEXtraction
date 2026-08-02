@@ -514,6 +514,58 @@ def refresh(widget) -> None:
     widget.update()
 
 
+def _srgb_luminance(rgb) -> float:
+    """WCAG relative luminance of an (r, g, b) 0-255 tuple."""
+    def _lin(c: float) -> float:
+        c /= 255.0
+        return c / 12.92 if c <= 0.04045 else ((c + 0.055) / 1.055) ** 2.4
+    r, g, b = (_lin(v) for v in rgb)
+    return 0.2126 * r + 0.7152 * g + 0.0722 * b
+
+
+def _contrast(a, b) -> float:
+    la, lb = _srgb_luminance(a), _srgb_luminance(b)
+    hi, lo = max(la, lb), min(la, lb)
+    return (hi + 0.05) / (lo + 0.05)
+
+
+def readable_on(color: str, background: str | None = None,
+                min_ratio: float = 4.5) -> str:
+    """Nudge ``color`` until it is legible on ``background``, keeping its hue.
+
+    Data-bound text (a legend tinted with its own marker colour) has to stay
+    recognisably that colour AND stay readable — pure gold reads fine on a dark
+    canvas and vanishes on a white one, which is why such labels used to carry
+    a second, hand-darkened hex that then drifted from the marker. This blends
+    the colour toward black or white (whichever raises contrast) in small steps
+    until it clears ``min_ratio``, so one source of truth serves every theme.
+    """
+    def _parse(value: str):
+        value = str(value or "").strip().lstrip("#")
+        if len(value) == 3:
+            value = "".join(c * 2 for c in value)
+        if len(value) != 6:
+            return None
+        try:
+            return tuple(int(value[i:i + 2], 16) for i in (0, 2, 4))
+        except ValueError:
+            return None
+
+    rgb = _parse(color)
+    bg = _parse(background if background is not None else Tokens.BG)
+    if rgb is None or bg is None:
+        return color
+    # Blend toward whichever end is further from the background.
+    target = (0, 0, 0) if _srgb_luminance(bg) > 0.5 else (255, 255, 255)
+    best = rgb
+    for step in range(21):                      # up to 100% in 5% steps
+        if _contrast(best, bg) >= min_ratio:
+            break
+        t = step / 20.0
+        best = tuple(round(c + (target[i] - c) * t) for i, c in enumerate(rgb))
+    return "#{:02X}{:02X}{:02X}".format(*best)
+
+
 def mono_note_style() -> str:
     """Stylesheet for a monospace note/summary QLabel (paths, fit results).
 
