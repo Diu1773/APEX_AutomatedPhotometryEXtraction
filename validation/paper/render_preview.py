@@ -17,26 +17,26 @@ OUT_ARTIFACT = ROOT / "MANUSCRIPT_ko_artifact.html"   # 아티팩트 게시용(d
 # 파일명이 fig<숫자>_ 패턴이 아닌 새 그림들(실측 주입 완전도 등)도 여기서 직접 잡는다 —
 # 예전 자동 매칭은 그 패턴만 찾아서 새 그림을 통째로 놓치고 옛 판을 붙이고 있었다.
 FIGFILES = {
-    1:  "fig_architecture.png",              # 2.1 설계 의도 — 작업 흐름·계층
-    2:  "fig10_calibration.png",             # 3.2 검출기 보정
-    3:  "fig11_detector.png",                # 3.3 검출기 특성화
-    4:  "fig12_preproc_crosscheck.png",      # 3.4 ccdproc 교차
-    5:  "fig13_cross_instrument.png",        # 3.5 교차기기 보정
-    6:  "fig6_qc_validation.png",            # 3.6  프레임 QC
-    7:  "fig_completeness_realvssynth.png",  # 3.7  완전도(실측 주입)
-    8:  "fig_detection_threshold.png",       # 3.8  검출 문턱·헛검출 오염
-    9:  "fig_wcs_engines.png",               # 3.9  astrometric solution
-    10: "fig2_error_model.png",              # 3.10 오차 모형
-    11: "fig3_parameter_sweep.png",          # 3.11 민감도
-    12: "fig4_crosscheck_sep.png",           # 3.12 합성 독립 엔진
-    13: "fig_iraf_crosscheck.png",           # 3.13 실측 독립 엔진(NGC6811 499별)
-    14: "fig_psf_validation.png",          # 3.14 PSF 측광
-    15: "fig9_crowded_field.png",            # 3.15 밀집장
-    16: "fig7_reference_crosscheck.png",     # 3.16 참조 목록
-    17: "fig8_cmd_reproduction.png",         # 3.17 CMD 재현
-    18: "fig_timeseries_validation.png",     # 3.18 시계열 (SYSREM·PDM)
-    19: "fig_lc_yzboo.png",                  # 4    과학 적용(YZ Boo)
-    # 3.9 astrometric solution 과 3.14 PSF 측광은 아직 그림이 없다(작성 예정)
+    1:  "fig_architecture.png",              # 2.1 작업 흐름·계층
+    2:  "fig11_detector.png",                # 3.2 검출기 특성화(PTC)
+    3:  "fig12_preproc_crosscheck.png",      # 3.2 ccdproc 교차
+    4:  "fig13_cross_instrument.png",        # 3.2 교차기기 보정
+    5:  "fig6_qc_validation.png",            # 3.3 프레임 QC
+    6:  "fig_completeness_realvssynth.png",  # 3.4 완전도(실측 주입)
+    7:  "fig_detection_threshold.png",       # 3.5 검출 문턱·헛검출 오염
+    8:  "fig_wcs_engines.png",               # 3.6 astrometric solution
+    9:  "fig2_error_model.png",              # 3.7 오차 모형
+    10: "fig3_parameter_sweep.png",          # 3.8 민감도
+    11: "fig4_crosscheck_sep.png",           # 3.9 합성 독립 엔진
+    12: "fig_iraf_crosscheck.png",           # 3.9 실측 독립 엔진(IRAF 499별)
+    13: "fig_psf_validation.png",            # 3.10 PSF 측광
+    14: "fig9_crowded_field.png",            # 3.11 밀집장
+    15: "fig7_reference_crosscheck.png",     # 3.12 외부 목록(PS1)
+    16: "fig8_cmd_reproduction.png",         # 3.12 CMD 재현
+    17: "fig_timeseries_validation.png",     # 3.13 시계열 (SYSREM·PDM)
+    18: "fig_lc_yzboo.png",                  # 4    과학 적용(YZ Boo)
+    # 옛 그림 2(fig10_calibration.png, 레거시 4패널)는 2026-08-03 사용자 지시로
+    # 뺐다. 3.2 의 보정 수치는 본문이 담고, 대체 그림 제작은 fig 세션 몫이다.
 }
 FIGMAP = {k: FIGDIR / v for k, v in FIGFILES.items() if (FIGDIR / v).exists()}
 _missing = [f"{k}:{v}" for k, v in FIGFILES.items() if not (FIGDIR / v).exists()]
@@ -48,24 +48,23 @@ def fig_uri(p):
 # descriptive captions, keyed by pipeline figure number
 CAPTIONS = {
  1: r"APEX의 작업 흐름과 계층. 0–7단계는 두 모드가 공유하며, 측광이 끝난 뒤에야 CMD 모드와 LC 모드로 갈라진다. 각 단계는 관측자에게 **결정 하나**를 요구하고(어떤 보정 프레임을 쓸지, 이 프레임을 받아들일지, 검출 문턱을 어디에 둘지, 몇 장에서 보여야 별로 인정할지, 구경을 얼마로 할지) 정해진 경로에 검사 가능한 산출물을 남긴다. 계산은 Qt를 부르지 않는 핵심부에 있고 그래픽 계층은 그것을 부르기만 하므로, 3절의 화면 없는 검증이 곧 화면이 돌리는 코드를 시험한다. 각 단계 아래의 붉은 번호는 그 단계를 검증하는 절이다.",
- 2: r"검출기 보정(0단계) 검증. **(a)** 실제 M13 $V$ 프레임의 보정본. **(b)** flat 보정이 광학 비네팅을 지운다. **(c)** 같은 raw를 APEX와 별개 코드베이스인 AstralImage/AIPPI 보정 엔진으로 각각 처리해 화소 단위로 비교 — 여섯 자료·아홉 밴드에 걸친 19벌에서 보정 프레임이 비트동일(차이 RMS·최대 모두 $0$ DN), 마스터 bias·dark는 RMS $\le0.30$ DN, 마스터 flat은 $\le0.030$. **(d)** L.A.Cosmic \citep{vandokkum2001} 우주선·핫픽셀 제거: 주입 우주선 화소 $100\%$·핫픽셀 $94\%$를 지우면서 별 중심 오검출 $0.000\%$, 구경 플럭스 변화 $0.00$ mmag.",
- 3: r"광자전달곡선(photon-transfer curve)으로 자료에서 직접 잰 검출기 특성: gain $0.681$ e$^-$/ADU, 읽기잡음 $2.35$ e$^-$, 암전류 $0.0077$ e$^-$/s($R^2=0.998$). 헤더의 EGAIN 값은 $\approx16\times$ 틀리므로 쓰지 않는다.",
- 4: r"각 보정 단계를 표준 파이썬 패키지 astropy \texttt{ccdproc}과 픽셀 대 픽셀로 비교. 마스터 bias·dark와 적용 세 단계가 비트동일($\Delta=0$), 전체 파이프라인도 $5\times10^{-4}$ DN 이내 — 읽기잡음보다 네 자릿수 이상 아래.",
- 5: r"두 LCO 카메라의 raw를 APEX로 보정해 독립 파이프라인 BANZAI 산출물과 비교. QHY600 CMOS는 전체가 균일한 $+0.06$ e$^-$, 4-앰프 Sinistro CCD는 $\approx0.3\%$ 일치(사분면 패턴은 앰프별 조립의 차이). 보정 산술이 검출기를 넘어 일반화됨을 보인다.",
- 6: r"주입 결함으로 만든 44-프레임 밤에서 자동 프레임 QC. 정상 24장을 오탐 없이 통과, 나쁜 시상·밝은 하늘·거짓 헤더 프레임을 모두 검출. 회색 투명도 손실만 놓치는데(균일 변화라 영상 통계에 안 잡힘), 이것이 2단계 측광-QC의 근거다.",
- 7: r"실측 프레임에 인공별을 주입해 잰 검출 완전도. **(a)** 관측 조건을 대표하는 실측 단일 노출 세 장 — 어두운 하늘·양호한 시상(M67 $i$), 밝은 하늘·양호한 시상(NGC 6811 $R$), 밝은 하늘·불량 시상(M13 $V$) — 의 주입 등급 대비 회수율. 점은 구간별 회수율(Wilson 95\% 이항 구간)이고 **등급 공간에는 어떤 함수도 맞추지 않는다**. 50\% 깊이 $m_{50}=17.65,\ 15.64,\ 14.90$ 은 곡선이 0.5를 지나는 지점을 읽은 값이며, 깊이는 방법이 아니라 그 프레임의 하늘 밝기와 시상이 정한다. 회색 파선은 합성 verification 프레임. 아래 스트립은 가장 얕은 프레임에 실제로 주입된 별들의 컷아웃이다. **(b)** 각 별을 기대 peak-화소 S/N으로 재표현하면 깊이가 3.4등급에 걸쳐 벌어졌던 **일곱 프레임이 단일 곡선으로 붕괴**한다. 합동 표본의 오차함수 피팅은 $\mathrm{S/N}_{50}=4.0$, 프레임별 독립 판독은 $4.05\pm0.18$ 로 일치한다.",
- 8: r"검출 문턱값에 따른 헛검출 오염을, 외부 목록 없이 프레임 자신에게서 잰 것. 배경을 뺀 영상의 부호를 뒤집어 같은 검출기를 다시 돌리면 잡음에서 기원한 헛검출이 그대로 세어진다 \citep{serra2012, molino2014}. **(a)** 구상성단 둘·산개성단 둘의 실측 단일 노출 다섯 장($B$·$R$·$g'$). 빈 역삼각형은 상한이다 — 부호를 뒤집은 영상에서 검출이 하나도 안 나온 경우로, $1/N_+$에 찍고 잇는 선에서는 뺐다(이으면 오염이 아니라 $N_+$가 만든 기울기가 그려진다). 큰 빈 기호는 각 프레임 자신의 하한, 곧 오염이 5\% 아래로 유지되는 가장 낮은 문턱값이며 **그 값이 $1.5,\,1.5,\,1.8,\,2.0,\,2.2$로 프레임마다 다르다.** M13의 두 곡선은 **같은 성단을 같은 밤에 찍은 두 필터**라 이 갈림을 대상 탓으로 돌릴 수 없음을 보인다. 기본값 $3.2\sigma$(세로선)에서는 다섯 장 모두 오염 2\% 이하다. 음영은 다섯이 함께 무너지는 $1.5$–$1.2\sigma$ 구간으로, 잡음이 최소 연결 면적에 걸쳐 문턱을 넘을 확률은 문턱값만의 함수이므로 프레임의 별 개수와 무관하다. **(b)** Gaia DR3 대조 검증. 가로축은 Gaia와 짝지어지지 않은 실측 헛검출 수, 세로축은 목록 없이 낸 추정값이며, 44점이 네 자릿수에 걸쳐 2배(음영) 안에 든다. 무너지는 구간에서 2.4\%로 맞고, 그 위에서는 추정이 실측보다 크다 — 게이트로서는 안전한 방향이고, Gaia 한계보다 어두운 진짜 별이 가로축에서 헛검출로 세어지는 탓도 있다.",
- 9: r"같은 M13 단일 노출 여덟 장(가로축, 노출번호+필터)을 엔진별 사본 트리에서 세 solve 엔진으로 푼 비교. 4단계 검출 목록은 세 트리가 공유하고, 해는 각 사본의 FITS 헤더에 기록된다. **(a)** 프레임마다 5×5 화소 격자를 세 엔진의 WCS로 하늘 좌표에 투영해 잰 엔진 쌍 사이 각거리(격자 중앙값). R·V 여섯 장에서 0.2–0.4″, B 두 장에서 0.6–1.0″로 일치한다(점선은 1화소 = 0.395″). **(b)** 파이프라인 QC 코드와 독립적으로, 각 엔진의 헤더 WCS로 Gaia DR3 별을 화소에 투영해 검출과 2″ 반경 최근접 매칭한 잔차 RMS. 프레임 중앙값은 내장 0.77 px, astrometry.net 0.93 px, ASTAP 1.10 px다. 내장 솔버는 채점에 쓰인 것과 같은 검출·Gaia 쌍에 해를 맞추므로 이 지표가 유리한 것은 부분적으로 구성 탓이다. 수용 게이트는 내장·ASTAP 여덟 장 전부와 astrometry.net 일곱 장을 통과시켰고(한 장은 99퍼센타일 잔차로 검토 표시), 검출 목록이 없던 예비 실행은 여덟 장 전부 기각하였다.",
- 10: r"주입–되찾기로 검증한 측광 오차 모형. 보고한 오차가 실측 산포와 일치하며(pull 표준편차 $1.014$, $N=3404$), 구간별 RMS가 $\sigma_m=1.0857/\mathrm{SNR}$을 두 자릿수에 걸쳐 따른다.",
- 11: r"파이프라인·관측 조건 스윕. 측광 산포는 구경 $1.2\times$FWHM에서 최소($0.058$등급)이고, 하늘밝기와 시상이 나빠지면 깊이가 얕아진다. 검출은 $2$–$6\sigma$ 문턱에 무관($<0.01$등급).",
- 12: r"합성 참값에서 APEX와 독립 구현 엔진 SEP \citep{barbary2016}의 일치(별 95개): MAD $0.006$등급, Pearson $r=0.99995$. 같은 화소에 두 독립 엔진이 같은 플럭스를 낸다.",
- 13: r"APEX가 raw에서부터 전부 줄인 NGC 6811 $V$ 프레임의 실제 별 499개를, 표 2에 맞춘 파라미터로 APEX 강제 측광과 IRAF `phot`(DAOPHOT)이 **같은 고정 좌표에서** 각각 잰 결과: MAD $9.7$ mmag, $r=0.99989$, 구간 중앙값 잔차가 어두운 쪽까지 평평하다 \citep{schechter1993}. 양쪽 모두 재중심을 껐으므로 잔차가 중심 잡기의 차이를 흡수할 수 없다. 이 불일치는 두 코드가 스스로 보고한 형식 오차의 제곱합근($27.8$ mmag)의 3분의 1 남짓이다.",
- 14: r"PSF 측광(8단계)과 강제 구경 측광(7단계)의 별 단위 일치. 두 표를 검출 식별자로 짝짓고, 양쪽 모두 신호대잡음비 20을 넘고 혼잡 신뢰불가·포화 플래그가 없는 별에서 $\Delta = m_{\rm PSF}-m_{\rm ap}$ 를 계산해 프레임별 중앙값(EPSF 정규화 오프셋, 절대 보정의 프레임 영점이 흡수)을 뺐다. **(a)** 카메라 세 대(Moravian C3-61000 CMOS, LCO QHY600 CMOS, LCO Sinistro CCD 4-앰프)·자료 여섯 벌·단일 노출 67장·별 90,201개의 분포와 MAD(7–40 mmag). 표시 범위 ±0.2 등급 밖의 별은 성긴 장에서 0.8–2.3%, M13에서 8.9%, 은하가 시야에 있는 NGC 5985 장에서 12.9%로, 구경 쪽이 이웃 별빛·배경 구조를 담는 방향이며 3.11절에서 다룬다. **(b)** QHY600 풀프레임 M45 $2.0^\circ\times1.3^\circ$ 19장의 반경 의존성. 반경별 중앙값은 모서리 구간을 제외하면 14 mmag 폭 안에 있고, 안쪽(정규화 반경 0.3 미만)과 바깥(0.7 초과)의 차이는 4 mmag, 마지막 모서리 구간만 $+28$ mmag(별 단위 MAD와 같은 크기)다. 회색 점은 무작위 12,000개 표본.",
- 15: r"두 구상성단(M5·M13) 코어에서 APEX의 두 측광법 — 강제 구경 대 PSF — 의 내부 일치. 최근접 이웃 거리에 대한 중앙 차이가 평평($\pm0.02$–$0.04$등급, 분해 한계 $\sim10$ px까지). Gaia에 의존하지 않는 내부 일관성 시험.",
- 16: r"NGC 6811을 Gaia와 독립인 Pan-STARRS 1 \citep{chambers2016}에 교차대조. $B$에서 Gaia 변환 참조가 어두운 쪽으로 $+0.022$등급 흐르지만 APEX 자체는 PS1 대비 평평($+0.010$) — 어두운 쪽 편차는 APEX가 아니라 Gaia BP의 알려진 결함 \citep{riello2021}.",
- 17: r"NGC 6811의 Johnson 색-등급도($V$ 대 $B-V$, 별 1921개). APEX 지상 측광이 Gaia 변환 우주 기반 참조와 주계열 능선 $19$ mmag로 일치하며, 독립 PS1 계에서도 같은 형태. CMD 산출물 자체를 검증(이소크론 맞추기는 별개).",
- 18: r"자체 구현한 시계열 모듈 둘을 주입한 참값으로 확인한 결과. 검증은 LC 모드의 단계 창이 호출하는 것과 같은 진입점을 쓰고 고정 시드에서 만든 합성 계열만 쓴다. **(a)** 위상 분산 최소화(PDM)의 주기 복원. 4절과 같은 관측 배치(하룻밤 5.2시간·80점) 위에 기본 진동과 배진동을 더한 비대칭 신호를 얹고, 주기 0.06–0.20일과 잡음 5–40 mmag의 각 칸마다 잡음 실현 12개를 돌려 $|P_{\rm rec}-P_{\rm true}|/P_{\rm true}$의 중앙값을 표시하였다. 잡음 20 mmag 이하에서 중앙값 1.4\%이고, 오차를 키우는 것은 잡음보다 주기다. 기선 0.217일이 주기 0.20일을 한 번밖에 담지 못하기 때문이며, 알고리즘이 아니라 기선의 한계다. **(b)** 같은 계열에 라이브러리의 Lomb–Scargle \citep{vanderplas2018} 을 함께 돌린 결과. 288개 계열이 일대일 선을 따르므로 자체 구현한 PDM이 다른 문제를 풀고 있지 않음을 확인한다. 어긋나는 점은 기선이 한 주기를 겨우 담는 0.16–0.22일 구간에 몰려 있다. **(c)** SYSREM \citep{tamuz2005}. 별 60개·프레임 120장에 프레임별 투과율과 별별 감도의 곱으로 계통 성분을 주입하고 한 별에만 주기 0.104092일·진폭 0.21등급의 변광을 넣었다. APEX는 성분을 **비교성만으로** 풀고 대상별에 적용한다(파란 점, 진폭 109\% 유지). 대상별을 성분 추출에 넣으면 비교성 산포는 똑같이 줄지만 변광 진폭은 0.4\%만 남는다(보라 x). 추세 제거를 산포 감소만으로 평가하면 안 되는 이유다.",
- 19: r"LC 모드의 종단(end-to-end) 과학 산출물: 고진폭 $\delta$ Scuti 별 YZ Boötis를 raw 프레임에서 APEX만으로 줄였다. **(a)** 하룻밤(2026-03-28, $r$ 밴드, 5.2시간에 걸친 80점)을 문헌 주기로 접으면 출판된 톱니 곡선이 재현되고 진폭은 pk-pk $0.39$ 등급이다. **(b)** Lomb–Scargle 주기도. 단일밤 최고 봉우리는 $0.1046$ 일로 문헌값 $0.10409$ 일(파선)과 0.5\% 차이지만, 하루 간격의 두 밤을 병합하면 최고 봉우리가 $+1$ 주기/일 alias인 $0.0946$ 일로 옮겨가고 참 주기는 부봉우리로만 남는다. 이는 관측 창(window)의 성질이지 파이프라인의 것이 아니며, 숨기지 않고 보인다."
+ 2: r"광자전달곡선(photon-transfer curve)으로 자료에서 직접 잰 검출기 특성: gain $0.681$ e$^-$/ADU, 읽기잡음 $2.35$ e$^-$, 암전류 $0.0077$ e$^-$/s($R^2=0.998$). 헤더의 EGAIN 값은 $\approx16\times$ 틀리므로 쓰지 않는다.",
+ 3: r"각 보정 단계를 표준 파이썬 패키지 astropy \texttt{ccdproc}과 픽셀 대 픽셀로 비교. 마스터 bias·dark와 적용 세 단계가 비트동일($\Delta=0$), 전체 파이프라인도 $5\times10^{-4}$ DN 이내 — 읽기잡음보다 네 자릿수 이상 아래.",
+ 4: r"두 LCO 카메라의 raw를 APEX로 보정해 독립 파이프라인 BANZAI 산출물과 비교. QHY600 CMOS는 전체가 균일한 $+0.06$ e$^-$, 4-앰프 Sinistro CCD는 $\approx0.3\%$ 일치(사분면 패턴은 앰프별 조립의 차이). 보정 산술이 검출기를 넘어 일반화됨을 보인다.",
+ 5: r"주입 결함으로 만든 44-프레임 밤에서 자동 프레임 QC. 정상 24장을 오탐 없이 통과, 나쁜 시상·밝은 하늘·거짓 헤더 프레임을 모두 검출. 회색 투명도 손실만 놓치는데(균일 변화라 영상 통계에 안 잡힘), 이것이 2단계 측광-QC의 근거다.",
+ 6: r"실측 프레임에 인공별을 주입해 잰 검출 완전도. **(a)** 관측 조건을 대표하는 실측 단일 노출 세 장 — 어두운 하늘·양호한 시상(M67 $i$), 밝은 하늘·양호한 시상(NGC 6811 $R$), 밝은 하늘·불량 시상(M13 $V$) — 의 주입 등급 대비 회수율. 점은 구간별 회수율(Wilson 95\% 이항 구간)이고 **등급 공간에는 어떤 함수도 맞추지 않는다**. 50\% 깊이 $m_{50}=17.65,\ 15.64,\ 14.90$ 은 곡선이 0.5를 지나는 지점을 읽은 값이며, 깊이는 방법이 아니라 그 프레임의 하늘 밝기와 시상이 정한다. 회색 파선은 합성 verification 프레임. 아래 스트립은 가장 얕은 프레임에 실제로 주입된 별들의 컷아웃이다. **(b)** 각 별을 기대 peak-화소 S/N으로 재표현하면 깊이가 3.4등급에 걸쳐 벌어졌던 **일곱 프레임이 단일 곡선으로 붕괴**한다. 합동 표본의 오차함수 피팅은 $\mathrm{S/N}_{50}=4.0$, 프레임별 독립 판독은 $4.05\pm0.18$ 로 일치한다.",
+ 7: r"검출 문턱값에 따른 헛검출 오염을, 외부 목록 없이 프레임 자신에게서 잰 것. 배경을 뺀 영상의 부호를 뒤집어 같은 검출기를 다시 돌리면 잡음에서 기원한 헛검출이 그대로 세어진다 \citep{serra2012, molino2014}. **(a)** 구상성단 둘·산개성단 둘의 실측 단일 노출 다섯 장($B$·$R$·$g'$). 빈 역삼각형은 상한이다 — 부호를 뒤집은 영상에서 검출이 하나도 안 나온 경우로, $1/N_+$에 찍고 잇는 선에서는 뺐다(이으면 오염이 아니라 $N_+$가 만든 기울기가 그려진다). 큰 빈 기호는 각 프레임 자신의 하한, 곧 오염이 5\% 아래로 유지되는 가장 낮은 문턱값이며 **그 값이 $1.5,\,1.5,\,1.8,\,2.0,\,2.2$로 프레임마다 다르다.** M13의 두 곡선은 **같은 성단을 같은 밤에 찍은 두 필터**라 이 갈림을 대상 탓으로 돌릴 수 없음을 보인다. 기본값 $3.2\sigma$(세로선)에서는 다섯 장 모두 오염 2\% 이하다. 음영은 다섯이 함께 무너지는 $1.5$–$1.2\sigma$ 구간으로, 잡음이 최소 연결 면적에 걸쳐 문턱을 넘을 확률은 문턱값만의 함수이므로 프레임의 별 개수와 무관하다. **(b)** Gaia DR3 대조 검증. 가로축은 Gaia와 짝지어지지 않은 실측 헛검출 수, 세로축은 목록 없이 낸 추정값이며, 44점이 네 자릿수에 걸쳐 2배(음영) 안에 든다. 무너지는 구간에서 2.4\%로 맞고, 그 위에서는 추정이 실측보다 크다 — 게이트로서는 안전한 방향이고, Gaia 한계보다 어두운 진짜 별이 가로축에서 헛검출로 세어지는 탓도 있다.",
+ 8: r"같은 M13 단일 노출 여덟 장(가로축, 노출번호+필터)을 엔진별 사본 트리에서 세 solve 엔진으로 푼 비교. 4단계 검출 목록은 세 트리가 공유하고, 해는 각 사본의 FITS 헤더에 기록된다. **(a)** 프레임마다 5×5 화소 격자를 세 엔진의 WCS로 하늘 좌표에 투영해 잰 엔진 쌍 사이 각거리(격자 중앙값). R·V 여섯 장에서 0.2–0.4″, B 두 장에서 0.6–1.0″로 일치한다(점선은 1화소 = 0.395″). **(b)** 파이프라인 QC 코드와 독립적으로, 각 엔진의 헤더 WCS로 Gaia DR3 별을 화소에 투영해 검출과 2″ 반경 최근접 매칭한 잔차 RMS. 프레임 중앙값은 내장 0.77 px, astrometry.net 0.93 px, ASTAP 1.10 px다. 내장 솔버는 채점에 쓰인 것과 같은 검출·Gaia 쌍에 해를 맞추므로 이 지표가 유리한 것은 부분적으로 구성 탓이다. 수용 게이트는 내장·ASTAP 여덟 장 전부와 astrometry.net 일곱 장을 통과시켰고(한 장은 99퍼센타일 잔차로 검토 표시), 검출 목록이 없던 예비 실행은 여덟 장 전부 기각하였다.",
+ 9: r"주입–되찾기로 검증한 측광 오차 모형. 보고한 오차가 실측 산포와 일치하며(pull 표준편차 $1.014$, $N=3404$), 구간별 RMS가 $\sigma_m=1.0857/\mathrm{SNR}$을 두 자릿수에 걸쳐 따른다.",
+ 10: r"파이프라인·관측 조건 스윕. 측광 산포는 구경 $1.2\times$FWHM에서 최소($0.058$등급)이고, 하늘밝기와 시상이 나빠지면 깊이가 얕아진다. 검출은 $2$–$6\sigma$ 문턱에 무관($<0.01$등급).",
+ 11: r"합성 참값에서 APEX와 독립 구현 엔진 SEP \citep{barbary2016}의 일치(별 95개): MAD $0.006$등급, Pearson $r=0.99995$. 같은 화소에 두 독립 엔진이 같은 플럭스를 낸다.",
+ 12: r"APEX가 raw에서부터 전부 줄인 NGC 6811 $V$ 프레임의 실제 별 499개를, 표 2에 맞춘 파라미터로 APEX 강제 측광과 IRAF `phot`(DAOPHOT)이 **같은 고정 좌표에서** 각각 잰 결과: MAD $9.7$ mmag, $r=0.99989$, 구간 중앙값 잔차가 어두운 쪽까지 평평하다 \citep{schechter1993}. 양쪽 모두 재중심을 껐으므로 잔차가 중심 잡기의 차이를 흡수할 수 없다. 이 불일치는 두 코드가 스스로 보고한 형식 오차의 제곱합근($27.8$ mmag)의 3분의 1 남짓이다.",
+ 13: r"PSF 측광(8단계)과 강제 구경 측광(7단계)의 별 단위 일치. 두 표를 검출 식별자로 짝짓고, 양쪽 모두 신호대잡음비 20을 넘고 혼잡 신뢰불가·포화 플래그가 없는 별에서 $\Delta = m_{\rm PSF}-m_{\rm ap}$ 를 계산해 프레임별 중앙값(EPSF 정규화 오프셋, 절대 보정의 프레임 영점이 흡수)을 뺐다. **(a)** 카메라 세 대(Moravian C3-61000 CMOS, LCO QHY600 CMOS, LCO Sinistro CCD 4-앰프)·자료 여섯 벌·단일 노출 67장·별 90,201개의 분포와 MAD(7–40 mmag). 표시 범위 ±0.2 등급 밖의 별은 성긴 장에서 0.8–2.3%, M13에서 8.9%, 은하가 시야에 있는 NGC 5985 장에서 12.9%로, 구경 쪽이 이웃 별빛·배경 구조를 담는 방향이며 3.11절에서 다룬다. **(b)** QHY600 풀프레임 M45 $2.0^\circ\times1.3^\circ$ 19장의 반경 의존성. 반경별 중앙값은 모서리 구간을 제외하면 14 mmag 폭 안에 있고, 안쪽(정규화 반경 0.3 미만)과 바깥(0.7 초과)의 차이는 4 mmag, 마지막 모서리 구간만 $+28$ mmag(별 단위 MAD와 같은 크기)다. 회색 점은 무작위 12,000개 표본.",
+ 14: r"두 구상성단(M5·M13) 코어에서 APEX의 두 측광법 — 강제 구경 대 PSF — 의 내부 일치. 최근접 이웃 거리에 대한 중앙 차이가 평평($\pm0.02$–$0.04$등급, 분해 한계 $\sim10$ px까지). Gaia에 의존하지 않는 내부 일관성 시험.",
+ 15: r"NGC 6811을 Gaia와 독립인 Pan-STARRS 1 \citep{chambers2016}에 교차대조. $B$에서 Gaia 변환 참조가 어두운 쪽으로 $+0.022$등급 흐르지만 APEX 자체는 PS1 대비 평평($+0.010$) — 어두운 쪽 편차는 APEX가 아니라 Gaia BP의 알려진 결함 \citep{riello2021}.",
+ 16: r"NGC 6811의 Johnson 색-등급도($V$ 대 $B-V$, 별 1921개). APEX 지상 측광이 Gaia 변환 우주 기반 참조와 주계열 능선 $19$ mmag로 일치하며, 독립 PS1 계에서도 같은 형태. CMD 산출물 자체를 검증(이소크론 맞추기는 별개).",
+ 17: r"자체 구현한 시계열 모듈 둘을 주입한 참값으로 확인한 결과. 검증은 LC 모드의 단계 창이 호출하는 것과 같은 진입점을 쓰고 고정 시드에서 만든 합성 계열만 쓴다. **(a)** 위상 분산 최소화(PDM)의 주기 복원. 4절과 같은 관측 배치(하룻밤 5.2시간·80점) 위에 기본 진동과 배진동을 더한 비대칭 신호를 얹고, 주기 0.06–0.20일과 잡음 5–40 mmag의 각 칸마다 잡음 실현 12개를 돌려 $|P_{\rm rec}-P_{\rm true}|/P_{\rm true}$의 중앙값을 표시하였다. 잡음 20 mmag 이하에서 중앙값 1.4\%이고, 오차를 키우는 것은 잡음보다 주기다. 기선 0.217일이 주기 0.20일을 한 번밖에 담지 못하기 때문이며, 알고리즘이 아니라 기선의 한계다. **(b)** 같은 계열에 라이브러리의 Lomb–Scargle \citep{vanderplas2018} 을 함께 돌린 결과. 288개 계열이 일대일 선을 따르므로 자체 구현한 PDM이 다른 문제를 풀고 있지 않음을 확인한다. 어긋나는 점은 기선이 한 주기를 겨우 담는 0.16–0.22일 구간에 몰려 있다. **(c)** SYSREM \citep{tamuz2005}. 별 60개·프레임 120장에 프레임별 투과율과 별별 감도의 곱으로 계통 성분을 주입하고 한 별에만 주기 0.104092일·진폭 0.21등급의 변광을 넣었다. APEX는 성분을 **비교성만으로** 풀고 대상별에 적용한다(파란 점, 진폭 109\% 유지). 대상별을 성분 추출에 넣으면 비교성 산포는 똑같이 줄지만 변광 진폭은 0.4\%만 남는다(보라 x). 추세 제거를 산포 감소만으로 평가하면 안 되는 이유다.",
+ 18: r"LC 모드의 종단(end-to-end) 과학 산출물: 고진폭 $\delta$ Scuti 별 YZ Boötis를 raw 프레임에서 APEX만으로 줄였다. **(a)** 하룻밤(2026-03-28, $r$ 밴드, 5.2시간에 걸친 80점)을 문헌 주기로 접으면 출판된 톱니 곡선이 재현되고 진폭은 pk-pk $0.39$ 등급이다. **(b)** Lomb–Scargle 주기도. 단일밤 최고 봉우리는 $0.1046$ 일로 문헌값 $0.10409$ 일(파선)과 0.5\% 차이지만, 하루 간격의 두 밤을 병합하면 최고 봉우리가 $+1$ 주기/일 alias인 $0.0946$ 일로 옮겨가고 참 주기는 부봉우리로만 남는다. 이는 관측 창(window)의 성질이지 파이프라인의 것이 아니며, 숨기지 않고 보인다."
 }
 
 # ---------- bibliography ----------
@@ -704,20 +703,20 @@ JS = r"""
     return P2;
   }
 
-  /* 차례는 전폭 한 단으로 따로 짠다. 항목이 넘치면 다음 지면으로 잇는다. */
+  /* 차례는 한 지면에 본문과 같은 2단으로 짠다(2026-08-03 사용자 지시: 목차 1페이지).
+     넘치면 오른 단으로, 두 단이 다 차야만 새 지면을 연다. */
   function newTocPage(){
     var P=newPage();
     P.el.classList.add('p-toc');
-    P.cols[1].style.display='none';
-    // 단 폭이 인라인으로 고정돼 있으므로, 한 단만 쓸 때는 판면 전폭으로 다시 준다.
-    var full=GEO.PW-2*GEO.MX;
-    P.cols[0].style.width=full+'px';
-    P.cols[0].style.flex='0 0 '+full+'px';
     return P;
   }
   function layoutToc(toc){
-    var P=newTocPage(), col=P.cols[0];
+    var P=newTocPage(), ci=0, col=P.cols[0];
     function ok(){ return col.scrollHeight<=col.clientHeight+1; }
+    function nextCol(){
+      if (ci===0){ ci=1; col=P.cols[1]; }
+      else { P=newTocPage(); ci=0; col=P.cols[0]; }
+    }
     [].slice.call(toc.children).forEach(function(node){
       var c=node.cloneNode(true);
       col.appendChild(c);
@@ -730,13 +729,15 @@ JS = r"""
           box.appendChild(li);
           if (!ok()){
             box.removeChild(li);
-            P=newTocPage(); col=P.cols[0];
+            if (!box.children.length) col.removeChild(box);
+            nextCol();
             box=document.createElement('ol'); box.className=c.className;
             col.appendChild(box); box.appendChild(li);
           }
         });
+        if (!box.children.length) col.removeChild(box);
       } else {
-        P=newTocPage(); col=P.cols[0]; col.appendChild(c);
+        nextCol(); col.appendChild(c);
       }
     });
   }
@@ -756,16 +757,19 @@ JS = r"""
     stage.style.cssText='overflow:hidden;';
     book.style.cssText='transform-origin:top left;width:'+GEO.PW+'px;'+
       'display:block;margin:0;padding:0;';
-    // 1) 표제면 — 제목과 초록만. 본문은 여기서 시작하지 않는다.
+    // 체재(2026-08-03 사용자 지시): 1쪽 제목+안내 · 2쪽 차례 한 지면 ·
+    // 3쪽부터 초록을 지면 머리에 얹고 바로 2단 본문 (A&A/AutoPhOT 식).
+    // 1) 표제면 — 제목과 안내만.
     var T0=newPage(); T0.el.classList.add('p-title');
-    ['.titleblock','.absblock'].forEach(function(sel){
-      var n=src.querySelector(sel); if(n) T0.span.appendChild(n.cloneNode(true));
-    });
-    // 2) 차례 — 본문 앞에 온다
+    var tb=src.querySelector('.titleblock');
+    if (tb) T0.span.appendChild(tb.cloneNode(true));
+    // 2) 차례 — 한 지면에 2단으로
     var toc=src.querySelector('.tocblock');
     if (toc) layoutToc(toc);
-    // 3) 본문 — 새 지면부터 2단
+    // 3) 본문 — 초록을 첫 지면 머리(전폭)에 얹고 그 아래에서 2단이 시작된다
     var P=newPage();
+    var abs=src.querySelector('.absblock');
+    if (abs) P.span.appendChild(abs.cloneNode(true));
     var flow=src.querySelector('.flow');
     [].slice.call(flow.children).forEach(function(k){ P=place(k.cloneNode(true), P); });
     draining=true;                                              // 남은 그림 마무리
@@ -984,7 +988,7 @@ JS = r"""
   ncomp.querySelector('.cancel').addEventListener('click', closeCompose);
   ncomp.querySelector('.save').addEventListener('click', saveCompose);
   ncta.addEventListener('keydown', function(e){
-    if ((e.ctrlKey||e.metaKey) && e.key==='Enter'){ saveCompose(); }
+    if (e.key==='Enter' && !e.shiftKey){ e.preventDefault(); saveCompose(); }
     if (e.key==='Escape'){ closeCompose(); }
   });
   function saveCompose(){
@@ -1038,27 +1042,61 @@ JS = r"""
       p.removeChild(m); p.normalize();
     });
   }
-  /* 인용문을 한 텍스트 노드 안에서 찾아 표시한다.
-     노드를 가로지르는 계산은 조판·표시가 노드를 쪼개면서 어긋난다
-     (2026-07-30: 범위는 맞는데 빈 mark 가 생겼다). 한 노드 안에서만 찾고,
-     못 찾으면 표시만 건너뛴다. 메모와 인용문은 그대로 남는다. */
+  /* 인용문을 블록(문단·제목·항목·캡션) 단위로 정규화해 찾는다.
+     - 예전에는 한 텍스트 노드 안에서만 찾아서, 기울임·코드 조각을 낀 선택과
+       제목 선택이 표시되지 않았다. 제목은 같은 문자열이 차례에 먼저 나와
+       차례 쪽에 표시가 붙기도 했다(2026-08-03) — 차례·러닝헤드는 건너뛴다.
+     - 블록 안에서 텍스트 노드들을 이어붙여 공백 정규화 문자열과
+       (노드, 오프셋) 매핑을 만들고, 걸치는 노드마다 mark 를 하나씩 감싼다. */
+  function mkMark(n){
+    var m=document.createElement('mark');
+    m.className='apexnote'; m.dataset.nid=n.id; m.title=n.body||'(메모 없음)';
+    return m;
+  }
   function markAll(){
     clearMarks();
     var root=activeRoot();
+    var blocks=[].slice.call(root.querySelectorAll('p,h2,h3,h4,li,figcaption,td,caption'));
     notes.forEach(function(n){
       var q=(n.quote||'').replace(/\s+/g,' ').trim();
       if (q.length<2) return;
-      var w=document.createTreeWalker(root, NodeFilter.SHOW_TEXT, null), node;
-      while ((node=w.nextNode())){
-        if (node.parentNode && node.parentNode.closest && node.parentNode.closest('mark.apexnote')) continue;
-        var j=node.nodeValue.indexOf(q);
+      for (var bi=0;bi<blocks.length;bi++){
+        var b=blocks[bi];
+        if (b.closest('.p-toc') || b.closest('.tocblock') ||
+            b.closest('.run') || b.closest('.folio')) continue;
+        var w=document.createTreeWalker(b, NodeFilter.SHOW_TEXT, null), t, nodes=[];
+        while ((t=w.nextNode())) nodes.push(t);
+        if (!nodes.length) continue;
+        var norm='', map=[], lastSp=true;
+        for (var k=0;k<nodes.length;k++){
+          var sv=nodes[k].nodeValue;
+          for (var i=0;i<sv.length;i++){
+            if (/\s/.test(sv[i])){
+              if (lastSp) continue;
+              norm+=' '; map.push({nd:nodes[k], off:i}); lastSp=true;
+            } else { norm+=sv[i]; map.push({nd:nodes[k], off:i}); lastSp=false; }
+          }
+        }
+        var j=norm.indexOf(q);
         if (j<0) continue;
+        var s0=map[j], e0=map[j+q.length-1];
         try {
           var rg=document.createRange();
-          rg.setStart(node, j); rg.setEnd(node, j+q.length);
-          var m=document.createElement('mark');
-          m.className='apexnote'; m.dataset.nid=n.id; m.title=n.body||'(메모 없음)';
-          rg.surroundContents(m);
+          rg.setStart(s0.nd, s0.off); rg.setEnd(e0.nd, e0.off+1);
+          if (rg.startContainer===rg.endContainer){
+            rg.surroundContents(mkMark(n));
+          } else {
+            var w2=document.createTreeWalker(b, NodeFilter.SHOW_TEXT, null), nd, seg=[];
+            while ((nd=w2.nextNode())) if (rg.intersectsNode(nd)) seg.push(nd);
+            seg.forEach(function(tn){
+              var r2=document.createRange();
+              r2.setStart(tn, tn===rg.startContainer ? rg.startOffset : 0);
+              r2.setEnd(tn, tn===rg.endContainer ? rg.endOffset : tn.nodeValue.length);
+              if (r2.toString().trim().length){
+                try { r2.surroundContents(mkMark(n)); } catch(e){}
+              }
+            });
+          }
         } catch(e){}
         break;
       }
@@ -1169,7 +1207,7 @@ HTML = f"""<meta charset="utf-8">
 <button id="notebtn" type="button">메모</button>
 <div id="notecompose">
   <p class="q"></p>
-  <textarea placeholder="메모를 적으세요 (Ctrl+Enter 저장)"></textarea>
+  <textarea placeholder="메모를 적으세요 (Enter 저장 · Shift+Enter 줄바꿈)"></textarea>
   <div class="row"><button type="button" class="cancel">취소</button>
     <button type="button" class="save">저장</button></div>
 </div>
