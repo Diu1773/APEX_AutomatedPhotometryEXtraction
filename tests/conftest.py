@@ -27,6 +27,7 @@ _GUI_DEPENDENT_TESTS = [
     "test_step10_nonlinearity.py",
     "test_step6_union_master.py",
     "test_step8_psf_detection_loader.py",
+    "test_variable_star_phase_plot.py",
 ]
 
 collect_ignore: list = [] if _HAS_PYQT5 else list(_GUI_DEPENDENT_TESTS)

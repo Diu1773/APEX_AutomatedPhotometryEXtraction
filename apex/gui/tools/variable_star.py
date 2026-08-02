@@ -4794,12 +4794,14 @@ class VariableStarToolWindow(ToolWindowBase):
         ax = fig.add_subplot(111)
 
         unique_filters = sorted(set(filt_v)) if filt_v is not None else [""]
+        plotted_y: list[np.ndarray] = []      # data actually drawn -> y-limits
         for fi, filt in enumerate(unique_filters):
             if not self.filter_visibility.get(filt, True):
                 continue
             sel = (filt_v == filt) if filt_v is not None else np.ones(len(phase), bool)
             ph_sel = np.concatenate([phase[sel], phase[sel] + 1.0])
             m_sel = np.concatenate([plot_mag[sel], plot_mag[sel]])
+            plotted_y.append(m_sel)
             color = self.filter_colors.get(filt) or _filt_color(filt, fi)
             label = filt if filt else "data"
             if dy_v is not None:
@@ -4843,6 +4845,7 @@ class VariableStarToolWindow(ToolWindowBase):
                             _phase_ext = np.concatenate([_phase, _phase + 1.0])
                             _cm_shifted = _cm[_mask] - np.nanmedian(_cm[_mask]) + np.nanmedian(plot_mag)
                             _mag_ext = np.concatenate([_cm_shifted, _cm_shifted])
+                            plotted_y.append(_mag_ext)
                             ax.scatter(
                                 _phase_ext,
                                 _mag_ext,
@@ -4871,6 +4874,21 @@ class VariableStarToolWindow(ToolWindowBase):
                 color="#6D4C41",
                 bbox=dict(boxstyle="round,pad=0.25", facecolor="#FFF3E0", edgecolor="#FFCC80", alpha=0.9),
             )
+        # Y-limits follow the DATA, never the overlays. A harmonic fit at an
+        # unconstraining period (e.g. the P=1 d default on two nights exactly
+        # one day apart) runs away by ~1e6 mag in the phase gaps; letting
+        # autoscale include it squashed the real light curve onto a flat line
+        # at "0" of an 800,000-mag axis. Pinning to the data keeps the fit
+        # visible where it matters and off-canvas where it is meaningless.
+        if plotted_y:
+            y_all = np.concatenate(plotted_y)
+            y_all = y_all[np.isfinite(y_all)]
+            if y_all.size:
+                y_lo = float(np.min(y_all))
+                y_hi = float(np.max(y_all))
+                pad = 0.05 * (y_hi - y_lo) if y_hi > y_lo else 0.05
+                ax.set_ylim(y_hi + pad, y_lo - pad)   # inverted: faint down
+
         handles, labels = ax.get_legend_handles_labels()
         if handles:
             ax.legend(fontsize=8, title=legend_title)

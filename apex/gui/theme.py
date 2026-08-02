@@ -455,6 +455,13 @@ def _apply_mpl_theme() -> None:
         return
     t = Tokens
     mpl.rcParams.update({
+        # Hangul in plot text (axis labels, empty-state notices) rendered as
+        # tofu boxes: the default DejaVu Sans has no Hangul glyphs. Matplotlib
+        # >= 3.6 falls back per glyph through this list, so DejaVu stays first
+        # — Latin text and every existing paper figure keep their exact face —
+        # and Korean-capable fonts only fill the glyphs DejaVu lacks.
+        "font.sans-serif": ["DejaVu Sans", "Malgun Gothic", "Noto Sans KR",
+                            "Segoe UI", "Arial"],
         "figure.facecolor": t.PLOT_BG,
         "figure.edgecolor": t.PLOT_BG,
         "savefig.facecolor": t.PLOT_BG,
