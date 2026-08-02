@@ -52,6 +52,7 @@ from PyQt5.QtWidgets import (
 from PyQt5.QtGui import QFont, QColor
 
 from apex.gui.layout_rules import FittedDialog, prevent_collapse, tame_canvas
+from apex.gui.theme import Tokens, style_button
 
 try:  # Python 3.11+
     import tomllib  # type: ignore
@@ -1268,10 +1269,11 @@ class QAReportWindow(ToolWindowBase):
         card_layout.setSpacing(3)
 
         title_label = QLabel(title)
-        title_label.setFont(QFont("Arial", 9, QFont.Bold))
+        _f = title_label.font(); _f.setBold(True); title_label.setFont(_f)
         detail_label = QLabel("Not checked")
         detail_label.setWordWrap(True)
-        detail_label.setStyleSheet("QLabel { font-size: 11px; }")
+        _f = detail_label.font(); _f.setPointSize(8)
+        detail_label.setFont(_f)
 
         card_layout.addWidget(title_label)
         card_layout.addWidget(detail_label)
@@ -1284,11 +1286,13 @@ class QAReportWindow(ToolWindowBase):
         if not card:
             return
         frame, detail_label = card
+        # State colours come from the live theme tokens, so the cards follow
+        # dark presets instead of glaring light pastels.
         palette = {
-            "ok": ("#E8F5E9", "#2E7D32", "#A5D6A7"),
-            "warn": ("#FFF8E1", "#F57F17", "#FFE082"),
-            "fail": ("#FFEBEE", "#C62828", "#EF9A9A"),
-            "unknown": ("#ECEFF1", "#455A64", "#CFD8DC"),
+            "ok": (Tokens.OK_SOFT, Tokens.OK, Tokens.OK),
+            "warn": (Tokens.WARN_SOFT, Tokens.WARN, Tokens.WARN),
+            "fail": (Tokens.ERROR_SOFT, Tokens.ERROR, Tokens.ERROR),
+            "unknown": (Tokens.SURFACE_ALT, Tokens.TEXT_SUB, Tokens.BORDER),
         }
         bg, fg, border = palette.get(state, palette["unknown"])
         frame.setStyleSheet(
@@ -1361,56 +1365,22 @@ class QAReportWindow(ToolWindowBase):
 
         # QA Parameters button
         self.btn_params = QPushButton("QA Parameters")
-        self.btn_params.setStyleSheet("""
-            QPushButton {
-                background-color: #9C27B0;
-                color: white;
-                font-weight: bold;
-                padding: 10px 15px;
-                font-size: 12px;
-            }
-            QPushButton:hover { background-color: #7B1FA2; }
-        """)
+        style_button(self.btn_params, height=Tokens.H_BUTTON)
         self.btn_params.clicked.connect(self.open_parameters_dialog)
         control_layout.addWidget(self.btn_params)
 
         self.btn_help = QPushButton("Help")
-        self.btn_help.setStyleSheet("""
-            QPushButton {
-                background-color: #455A64;
-                color: white;
-                font-weight: bold;
-                padding: 10px 15px;
-                font-size: 12px;
-            }
-            QPushButton:hover { background-color: #37474F; }
-        """)
+        style_button(self.btn_help, "ghost", height=Tokens.H_BUTTON)
         self.btn_help.clicked.connect(self.open_help_dialog)
         control_layout.addWidget(self.btn_help)
 
         self.btn_generate = QPushButton("Generate QA Report")
-        self.btn_generate.setStyleSheet("""
-            QPushButton {
-                background-color: #4CAF50;
-                color: white;
-                font-weight: bold;
-                padding: 10px 20px;
-                font-size: 12px;
-            }
-            QPushButton:hover { background-color: #45a049; }
-        """)
+        style_button(self.btn_generate, "primary", height=Tokens.H_ACTION)
         self.btn_generate.clicked.connect(self.generate_report)
         control_layout.addWidget(self.btn_generate)
 
         self.btn_stop = QPushButton("Stop")
-        self.btn_stop.setStyleSheet("""
-            QPushButton {
-                background-color: #f44336;
-                color: white;
-                font-weight: bold;
-                padding: 10px 15px;
-            }
-        """)
+        style_button(self.btn_stop, "danger", height=Tokens.H_ACTION)
         self.btn_stop.clicked.connect(self.stop_report)
         self.btn_stop.setEnabled(False)
         control_layout.addWidget(self.btn_stop)
@@ -1418,33 +1388,20 @@ class QAReportWindow(ToolWindowBase):
         # Filter status label
         self.filter_status_label = QLabel()
         self._update_filter_status_label()
-        self.filter_status_label.setStyleSheet("QLabel { color: #1565C0; font-weight: bold; }")
+        _f = self.filter_status_label.font(); _f.setBold(True)
+        self.filter_status_label.setFont(_f)
         control_layout.addWidget(self.filter_status_label)
 
         control_layout.addStretch()
 
         self.btn_save_plots = QPushButton("Save All Plots")
-        self.btn_save_plots.setStyleSheet("""
-            QPushButton {
-                background-color: #2196F3;
-                color: white;
-                font-weight: bold;
-                padding: 10px 15px;
-            }
-        """)
+        style_button(self.btn_save_plots, height=Tokens.H_BUTTON)
         self.btn_save_plots.clicked.connect(self.save_all_plots)
         self.btn_save_plots.setEnabled(False)
         control_layout.addWidget(self.btn_save_plots)
 
         self.btn_export_latex = QPushButton("Export LaTeX")
-        self.btn_export_latex.setStyleSheet("""
-            QPushButton {
-                background-color: #9C27B0;
-                color: white;
-                font-weight: bold;
-                padding: 10px 15px;
-            }
-        """)
+        style_button(self.btn_export_latex, height=Tokens.H_BUTTON)
         self.btn_export_latex.clicked.connect(self.export_latex)
         self.btn_export_latex.setEnabled(False)
         control_layout.addWidget(self.btn_export_latex)
@@ -1473,17 +1430,6 @@ class QAReportWindow(ToolWindowBase):
 
         # === Tab Widget for Results ===
         self.tabs = QTabWidget()
-        self.tabs.setStyleSheet("""
-            QTabWidget::pane { border: 1px solid #ccc; }
-            QTabBar::tab {
-                padding: 8px 16px;
-                font-weight: bold;
-            }
-            QTabBar::tab:selected {
-                background-color: #E3F2FD;
-                border-bottom: 2px solid #2196F3;
-            }
-        """)
 
         # Tab 1: Error Model
         self.tab_error = QWidget()
@@ -1526,7 +1472,6 @@ class QAReportWindow(ToolWindowBase):
         layout = QVBoxLayout(dialog)
         help_text = QTextEdit()
         help_text.setReadOnly(True)
-        help_text.setStyleSheet("QTextEdit { font-size: 12px; line-height: 1.35; }")
         help_text.setHtml("""
 <h2>QA Report 사용 목적</h2>
 <p>
@@ -1592,7 +1537,7 @@ QA가 PASS라고 해서 표준성 보정, extinction/color-term 보정, 시간�
             "frame-to-frame scatter (RMS). Literature expectation: RMS/σ_pred ≈ 1.0 and χ²/ν ≈ 1.0"
         )
         desc.setWordWrap(True)
-        desc.setStyleSheet("QLabel { background-color: #E3F2FD; padding: 10px; border-radius: 5px; }")
+        desc.setProperty("role", "info")
         layout.addWidget(desc)
 
         mode_row = QHBoxLayout()
@@ -1645,7 +1590,7 @@ QA가 PASS라고 해서 표준성 보정, extinction/color-term 보정, 시간�
             "Large shifts (>1 FWHM) may indicate matching or detection problems."
         )
         desc.setWordWrap(True)
-        desc.setStyleSheet("QLabel { background-color: #E8F5E9; padding: 10px; border-radius: 5px; }")
+        desc.setProperty("role", "info")
         layout.addWidget(desc)
 
         splitter = QSplitter(Qt.Horizontal)
@@ -1683,7 +1628,7 @@ QA가 PASS라고 해서 표준성 보정, extinction/color-term 보정, 시간�
             "Per-frame quality assessment. Check/uncheck 'Use' to include/exclude frames from error model."
         )
         desc.setWordWrap(True)
-        desc.setStyleSheet("QLabel { background-color: #FFF3E0; padding: 10px; border-radius: 5px; }")
+        desc.setProperty("role", "info")
         layout.addWidget(desc)
 
         # Control buttons
@@ -1698,33 +1643,20 @@ QA가 PASS라고 해서 표준성 보정, extinction/color-term 보정, 시간�
         frame_ctrl_layout.addWidget(self.btn_uncheck_flagged)
 
         self.btn_apply_frame_selection = QPushButton("Apply & Regenerate")
-        self.btn_apply_frame_selection.setStyleSheet("""
-            QPushButton {
-                background-color: #FF9800;
-                color: white;
-                font-weight: bold;
-                padding: 5px 10px;
-            }
-        """)
+        style_button(self.btn_apply_frame_selection, height=Tokens.H_BUTTON)
         self.btn_apply_frame_selection.clicked.connect(self._apply_frame_selection)
         frame_ctrl_layout.addWidget(self.btn_apply_frame_selection)
 
         self.btn_reset_qa = QPushButton("Reset All")
-        self.btn_reset_qa.setStyleSheet("""
-            QPushButton {
-                background-color: #607D8B;
-                color: white;
-                font-weight: bold;
-                padding: 5px 10px;
-            }
-        """)
+        style_button(self.btn_reset_qa, height=Tokens.H_BUTTON)
         self.btn_reset_qa.clicked.connect(self._reset_qa_params)
         frame_ctrl_layout.addWidget(self.btn_reset_qa)
 
         frame_ctrl_layout.addStretch()
 
         self.frame_selection_label = QLabel("Selected: 0/0 frames")
-        self.frame_selection_label.setStyleSheet("QLabel { font-weight: bold; color: #1565C0; }")
+        _f = self.frame_selection_label.font(); _f.setBold(True)
+        self.frame_selection_label.setFont(_f)
         frame_ctrl_layout.addWidget(self.frame_selection_label)
 
         layout.addLayout(frame_ctrl_layout)
@@ -1763,7 +1695,7 @@ QA가 PASS라고 해서 표준성 보정, extinction/color-term 보정, 시간�
             "indicates problematic background measurements."
         )
         desc.setWordWrap(True)
-        desc.setStyleSheet("QLabel { background-color: #F3E5F5; padding: 10px; border-radius: 5px; }")
+        desc.setProperty("role", "info")
         layout.addWidget(desc)
 
         splitter = QSplitter(Qt.Horizontal)
@@ -1798,14 +1730,15 @@ QA가 PASS라고 해서 표준성 보정, extinction/color-term 보정, 시간�
             "Formatted tables and statistics ready for inclusion in scientific publications."
         )
         desc.setWordWrap(True)
-        desc.setStyleSheet("QLabel { background-color: #ECEFF1; padding: 10px; border-radius: 5px; }")
+        desc.setProperty("role", "info")
         layout.addWidget(desc)
 
         # Verdict panel
         verdict_group = QGroupBox("Pipeline Validation Verdict")
         verdict_layout = QVBoxLayout(verdict_group)
         self.verdict_label = QLabel("Run QA Report to see validation results")
-        self.verdict_label.setFont(QFont("Arial", 12))
+        _f = self.verdict_label.font(); _f.setPointSize(12)
+        self.verdict_label.setFont(_f)
         self.verdict_label.setAlignment(Qt.AlignCenter)
         verdict_layout.addWidget(self.verdict_label)
         layout.addWidget(verdict_group)
@@ -1815,7 +1748,7 @@ QA가 PASS라고 해서 표준성 보정, extinction/color-term 보정, 시간�
         latex_layout = QVBoxLayout(latex_group)
         self.latex_text = QTextEdit()
         self.latex_text.setReadOnly(True)
-        self.latex_text.setFont(QFont("Courier", 9))
+        self.latex_text.setObjectName("Log")   # themed mono surface
         latex_layout.addWidget(self.latex_text)
         layout.addWidget(latex_group)
 
@@ -1832,7 +1765,7 @@ QA가 PASS라고 해서 표준성 보정, extinction/color-term 보정, 시간�
         layout = QVBoxLayout(self.tab_log)
         self.log_text = QTextEdit()
         self.log_text.setReadOnly(True)
-        self.log_text.setFont(QFont("Courier", 9))
+        self.log_text.setObjectName("Log")     # themed mono surface
         layout.addWidget(self.log_text)
 
     def log(self, msg: str):
@@ -1869,7 +1802,7 @@ QA가 PASS라고 해서 표준성 보정, extinction/color-term 보정, 시간�
         filter_layout = QVBoxLayout(filter_group)
 
         filter_desc = QLabel("Enable/disable filters for QA analysis:")
-        filter_desc.setStyleSheet("color: gray;")
+        filter_desc.setProperty("role", "caption")
         filter_layout.addWidget(filter_desc)
 
         # Create checkboxes for each detected filter
@@ -1881,7 +1814,7 @@ QA가 PASS라고 해서 표준성 보정, extinction/color-term 보정, 시간�
         else:
             for i, filt in enumerate(self.available_filters):
                 cb = QCheckBox(f"{filt} band")  # Keep original case from FITS header
-                cb.setStyleSheet("QCheckBox { font-weight: bold; font-size: 12px; }")
+                _f = cb.font(); _f.setBold(True); cb.setFont(_f)
 
                 # Check if this filter is currently enabled
                 if self.qa_params["enabled_filters"] is None:
@@ -2685,13 +2618,13 @@ Quality Flags:
             if np.isfinite(rms_ratio) and np.isfinite(chi2_nu):
                 if 0.8 <= rms_ratio <= 1.2 and 0.7 <= chi2_nu <= 1.3:
                     verdict = "✅ PASS: Error model validated for publication"
-                    color = "#4CAF50"
+                    color = Tokens.OK
                 elif 0.6 <= rms_ratio <= 1.5 and 0.5 <= chi2_nu <= 2.0:
                     verdict = "⚠️ MARGINAL: Error model acceptable with caveats"
-                    color = "#FF9800"
+                    color = Tokens.WARN
                 else:
                     verdict = "❌ FAIL: Error model requires investigation"
-                    color = "#f44336"
+                    color = Tokens.ERROR
 
                 # Build filter info string
                 if self.qa_params["enabled_filters"] is None:
