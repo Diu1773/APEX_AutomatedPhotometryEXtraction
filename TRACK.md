@@ -303,12 +303,14 @@ esult`,
    (sky 13.8 ADU 로 sky-limited 하한 근처 — 예측대로면 커야 한다)
    ② dark 수정이 광곡선 산포에 남긴 흔적. 기존 LC 는 −10 °C dark 산출이라
    직접 비교는 불가하고, 새 결과의 내적 일관성만 본다.
-   ③ **(2026-08-02 발견) `night_id` 가 364행 전부 0 이다** — headless 체인에는
-   night 분류가 없다(`night_assignments.json` 은 GUI Step 1 전용, index 에도
-   `night_id` 컬럼 없음 → 빌더 `.get(fname, 0)`, 2026-05-08부터의 공백).
-   그래서 이 워크스페이스의 **"Nightly offset" 보정이 두 밤을 한 그룹으로**
-   처리했다. `photometry_source_service.py:375` 에는 DATE-OBS 날짜 폴백이
-   있는데 step9 빌더에는 없다 — 같은 폴백을 빌더에 넣으면 닫힌다.
+   ③ **(2026-08-02 발견, 08-03 수정) `night_id` 가 364행 전부 0 이었다** —
+   headless 체인에는 night 분류가 없다(GUI Step 1 전용, 2026-05-08부터의 공백).
+   그래서 이 워크스페이스의 "Nightly offset" 보정이 두 밤을 한 그룹으로 처리했다.
+   **수정됨**: step9 빌더의 ensemble·diff 두 경로에 DATE-OBS 폴백을 넣었다
+   (`night_utils.fallback_night_key` — P1 정오분할, tz 없으면 서비스의 달력날짜
+   규칙). 실워크스페이스 사본에서 0/0 → **N1=81(04-29)·N2=283(04-30)** 확인.
+   ⚠️ **기존 lc_detrend 산출물은 여전히 한 그룹 보정본**이다 — Step 9 부터
+   다시 돌려야 밤별 offset 이 적용된다.
    그다음: `source_quality.py:115` All-NaN slice 경고 (테스트 4건)
 
 **백로그 — apex-paper 에서 이관 (2026-08-02, D-P02 닫으면서)**

@@ -109,6 +109,51 @@ def test_observing_night_from_jd_bad_input():
     assert nu.observing_night_from_jd("nonsense") == ""
 
 
+# --- headless night fallback ------------------------------------------------
+
+def test_fallback_night_key_uses_the_noon_split_with_a_reference():
+    # Post-midnight KST frame stays on the previous observing night.
+    assert nu.fallback_night_key("2025-04-30T15:10:00", 9.0) == "20250430"
+    assert nu.fallback_night_key("2025-04-29T17:47:00", 9.0) == "20250429"
+
+
+def test_fallback_night_key_without_reference_is_the_calendar_date():
+    """No tz/longitude: the Greenwich noon rule would tear an evening apart,
+    so the plain DATE-OBS date is used (photometry_source_service rule)."""
+    assert nu.fallback_night_key("2025-04-30T15:10:00") == "2025-04-30"
+    assert nu.fallback_night_key("2025-04-30 15:10:00", 0.0) == "2025-04-30"
+    assert nu.fallback_night_key("", 9.0) == ""
+    assert nu.fallback_night_key(None) == ""
+
+
+def test_fill_missing_night_ids_numbers_chronologically():
+    ids, assigned = nu.fill_missing_night_ids(
+        [0, 0, 0, 0],
+        ["20250430", "20250429", "20250430", "20250429"],
+    )
+    assert assigned == {"20250429": 1, "20250430": 2}
+    assert ids == [2, 1, 2, 1]
+
+
+def test_fill_missing_night_ids_keeps_existing_and_starts_above_them():
+    ids, assigned = nu.fill_missing_night_ids(
+        [3, 0, 0], ["", "20250430", "20250429"], start_after=3)
+    assert ids == [3, 5, 4]
+    assert assigned == {"20250429": 4, "20250430": 5}
+
+
+def test_fill_missing_night_ids_leaves_keyless_frames_at_zero():
+    """A frame with no DATE-OBS must not be folded into an arbitrary night."""
+    ids, assigned = nu.fill_missing_night_ids([0, 0], ["", "20250430"])
+    assert ids == [0, 1]
+    assert assigned == {"20250430": 1}
+
+
+def test_fill_missing_night_ids_noop_when_all_assigned():
+    ids, assigned = nu.fill_missing_night_ids([1, 2], ["x", "y"])
+    assert ids == [1, 2] and assigned == {}
+
+
 # --- epoch span -------------------------------------------------------------
 
 def test_night_span_days():

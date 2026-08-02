@@ -46,6 +46,8 @@ __all__ = [
     "observing_night_from_jd",
     "jd_to_datetime",
     "night_span_days",
+    "fallback_night_key",
+    "fill_missing_night_ids",
 ]
 
 LON_HEADER_KEYS = ("SITELONG", "SITELON", "LONG-OBS", "LONGITUD", "OBSGEO-L",
@@ -170,6 +172,45 @@ def has_local_reference(lon_east_deg=None, tz_offset_hours=None) -> bool:
     with another signal (path date, JD gaps) should use that instead.
     """
     return night_offset_hours(lon_east_deg, tz_offset_hours)[1] != METHOD_UTC
+
+
+def fallback_night_key(date_obs, tz_offset_hours=None) -> str:
+    """Observing-night key for a frame that has no assigned night.
+
+    Headless runs carry no night assignments at all (the classifier is a GUI
+    Step 1 mixin), which used to leave ``night_id = 0`` on every frame and made
+    per-night corrections treat all nights as one. With a local reference the
+    shared noon split decides; without one it falls back to the plain DATE-OBS
+    calendar date — the ``photometry_source_service`` rule, safe whenever a
+    night does not cross UTC midnight (an East-Asian night never does).
+    """
+    if date_obs is None or not str(date_obs).strip():
+        return ""
+    if has_local_reference(tz_offset_hours=tz_offset_hours):
+        return observing_night(date_obs, tz_offset_hours=tz_offset_hours)
+    return str(date_obs).strip().split("T", 1)[0].split(" ", 1)[0]
+
+
+def fill_missing_night_ids(night_ids, keys, start_after: int = 0):
+    """Assign sequential ids to frames whose night is still unassigned.
+
+    ``night_ids`` and ``keys`` run parallel; entries with ``night_id > 0`` are
+    kept as-is, the rest get consecutive numbers (chronological: sorted key
+    order) starting above ``start_after``. Frames with no key stay 0 rather
+    than being folded into a night they may not belong to.
+
+    Returns ``(filled_ids, {key: assigned_id})``.
+    """
+    missing = sorted({
+        key for nid, key in zip(night_ids, keys)
+        if (nid is None or int(nid) <= 0) and key
+    })
+    assigned = {key: int(start_after) + i + 1 for i, key in enumerate(missing)}
+    filled = [
+        int(nid) if (nid is not None and int(nid) > 0) else assigned.get(key, 0)
+        for nid, key in zip(night_ids, keys)
+    ]
+    return filled, assigned
 
 
 def night_span_days(nights) -> Optional[int]:

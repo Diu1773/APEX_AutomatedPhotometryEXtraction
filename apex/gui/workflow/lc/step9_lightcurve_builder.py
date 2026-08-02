@@ -157,6 +157,10 @@ class ClickableSlider(QSlider):
                 return
         super().mousePressEvent(event)
 from apex.utils.astro_utils import compute_airmass_from_header, compute_bjd_tdb_array
+from apex.utils.night_utils import (
+    fallback_night_key as _nu_fallback_night_key,
+    fill_missing_night_ids as _nu_fill_missing_night_ids,
+)
 from apex.utils.step_paths_lc import (
     step1_dir,
     step2_cropped_dir,
@@ -2572,6 +2576,8 @@ class LightCurveBuilderWindow(StepWindowBase):
         times = []
         dates = []
         night_ids = []
+        night_fallback_keys = []          # DATE-OBS-derived night, headless case
+        _tz = float(getattr(self.params.P, "site_tz_offset_hours", 0.0) or 0.0)
         filters = []
         airmasses = []
         mags = []
@@ -2623,6 +2629,9 @@ class LightCurveBuilderWindow(StepWindowBase):
             times.append(jd)
             dates.append(_date_from_dateobs(date_obs) if date_obs else _extract_date_from_path(result_dir, fname))
             night_ids.append(night_id_map.get(fname, 0))
+            night_fallback_keys.append(
+                "" if night_id_map.get(fname, 0) > 0
+                else _nu_fallback_night_key(date_obs, _tz))
             filt_key = _normalize_filter_key(filt_val)
             filters.append(filt_key)
             airmasses.append(am if np.isfinite(am) else np.nan)
@@ -2719,6 +2728,21 @@ class LightCurveBuilderWindow(StepWindowBase):
             else:
                 diffs.append(np.nan)
                 diff_errs.append(np.nan)
+
+        # Headless workspaces carry no night assignments (the classifier is a
+        # GUI Step 1 mixin) — every frame then landed on night_id 0 and the
+        # nightly-offset correction treated all nights as one. Fill the gap
+        # from DATE-OBS with the app's one night definition (P1 noon split).
+        filled_ids, inferred = _nu_fill_missing_night_ids(
+            night_ids, night_fallback_keys,
+            start_after=max(night_id_map.values(), default=0))
+        if inferred:
+            night_ids = filled_ids
+            if verbose:
+                self.log(f"[NIGHT] no stored night assignments — inferred "
+                         f"{len(inferred)} night(s) from DATE-OBS: "
+                         + ", ".join(f"N{v}={k}" for k, v in sorted(
+                             inferred.items(), key=lambda kv: kv[1])))
 
         tarr = np.array(times, float)
         if np.all(~np.isfinite(tarr)):
@@ -2882,6 +2906,8 @@ class LightCurveBuilderWindow(StepWindowBase):
         filters = []
         airmasses = []
         diff_night_ids = []
+        diff_fallback_keys = []           # DATE-OBS-derived night, headless case
+        _tz = float(getattr(self.params.P, "site_tz_offset_hours", 0.0) or 0.0)
 
         # headers.csv에서 airmass 컬럼 확인 (FITS 안 읽기 위해)
         header_airmass_map = {}
@@ -2925,6 +2951,8 @@ class LightCurveBuilderWindow(StepWindowBase):
                 hdr = self._get_header(result_dir, fname, self._header_cache)
                 if hdr is not None:
                     n_fits_read += 1
+                    if not date_obs:
+                        date_obs = hdr.get("DATE-OBS")
                     if not np.isfinite(jd):
                         jd = _parse_jd(hdr.get("DATE-OBS"))
                     if not filt_val:
@@ -2937,6 +2965,9 @@ class LightCurveBuilderWindow(StepWindowBase):
             filters.append(filt_key)
             airmasses.append(float(am) if np.isfinite(am) else np.nan)
             diff_night_ids.append(diff_night_id_map.get(fname, 0))
+            diff_fallback_keys.append(
+                "" if diff_night_id_map.get(fname, 0) > 0
+                else _nu_fallback_night_key(date_obs, _tz))
 
             df = self._get_photometry_df(result_dir, fname)
             if df is None or df.empty:
@@ -3003,6 +3034,17 @@ class LightCurveBuilderWindow(StepWindowBase):
                 self.log(f"[WARN] Comp missing in: {', '.join(missing_comp_frames[:10])}")
             elif missing_comp_frames:
                 self.log(f"[WARN] Comp missing in {len(missing_comp_frames)} frames (first 5: {', '.join(missing_comp_frames[:5])})")
+
+        # Same headless gap as the ensemble series: no stored assignments ->
+        # infer the nights from DATE-OBS (P1 noon split) instead of 0-for-all.
+        filled_ids, inferred = _nu_fill_missing_night_ids(
+            diff_night_ids, diff_fallback_keys,
+            start_after=max(diff_night_id_map.values(), default=0))
+        if inferred:
+            diff_night_ids = filled_ids
+            if verbose:
+                self.log(f"[NIGHT] no stored night assignments — inferred "
+                         f"{len(inferred)} night(s) from DATE-OBS")
 
         tarr = np.array(times, float)
         if np.all(~np.isfinite(tarr)):
