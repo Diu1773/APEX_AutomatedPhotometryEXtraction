@@ -2491,7 +2491,12 @@ class ZeropointCalibrationWorker(QThread):
                         break
 
                 w_filt  = _wls_weights(f"mag_inst_err_{filt}")
-                s_max   = slope_absmax if key != "U" else max(slope_absmax, 3.0)
+                # |ct| must stay below the fixed-point contraction bound of
+                # solve_standard_colors (error shrinks ~|ct| per pass, so
+                # |ct| >= 1 diverges).  A former U-band exemption up to 3.0
+                # let a wild fit (ct = -2.94, U vs approx Gaia reference)
+                # pass and blow mag_std_U up to +-1000 mag.
+                s_max   = min(slope_absmax, 0.8)
 
                 # When no color index is available, fall back to ZP-only fit (CT forced to 0)
                 if color_col_name == "none":

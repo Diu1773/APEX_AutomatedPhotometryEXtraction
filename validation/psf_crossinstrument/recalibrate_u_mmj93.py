@@ -21,6 +21,7 @@ Run:
 
 from __future__ import annotations
 
+import argparse
 import sys
 from pathlib import Path
 
@@ -28,10 +29,22 @@ import numpy as np
 import pandas as pd
 
 BASE = Path(r"E:/APEX_validation/psf_crossinstrument/m67_ubv")
-WIDE = BASE / "result" / "cmd_zeropoint" / "median_by_ID_filter_wide_cmd.csv"
 EXT_DIR = BASE / "external_ref"
-OUT_RESULT = BASE / "result_ustd"
 MATCH_ARCSEC = 1.5
+
+_ap = argparse.ArgumentParser(description=__doc__)
+_ap.add_argument("--source-result", default="result",
+                 help="result dir (under m67_ubv/) whose wide table to anchor, "
+                      "e.g. result (aperture) or result_psf (PSF)")
+_ap.add_argument("--suffix", default="",
+                 help="suffix for output dirs: result{suffix}_ustd / _uonly")
+ARGS = _ap.parse_args()
+
+WIDE = (BASE / ARGS.source_result / "cmd_zeropoint"
+        / "median_by_ID_filter_wide_cmd.csv")
+OUT_RESULT = BASE / f"result{ARGS.suffix}_ustd"
+OUT_UONLY = BASE / f"result{ARGS.suffix}_uonly"
+RES_CSV = EXT_DIR / f"mmj93_match_residuals{ARGS.suffix or ''}.csv"
 
 
 def fetch_mmj93() -> pd.DataFrame:
@@ -127,7 +140,7 @@ def main() -> int:
     #   result_uonly — only U shifted (ablation: is B's 0.03-0.05 also needed?)
     variants = {
         OUT_RESULT: {"U": dU_med, "B": dB_med, "V": dV_med},
-        BASE / "result_uonly": {"U": dU_med},
+        OUT_UONLY: {"U": dU_med},
     }
     for out_dir, shifts in variants.items():
         out_zp = out_dir / "cmd_zeropoint"
@@ -139,7 +152,7 @@ def main() -> int:
         wide_c.to_csv(out_csv, index=False, encoding="utf-8")
         print(f"{out_dir.name}: shifts {shifts} -> {out_csv}")
 
-    res.to_csv(EXT_DIR / "mmj93_match_residuals.csv", index=False, encoding="utf-8")
+    res.to_csv(RES_CSV, index=False, encoding="utf-8")
     print(f"\ndU = {dU_med:+.4f} (robust sigma {dU_mad:.4f}, N={nU})")
     return 0
 
