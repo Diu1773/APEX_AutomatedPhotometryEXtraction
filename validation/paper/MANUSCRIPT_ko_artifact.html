@@ -26,6 +26,7 @@ body{font-family:var(--serif);font-size:12.2px;line-height:1.36;color:var(--ink)
 .pinner{position:absolute;left:var(--mx);right:var(--mx);top:var(--mt);bottom:var(--mb);
   display:flex;flex-direction:column;}
 .span:not(:empty){margin-bottom:10px;}
+.span.bot:not(:empty){margin:10px 0 0;}
 .cols{flex:1 1 auto;min-height:0;display:flex;gap:var(--gut);}
 .col{flex:1 1 0;min-width:0;overflow:hidden;}
 .run{position:absolute;left:var(--mx);right:var(--mx);top:34px;font-size:10px;
@@ -456,7 +457,8 @@ mark.apexnote{cursor:pointer;}
     var pg=el('div','page');
     pg.innerHTML='<div class="run"></div><div class="pinner">'+
       '<div class="span"></div><div class="cols"><div class="col"></div>'+
-      '<div class="col"></div></div></div><div class="folio"></div>';
+      '<div class="col"></div></div><div class="span bot"></div></div>'+
+      '<div class="folio"></div>';
     book.appendChild(pg);
     var inner=pg.querySelector('.pinner'), cols=pg.querySelector('.cols'),
         cs=pg.querySelectorAll('.col'),
@@ -472,7 +474,8 @@ mark.apexnote{cursor:pointer;}
       cs[i].style.cssText='width:'+colW+'px;flex:0 0 '+colW+'px;min-width:0;'+
         'overflow:hidden;box-sizing:border-box;';
     }
-    var P={el:pg, span:pg.querySelector('.span'), cols:[cs[0],cs[1]], ci:0, inner:inner};
+    var P={el:pg, span:pg.querySelector('.span'), spanB:pg.querySelector('.span.bot'),
+           cols:[cs[0],cs[1]], ci:0, inner:inner};
     pages.push(P); return P;
   }
   function fits(c){ return c.scrollHeight<=c.clientHeight+1; }
@@ -484,33 +487,55 @@ mark.apexnote{cursor:pointer;}
     return k.getBoundingClientRect().bottom - c.getBoundingClientRect().top;
   }
 
-  /* 전폭 요소(그림·표)는 지면 머리에 앉힌다. 기본은 판면의 58% 로, 한 지면에 하나다.
-     다만 그림 15장 + 표 4개를 본문 14쪽에 다 앉힐 수는 없어서, 밀린 개수만큼 머리
-     자리를 넓혀 준다. 안 넓히면 본문이 끝난 뒤에 그림만 있는 지면이 줄줄이 남는다
-     (2026-07-30: 그림 10-15 와 표 2개가 17-24쪽으로 밀렸다). */
+  /* 전폭 요소(그림·표)는 지면 머리와 발치의 두 자리에 앉힌다 (A&A 식 상·하 float).
+     자리가 지면당 하나뿐이면 3절처럼 본문 9쪽이 그림 17장을 참조하는 구간에서
+     줄이 5-7쪽씩 밀린다(2026-08-03 실측 — 사용자: "3절 fig들은 왜 없고").
+     두 자리 합쳐 판면의 72% 까지 쓰고, 남는 가운데 띠에 본문이 흐른다. */
   var draining=false;
-  function spanCap(P){
-    if (draining) return P.inner.clientHeight;   // 본문이 끝났으면 지면을 다 쓴다
-    var frac = pending.length>=3 ? 0.80 : (pending.length===2 ? 0.70 : 0.58);
-    return P.inner.clientHeight*frac;
+  function spanCap(P, sp){
+    if (draining) return P.inner.clientHeight*0.5;   // 마무리 지면은 위아래 반반
+    // 자리당 46% + 두 자리 합 80%: 키 큰 그림(≤454px)이 위에 앉아도 아래에
+    // 중간 그림(≥250px) 자리가 남아 짝이 된다. 합을 72% 로 두면 아래 자리가
+    // 140px 하한에 걸려 지면당 한 장으로 돌아간다(2026-08-03 실측 최대 7쪽 밀림).
+    // 자리당 46% + 두 자리 합 80%. 실측 비교(2026-08-03):
+    //   합 72%          -> 아래 자리가 140px 하한에 걸려 최대 7쪽 밀림
+    //   46/80 (이 값)   -> 최대 4쪽 · 평균 3.5쪽 · 그림 최소 204px
+    //   밀림시 50/88 부스트 -> 그림이 커지면 본문이 단에서 밀려나 giveBack 순환이
+    //                      늘고 오히려 최대 7쪽으로 후퇴. 키우는 쪽은 답이 아니다.
+    var other=(sp===P.span ? P.spanB : P.span).offsetHeight;
+    var room=P.inner.clientHeight*0.80 - other;
+    var base=P.inner.clientHeight*0.46;
+    return Math.min(base, room);
   }
-  function shrink(node, P, cap){
-    var im=node.querySelector('img'); if(!im) return;
-    for (var k=0;k<16 && P.span.offsetHeight>cap;k++){
-      var h=im.getBoundingClientRect().height||400;
-      im.style.maxHeight=Math.round(h*0.9)+'px'; im.style.width='auto';
+  /* 반복 0.9 곱 축소는 쓰지 않는다. giveBack 으로 큐에 돌아갔다가 다시 앉을 때
+     이미 줄어든 크기에서 또 줄어 그림이 우표만 해진다(2026-08-03: 그림 3 이 89px).
+     캡션을 뺀 목표 높이로 한 번에 맞추고, 너무 작아질 자리면 아예 안 앉힌다. */
+  function sizeTo(node, sp, cap){
+    var im=node.querySelector('img'); if(!im) return true;
+    im.style.maxHeight=''; im.style.width='';        // 자연 크기에서 다시 계산
+    var imH=im.getBoundingClientRect().height||400;
+    var chrome=sp.offsetHeight-imH;                  // 캡션·여백
+    var target=cap-chrome;
+    if (imH<=target) return true;
+    if (target<140 && !draining) return false;       // 읽을 수 없게 줄이느니 다음 지면
+    im.style.maxHeight=Math.max(90, Math.round(target))+'px';
+    im.style.width='auto';
+    return true;
+  }
+  function flushOne(P, sp){
+    var cap=spanCap(P, sp);        // 들어올 때의 밀린 정도로 한 번만 정한다
+    while (pending.length){
+      var f=pending[0], wasEmpty=!sp.firstChild;
+      sp.appendChild(f);
+      if (sp.offsetHeight>cap){
+        if (wasEmpty && sizeTo(f,sp,cap)){ pending.shift(); }
+        else { sp.removeChild(f); break; }
+      } else { pending.shift(); }
     }
   }
   function flushSpan(P){
-    var cap=spanCap(P);            // 들어올 때의 밀린 정도로 한 번만 정한다
-    while (pending.length){
-      var f=pending[0], wasEmpty=!P.span.firstChild;
-      P.span.appendChild(f);
-      if (P.span.offsetHeight>cap){
-        if (wasEmpty){ shrink(f,P,cap); pending.shift(); }
-        else { P.span.removeChild(f); break; }
-      } else { pending.shift(); }
-    }
+    flushOne(P, P.span);
+    if (pending.length) flushOne(P, P.spanB);
   }
   function fresh(){ var P=newPage(); flushSpan(P); return P; }
   function advance(P){ if (P.ci===0){ P.ci=1; return P; } return fresh(); }
@@ -535,12 +560,21 @@ mark.apexnote{cursor:pointer;}
      마지막 것부터 pending 앞으로 되돌려 단을 넓혀 본다. 앞에 넣으므로 차례는 그대로다.
      되돌릴 것이 없으면 false — 그때는 어쩔 수 없이 넘치게 둔다. */
   function giveBackSpan(node, P, c){
-    while (P.span.children.length){
-      var back=P.span.lastElementChild;
-      P.span.removeChild(back); pending.unshift(back);
-      c.appendChild(node);
-      if (fits(c)) return true;
-      c.removeChild(node);
+    // 발치부터 되돌린다. 발치의 그림 번호가 머리보다 크므로, 발치를 먼저
+    // unshift 하고 머리를 그 앞에 넣어야 pending 이 오름차순으로 남는다.
+    var sps=[P.spanB, P.span];
+    for (var si=0; si<sps.length; si++){
+      var sp=sps[si];
+      while (sp.children.length){
+        var back=sp.lastElementChild;
+        sp.removeChild(back);
+        var bim=back.querySelector('img');           // 다음 자리에서 새로 계산하도록
+        if (bim){ bim.style.maxHeight=''; bim.style.width=''; }
+        pending.unshift(back);
+        c.appendChild(node);
+        if (fits(c)) return true;
+        c.removeChild(node);
+      }
     }
     return false;
   }
@@ -574,7 +608,15 @@ mark.apexnote{cursor:pointer;}
       // 되고, 그러면 모든 제목이 밀려난다(2026-07-29: 24쪽 -> 27쪽, 잘린 제목 1 -> 5).
       if (isHead(node) && c.children.length>1 && c.clientHeight-contentBottom(c) < 48){
         c.removeChild(node);
-        var Pn=advance(P); Pn.cols[Pn.ci].appendChild(node); return Pn;
+        // 바로 앞이 또 제목이면 같이 끌고 간다. 안 그러면 h2 뒤의 h3 만 넘어가며
+        // h2 가 단 끝에 홀로 남는다(2026-08-03: 17쪽 "5. 논의").
+        var chain=[];
+        while (c.children.length && isHead(c.lastElementChild)){
+          chain.unshift(c.lastElementChild); c.removeChild(c.lastElementChild);
+        }
+        var Pn=advance(P);
+        chain.forEach(function(h){ Pn.cols[Pn.ci].appendChild(h); });
+        Pn.cols[Pn.ci].appendChild(node); return Pn;
       }
       return P;
     }
@@ -683,7 +725,7 @@ mark.apexnote{cursor:pointer;}
     while (pending.length){
       var n0=pending.length, Q=fresh();
       if (pending.length===n0){
-        var f=pending.shift(); Q.span.appendChild(f); shrink(f,Q,spanCap(Q));
+        var f=pending.shift(); Q.span.appendChild(f); sizeTo(f,Q.span,spanCap(Q,Q.span));
       }
     }
     var N=pages.length;
@@ -714,6 +756,7 @@ mark.apexnote{cursor:pointer;}
     pages.forEach(function(p){
       if (p.cols) p.cols.forEach(function(c){ got+=c.children.length; });
       got+=p.span.children.length;
+      if (p.spanB) got+=p.spanB.children.length;
     });
     if (over || pages.length<6 || got<want){
       var m=document.createElement('div'); m.id='typoerr';
