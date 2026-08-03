@@ -183,6 +183,41 @@ def main() -> int:
     np.savez_compressed(DATA / "calib_crosscheck_maps.npz",
                         pool=POOL, shape=np.array(light64.shape), **maps)
 
+    # ── 그림용 단계 영상 (fig_calibration_step0.py 가 읽는다) ──
+    # 마스터 셋과 라이트의 단계별 모습을 블록평균으로 줄여 저장한다. 표시용이라
+    # 12배면 충분하고(399x266), 원본을 다시 읽지 않아도 그림이 재생성된다.
+    SHRINK = 12
+
+    def block_mean(a, k=SHRINK):
+        h, w = a.shape
+        a = a[: h - h % k, : w - w % k]
+        return a.reshape(h // k, k, w // k, k).mean(axis=(1, 3)).astype(np.float32)
+
+    def sky_profile(a, nbin=160):
+        """행 중앙값의 가로 프로파일 — 비네팅이 평평해지는지 보이는 데 쓴다."""
+        col = np.nanmedian(a, axis=0)
+        idx = np.linspace(0, col.size, nbin + 1).astype(int)
+        return np.array([np.nanmedian(col[idx[i]:idx[i + 1]])
+                         for i in range(nbin)], dtype=np.float32)
+
+    np.savez_compressed(
+        DATA / "calib_stages.npz",
+        shrink=SHRINK,
+        master_bias=block_mean(mbias_a),
+        master_dark=block_mean(mdark_a),
+        master_flat=block_mean(mflat_a),
+        light_raw=block_mean(np.asarray(light64, dtype=np.float64)),
+        light_bd=block_mean(apex_d),          # bias·dark 뺀 뒤
+        light_cal=block_mean(apex_f),         # flat 까지 나눈 뒤
+        prof_bd=sky_profile(apex_d),
+        prof_cal=sky_profile(apex_f),
+        prof_flat=sky_profile(mflat_a),
+        dark_exp=np.float32(dexp), light_exp=np.float32(lexp),
+        bias_med=np.float32(np.nanmedian(mbias_a)),
+        dark_med=np.float32(np.nanmedian(mdark_a)),
+        flat_med=np.float32(np.nanmedian(mflat_a)),
+    )
+
     for k in diffs:
         print(f"  {k:14s} max|Δ|={steps[k]['max_abs']:.2e}  σ={steps[k]['robust_sigma']:.2e}")
     print("wrote JSON + maps.npz")

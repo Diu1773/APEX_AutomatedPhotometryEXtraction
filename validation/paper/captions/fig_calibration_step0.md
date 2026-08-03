@@ -1,20 +1,19 @@
 # Figure — detector calibration (Step 0)
 
-**(a)** A real M13 $V$ frame before and after APEX Step 0: the optical vignette
-and the fixed-pattern structure are removed. **(b)** Controlled truth recovery —
-known bias, dark and flat are injected into a synthetic frame and inverted
-through Step 0; the residual against the true science frame has systematic
-offset -0.004 DN and scatter MAD 3.13 DN, the latter equal
-to the injected read-noise floor (3.0 DN). The master bias is
-recovered to RMS 0.97 DN and the unit-median flat reduces the
-corner vignette residual from 10.6 to 0.7
-DN. **(c)** The optional cosmetic stage (L.A.Cosmic via astroscrappy) removes
-100 per cent of injected cosmic-ray pixels and
-94 per cent of hot pixels while touching
-0.000 per cent of star-core pixels; aperture
-fluxes shift by 0.00 mmag (median).
-**(d)** The same raw frames reduced by the independent AstralImage/AIPPI engine:
-across 19 datasets in 9 bands the calibrated frames are bit-identical
-(difference RMS and maximum both 0 DN), and the master frames agree to
-$\leq$0.30 DN RMS.
-Generator: `fig_calibration_step0.py`; every number is recomputed at figure time.
+**(a)-(c)** The three master frames APEX builds from the night's own
+calibration exposures: bias (median 512 DN),
+dark (1.0 DN in 60 s) and flat
+(unit median). **(d)** The flat's horizontal profile — a
+12 per cent
+response gradient across the field, which is what the division removes.
+**(e)-(g)** The same NGC 6811 $B$ science frame after each operation: raw,
+then bias- and dark-subtracted, then flat-fielded. Panels (f) and (g) share a
+greyscale so the change is the flat-fielding alone. **(h)** The sky profile
+before and after flat-fielding, each normalised to its own median: the
+peak-to-peak gradient falls from 12.9 to 1.6 per
+cent. All frames are real (Moravian C3-61000, 2x2, night 2026-06-11;
+8 bias, 8 darks, 5 flats), shown at
+1/12 scale. Numerical validation of these operations is
+separate: recovery of injected truth (text), the detector constants (Fig. 3),
+pixel-for-pixel agreement with ccdproc (Fig. 4) and reproduction on two more
+cameras (Fig. 5).
