@@ -28,7 +28,7 @@ from __future__ import annotations
 import sys
 from pathlib import Path
 
-REPO = Path(__file__).resolve().parents[2]
+REPO = Path(__file__).absolute().parents[2]
 sys.path.insert(0, str(REPO))
 sys.path.insert(0, str(REPO / "validation" / "paper"))
 
@@ -318,7 +318,7 @@ def make_figure(res):
     hi = max(rep_sigma.max(), emp_rms.max()) * 1.2
     ax_d.plot([lo, hi], [lo, hi], color=C["floor"], lw=1.0, ls="--",
               label=r"$y=x$", zorder=1)
-    sc = ax_d.scatter(rep_sigma, emp_rms, c=mags, cmap="viridis", s=28,
+    sc = ax_d.scatter(rep_sigma, emp_rms, c=mags, cmap="Greys", s=28,
                       zorder=3, edgecolors="white", linewidths=0.5)
     cb = fig.colorbar(sc, ax=ax_d, pad=0.02, fraction=0.05)
     cb.set_label(r"$m_{\rm true}$ (mag)", fontsize=8)

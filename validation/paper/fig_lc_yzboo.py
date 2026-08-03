@@ -20,7 +20,7 @@ from __future__ import annotations
 import sys
 from pathlib import Path
 
-REPO = Path(r"C:\Users\bmffr\Desktop\Result\Automated_Photometry_EXtraction")
+REPO = Path(__file__).absolute().parents[2]
 sys.path.insert(0, str(REPO))
 sys.path.insert(0, str(REPO / "validation" / "paper"))
 
@@ -105,7 +105,7 @@ def main() -> int:
     # (b) periodograms single vs merged
     ax_b.plot(per_g, pow_g / pow_g.max(), color=C["data"], lw=1.0,
               label=f"single night (peak {p_good:.4f} d)")
-    ax_b.plot(per_m, pow_m / pow_m.max(), color=C["accent"], lw=1.0, alpha=0.85,
+    ax_b.plot(per_m, pow_m / pow_m.max(), color=C["accent"], lw=1.0, ls="--", alpha=0.85,
               label=f"2-night merge (peak {p_merged:.4f} d)")
     ax_b.axvline(P_LIT, color=C["model"], ls="--", lw=1.2,
                  label=f"literature {P_LIT:.4f} d")

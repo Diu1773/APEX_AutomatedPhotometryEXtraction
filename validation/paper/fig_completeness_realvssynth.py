@@ -23,7 +23,7 @@ sigma x FWHM^2.
 from __future__ import annotations
 import sys
 from pathlib import Path
-REPO = Path(r"C:\Users\bmffr\Desktop\Result\Automated_Photometry_EXtraction")
+REPO = Path(__file__).absolute().parents[2]
 sys.path.insert(0, str(REPO))
 sys.path.insert(0, str(REPO / "validation" / "paper"))
 

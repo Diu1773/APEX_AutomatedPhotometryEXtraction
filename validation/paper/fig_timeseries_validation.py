@@ -33,7 +33,7 @@ import json
 import sys
 from pathlib import Path
 
-REPO = Path(__file__).resolve().parents[2]
+REPO = Path(__file__).absolute().parents[2]
 sys.path.insert(0, str(REPO))
 sys.path.insert(0, str(REPO / "validation" / "paper"))
 
@@ -197,12 +197,14 @@ def main() -> int:
 
     # (a) PDM relative error vs noise, one line per period
     ax = axes[0]
-    cmap = plt.get_cmap("viridis")
+    line_styles = ["-", "--", ":", "-.", (0, (5, 1, 1, 1)), (0, (2, 1))]
+    markers = ["o", "s", "^", "D", "v", "P"]
+    greys = ["#111111", "#333333", "#555555", "#777777", "#999999", "#BBBBBB"]
     for i, p in enumerate(PERIODS):
         sub = [r for r in pdm_rows if r["period"] == p]
         ax.plot([r["noise"] * 1000 for r in sub],
                 [r["pdm_med_relerr"] * 100 for r in sub],
-                "o-", ms=3, color=cmap(i / max(1, len(PERIODS) - 1)),
+                marker=markers[i], ls=line_styles[i], ms=3, color=greys[i],
                 label=f"{p:g} d")
     ax.set_xscale("log"); ax.set_yscale("log")
     # default log ticks collide at 5-40; label the four sampled values instead
@@ -238,7 +240,8 @@ def main() -> int:
     ax = axes[2]
     t = np.asarray(sr["t"])
     order = np.argsort(t)
-    ax.plot(t * 24, sr["var_before"], "o", ms=2.0, color=PALETTE["grey"],
+    ax.plot(t * 24, sr["var_before"], "o", ms=2.0, mfc="white",
+            mec=PALETTE["grey"], color=PALETTE["grey"],
             alpha=0.6, label="before")
     ax.plot(t[order] * 24, np.asarray(sr["var_truth"])[order], "-",
             color=C["model"], lw=1.3, zorder=4, label="injected")

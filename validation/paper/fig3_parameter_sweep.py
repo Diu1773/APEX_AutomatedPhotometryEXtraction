@@ -40,7 +40,7 @@ import shutil
 import sys
 from pathlib import Path
 
-REPO = Path(__file__).resolve().parents[2]
+REPO = Path(__file__).absolute().parents[2]
 sys.path.insert(0, str(REPO))
 sys.path.insert(0, str(REPO / "validation" / "paper"))
 
@@ -390,8 +390,8 @@ def _err(lo, hi, y):
     return np.vstack([y - np.asarray(lo, float), np.asarray(hi, float) - y])
 
 
-def make_figure(ap: pd.DataFrame, bg: pd.DataFrame, se: pd.DataFrame,
-                thr: pd.DataFrame) -> dict:
+def make_figure_legacy(ap: pd.DataFrame, bg: pd.DataFrame, se: pd.DataFrame,
+                       thr: pd.DataFrame) -> dict:
     fig, axes = plt.subplots(2, 3, figsize=(DOUBLE_COL, 4.9), sharex="col")
     (ax_a, ax_b, ax_c), (ax_d, ax_e, ax_f) = axes
     TITLE_KW = dict(loc="left", fontsize=8.4)
@@ -524,7 +524,7 @@ def make_figure(ap: pd.DataFrame, bg: pd.DataFrame, se: pd.DataFrame,
 
 
 # ── caption ──────────────────────────────────────────────────────────────────
-def write_caption(ap, bg, se, thr) -> Path:
+def write_caption_legacy(ap, bg, se, thr) -> Path:
     CAP_DIR.mkdir(parents=True, exist_ok=True)
     cap_path = CAP_DIR / "fig3_parameter_sweep.md"
 
@@ -661,6 +661,141 @@ Production default: 3.2 sigma.
 """
     cap_path.write_text(text, encoding="utf-8")
     return cap_path
+
+
+def make_figure(ap: pd.DataFrame, bg: pd.DataFrame, se: pd.DataFrame,
+                thr: pd.DataFrame) -> dict:
+    """Compact three-panel summary; the threshold sweep has its own figure."""
+    fig, axes = plt.subplots(1, 3, figsize=(DOUBLE_COL, 2.75))
+    axa, axb, axc = axes
+    title_kw = dict(loc="left", fontsize=8.5)
+
+    fwhm_det = float(ap["fwhm_det_px"].iloc[0])
+    solid = ap[~ap["clamped"]]
+    clamp = ap[ap["clamped"]]
+    x_s = solid["r_ap_px"] / fwhm_det
+    x_c = clamp["r_ap_px"] / fwhm_det
+    optimum = solid.loc[solid["mad"].idxmin()]
+    x_opt = float(optimum["r_ap_px"]) / fwhm_det
+    rmse_med = float(np.median(solid["rmse"]))
+
+    axa.axvspan(0.5, MIN_R_AP_PX / fwhm_det, color=PALETTE["grey"],
+                alpha=0.15, lw=0)
+    axa.axvline(DEFAULT_APERTURE_SCALE, color=PALETTE["grey"], ls="--", lw=0.9)
+    axa.errorbar(
+        x_s, solid["mad"],
+        yerr=_err(solid["mad_lo"], solid["mad_hi"], solid["mad"]),
+        fmt="o-", ms=3.5, lw=1.1, capsize=2, color=C["data"],
+        label="unclamped",
+    )
+    axa.errorbar(
+        x_c, clamp["mad"],
+        yerr=_err(clamp["mad_lo"], clamp["mad_hi"], clamp["mad"]),
+        fmt="o", ms=4.2, mfc="white", capsize=2, color=C["data"],
+        label="4 px floor",
+    )
+    axa.annotate(
+        f"minimum {optimum['mad']:.3f} mag",
+        (x_opt, float(optimum["mad"])), xytext=(15, 12),
+        textcoords="offset points", fontsize=6.4,
+        arrowprops=dict(arrowstyle="-", lw=0.7, color=C["model"]),
+    )
+    axa.text(
+        0.98, 0.95, f"position RMSE {rmse_med:.3f} px\n(aperture-independent)",
+        transform=axa.transAxes, ha="right", va="top", fontsize=6.1,
+        color=PALETTE["grey"],
+    )
+    axa.set_xlabel("aperture radius / FWHM")
+    axa.set_ylabel("magnitude-error MAD (mag)")
+    axa.set_ylim(0.03, 0.22)
+    axa.set_title(f"(a) optimum at {x_opt:.2f}$\\times$FWHM", **title_kw)
+
+    def condition_panel(ax, x, data, xlabel, title, logx=False):
+        ax.errorbar(
+            x, data["m50"],
+            yerr=_err(data["m50_lo"], data["m50_hi"], data["m50"]),
+            fmt="o-", ms=3.5, lw=1.1, capsize=2, color=C["data"],
+        )
+        if logx:
+            ax.set_xscale("log")
+        ax.set_xlabel(xlabel)
+        ax.set_ylabel(r"50% completeness $m_{50}$ (mag)")
+        ax.set_title(title, **title_kw)
+        ax.annotate(
+            f"{data['m50'].iloc[0]:.2f}", (x.iloc[0], data["m50"].iloc[0]),
+            xytext=(4, 3), textcoords="offset points", fontsize=6.4,
+        )
+        ax.annotate(
+            f"{data['m50'].iloc[-1]:.2f}", (x.iloc[-1], data["m50"].iloc[-1]),
+            xytext=(-4, 3), textcoords="offset points", ha="right", fontsize=6.4,
+        )
+        ax.text(
+            0.03, 0.06,
+            f"scatter {data['mad'].iloc[0] * 1000:.0f} → "
+            f"{data['mad'].iloc[-1] * 1000:.0f} mmag",
+            transform=ax.transAxes, fontsize=6.2, color=PALETTE["grey"],
+        )
+
+    d_bg = float(bg["m50"].iloc[0] - bg["m50"].iloc[-1])
+    condition_panel(
+        axb, bg["background"], bg, "sky background (ADU)",
+        f"(b) sky increase: −{d_bg:.2f} mag", logx=True,
+    )
+    axb.set_xlim(38, 1300)
+
+    d_se = float(se["m50"].iloc[0] - se["m50"].iloc[-1])
+    condition_panel(
+        axc, se["fwhm_px"], se, "seeing FWHM (px)",
+        f"(c) broader PSF: −{d_se:.2f} mag",
+    )
+
+    baked = sorted(set(int(n) for d in (ap, bg, se, thr) for n in d["n_baked"]))
+    baked_txt = f"{baked[0]}" if len(baked) == 1 else f"{min(baked)}–{max(baked)}"
+    provenance = (
+        "Synthetic APEX frames · seed "
+        f"{SEED} · {FRAME_BASE['size']}$^2$ px · {baked_txt} stars · "
+        "gain 1.5 e$^-$/ADU · RN 5 e$^-$ · $r$ band. "
+        f"Each point: {TRIALS} trials $\\times$ {STARS_PER_TRIAL} injections; "
+        "bars: 95% cluster-bootstrap CI."
+    )
+    fig.tight_layout(rect=(0, 0.13, 1, 1), w_pad=1.0)
+    fig.text(0.005, 0.015, provenance, fontsize=5.6,
+             color=PALETTE["grey"], va="bottom")
+    paths = save_fig(fig, "fig3_parameter_sweep", FIG_DIR)
+    plt.close(fig)
+    return paths
+
+
+def write_caption(ap, bg, se, thr) -> Path:
+    CAP_DIR.mkdir(parents=True, exist_ok=True)
+    path = CAP_DIR / "fig3_parameter_sweep.md"
+    fwhm_det = float(ap["fwhm_det_px"].iloc[0])
+    solid = ap[~ap["clamped"]]
+    optimum = solid.loc[solid["mad"].idxmin()]
+    x_opt = float(optimum["r_ap_px"]) / fwhm_det
+    rmse_med = float(np.median(solid["rmse"]))
+    text = f"""# Figure — parameter and observing-condition sensitivity
+
+Synthetic APEX frames ({FRAME_BASE['size']}×{FRAME_BASE['size']} px; seed
+{SEED}; gain 1.5 e-/ADU; read noise 5 e-). Each point contains {TRIALS}
+trials of {STARS_PER_TRIAL} injected stars and follows the production detection
+and forced-aperture path; bars are 95% cluster-bootstrap intervals.
+**(a)** The magnitude-error MAD is lowest at {x_opt:.2f}×FWHM
+({optimum['mad']:.3f} mag). The open marker is the request constrained by the
+4 px minimum radius; the median position RMSE is {rmse_med:.3f} px and does not
+depend on the photometric aperture. **(b)** Raising the sky from
+{bg['background'].iloc[0]:.0f} to {bg['background'].iloc[-1]:.0f} ADU changes
+$m_{{50}}$ from {bg['m50'].iloc[0]:.2f} to {bg['m50'].iloc[-1]:.2f} mag and
+the MAD from {bg['mad'].iloc[0] * 1000:.0f} to
+{bg['mad'].iloc[-1] * 1000:.0f} mmag. **(c)** Broadening the PSF from
+{se['fwhm_px'].iloc[0]:.1f} to {se['fwhm_px'].iloc[-1]:.1f} px changes
+$m_{{50}}$ from {se['m50'].iloc[0]:.2f} to {se['m50'].iloc[-1]:.2f} mag and
+the MAD from {se['mad'].iloc[0] * 1000:.0f} to
+{se['mad'].iloc[-1] * 1000:.0f} mmag. The detection-threshold sweep is shown
+separately in the threshold-validation figure.
+"""
+    path.write_text(text, encoding="utf-8")
+    return path
 
 
 # ── main ─────────────────────────────────────────────────────────────────────

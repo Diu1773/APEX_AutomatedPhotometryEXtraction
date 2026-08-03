@@ -25,7 +25,7 @@ import json
 import sys
 from pathlib import Path
 
-REPO = Path(__file__).resolve().parents[2]
+REPO = Path(__file__).absolute().parents[2]
 sys.path.insert(0, str(REPO / "validation" / "paper"))
 
 import numpy as np
@@ -39,12 +39,12 @@ DATA = REPO / "validation" / "paper" / "data_wcs_engines"
 OUTDIR = REPO / "validation" / "paper" / "figures"
 PIX = 0.395   # arcsec / px
 
-PAIRS = [("internal|astap", "built-in vs ASTAP", C["data"], "o"),
-         ("internal|astnet", "built-in vs astrometry.net", C["model"], "s"),
-         ("astap|astnet", "ASTAP vs astrometry.net", C["reference"], "^")]
-ENG = [("internal", "built-in", C["data"], "o"),
-       ("astnet", "astrometry.net", C["model"], "s"),
-       ("astap", "ASTAP", C["reference"], "^")]
+PAIRS = [("internal|astap", "built-in vs ASTAP", C["data"], "o", "-"),
+         ("internal|astnet", "built-in vs astrometry.net", C["model"], "s", "--"),
+         ("astap|astnet", "ASTAP vs astrometry.net", C["reference"], "^", ":")]
+ENG = [("internal", "built-in", C["data"], "o", "-"),
+       ("astnet", "astrometry.net", C["model"], "s", "--"),
+       ("astap", "ASTAP", C["reference"], "^", ":")]
 
 
 def short(fname: str) -> str:
@@ -65,10 +65,10 @@ def main() -> int:
 
     # (a) pairwise solution separations
     ax = axes[0]
-    for key, lab, colour, mk in PAIRS:
+    for key, lab, colour, mk, ls in PAIRS:
         y = [next(r["pairs"][key]["median"] for r in cross["compare"]["frames"]
                   if r["file"] == f) for f in frames]
-        ax.plot(x, y, marker=mk, ls="-", ms=3.4, lw=1.0, color=colour, label=lab)
+        ax.plot(x, y, marker=mk, ls=ls, ms=3.4, lw=1.0, color=colour, label=lab)
     ax.axhline(PIX, color=PALETTE["grey"], ls=":", lw=0.9)
     ax.text(0.02, PIX + 0.03, "1 px", fontsize=7, color=PALETTE["grey"], ha="left")
     ax.set_xticks(x, labels)
@@ -80,10 +80,10 @@ def main() -> int:
 
     # (b) independent Gaia residuals
     ax = axes[1]
-    for key, lab, colour, mk in ENG:
+    for key, lab, colour, mk, ls in ENG:
         rows = {r["file"]: r["rms_px"] for r in resid[key]}
         y = [rows[f] for f in frames]
-        ax.plot(x, y, marker=mk, ls="-", ms=3.4, lw=1.0, color=colour, label=lab)
+        ax.plot(x, y, marker=mk, ls=ls, ms=3.4, lw=1.0, color=colour, label=lab)
     ax.set_xticks(x, labels)
     ax.set_xlabel("frame")
     ax.set_ylabel("Gaia residual RMS (px)")

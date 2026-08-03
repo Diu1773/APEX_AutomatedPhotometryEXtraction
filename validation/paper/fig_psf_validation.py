@@ -22,7 +22,7 @@ import json
 import sys
 from pathlib import Path
 
-REPO = Path(r"C:\Users\bmffr\Desktop\Result\Automated_Photometry_EXtraction")
+REPO = Path(__file__).absolute().parents[2]
 sys.path.insert(0, str(REPO / "validation" / "paper"))
 
 import numpy as np
@@ -121,9 +121,12 @@ def main() -> int:
         trimmed.append(1 - keep.mean())
     vp = ax.violinplot(data, positions=pos, widths=0.75, showextrema=False)
     cam_col = {"C3-61000": C["data"], "QHY600": C["reference"], "Sinistro": C["accent"]}
+    cam_hatch = {"C3-61000": "", "QHY600": "///", "Sinistro": "..."}
     for body, (key, _r, _l, cam, _s) in zip(vp["bodies"], SETS):
         body.set_facecolor(cam_col[cam]); body.set_alpha(0.55)
-        body.set_edgecolor("none")
+        body.set_edgecolor(PALETTE["black"])
+        body.set_linewidth(0.4)
+        body.set_hatch(cam_hatch[cam])
     for i, s in enumerate(stats):
         ax.text(pos[i], 0.175, f"{s['mad_mag']*1000:.0f}", ha="center", fontsize=7.2)
         ax.text(pos[i], 0.142, f"{s['n_frames']} fr", ha="center", fontsize=5.4,
@@ -139,8 +142,9 @@ def main() -> int:
     ax.set_ylim(-0.21, 0.21)
     ax.text(0.015, 0.03, "frame median removed", transform=ax.transAxes,
             fontsize=5.8, color=PALETTE["grey"])
-    handles = [plt.Rectangle((0, 0), 1, 1, fc=c, alpha=0.55)
-               for c in cam_col.values()]
+    handles = [plt.Rectangle((0, 0), 1, 1, fc=cam_col[cam], alpha=0.55,
+                             ec=PALETTE["black"], hatch=cam_hatch[cam])
+               for cam in cam_col]
     ax.legend(handles, list(cam_col), fontsize=6.2, loc="lower right", ncol=1,
               handlelength=1.1, labelspacing=0.25, frameon=False,
               borderaxespad=0.2)

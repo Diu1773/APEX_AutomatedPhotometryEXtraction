@@ -1,65 +1,68 @@
-# APEX paper-grade validation figures
+# APEX paper validation figures
 
-Publication-quality validation figure set for APEX. Every figure is generated
-by its own `figN_*.py` script from **self-contained experiments** (no external
-data, fixed seeds) or from committed benchmark outputs, using the production
-APEX code paths (real Step-4 detector, real `phot_vectorized`).
+This directory contains the generators and final assets for the 17 figures in
+the Korean manuscript. Figures use the production APEX calculation paths or
+retained validation products. Synthetic experiments use fixed seeds. The
+shared style is monochrome; categories are distinguished with line style,
+marker shape, and hatching. Each final figure prints its data provenance.
 
-| Fig | Script | What it proves | Data |
-| --- | --- | --- | --- |
-| 1 | `fig1_completeness.py` | Completeness function, m50 depth + bootstrap CI | canonical injection run (`data/`) |
-| 2 | `fig2_error_model.py` | Reported σ is honest: pull ~ N(0,1), CCD-equation floor | self-generated Monte-Carlo |
-| 3 | `fig3_parameter_sweep.py` | Aperture optimum; depth vs sky / seeing trends | self-generated sweeps |
-| 4 | `fig4_crosscheck_sep.py` | APEX ≡ independent `sep` C engine (synthetic truth) | self-generated frame |
-| 5 | `fig5_crosscheck_iraf.py` | APEX ≡ IRAF/DAOPHOT on real NGC 457 g-band data | `benchmark/runs/ngc457_iraf_crosscheck_g0016_v1/` (committed) |
-| 6 | `fig6_qc_validation.py` | Frame-QC decisions vs injected frame defects | self-generated synthetic night |
-| 7 | `fig7_reference_crosscheck.py` | Faint drift is a Gaia BP artifact, not an APEX error | NGC 6811 reduction + PS1 (VizieR, cached) |
-| 8 | `fig8_cmd_reproduction.py` | APEX/Gaia/PS1 CMDs agree (19 mmag ridgeline RMS) | NGC 6811 reduction + PS1 cache |
-| 9 | `fig9_crowded_field.py` | No crowding-dependent bias in a real globular core (M5) | M5 reduction (re-run Steps 7/8/10) + NGC 6811 |
+| Fig. | Generator | Validation or application | Main input |
+| ---: | --- | --- | --- |
+| 1 | `fig_architecture.py` | Workflow and software layers | repository structure |
+| 2 | `fig_calibration_step0.py` | Step-0 calibration data and effect | NGC 6811 calibration/science frames |
+| 3 | `fig11_detector.py` | Gain, read noise, and dark current | retained detector-characterization data |
+| 4 | `fig12_preproc_crosscheck.py` | APEX–ccdproc pixel arithmetic | retained NGC 6811 calibration products |
+| 5 | `fig13_cross_instrument.py` | Cross-instrument calibration | LCO QHY600 and Sinistro products |
+| 6 | `fig6_qc_validation.py` | Frame-QC decisions | fixed-seed synthetic night |
+| 7 | `fig_completeness_realvssynth.py` | Detection completeness | artificial stars in seven real frames |
+| 8 | `fig_detection_threshold.py` | Threshold and false-detection contamination | five real frames and Gaia checks |
+| 9 | `fig_wcs_engines.py` | WCS engine comparison | eight M13 frames |
+| 10 | `fig2_error_model.py` | Photometric uncertainty model | fixed-seed Monte Carlo data |
+| 11 | `fig3_parameter_sweep.py` | Aperture, sky, and seeing sensitivity | fixed-seed parameter sweeps |
+| 12 | `fig_photometry_crosschecks.py` | SEP and IRAF/DAOPHOT cross-checks | synthetic frame and NGC 6811 V frame |
+| 13 | `fig_psf_validation.py` | PSF–aperture internal agreement | 67 frames from three cameras |
+| 14 | `fig9_crowded_field.py` | Crowded-field internal agreement | retained M5 and M13 products |
+| 15 | `fig_external_validation.py` | PS1 residuals and CMD comparison | NGC 6811 products and cached PS1 match |
+| 16 | `fig_timeseries_validation.py` | PDM and SYSREM injection tests | fixed-seed synthetic time series |
+| 17 | `fig_lc_yzboo.py` | YZ Boo end-to-end application | retained YZ Boo products |
 
 Shared infrastructure:
 
-- `apex_paper_style.py` — one publication style for all figures (Okabe-Ito
-  colorblind-safe palette, serif/CM math, 300 dpi, vector PDF + PNG on every save).
-- `_make_canonical_data.py` — regenerates the canonical artificial-star dataset
-  (840 injections / 12 trials, ~1 min) under `data/`.
-- `assemble_figures.py` — writes `FIGURES.md` (figure + caption index) and
-  `figures/overview_contact_sheet.png`.
-- `run_all.py` — runs everything above in the right order.
+- `apex_paper_style.py`: monochrome publication style and PNG/PDF saving.
+- `_make_canonical_data.py`: canonical artificial-star data generator.
+- `run_all.py`: runs the final generators in manuscript order and renders the
+  Korean HTML preview.
+- `render_preview.py`: maps manuscript figure numbers to final files and builds
+  `MANUSCRIPT_ko_preview.html` and `MANUSCRIPT_ko_artifact.html`.
 
 ## How to run
 
-Always use the deploy venv interpreter (all deps installed):
+Use the deploy environment and UTF-8 mode on Windows:
 
-```bash
-.venv-deploy/Scripts/python.exe validation/paper/run_all.py            # everything
-.venv-deploy/Scripts/python.exe validation/paper/run_all.py --only 2 5 # subset
-.venv-deploy/Scripts/python.exe validation/paper/run_all.py --fast     # skip slow fig3 sweeps
+```powershell
+.venv-deploy/Scripts/python.exe -X utf8 validation/paper/run_all.py
+.venv-deploy/Scripts/python.exe -X utf8 validation/paper/run_all.py --only 4 12 15
+.venv-deploy/Scripts/python.exe -X utf8 validation/paper/run_all.py --fast
 ```
 
-Approximate runtimes: fig1/4/5 seconds; fig2 ~1 min; fig6 ~3-5 min;
-fig3 ~10 min (19 full benchmark runs); fig7/8 ~1 min (PS1 query cached after
-first run); fig9 seconds (consumes an already-reduced M5 tree); canonical
-data ~1 min.
+`--fast` skips Figure 11's parameter sweep and uses the existing final asset
+when rendering. The runner also passes UTF-8 mode to every child generator.
 
-## Rules / gotchas
+## Data and reproducibility notes
 
-- **Windows MAX_PATH (260 chars):** benchmark runs write deeply nested cache
-  paths. Figure outputs stay under the repo; heavy *run* directories go to a
-  SHORT root (`C:\Users\<user>\AppData\Local\Temp\apx_*`). Never point a run
-  at a deep scratch path.
-- `data/` and `_sweep_ref.fits` are **regenerable and gitignored** — only
-  scripts, captions, and final figures are committed. Rerun
-  `_make_canonical_data.py` after cloning to rebuild `data/`.
-- Fig 5 consumes the committed IRAF cross-check
-  (`benchmark/runs/ngc457_iraf_crosscheck_g0016_v1/phot_fixed_coords/fixed_comparison.csv`);
-  regenerating that requires PyRAF in WSL (`apex/benchmark/iraf_crosscheck.py`).
-- Figs 5, 7, 8, 9 need the external data volume (`E:\observed_Analysis`),
-  not just this repo — they are not reproducible from a bare checkout.
-- Fig 9 (M5) requires Steps 7/8/10 to have been re-run against the current
-  code with `parameters_M5.toml` (gitignored, uncommitted — see
-  `scripts/run_step7_headless.py` / `run_step8_headless.py` /
-  `run_step10_headless.py --params parameters_M5.toml`); it does not
-  regenerate that reduction itself, only reads it.
-- Captions live in `captions/figN_*.md` — paper-style "Figure N." text plus
-  the exact numbers from the run that produced the committed figure.
+- Heavy `data*/` directories are regenerable or retained validation data and
+  are gitignored. Scripts, captions, and final PNG/PDF assets are committed.
+- Figures 6, 10, 11, and 16 use only synthetic data with fixed seeds. Figures
+  2–5, 7–9, 12–15, and 17 require retained products or the external observation
+  volume; a source-only checkout cannot rebuild them from raw data.
+- Figure 12's IRAF comparison uses the retained fixed-coordinate benchmark.
+  Recreating the IRAF measurements requires PyRAF in WSL.
+- Figure 14 reads the retained Step-7/8 products. The raw FITS files are no
+  longer present in the current archive, so the generator uses the known
+  4800×3200 detector shape when needed. For M13 it falls back to
+  `cmd_psf_backup_gui_20260729` if the primary PSF directory is empty.
+- Figure 15 uses the cached PS1 cross-match at
+  `data/ps1_match_ngc6811.csv`; no live catalogue query is needed.
+- `validation/paper` is a junction. Generators use `Path.absolute()` for
+  repository discovery; changing this to `resolve()` can redirect the inferred
+  repository root to the junction target.

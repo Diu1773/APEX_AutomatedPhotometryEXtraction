@@ -1,38 +1,10 @@
-"""Figure 9 — Crowded-field validation on two real globular clusters (M5, M13).
+"""Crowded-field comparison on the globular clusters M5 and M13.
 
-Figs 1-8 validate APEX on open clusters / uncrowded synthetic fields. This
-figure extends the validation into genuinely denser real fields: the
-globular clusters M5 (NGC 5904) and M13 (NGC 6205), each re-reduced end-to-end
-with the CURRENT codebase (Step-7 forced photometry with the fixed sky
-annulus, Step-8 PSF photometry, Step-10 calibration with the
-colour-solve/quadratic/Gaia-quality fixes -- see PAPER.md sec 2.2-2.4 for the
-re-run provenance, the shared-instrument caveat, and why the other archived
-clusters in E:\\observed_Analysis are NOT used as evidence).
-
-Two honest, non-cherry-picked probes were run on M5 before this figure was
-first drawn:
-  1. Residual (APEX aperture vs Gaia-transformed reference) binned by nearest-
-     neighbour separation, at fixed reference magnitude -> no clean crowding
-     trend (MAD comparable across bins; likely because Gaia's own RUWE/C*
-     cuts already reject the worst blends before a star ever reaches the
-     calibrator table -- a survivorship bias in that specific test; M13's
-     archived Gaia cross-match is even less usable -- only 38/1347 detected
-     sources resolve a gaia_source_id in a live DR3 query -- so this probe is
-     not attempted for M13 at all).
-  2. Aperture-vs-PSF magnitude offset (APEX's own two measurement methods,
-     independent of Gaia) binned by neighbour separation -> flat in M5,
-     REPLICATED flat in M13 (a denser, independently reduced field with an
-     unrelated, far worse Gaia cross-match) -- the same ~0.02-0.04 mag
-     scatter at every separation from ~10 to 1000+ px, in both clusters.
-Both are reported honestly rather than discarded. The figure instead reports
-what the DATA actually supports: (a) both cores are real, strongly enhanced
-density fields (quantified against the open cluster NGC 6811 used in Figs
-1-8), and (b) within the ~10 px (~4'') separation this ground-based,
-2x2-binned dataset resolves, APEX's aperture and PSF photometry agree with
-no detected crowding-dependent bias, in TWO independent crowded fields -- a
-genuine, replicated positive finding about the domain of validity, not a
-manufactured trend, and not evidence that crowding never matters at finer
-separations than this dataset can resolve.
+Panel (a) measures the radial source-density enhancement. Panel (b) compares
+APEX forced-aperture and PSF magnitudes against nearest-neighbour separation.
+Both measurements use retained products from reductions made with the current
+code. The test is internal to APEX and does not cover blends below the
+approximately 10-pixel detection/deduplication floor.
 
 Needs the data SSD (M5 + M13 + NGC 6811 re-reductions). Run:
     .venv-deploy\\Scripts\\python.exe validation\\paper\\fig9_crowded_field.py
@@ -45,7 +17,7 @@ import os
 import sys
 from pathlib import Path
 
-REPO = Path(r"C:\Users\bmffr\Desktop\Result\Automated_Photometry_EXtraction")
+REPO = Path(__file__).absolute().parents[2]
 sys.path.insert(0, str(REPO))
 sys.path.insert(0, str(REPO / "validation" / "paper"))
 
@@ -96,9 +68,18 @@ def density_profile(cfg):
     mr = master[master["filter"] == cfg["filter"]][["ID", "x_ref", "y_ref"]].drop_duplicates("ID")
     xy = mr[["x_ref", "y_ref"]].to_numpy(float)
 
-    sample_fits = sorted(glob.glob(cfg["data_glob"]))[0]
-    h = fits.getheader(sample_fits)
-    shape = (int(h["NAXIS2"]), int(h["NAXIS1"]))
+    samples = sorted(glob.glob(cfg["data_glob"]))
+    if samples:
+        h = fits.getheader(samples[0])
+        shape = (int(h["NAXIS2"]), int(h["NAXIS1"]))
+    else:
+        # The raw/processed FITS may be archived after the distilled Step-7
+        # products are retained. Both reductions use the same 4800x3200 crop;
+        # also guard against any catalog extending past that nominal boundary.
+        shape = (
+            max(3200, int(np.ceil(xy[:, 1].max())) + 1),
+            max(4800, int(np.ceil(xy[:, 0].max())) + 1),
+        )
 
     cx, cy, ratio = _auto_density_center(xy, shape, fwhm_px=cfg["fwhm_px"], cell_fwhm_mult=8.0)
     r = np.hypot(xy[:, 0] - cx, xy[:, 1] - cy)
@@ -138,7 +119,11 @@ def aperture_vs_psf_by_crowding(cfg):
 
         pf = f.replace("step7_forced_phot", "cmd_psf")
         if not os.path.exists(pf):
-            continue
+            archived = cfg["result"] / "cmd_psf_backup_gui_20260729" / Path(f).name
+            if archived.exists():
+                pf = str(archived)
+            else:
+                continue
         psf = pd.read_csv(pf, sep="\t")
         psf = psf[psf["FILTER"] == cfg["filter"]]
         if psf.empty:
@@ -223,65 +208,31 @@ def main() -> int:
     ax_b.set_title("(b) aperture vs PSF vs local density", loc="left")
 
     fig.suptitle("M5 & M13 (globular clusters) — crowded-field re-reductions, current codebase",
-                 fontsize=8.0, y=1.02, color="#333333")
-    fig.tight_layout(rect=(0, 0, 0.99, 1))
+                 fontsize=8.0, y=0.995, color="#333333")
+    provenance = (
+        f"Moravian C3-61000 (2×2), r band · M5: {CLUSTERS['M5']['n_frames']} frames, "
+        f"{results['M5']['n_master']} master sources · M13: {CLUSTERS['M13']['n_frames']} frames, "
+        f"{results['M13']['n_master']} master sources · APEX Step 7/8 retained products"
+    )
+    fig.tight_layout(rect=(0, 0.055, 0.99, 0.97))
+    fig.text(0.5, 0.012, provenance, ha="center", va="bottom",
+             fontsize=5.4, color=PALETTE["grey"])
     paths = save_fig(fig, "fig9_crowded_field", OUTDIR)
     plt.close(fig)
 
     m5, m13 = results["M5"], results["M13"]
-    caption = f"""# Figure 9 — Crowded-field validation on two real globular clusters (M5, M13)
+    caption = f"""# Figure — crowded-field photometry comparison
 
-**Figure 9.** Figs 1-8 validate APEX on open clusters and uncrowded synthetic
-fields; this figure extends into genuinely denser real fields, and checks
-whether the result replicates across two independent globular clusters. M5
-(NGC 5904, {CLUSTERS['M5']['n_frames']} $r$-band frames, {m5['n_master']} master sources) and M13
-(NGC 6205, {CLUSTERS['M13']['n_frames']} $r$-band frames, {m13['n_master']} master sources) were each
-re-reduced end-to-end with the *current* codebase (Step-7 forced photometry
-with the fixed sky annulus, Step-8 PSF photometry, Step-10 calibration).
-
-**(a)** Radial source density around each field's true density peak (found
-with APEX's own `psf_core` auto-density-center routine, not the field
-centroid): M5's core is enhanced **{m5['ratio']:.0f}$\\times$** and M13's
-**{m13['ratio']:.0f}$\\times$** over their respective field backgrounds —
-both close together and both far above the open cluster NGC 6811's
-**{ratio_ngc6811:.0f}$\\times$** (Figs 1-8) by the identical metric: two
-genuinely, and similarly, denser fields. **(b)** Aperture-vs-PSF magnitude
-residual (APEX's own two independent measurement methods, zeropoint-aligned
-per cluster on {m5['n_anchor']} (M5) / {m13['n_anchor']} (M13) bright/isolated
-stars) versus each star's nearest-neighbour separation (`neighbor_dist_px`,
-an APEX master-catalog product), for {m5['n_matched']} (M5) and
-{m13['n_matched']} (M13) $r$-band stars matched positionally between the two
-methods. The grey band marks the dataset's detection/deduplication floor
-(~{RES_FLOOR_PX:.0f} px, ~4$''$).
-
-**Honest result, now replicated.** Two probes were run on M5 before this
-figure was first drawn: (1) residual against the Gaia-transformed reference
-binned by neighbour separation, and (2) the aperture-vs-PSF comparison shown
-in panel (b). Neither shows a clean crowding-driven degradation in M5; probe
-(1) is not attempted for M13 at all, because M13's archived Gaia cross-match
-is essentially unusable (only 38 of 1347 detected sources resolve a
-`gaia_source_id` in a live Gaia DR3 query — the match itself appears to have
-been broken by an earlier version of the matching code, not a sign of a
-uniquely bad field). Probe (2), shown here, sidesteps that dependency
-entirely: it compares two APEX-internal methods on the same detected/matched
-star list, independent of Gaia. **Panel (b)'s binned medians are flat in
-BOTH clusters** — consistent with zero within $\\pm$0.02–0.04 mag from the
-resolution floor out to isolated separations, despite M13 having a far
-worse (and unrelated) Gaia cross-match than M5, which rules out a shared
-Gaia-side artifact as the explanation for the flatness. **Within the
-$\\sim${RES_FLOOR_PX:.0f} px ($\\sim$4$''$) separation this ground-based,
-2$\\times$2-binned instrument resolves, APEX detects, forced-photometers, and
-PSF-fits both globular-cluster cores correctly, with no detected
-crowding-dependent bias between the two methods, replicated in two
-independent fields.** This is a genuine, replicated positive finding about
-the domain of validity established here — not a claim that crowding never
-degrades aperture photometry, and not a manufactured trend. Sub-resolution
-blending (separations below this dataset's own detection floor, as would be
-probed by space-based or lucky imaging) is not and cannot be tested by this
-dataset, and remains open. Note also (§4.3) that M5, M13, and every other
-cluster in this validation share the identical camera (Moravian
-Instruments C3-61000) — this replication is across two *fields*, not two
-*instruments*.
+M5 ({CLUSTERS['M5']['n_frames']} $r$-band frames, {m5['n_master']} master
+sources) and M13 ({CLUSTERS['M13']['n_frames']} frames, {m13['n_master']}
+master sources) were reduced with the current APEX code. **(a)** The core
+source density is {m5['ratio']:.0f}$\\times$ the field background in M5 and
+{m13['ratio']:.0f}$\\times$ in M13; NGC 6811 is {ratio_ngc6811:.0f}$\\times$
+by the same metric. **(b)** Zeropoint-aligned aperture-minus-PSF residuals for
+{m5['n_matched']} M5 and {m13['n_matched']} M13 stars show no trend with
+nearest-neighbour separation above the {RES_FLOOR_PX:.0f}-pixel resolution
+floor. This is an internal comparison of two APEX methods; it does not test
+external absolute accuracy or unresolved blends below that floor.
 """
     CAPDIR.mkdir(parents=True, exist_ok=True)
     (CAPDIR / "fig9_crowded_field.md").write_text(caption, encoding="utf-8")

@@ -1,8 +1,8 @@
 """Shared publication-quality matplotlib style for APEX validation figures.
 
 Every APEX paper figure imports this module so the whole figure set is visually
-consistent: one serif font family, one colorblind-safe qualitative palette
-(Okabe-Ito), one line/grid weight scale, and one save path that emits BOTH a
+consistent: one serif font family, one print-safe monochrome palette, one
+line/grid weight scale, and one save path that emits BOTH a
 vector PDF (for LaTeX) and a 300-dpi PNG (for quick viewing / the docs site).
 
 Usage
@@ -17,8 +17,8 @@ Design notes
 ------------
 * Figure widths follow journal columns: SINGLE_COL = 3.4 in (~86 mm, one
   column of a two-column article); DOUBLE_COL = 7.0 in (full text width).
-* The Okabe-Ito palette is deuteranopia/protanopia safe and prints well in
-  grayscale (distinct luminance). Do not hand-pick other colors.
+* All semantic colors are neutral grays.  Categories must also differ by
+  marker, line style, or hatch so the figures remain legible in photocopies.
 * 300 dpi PNG + true vector PDF is the standard "camera-ready" combination.
 """
 
@@ -32,25 +32,25 @@ matplotlib.use("Agg")  # headless: never require a display
 import matplotlib.pyplot as plt
 
 
-# ── Okabe-Ito colorblind-safe qualitative palette ────────────────────────────
+# ── Journal monochrome palette ─────────────────────────────────────────────
 PALETTE: dict[str, str] = {
     "black": "#000000",
-    "orange": "#E69F00",
-    "skyblue": "#56B4E9",
-    "green": "#009E73",
-    "yellow": "#F0E442",
-    "blue": "#0072B2",
-    "vermillion": "#D55E00",
-    "purple": "#CC79A7",
+    "orange": "#737373",
+    "skyblue": "#BDBDBD",
+    "green": "#525252",
+    "yellow": "#D9D9D9",
+    "blue": "#252525",
+    "vermillion": "#636363",
+    "purple": "#969696",
     "grey": "#7F7F7F",
 }
 
 # Semantic aliases (use these in figures so intent is explicit).
 C = {
-    "data": PALETTE["blue"],        # measured / recovered points
-    "model": PALETTE["vermillion"], # fitted model / theory line
+    "data": PALETTE["blue"],        # measured / recovered points (dark)
+    "model": PALETTE["vermillion"], # fitted model / theory line (mid)
     "reference": PALETTE["green"],  # external tool / truth reference
-    "accent": PALETTE["orange"],    # secondary series
+    "accent": PALETTE["purple"],    # secondary series (light)
     "floor": PALETTE["grey"],       # noise floor / guide lines
     "bad": PALETTE["vermillion"],
     "good": PALETTE["green"],
@@ -89,8 +89,8 @@ def apply_paper_style() -> None:
                     PALETTE["blue"],
                     PALETTE["vermillion"],
                     PALETTE["green"],
-                    PALETTE["orange"],
                     PALETTE["purple"],
+                    PALETTE["grey"],
                     PALETTE["skyblue"],
                     PALETTE["black"],
                 ]

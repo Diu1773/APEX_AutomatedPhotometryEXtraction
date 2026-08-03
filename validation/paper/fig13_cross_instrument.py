@@ -22,7 +22,7 @@ import numpy as np
 import matplotlib.pyplot as plt
 from astropy.visualization import ZScaleInterval
 
-REPO = Path(r"C:\Users\bmffr\Desktop\Result\Automated_Photometry_EXtraction")
+REPO = Path(__file__).absolute().parents[2]
 sys.path.insert(0, str(REPO / "validation" / "paper"))
 from apex_paper_style import apply_paper_style, save_fig, PALETTE, DOUBLE_COL
 
@@ -48,7 +48,7 @@ def main() -> int:
             lo, hi = z.get_limits(img[np.isfinite(img)])
             axes[r, c].imshow(img, vmin=lo, vmax=hi, origin="lower", cmap="gray")
         dl = float(np.nanpercentile(np.abs(diff[np.isfinite(diff)]), 99))
-        im = axes[r, 2].imshow(diff, vmin=-dl, vmax=dl, origin="lower", cmap="RdBu_r")
+        im = axes[r, 2].imshow(diff, vmin=-dl, vmax=dl, origin="lower", cmap="gray")
         fig.colorbar(im, ax=axes[r, 2], fraction=0.046, pad=0.03).set_label("e⁻", fontsize=6)
         for c in range(3):
             axes[r, c].set_xticks([]); axes[r, c].set_yticks([])
