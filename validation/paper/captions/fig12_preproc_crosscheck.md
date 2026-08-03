@@ -1,20 +1,18 @@
-# Figure 12 — Per-step preprocessing cross-check vs ccdproc
+# Figure — per-step preprocessing cross-check vs ccdproc
 
-**Figure 12.** Each APEX detector-calibration stage compared, pixel-for-pixel,
-against the equivalent operation in **astropy ccdproc** — the community-standard
-Python CCD-reduction package — on the same real Moravian C3-61000 frames
-(NGC 6811, B, 2x2; 8 bias, 8 darks, 5
-flats, one science frame). **(a)** The maximum per-pixel disagreement for master
-bias/dark/flat construction, bias/dark/flat application, and the full pipeline.
-Master bias, master dark, and all three application steps are **bit-identical**
-(delta = 0); master-flat construction and the full pipeline agree to
-6e-08 and 5e-04
-DN (float32 rounding). All stages sit four to nine orders of magnitude below the
-detector read noise (3.45 DN) and the sky shot noise
-(31 DN). **(b)** The same three quantities as a noise budget.
-The two independently-written pipelines are numerically identical, so APEX's
-reduction implements the standard bias/dark/flat arithmetic correctly. This is a
-cross-implementation check (analogous to the sep and IRAF photometry
-cross-checks), not a ground-truth validation — the latter is the synthetic
-inject->recover test. Cosmetic correction uses astroscrappy, the L.A.Cosmic
-reference implementation.
+**(a)–(g)** |APEX − ccdproc| difference map for every calibration stage
+(8×8 max-pooled over the full 3194×4788 frame):
+master bias/dark/flat construction, bias/dark/flat application, and the full
+end-to-end pipeline. Six stages are **bit-identical** (Δ = 0 at every pixel);
+only the full chain shows float32 rounding at max|Δ| =
+8.6e-04 DN (robust σ =
+2.6e-05 DN). **(h)** That worst
+disagreement against the detector read noise (3.45 DN) and sky shot
+noise (41 DN) — more than three orders of magnitude below any
+real noise term. Inputs: 8 bias, 8 darks (60 s),
+5 flats, one 60 s NGC 6811 $B$ light (Moravian C3-61000, 2×2,
+night 2026-06-11); reference astropy ccdproc 2.5.1. The cosmetic
+(L.A.Cosmic + hot-pixel) stage is disabled here — it repairs ~1% of pixels by
+design and is validated separately by injection; this figure isolates the
+bias/dark/flat arithmetic. Generator: `calib_crosscheck_ngc6811.py` (input
+file names recorded in the JSON).

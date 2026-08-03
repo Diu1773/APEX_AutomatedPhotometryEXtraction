@@ -1,24 +1,19 @@
-"""Figure 12 — Per-step preprocessing cross-check against astropy ccdproc.
+# -*- coding: utf-8 -*-
+"""Figure — per-step preprocessing cross-check against astropy ccdproc.
 
-Every APEX calibration stage (master bias/dark/flat construction, then bias/dark/
-flat application, then the full pipeline) is run alongside the equivalent
-operation in ccdproc — the community-standard, independently-maintained astropy
-CCD reduction package — on the SAME real Moravian C3-61000 frames (NGC 6811,
-B band, 2x2). This is the calibration analogue of the sep (Fig 4) and IRAF
-(Fig 5) photometry cross-checks: an independent implementation, so agreement is
-evidence the reduction arithmetic is standard and correct.
+2026-08-03 rework (user: the old panel (a) log-lollipop put five bit-identical
+steps on a fake 1e-9 floor and read as an empty plot — "각 처리단계마다 plot을
+넣던가").  Panel (a) is now one difference *map* per calibration step: the
+max-pooled |APEX - ccdproc| image itself.  Six steps are exactly zero
+everywhere — a blank map is the honest picture of bit-identity — and the full
+end-to-end chain shows only float32 rounding dust, orders of magnitude below
+read noise.  Panel (b) keeps the noise budget.
 
-Panel (a): the per-step APEX-vs-ccdproc pixel disagreement (max |delta|), against
-the detector's own read noise and the sky shot noise. Panel (b): the same three
-numbers as a noise budget. Every stage agrees to <= 5e-4 DN — four to nine orders
-of magnitude below any real noise term — so the two independent pipelines are
-numerically identical.
+Data: data/calib_crosscheck_ngc6811.json + data/calib_crosscheck_maps.npz,
+both written by calib_crosscheck_ngc6811.py (the committed generator; it also
+records every input frame name).
 
-(This quantifies cross-implementation agreement, NOT ground truth; the
-ground-truth gate is the synthetic inject->recover test, Fig 10 / calibration
-tests. Cosmetic correction uses astroscrappy = the L.A.Cosmic reference itself.)
-
-Run: .venv-deploy\\Scripts\\python validation\\paper\\fig12_preproc_crosscheck.py
+Run: .venv-deploy\\Scripts\\python -X utf8 validation\\paper\\fig12_preproc_crosscheck.py
 """
 from __future__ import annotations
 
@@ -31,6 +26,7 @@ sys.path.insert(0, str(REPO / "validation" / "paper"))
 
 import numpy as np
 import matplotlib.pyplot as plt
+from matplotlib import colors
 
 from apex_paper_style import apply_paper_style, save_fig, C, PALETTE, DOUBLE_COL
 
@@ -40,113 +36,118 @@ DATA = REPO / "validation" / "paper" / "data"
 OUTDIR = REPO / "validation" / "paper" / "figures"
 CAPDIR = REPO / "validation" / "paper" / "captions"
 
-STEP_LABELS = {
-    "master_bias": "master bias\n(combine)",
-    "master_dark": "master dark\n(combine)",
-    "master_flat": "master flat\n(combine+norm)",
-    "bias_subtract": "bias subtract",
-    "dark_subtract": "dark subtract\n(exp-scaled)",
-    "flat_correct": "flat field",
-    "full_pipeline": "full pipeline",
-}
-ORDER = list(STEP_LABELS)
-FLOOR = 1e-9   # plot exact-zero (bit-identical) steps at the axis floor
+STEPS = [
+    ("master_bias", "master bias"),
+    ("master_dark", "master dark"),
+    ("master_flat", "master flat"),
+    ("bias_subtract", "bias subtract"),
+    ("dark_subtract", "dark subtract"),
+    ("flat_correct", "flat field"),
+    ("full_pipeline", "full pipeline"),
+]
 
 
 def main() -> int:
-    res = json.loads((DATA / "calib_crosscheck_ngc6811.json").read_text())
-    ptc = json.loads((DATA / "detector_ptc.json").read_text())
+    res = json.loads((DATA / "calib_crosscheck_ngc6811.json").read_text(encoding="utf-8"))
+    ptc = json.loads((DATA / "detector_ptc.json").read_text(encoding="utf-8"))
+    maps = np.load(DATA / "calib_crosscheck_maps.npz")
     gain = ptc["gain_e_per_adu"]
     rn_dn = ptc["read_noise_adu"]
-    sky_dn = res["light_median"]
-    sky_shot_dn = float(np.sqrt(max(sky_dn, 1.0) / gain))   # sqrt(sky_e)/gain
-
+    sky_shot_dn = float(np.sqrt(max(res["light_median"], 1.0) / gain))
     steps = res["steps"]
-    maxabs = np.array([steps[s]["max_abs"] for s in ORDER])
-    plotx = np.where(maxabs > 0, maxabs, FLOOR)
-    exact = maxabs == 0
+    worst = max(steps[k]["max_abs"] for k, _ in STEPS)
 
-    fig, (axa, axb) = plt.subplots(1, 2, figsize=(DOUBLE_COL, 3.3),
-                                   gridspec_kw={"width_ratios": [2.1, 1.0]})
+    fig = plt.figure(figsize=(DOUBLE_COL, 4.15))
+    gs = fig.add_gridspec(2, 4, hspace=0.42, wspace=0.14,
+                          left=0.035, right=0.985, top=0.90, bottom=0.145)
 
-    # (a) per-step lollipop
-    y = np.arange(len(ORDER))[::-1]
-    axa.hlines(y, FLOOR, plotx, color=PALETTE["grey"], lw=1.2, zorder=1)
-    axa.scatter(plotx, y, s=42, color=C["data"], zorder=3)
-    for xi, yi, ex in zip(plotx, y, exact):
-        if ex:
-            axa.annotate("= 0 (bit-identical)", (FLOOR, yi), xytext=(4, 0),
-                         textcoords="offset points", va="center", ha="left",
-                         fontsize=6.6, color=C["model"])
-    axa.axvline(rn_dn, color=C["reference"], lw=1.4, ls="--",
-                label=f"read noise ({rn_dn:.2f} DN)")
-    axa.axvline(sky_shot_dn, color=C["bad"], lw=1.4, ls=":",
-                label=f"sky shot noise ({sky_shot_dn:.0f} DN)")
-    axa.set_xscale("log")
-    axa.set_xlim(FLOOR, sky_shot_dn * 4)
-    axa.set_yticks(y)
-    axa.set_yticklabels([STEP_LABELS[s] for s in ORDER], fontsize=7)
-    axa.set_xlabel(r"APEX $-$ ccdproc  max$|\Delta|$  (DN)")
-    axa.legend(loc="lower right", fontsize=6.8)
-    axa.set_title("(a) Every preprocessing step vs ccdproc", loc="left")
+    vmax = 1e-3
+    norm = colors.Normalize(vmin=0.0, vmax=vmax)
+    last_im = None
+    for i, (key, label) in enumerate(STEPS):
+        ax = fig.add_subplot(gs[i // 4, i % 4])
+        m = maps[key]
+        last_im = ax.imshow(m, cmap="Greys", norm=norm, origin="lower",
+                            aspect="auto", interpolation="nearest")
+        mx = steps[key]["max_abs"]
+        ax.set_title(f"({chr(97 + i)}) {label}", loc="left", fontsize=7.6)
+        if mx == 0.0:
+            note, colr = "$\\Delta = 0$  (bit-identical)", C["model"]
+        else:
+            note, colr = f"max$|\\Delta|$ = {mx:.1e} DN", C["data"]
+        ax.text(0.5, 0.5, note, transform=ax.transAxes, ha="center", va="center",
+                fontsize=7.2, color=colr,
+                bbox=dict(fc="white", ec="none", alpha=0.75, pad=1.4))
+        ax.set_xticks([])
+        ax.set_yticks([])
+        for s in ax.spines.values():
+            s.set_linewidth(0.5)
 
-    # (b) noise budget
-    worst = float(np.max(maxabs))
+    # (h) noise budget — the same disagreement against the real noise terms
+    axb = fig.add_subplot(gs[1, 3])
     names = ["APEX vs\nccdproc", "read\nnoise", "sky shot\nnoise"]
-    vals = [max(worst, FLOOR), rn_dn, sky_shot_dn]
+    vals = [max(worst, 1e-5), rn_dn, sky_shot_dn]
     cols = [C["data"], C["reference"], C["bad"]]
     xb = np.arange(3)
     axb.bar(xb, vals, color=cols, width=0.62, zorder=3)
     axb.set_yscale("log")
-    axb.set_ylim(1e-5, sky_shot_dn * 4)
+    axb.set_ylim(1e-5, sky_shot_dn * 30)   # 막대 위 주석이 잘리지 않게
     axb.set_xticks(xb)
-    axb.set_xticklabels(names, fontsize=7)
-    axb.set_ylabel("DN")
+    axb.set_xticklabels(names, fontsize=6.6)
+    axb.tick_params(labelsize=6.4)
     for xi, v in zip(xb, vals):
         axb.annotate(f"{v:.0e}" if v < 1e-2 else f"{v:.1f}", (xi, v),
-                     xytext=(0, 3), textcoords="offset points",
-                     ha="center", va="bottom", fontsize=6.8)
-    axb.set_title("(b) Noise budget", loc="left")
+                     xytext=(0, 2.5), textcoords="offset points",
+                     ha="center", va="bottom", fontsize=6.6)
+    axb.set_title("(h) noise budget (DN)", loc="left", fontsize=7.6)
 
-    fig.suptitle(
-        "APEX reduction is numerically identical to the community-standard "
-        "ccdproc at every stage (NGC 6811, B, C3-61000).",
-        fontsize=7.4, y=1.02, color="#333333")
-    fig.tight_layout(rect=(0, 0, 1, 0.97))
+    # 공유 색막대 — 지도 (a)-(g) 의 |Δ| 눈금
+    cax = fig.add_axes([0.035, 0.078, 0.30, 0.02])
+    cb = fig.colorbar(last_im, cax=cax, orientation="horizontal")
+    cb.set_label(r"$|\mathrm{APEX} - \mathrm{ccdproc}|$  (DN)", fontsize=6.4)
+    cb.ax.tick_params(labelsize=6.0)
+
+    # 데이터 명세 (그림 안에 출처를 박는다). 한 줄로 쓰면 그림 폭을 넘어
+    # tight-bbox 가 캔버스를 왼쪽으로 늘린다(2026-08-03 실측) — 두 줄로 나눈다.
+    prov1 = (f"NGC 6811 $B$ single 60 s · Moravian C3-61000 (2$\\times$2) · night {res['night']} · "
+             f"{res['n_bias']} bias / {res['n_dark']} dark (60 s) / {res['n_flat']} flat")
+    prov2 = (f"APEX vs {res['reference']} · cosmetic step off (validated separately by "
+             f"injection) · gen: calib_crosscheck_ngc6811.py")
+    fig.text(0.985, 0.052, prov1, ha="right", va="bottom", fontsize=5.9,
+             color=PALETTE["grey"])
+    fig.text(0.985, 0.012, prov2, ha="right", va="bottom", fontsize=5.9,
+             color=PALETTE["grey"])
+
     paths = save_fig(fig, "fig12_preproc_crosscheck", OUTDIR)
     plt.close(fig)
 
     CAPDIR.mkdir(parents=True, exist_ok=True)
     (CAPDIR / "fig12_preproc_crosscheck.md").write_text(
-        f"""# Figure 12 — Per-step preprocessing cross-check vs ccdproc
+        f"""# Figure — per-step preprocessing cross-check vs ccdproc
 
-**Figure 12.** Each APEX detector-calibration stage compared, pixel-for-pixel,
-against the equivalent operation in **astropy ccdproc** — the community-standard
-Python CCD-reduction package — on the same real Moravian C3-61000 frames
-(NGC 6811, B, 2x2; {res['n_bias']} bias, {res['n_dark']} darks, {res['n_flat']}
-flats, one science frame). **(a)** The maximum per-pixel disagreement for master
-bias/dark/flat construction, bias/dark/flat application, and the full pipeline.
-Master bias, master dark, and all three application steps are **bit-identical**
-(delta = 0); master-flat construction and the full pipeline agree to
-{steps['master_flat']['max_abs']:.0e} and {steps['full_pipeline']['max_abs']:.0e}
-DN (float32 rounding). All stages sit four to nine orders of magnitude below the
-detector read noise ({rn_dn:.2f} DN) and the sky shot noise
-({sky_shot_dn:.0f} DN). **(b)** The same three quantities as a noise budget.
-The two independently-written pipelines are numerically identical, so APEX's
-reduction implements the standard bias/dark/flat arithmetic correctly. This is a
-cross-implementation check (analogous to the sep and IRAF photometry
-cross-checks), not a ground-truth validation — the latter is the synthetic
-inject->recover test. Cosmetic correction uses astroscrappy, the L.A.Cosmic
-reference implementation.
+**(a)–(g)** |APEX − ccdproc| difference map for every calibration stage
+(8×8 max-pooled over the full {maps['shape'][0]}×{maps['shape'][1]} frame):
+master bias/dark/flat construction, bias/dark/flat application, and the full
+end-to-end pipeline. Six stages are **bit-identical** (Δ = 0 at every pixel);
+only the full chain shows float32 rounding at max|Δ| =
+{steps['full_pipeline']['max_abs']:.1e} DN (robust σ =
+{steps['full_pipeline']['robust_sigma']:.1e} DN). **(h)** That worst
+disagreement against the detector read noise ({rn_dn:.2f} DN) and sky shot
+noise ({sky_shot_dn:.0f} DN) — more than three orders of magnitude below any
+real noise term. Inputs: {res['n_bias']} bias, {res['n_dark']} darks (60 s),
+{res['n_flat']} flats, one 60 s NGC 6811 $B$ light (Moravian C3-61000, 2×2,
+night {res['night']}); reference {res['reference']}. The cosmetic
+(L.A.Cosmic + hot-pixel) stage is disabled here — it repairs ~1% of pixels by
+design and is validated separately by injection; this figure isolates the
+bias/dark/flat arithmetic. Generator: `calib_crosscheck_ngc6811.py` (input
+file names recorded in the JSON).
 """, encoding="utf-8")
 
-    print("=== fig12 preprocessing cross-check ===")
-    for s in ORDER:
-        st = steps[s]
-        print(f"  {s:16s} max|Δ|={st['max_abs']:.2e} DN  σ={st['robust_sigma']:.2e}")
-    print(f"read noise {rn_dn:.2f} DN, sky shot {sky_shot_dn:.1f} DN")
+    print("=== fig12 rework ===")
+    for k, _ in STEPS:
+        print(f"  {k:14s} max|Δ|={steps[k]['max_abs']:.2e}")
     for ext, p in paths.items():
-        print(f"wrote {ext}: {p}  exists={p.exists()}")
+        print(f"wrote {ext}: {p}")
     return 0
 
 

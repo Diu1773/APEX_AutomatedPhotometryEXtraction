@@ -49,7 +49,7 @@ def fig_uri(p):
 CAPTIONS = {
  1: r"APEX의 작업 흐름과 계층. 0–7단계는 두 모드가 공유하며, 측광이 끝난 뒤에야 CMD 모드와 LC 모드로 갈라진다. 각 단계는 관측자에게 **결정 하나**를 요구하고(어떤 보정 프레임을 쓸지, 이 프레임을 받아들일지, 검출 문턱을 어디에 둘지, 몇 장에서 보여야 별로 인정할지, 구경을 얼마로 할지) 정해진 경로에 검사 가능한 산출물을 남긴다. 계산은 Qt를 부르지 않는 핵심부에 있고 그래픽 계층은 그것을 부르기만 하므로, 3절의 화면 없는 검증이 곧 화면이 돌리는 코드를 시험한다. 각 단계 아래의 붉은 번호는 그 단계를 검증하는 절이다.",
  2: r"광자전달곡선(photon-transfer curve)으로 자료에서 직접 잰 검출기 특성: gain $0.681$ e$^-$/ADU, 읽기잡음 $2.35$ e$^-$, 암전류 $0.0077$ e$^-$/s($R^2=0.998$). 헤더의 EGAIN 값은 $\approx16\times$ 틀리므로 쓰지 않는다.",
- 3: r"각 보정 단계를 표준 파이썬 패키지 astropy \texttt{ccdproc}과 픽셀 대 픽셀로 비교. 마스터 bias·dark와 적용 세 단계가 비트동일($\Delta=0$), 전체 파이프라인도 $5\times10^{-4}$ DN 이내 — 읽기잡음보다 네 자릿수 이상 아래.",
+ 3: r"보정 각 단계의 $|$APEX$-$ccdproc$|$ 차이 지도(전체 프레임, 8×8 최대값 풀링). **(a–f)** 마스터 bias·dark·flat 구성과 bias·dark·flat 적용 여섯 단계는 모든 화소에서 비트동일($\Delta=0$ — 빈 지도가 그 증거다). **(g)** 완전 사슬만 float32 반올림 먼지(최대 $8.6\times10^{-4}$ DN)를 남긴다. **(h)** 그 최대 불일치를 읽기잡음(3.5 DN)·하늘 산탄잡음(41 DN)과 견준 잡음 예산 — 세 자릿수 이상 아래. NGC 6811 $B$ 60초 1장, bias 8·dark 8·flat 5, 2026-06-11 밤, Moravian C3-61000; 우주선·핫픽셀 수리 단계는 산술 비교라 끔(주입 시험이 따로 검증).",
  4: r"두 LCO 카메라의 raw를 APEX로 보정해 독립 파이프라인 BANZAI 산출물과 비교. QHY600 CMOS는 전체가 균일한 $+0.06$ e$^-$, 4-앰프 Sinistro CCD는 $\approx0.3\%$ 일치(사분면 패턴은 앰프별 조립의 차이). 보정 산술이 검출기를 넘어 일반화됨을 보인다.",
  5: r"주입 결함으로 만든 44-프레임 밤에서 자동 프레임 QC. 정상 24장을 오탐 없이 통과, 나쁜 시상·밝은 하늘·거짓 헤더 프레임을 모두 검출. 회색 투명도 손실만 놓치는데(균일 변화라 영상 통계에 안 잡힘), 이것이 2단계 측광-QC의 근거다.",
  6: r"실측 프레임에 인공별을 주입해 잰 검출 완전도. **(a)** 관측 조건을 대표하는 실측 단일 노출 세 장 — 어두운 하늘·양호한 시상(M67 $i$), 밝은 하늘·양호한 시상(NGC 6811 $R$), 밝은 하늘·불량 시상(M13 $V$) — 의 주입 등급 대비 회수율. 점은 구간별 회수율(Wilson 95\% 이항 구간)이고 **등급 공간에는 어떤 함수도 맞추지 않는다**. 50\% 깊이 $m_{50}=17.65,\ 15.64,\ 14.90$ 은 곡선이 0.5를 지나는 지점을 읽은 값이며, 깊이는 방법이 아니라 그 프레임의 하늘 밝기와 시상이 정한다. 회색 파선은 합성 verification 프레임. 아래 스트립은 가장 얕은 프레임에 실제로 주입된 별들의 컷아웃이다. **(b)** 각 별을 기대 peak-화소 S/N으로 재표현하면 깊이가 3.4등급에 걸쳐 벌어졌던 **일곱 프레임이 단일 곡선으로 붕괴**한다. 합동 표본의 오차함수 피팅은 $\mathrm{S/N}_{50}=4.0$, 프레임별 독립 판독은 $4.05\pm0.18$ 로 일치한다.",
@@ -359,6 +359,8 @@ body{font-family:var(--serif);font-size:12.2px;line-height:1.36;color:var(--ink)
 /* 좁은 단에서 한글 양끝맞춤은 어절 사이가 벌어지므로, 한글은 어디서나 줄바꿈을
    허용(word-break:normal)해 균일하게 채운다. 국문 학술지 조판 관례다. */
 p{margin:0;text-align:justify;word-break:normal;overflow-wrap:break-word;text-indent:1.1em;}
+p.pcont{text-indent:0;}                 /* 단 경계에서 쪼개진 문단의 뒤토막 */
+p.psplit{text-align-last:justify;}      /* 앞토막은 마지막 줄도 양끝맞춤 */
 h2 + p, h3 + p, h4 + p, figure + p, .tw + p, blockquote + p{text-indent:0;}
 /* 제목·캡션은 어절 중간에서 끊기면 안 된다. 본문 단만 음절 단위 줄바꿈을 허용한다. */
 h2,h3,h4,.ptitle,.abshead,.toc-h,figcaption,thead th{word-break:keep-all;}
@@ -649,6 +651,61 @@ JS = r"""
     return P;
   }
 
+  /* ── 문단 쪼개기 ─────────────────────────────────────────────
+     문단을 원자 블록으로 다루면 단 끝 자투리가 늘 버려지고, 큰 문단이 빈 단에도
+     안 들어가면 giveBackSpan 이 발치 그림을 도로 뺏는다(2026-08-03: 8쪽 발치가
+     그래서 비었고 그림 줄이 지면당 한 장으로 후퇴). 진짜 조판처럼 문단을 단
+     경계에서 자른다. 인라인 마크업은 Range.extractContents 가 보존한다. */
+  function truncCloneHeight(orig, c, k){
+    var cl=orig.cloneNode(true);
+    c.appendChild(cl);
+    var cnt=0, w=document.createTreeWalker(cl, NodeFilter.SHOW_TEXT, null), t, cut=null;
+    outer: while((t=w.nextNode())){
+      var re=/\S+\s*/g, m;
+      while((m=re.exec(t.nodeValue))){
+        cnt++;
+        if (cnt===k){ cut={nd:t, off:m.index+m[0].length}; break outer; }
+      }
+    }
+    if (cut){
+      var r=document.createRange();
+      r.setStart(cut.nd, cut.off); r.setEnd(cl, cl.childNodes.length);
+      r.deleteContents();
+    }
+    var h=cl.getBoundingClientRect().height;
+    c.removeChild(cl);
+    return h;
+  }
+  function splitPara(node, c, avail){
+    if (avail < 40) return null;                         // 두 줄도 안 되는 자투리
+    var nW=(node.textContent.match(/\S+/g)||[]).length;
+    if (nW < 14) return null;
+    var lo=4, hi=nW-4, best=0;
+    while (lo<=hi){
+      var mid=(lo+hi)>>1;
+      if (truncCloneHeight(node, c, mid) <= avail){ best=mid; lo=mid+1; }
+      else hi=mid-1;
+    }
+    if (best < 4) return null;
+    var cnt=0, w=document.createTreeWalker(node, NodeFilter.SHOW_TEXT, null), t, cut=null;
+    outer: while((t=w.nextNode())){
+      var re=/\S+\s*/g, m;
+      while((m=re.exec(t.nodeValue))){
+        cnt++;
+        if (cnt===best){ cut={nd:t, off:m.index+m[0].length}; break outer; }
+      }
+    }
+    if (!cut) return null;
+    var r=document.createRange();
+    r.setStart(cut.nd, cut.off); r.setEnd(node, node.childNodes.length);
+    var frag=r.extractContents();
+    var b=document.createElement('p');
+    b.className=((node.className||'')+' pcont').trim();
+    b.appendChild(frag);
+    node.classList.add('psplit');                        // 앞토막: 마지막 줄도 양끝맞춤
+    return b;
+  }
+
   /* 빈 단인데도 블록이 안 들어가면, 지면 머리(그림·표)가 자리를 너무 먹은 것이다.
      마지막 것부터 pending 앞으로 되돌려 단을 넓혀 본다. 앞에 넣으므로 차례는 그대로다.
      되돌릴 것이 없으면 false — 그때는 어쩔 수 없이 넘치게 둔다. */
@@ -714,6 +771,15 @@ JS = r"""
       return P;
     }
     c.removeChild(node);
+    // 문단이면 단 끝 자투리를 채우도록 쪼갠다. 나머지는 다음 자리로 흘린다.
+    if (node.tagName==='P'){
+      var availH=c.clientHeight - contentBottom(c) - 3;
+      var rest=splitPara(node, c, availH);
+      if (rest){
+        c.appendChild(node);
+        return place(rest, P);
+      }
+    }
     var listy=(node.tagName==='OL'||node.tagName==='UL')&&node.children.length>1;
     // 이 단에 있는 것이 제목뿐(또는 빈 단)이면 옮길 데가 없다. 지면 머리를 되돌려
     // 제목과 본문을 한자리에 앉힌다. 안 그러면 제목만 남고 본문이 다음 단으로 간다.
