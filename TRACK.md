@@ -15,14 +15,37 @@
 .venv-deploy/Scripts/python.exe -m pytest tests/ -q
 ```
 
-- **통과 기준:** 620 passed, 0 failed  (2026-07-28 +6 — 이웃 신뢰 검사)
-- **소요:** 약 7분
-- **마지막 실행:** 2026-07-28 — 620 passed, 6 warnings (4분 41초)
+- **통과 기준:** 764 passed, 0 failed  (2026-08-04 기준 — 다른 세션들이 +42)
+- **소요:** 약 5분
+- **마지막 실행:** 2026-08-04 — 764 passed, 6 warnings (4분 40초; step10 색항
+  클램프 수정 `88263bc` 포함 전량 통과)
 - CI: `.github/workflows/tests.yml` 외 3개
 
 ## 지금
 
-- 마지막 커밋: `HEAD` 2026-08-01 — fix(wcs): pixel_scale_arcsec 미설정 시 float(None) 크래시
+**2026-08-04 이소크론 [M/H] rail — 해소 실증 세션 (`ec1701c`+`88263bc`)**
+
+- **U 영점을 외부 표준(MMJ93, VizieR J/AJ/106/181)으로 재앵커하니 rail 이
+  풀렸다.** m67_ubv(SBIG U·B·V) 오프셋 실측: dU −0.131 / dB +0.051(Sandquist
+  2004 로 교차확인 +0.030) / dV +0.008. 같은 자료·같은 설정 재적합:
+  **[M/H] −0.83 → +0.06, 나이 3.83 Gyr, E(B−V) 0.011, (m−M)₀ 9.67 — 전부
+  문헌 복귀.** 소거실험: U 만 재앵커하면 rail 잔존(−0.55) — **전 밴드 영점이
+  한 표준계에 앉아야 U−B 가 축퇴를 푼다.** B−V 단독은 영점이 좋아도 넓고 기움.
+- **PSF 측광으로도 동일 재현** (Step8 8/8 → Step10 → 재앵커 → 적합):
+  오프셋 dU −0.132, 적합 +0.06/3.86/0.005/9.65. 측광 방식 무관.
+- **다성단 PSF 적합** (reprocess BVR): M13 B−V+dm prior → **[M/H] −1.56·나이
+  12.76** (문헌 −1.53/12.5; dm 사후 13.97 이 prior 를 2.9σ 밀어냄 = 단색
+  dm−E 축퇴 잔존, E 0.09 vs 문헌 0.02 — 미해결로 기록). NGC6811 은 E prior
+  필수(없으면 나이 하한 rail·E 0.33; 있으면 0.83/+0.06/0.081 — 기존 검증 재현).
+  M67 재처리본(gri)은 Step8 30프레임 완주 후 g−r 적합 실행.
+- **코어 버그픽스(`88263bc`)**: Step10 U 색항 허용치 3.0 예외가
+  `solve_standard_colors` 고정점 반복(수렴조건 |ct|<1)을 발산시켜 PSF 런에서
+  `mag_std_U` 가 ±1000 등급 폭주. 클램프를 수렴 한도 0.8 로 통일. 구경 런은
+  |ct|>3 클램프 폴백으로 우연히 살았던 것.
+- 신규: `run_step12_headless --dm-prior`(구상성단용)·`--mh-bounds`,
+  `recalibrate_u_mmj93.py`(--source-result/--suffix). 상세:
+  `validation/psf_crossinstrument/REPORT_UB_DEGENERACY.md` 후속절.
+- 마지막 커밋(직전): 2026-08-01 — fix(wcs): pixel_scale_arcsec 미설정 시 float(None) 크래시
 - 오라클 **722 passed, 0 failed** (2026-08-01, 5분 21초). 7-31 아침 625 → +97
 - 2026-08-02 워크트리(`claude2/festive-merkle-659e92`, 논문 fig 재작업 세션)에서
   재실행: **721 passed, 1 skipped, 0 failed** (3분 48초). skip 은
@@ -230,8 +253,9 @@
   유지하되, 격자 도입 판단 기준은 이 모서리 값이다. 착수
   조건과 구현 방향은 `validation/psf_crossinstrument/REPORT_WIDE_EPSF.md`
   「향후 구현」절에 적었다 (grid_size 를 모델 단위로 승격 → `GriddedPSFModel`).
-- **이소크론 축퇴 — 위 작업들 뒤로.** U-B 로는 실패했고(Gaia→U σ=0.200),
-  U 표준등급(Landolt/Stetson) 확보가 선행 조건이다.
+- **이소크론 축퇴 — 해소 실증 완료 (2026-08-04, `ec1701c`).** 선행 조건이던
+  U 표준등급을 MMJ93(VizieR)으로 확보해 영점 재앵커 → [M/H] rail 해소.
+  「지금」절 참조. 남은 정직한 한계: 단색 dm−E 축퇴(M13)·faint-MS 나이 희석.
 
 **2026-07-29 PSF 완성 세션에서 끝난 것**
 
@@ -270,6 +294,13 @@
   (이 항목은 8731 인스턴스가 낡은 코드라 자동으로 안 내려와서 손으로 넣었다 — F-018)
 
 ## 다음 3개
+
+0. **(신규 후보, 2026-08-04) 이소크론 rail 해소의 후속** — ① 논문 반영: §10/fig8
+   계열에 「영점 재앵커 → rail 해소」 3부작(B−V 단독 / 나쁜 U / 표준 U) 편입
+   ② 외부 표준 카탈로그 재앵커를 GUI/서비스 기능으로 승격할지(지금은
+   `validation/psf_crossinstrument/recalibrate_u_mmj93.py` 검증 스크립트)
+   ③ M13 단색 dm−E 축퇴(사후 dm 13.97 vs prior 14.4)는 V−R 추가 색으로
+   풀리는지 확인. — 셋 다 사용자 판단 필요.
 
 1. **검출수 급증 프레임의 실물 찾기** — 「4000프레임 재검출」로 적혀 있던 항목.
    **프레임 4,000장이 아니다.** 원문은 *"사장님 4000개 프레임 재검출"* 이고,
