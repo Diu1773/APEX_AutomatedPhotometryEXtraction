@@ -46,6 +46,13 @@ def main() -> int:
                     metavar=("MEAN", "SIGMA"))
     ap.add_argument("--parallax-prior", action="store_true",
                     help="derive a (m-M)0 prior from Gaia parallaxes of members")
+    ap.add_argument("--dm-prior", nargs=2, type=float, default=None,
+                    metavar=("MEAN", "SIGMA"),
+                    help="explicit (m-M)0 Gaussian prior — use for distant "
+                         "clusters (globulars) where Gaia parallax is unusable")
+    ap.add_argument("--mh-bounds", nargs=2, type=float, default=[-1.0, 0.5],
+                    metavar=("MIN", "MAX"),
+                    help="[M/H] bounds (widen for globulars, e.g. -2.2 0.5)")
     ap.add_argument("--no-membership", action="store_true")
     ap.add_argument("--max-stars", type=int, default=500)
     ap.add_argument("--walkers", type=int, default=32)
@@ -117,9 +124,11 @@ def main() -> int:
     cfg = IsochroneFitConfig(
         colors=colors, mag_band=args.mag, iso_file=iso_file,
         age_bounds=age_bounds,
-        mh_bounds=(-1.0, 0.5), dm_bounds=(5.0, 18.0), ecolor_bounds=(0.0, 1.0),
+        mh_bounds=(float(args.mh_bounds[0]), float(args.mh_bounds[1])),
+        dm_bounds=(5.0, 18.0), ecolor_bounds=(0.0, 1.0),
         mh_prior=tuple(args.mh_prior) if args.mh_prior else None,
         ecolor_prior=ecolor_prior,
+        dm_prior=tuple(args.dm_prior) if args.dm_prior else None,
         parallax_distance_prior=bool(args.parallax_prior),
         use_membership=not args.no_membership,
         max_stars=args.max_stars, n_walkers=args.walkers,
