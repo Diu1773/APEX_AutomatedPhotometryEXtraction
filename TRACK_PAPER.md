@@ -41,6 +41,11 @@
 - 증류 데이터 `validation/paper/data_parameter_sweep/` 커밋, 재조판은
   `fig3_parameter_sweep.py --figure-only`(벤치 캐시 `Temp\apx_sweep`).
   fig 스크립트 6개 REPO 하드코딩 제거(`__file__` 기준, 워크트리 안전).
+- **정리 남음**: 브랜치 `claude2/festive-merkle-659e92` 와 그 워크트리
+  (`.claude/worktrees/festive-merkle-659e92`)는 완전 머지됐지만, 머지한 세션이
+  그 안에서 돌고 있어 지우지 않았다. 다음 세션이 지운다 —
+  `git worktree remove .claude/worktrees/festive-merkle-659e92` 후
+  `git branch -d claude2/festive-merkle-659e92`.
 
 **2026-08-02 · §3 완성 — 절 stub 0** (`f756bce` 까지)
 
@@ -189,9 +194,18 @@
 
 **지금은 3절만 본다.**
 
-1. `references.bib` 50건 최종 검증 (`/ars-citation-check`)
-2. **§4 분량** — 4절이 원고의 4.5% 뿐이다. 3절이 끝난 뒤에 본다.
-3. 미리보기 메모 추가분 회수·반영 (쌓이는 대로)
+1. **§3.2 검출기 보정 대체 그림** — 옛 그림 2를 폐기(`f3d321f`)한 자리가
+   비어 있어 §3.2 첫 두 문단이 그림 없이 간다. 패널 4개 명세·데이터 경로·
+   cosmetic 함정은 `논문작업/MERGE_fig_branch.md` §5 에 정리돼 있고, 새 측정은
+   필요 없다. 승인 템플릿(`fig_psf_validation` 양식) 적용 → 그림 2 자리에
+   넣고 이하 번호 +1, `FIGFILES`·`CAPTIONS`·본문 참조 동반 갱신.
+2. **아티팩트 재게시** — 라이브는 아직 머지 전(`f3d321f`) 빌드다. 재작업한
+   그림 5건과 §3.5/§3.7/§3.8/§5.4 정정이 안 실려 있다. 게시 전 라이브 판을
+   WebFetch 로 확인하고 같은 링크에 덮어쓴다.
+3. `references.bib` 50건 최종 검증 (`/ars-citation-check`)
+
+그 뒤: **§4 분량**(원고의 4.5% 뿐, 3절이 끝난 뒤에 본다) · 미리보기 메모
+추가분 회수·반영(쌓이는 대로).
 
 **§3.1 통독 완료** (`75cace6`, 2026-08-03): 표 2 깨진 셀("(3.9절(3.9절)" —
 재번호 매핑 겹침 사고)·낡은 WCS 행(3.6 신설 전 "자체보고+간접" → "직접") 정정,
@@ -333,6 +347,22 @@ Claude 의 오류 경위: 레포 전체 grep 이 타임아웃되자 `apex/` 로 
   기존 파일을 재사용한다. 프레임 파라미터를 바꾸면 사이드카가 자동 무효화.
 - **frame-FWHM 추정기는 QC 창(`[fwhm] px_min=3.0`) 밖에서 붕괴한다.**
   진짜 2.5px 프레임을 별 5개로 8.5px 라고 쟀다. 시잉 실험은 창 안에서만.
+- **인공별 주입은 프레임이 좁으면 배치에 실패한다.** FWHM 6px 에서 최소
+  분리 제약이 ~62px 이라 640px 프레임에 40개를 놓다가 random-sequential
+  jamming 한계에 걸렸다(`Could place only 3/16 field stars`). fig3 는 별
+  밀도를 유지한 채 1024²·435별로 키워 해결했다. 프레임을 넓히거나
+  `stars_per_trial` 을 줄일 것.
+- **`validation/` 은 `E:\APEX_validation_output` 정션이다.** 스크립트에서
+  `Path(__file__).resolve()` 를 쓰면 경로가 `E:\...` 로 풀려 나온다. 같은
+  실체이므로 오작동은 아니지만, 조판 출력 경로가 E: 로 찍혀 "엉뚱한 데 썼나"
+  하고 시간을 쓰기 쉽다(2026-08-03).
+- **matplotlib mathtext 는 `\le`·`\ge` 를 모른다** — `\leq`·`\geq` 를 쓴다.
+  그림 안 주석에서 `ParseFatalException: Unknown symbol` 로 죽는다.
+- **조판 육안 확인은 `file://` 로 안 된다**(브라우저 도구가 거부). 로컬
+  서버를 띄운다 — `.claude/launch.json` 에 `paper-preview`(포트 8742,
+  `validation/paper` 서빙)가 이미 있으니 새로 만들지 말 것. 브라우저 pane 이
+  안 보이면 스크린샷도 못 찍으므로, `javascript_tool` 로 지면 수(`.page`)·
+  그림 수·단 넘침·자체점검 배너(`#typoerr`)를 수치로 확인한다.
 - **신규성 근거는 확정됐다.** Dragonfly(하한만) · ZTF(개수 기반 없음) · iPTF/PTFIDE(상한 없음)
   — 세 파이프라인 전부 초과검출을 보지 않는다. 이 공백이 게이트의 신규성이다.
 - 문헌 확인은 IOPscience/ar5iv에서 직접. PDF가 안 열리면 ar5iv를 쓴다(iPTF 사례).
