@@ -45,6 +45,15 @@
 - 신규: `run_step12_headless --dm-prior`(구상성단용)·`--mh-bounds`,
   `recalibrate_u_mmj93.py`(--source-result/--suffix). 상세:
   `validation/psf_crossinstrument/REPORT_UB_DEGENERACY.md` 후속절.
+- **표준성 재앵커가 APEX 기능으로 승격됐다** (사용자 요청). Qt-free 코어
+  `apex/analysis/cmd/standard_anchor.py`(VizieR fetch+캐시·교차매칭·오프셋·
+  |offset|>1 mag 가드) + 단위테스트 7개(무네트워크) + Step 10 워커 통합
+  (`[cmd.standard_anchor]` enable/catalog/match_radius_arcsec/min_stars,
+  실패 시 경고 후 비앵커 진행) + GUI 파라미터 다이얼로그 그룹("External
+  Standard Anchor", 한국어 설명·툴팁) + approx 참조(σ≥0.1) 로그에 재앵커
+  권고 문구. 엔드투엔드 검증: m67_ubv 사본에서 VizieR 실 fetch → 오프셋이
+  검증 스크립트와 소수 넷째 자리까지 일치, QC(standard_anchor_offsets.csv)
+  산출. 레포트 fig 2장(`fig_ub_rail.py`): 영점 진단 + rail 해소 4적합 비교.
 - **나머지 성단(M5·M37·NGC457)은 구경 wide 로만 적합** — M5 나이·dm 문헌
   일치 + [M/H] −1.50(gri 바닥 재현), M37·NGC457 은 [M/H] 상한 rail(차등적색화
   / 수직 MS 정보 부족 — 정직하게 기록).

@@ -504,6 +504,19 @@ clip_sigma = 3.0
 fit_iters = 5
 slope_absmax = 2.0
 
+# Step 10 external standard-star anchor. Re-anchors mag_std_* on a
+# Gaia-independent VizieR standard catalog covering the target field.
+# Essential when a band's Gaia reference is 'approx' (Johnson U, sigma~0.20):
+# on M67 the approx U zero-point was off by -0.13 mag and railed the isochrone
+# [M/H] to -0.83; anchoring U/B/V on Montgomery+1993 (J/AJ/106/181, tied to
+# Landolt) restored the literature solution (+0.06). All bands must sit on one
+# standard system -- anchoring U alone is not enough.
+[cmd.standard_anchor]
+enable = false
+catalog = ""              # VizieR id, e.g. "J/AJ/106/181" (M67 UBVRI)
+match_radius_arcsec = 1.5
+min_stars = 20
+
 [isochrone]
 file_path = ""
 age_init = 9.7

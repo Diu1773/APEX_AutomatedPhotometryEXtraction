@@ -436,6 +436,11 @@ CMD_ONLY_TOML_KEY_MAP += (
     (('cmd', 'color', 'clip_sigma'), 'color_clip_sigma'),
     (('cmd', 'color', 'fit_iters'), 'color_fit_iters'),
     (('cmd', 'color', 'slope_absmax'), 'color_slope_absmax'),
+    # ── Step 10 external standard-star anchor (Gaia-independent ZP re-anchor) ──
+    (('cmd', 'standard_anchor', 'enable'), 'std_anchor_enable'),
+    (('cmd', 'standard_anchor', 'catalog'), 'std_anchor_catalog'),
+    (('cmd', 'standard_anchor', 'match_radius_arcsec'), 'std_anchor_match_radius'),
+    (('cmd', 'standard_anchor', 'min_stars'), 'std_anchor_min_stars'),
     (('gaia', 'zp_slope_absmax'), 'gaia_zp_slope_absmax'),
     (('gaia', 'color_slope_absmax'), 'gaia_color_slope_absmax'),
     (('isochrone', 'file_path'), 'iso_file_path'),

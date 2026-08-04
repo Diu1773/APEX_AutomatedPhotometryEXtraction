@@ -809,6 +809,13 @@ class Parameters:
             zp_clip_sigma=_getf(raw, "zp_clip_sigma", 3.0),
             zp_fit_iters=_geti(raw, "zp_fit_iters", 5),
             zp_slope_absmax=_getf(raw, "zp_slope_absmax", 1.0),
+            # Step 10 external standard-star anchor: re-anchor mag_std_* on a
+            # Gaia-independent VizieR standard catalog (e.g. M67 = J/AJ/106/181).
+            # Essential when a band's Gaia reference is 'approx' (Johnson U).
+            std_anchor_enable=_as_bool(raw.get("std_anchor_enable", "false"), False),
+            std_anchor_catalog=str(raw.get("std_anchor_catalog", "") or ""),
+            std_anchor_match_radius=_getf(raw, "std_anchor_match_radius", 1.5),
+            std_anchor_min_stars=_geti(raw, "std_anchor_min_stars", 20),
             frame_zp_min_n=_geti(raw, "frame_zp_min_n", 5),
             cmd_apply_extinction=_as_bool(raw.get("cmd_apply_extinction", "false"), False),
             cmd_extinction_mode=raw.get("cmd_extinction_mode", "absorb"),

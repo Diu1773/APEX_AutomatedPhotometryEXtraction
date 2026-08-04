@@ -32,7 +32,7 @@ from PyQt5.QtCore import Qt, QThread, pyqtSignal
 from PyQt5.QtWidgets import (
     QVBoxLayout, QHBoxLayout, QPushButton, QLabel, QGroupBox, QMessageBox,
     QTextEdit, QDialog, QFormLayout, QDialogButtonBox, QDoubleSpinBox,
-    QSpinBox, QCheckBox, QComboBox, QWidget, QTabWidget, QFileDialog
+    QSpinBox, QCheckBox, QComboBox, QWidget, QTabWidget, QFileDialog, QLineEdit
 )
 
 from apex.gui.workflow.step_window_base import StepWindowBase
@@ -1941,6 +1941,58 @@ class ZeropointCalibrationWorker(QThread):
 
         return float(zp), float(ct), int(len(x)), scatter
 
+    def _apply_standard_anchor(self, df_out: pd.DataFrame, output_dir: Path) -> pd.DataFrame:
+        """Re-anchor mag_std_* on an external (Gaia-independent) standard
+        catalog when [cmd.standard_anchor] is enabled.  Validated on M67:
+        the Gaia 'approx' U reference was off by −0.13 mag and drove the
+        isochrone [M/H] to a confident wrong value; anchoring U/B/V on
+        MMJ93 (VizieR J/AJ/106/181, Landolt-tied) restored the literature
+        solution.  Any failure here must not sink Step 10 — it degrades to
+        the un-anchored table with a warning."""
+        P = self.params.P
+        if not getattr(P, "std_anchor_enable", False):
+            return df_out
+        catalog = str(getattr(P, "std_anchor_catalog", "") or "").strip()
+        if not catalog:
+            self._log("[ANCHOR] enabled but no catalog id set — skipped "
+                      "(cmd.standard_anchor.catalog, e.g. \"J/AJ/106/181\")")
+            return df_out
+        try:
+            from apex.analysis.cmd.standard_anchor import (
+                anchor_qc_frame,
+                apply_anchor,
+                compute_anchor,
+                fetch_standard_catalog,
+            )
+
+            cache_dir = Path(self.result_dir) / "cache" / "standard_anchor"
+            std = fetch_standard_catalog(catalog, cache_dir, log=self._log)
+            result = compute_anchor(
+                df_out, std, catalog,
+                match_radius_arcsec=float(getattr(P, "std_anchor_match_radius", 1.5)),
+                min_stars=int(getattr(P, "std_anchor_min_stars", 20)),
+                log=self._log,
+            )
+            for msg in result.warnings:
+                self._log(f"[ANCHOR][warn] {msg}")
+            qc = anchor_qc_frame(result)
+            if not qc.empty:
+                qc.to_csv(output_dir / "standard_anchor_offsets.csv", index=False)
+            if result.residuals is not None and not result.residuals.empty:
+                result.residuals.to_csv(
+                    output_dir / "standard_anchor_residuals.csv", index=False)
+            if not result.applied_bands:
+                self._log("[ANCHOR] no band anchored — table left on the Gaia reference")
+                return df_out
+            self._log(f"[ANCHOR] applied to mag_std_{{{','.join(result.applied_bands)}}} "
+                      f"(catalog {catalog}, {result.n_matched} matches, "
+                      f"sep median {result.sep_median_arcsec:.2f}\")")
+            return apply_anchor(df_out, result)
+        except Exception as exc:
+            self._log(f"[ANCHOR][warn] standard anchor failed — continuing "
+                      f"un-anchored: {type(exc).__name__}: {exc}")
+            return df_out
+
     def run(self):
         try:
             P = self.params.P
@@ -2418,6 +2470,15 @@ class ZeropointCalibrationWorker(QThread):
                 coeffs, lo, hi, source, sig_approx = _GAIA_TO_BAND[key]
                 warn = " [WARNING: σ≈{:.2f} mag — use with caution]".format(sig_approx) if sig_approx >= 0.10 else ""
                 self._log(f"[ZP][{filt}] {source}  G-{filt}=poly(BP-RP)  σ≈{sig_approx:.3f}{warn}")
+                if sig_approx >= 0.10 and not getattr(self.params.P, "std_anchor_enable", False):
+                    # Validated on M67: the approx U reference was off −0.13 mag
+                    # and railed the isochrone [M/H]. The cure is an external,
+                    # Gaia-independent standard catalog (Parameters > External
+                    # Standard Anchor), not more colours.
+                    self._log(f"[ZP][{filt}] 권고: 이 밴드의 Gaia 참조는 근사(σ≥0.1)입니다 — "
+                              f"Parameters의 'External Standard Anchor'로 표준성 카탈로그에 "
+                              f"재앵커하세요 (M67 실측: U 영점 -0.13 mag 편차가 이소크론 "
+                              f"[M/H]를 rail시킴)")
                 m_filt = m_bpRP & (xcol >= lo) & (xcol <= hi)
                 G_minus_filt = np.full_like(G, np.nan)
                 G_minus_filt[m_filt] = self._poly_eval(xcol[m_filt], coeffs)
@@ -2949,6 +3010,8 @@ class ZeropointCalibrationWorker(QThread):
 
             df_out["gaia_G_syn"]     = gaia_G_syn
             df_out["gaia_BP_RP_syn"] = gaia_BP_RP_syn
+
+            df_out = self._apply_standard_anchor(df_out, output_dir)
 
             out_cmd_path = output_dir / "median_by_ID_filter_wide_cmd.csv"
             df_out.to_csv(out_cmd_path, index=False, na_rep="NaN")
@@ -5108,6 +5171,56 @@ class ZeropointCalibrationWindow(StepWindowBase):
         gaia_form.addRow("BP-RP max:", self.param_gi_max)
 
         layout.addWidget(gaia_group)
+
+        anchor_group, anchor_container = create_collapsible_section(
+            "External Standard Anchor")
+        anchor_form = QFormLayout(anchor_container)
+        anchor_form.setContentsMargins(0, 0, 0, 0)
+
+        anchor_info = QLabel(
+            "Gaia 변환 참조가 부정확한 밴드(특히 Johnson U, σ≈0.20)를 "
+            "VizieR 표준성 카탈로그(Landolt 계열, Gaia 독립)로 재앵커합니다.\n"
+            "M67 실측: U 영점이 -0.13 mag 틀어져 이소크론 [M/H]가 "
+            "-0.83으로 rail — 재앵커 후 +0.06(문헌 일치). 모든 밴드가 한 "
+            "표준계에 앉아야 U-B가 축퇴를 풉니다."
+        )
+        anchor_info.setWordWrap(True)
+        anchor_form.addRow(anchor_info)
+
+        self.param_anchor_enable = QCheckBox("Enable")
+        self.param_anchor_enable.setChecked(
+            bool(getattr(self.params.P, "std_anchor_enable", False)))
+        self.param_anchor_enable.setToolTip(
+            "켜면 Step 10이 wide CMD 테이블 저장 직전에 mag_std_* 를 외부 "
+            "표준성 오프셋만큼 이동합니다 (계측 측광은 불변). 오프셋 QC는 "
+            "cmd_zeropoint/standard_anchor_offsets.csv 에 남습니다.")
+        anchor_form.addRow("Anchor mag_std to standards:", self.param_anchor_enable)
+
+        self.param_anchor_catalog = QLineEdit()
+        self.param_anchor_catalog.setText(
+            str(getattr(self.params.P, "std_anchor_catalog", "") or ""))
+        self.param_anchor_catalog.setPlaceholderText(
+            "VizieR catalog id — e.g. J/AJ/106/181 (M67 UBVRI, Montgomery+1993)")
+        self.param_anchor_catalog.setToolTip(
+            "대상 시야를 덮는 표준성 측광 카탈로그의 VizieR ID. 직접 "
+            "<band>mag 컬럼 또는 Vmag+색(B-V, U-B, V-R, V-I)이 있어야 하며, "
+            "Gaia에서 유도된 카탈로그는 쓰면 안 됩니다(독립성 상실).")
+        anchor_form.addRow("VizieR catalog:", self.param_anchor_catalog)
+
+        self.param_anchor_radius = QDoubleSpinBox()
+        self.param_anchor_radius.setRange(0.1, 10.0)
+        self.param_anchor_radius.setDecimals(1)
+        self.param_anchor_radius.setValue(
+            float(getattr(self.params.P, "std_anchor_match_radius", 1.5)))
+        anchor_form.addRow("Match radius (arcsec):", self.param_anchor_radius)
+
+        self.param_anchor_min_stars = QSpinBox()
+        self.param_anchor_min_stars.setRange(5, 1000)
+        self.param_anchor_min_stars.setValue(
+            int(getattr(self.params.P, "std_anchor_min_stars", 20)))
+        anchor_form.addRow("Min matched stars:", self.param_anchor_min_stars)
+
+        layout.addWidget(anchor_group)
         layout.addStretch(1)
         add_parameter_reset_button(
             buttons,
@@ -5124,6 +5237,9 @@ class ZeropointCalibrationWindow(StepWindowBase):
                 (self.param_gaia_snr, 20.0),
                 (self.param_gi_min, -0.5),
                 (self.param_gi_max, 4.5),
+                (self.param_anchor_enable, False),
+                (self.param_anchor_radius, 1.5),
+                (self.param_anchor_min_stars, 20),
             ],
         )
         buttons.accepted.connect(lambda: self.save_parameters(dialog))
@@ -5143,6 +5259,10 @@ class ZeropointCalibrationWindow(StepWindowBase):
         self.params.P.gaia_snr_calib_min = self.param_gaia_snr.value()
         self.params.P.gaia_gi_min = self.param_gi_min.value()
         self.params.P.gaia_gi_max = self.param_gi_max.value()
+        self.params.P.std_anchor_enable = self.param_anchor_enable.isChecked()
+        self.params.P.std_anchor_catalog = self.param_anchor_catalog.text().strip()
+        self.params.P.std_anchor_match_radius = self.param_anchor_radius.value()
+        self.params.P.std_anchor_min_stars = self.param_anchor_min_stars.value()
         self._zp_cache_validation_result = None
         self.save_state()
         saved = self.persist_params()

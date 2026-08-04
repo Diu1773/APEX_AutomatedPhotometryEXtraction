@@ -94,6 +94,16 @@ E:\APEX_validation\psf_crossinstrument\m67_ubv\
 
 # 후속 (2026-08-04) — 표준 U 영점으로 축퇴가 실제로 풀렸다
 
+![영점 진단](fig_ub_zeropoint_diagnosis.png)
+*그림 1 — MMJ93 표준 대비 밴드별 오프셋. U 는 −0.131 mag 계통 편차(Gaia
+근사 참조의 공칭 σ=0.20 이 문제의 근원), B 도 +0.051, V 는 무죄.
+생성: `fig_ub_rail.py`.*
+
+![rail 해소 3부작](fig_ub_rail_resolution.png)
+*그림 2 — 같은 자료·같은 별·같은 MCMC 에서 영점 앵커만 바꾼 4개 적합.
+회색=B−V 단독(표준 영점: 축퇴로 넓음), 주황=U−B 추가+Gaia U(확신하며 틀림),
+파랑=U−B+표준 영점(문헌 복귀), 초록=같은 조건의 PSF 측광(재현). 음영=문헌 범위.*
+
 위의 "제대로 하려면 U 표준등급이 필요하다"를 실행했다. M67 은 고전 측광
 표준장이라 외부 표준 카탈로그가 있다: **Montgomery, Marschall & Janes 1993**
 (AJ 106, 181; VizieR `J/AJ/106/181` table3, UBVRI 1,456별) 를 내려받아
