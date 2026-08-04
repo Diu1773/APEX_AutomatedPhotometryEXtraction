@@ -2234,8 +2234,12 @@ class IsochroneModelWindow(StepWindowBase):
                 idx = int(state_data["band_mag_idx"])
                 if 0 <= idx < self.mag_combo.count():
                     self.mag_combo.setCurrentIndex(idx)
-            # MCMC tab is built later in __init__ — stash and apply there.
+            # restore_state runs AFTER setup_step_ui() (see __init__), so the
+            # MCMC widgets already exist here — apply directly. The stash +
+            # build-site apply stays as a guard for any future order change.
             self._mcmc_saved_state = state_data.get("mcmc") or {}
+            if self._mcmc_saved_state and hasattr(self, "mcmc_mh_prior_chk"):
+                self._restore_mcmc_state(self._mcmc_saved_state)
         if self.iso_path_edit is not None and not self.iso_path_edit.text().strip():
             iso_path = str(getattr(self.params.P, "iso_file_path", "") or "")
             if iso_path:
