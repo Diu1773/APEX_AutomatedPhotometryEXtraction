@@ -172,11 +172,12 @@
 
 ![Step 12 아이소크론 모델 (M5 표준화 CMD + 등시선)](img/cmd_step12_isochrone_model.png)
 
-**한 줄 목적:** PARSEC/BaSTI 아이소크론을 CMD 위에 올려 **나이·금속함량·거리·적색화**를 맞춥니다 — 수동 슬라이더 / 빠른 격자 피팅 / 정밀 MCMC 세 방법.
+**한 줄 목적:** PARSEC/BaSTI 아이소크론을 CMD 위에 올려 **나이·금속함량·거리·적색화**를 맞춥니다 — 피팅은 **MCMC 우도적합 하나**로 단일화(2026-08-04), 수동 슬라이더는 결과 확인·탐색용.
 
 ### 화면 구성
 - **Isochrone Source**(아이소크론 파일/폴더) · **Band Selection**(색·등급) · **Source Filters**(시차·ROI·SNR)
-- 탭: **`CMD Viewer`**(수동 슬라이더) / **`Color-Color`** / **`Quick Fit (grid)`** / **`Auto-fit (MCMC)`**
+- 탭: **`Auto-fit (MCMC)`**(기본 탭, 유일한 자동 피팅) / **`CMD Viewer`**(수동 슬라이더 — 시각 확인용)
+- (구판의 `Color-Color`·`Quick Fit (grid)` 탭은 제거됨 — 색-색 정보는 다중색 MCMC 우도에 포함)
 
 위 그림에서 아래쪽 슬라이더가 **log Age=9.50, [Fe/H]=−0.25, E(g-r)=0.0901** 로,
 표준화 CMD에 주계열·거성가지를 따라 등시선(붉은 곡선)이 겹쳐져 있습니다.
@@ -184,10 +185,10 @@
 ### 따라하기 (권장 워크플로)
 1. **`Browse`** 로 아이소크론 파일을 엽니다(관측 밴드와 **같은 측광 시스템**이어야 함 — 예: Johnson B-V는 Johnson/Bessell 파일).
 2. **`Band Selection`** 에서 `Color(X)`·`Mag(Y)` 를 CMD와 같게 맞춥니다.
-3. **`CMD Viewer`** 탭에서 슬라이더(log Age·[Fe/H]·E(color)·Dist. Mod)를 드래그해 곡선을 데이터에 **대략 겹칩니다.**
-4. **`Quick Fit (grid)`** 탭으로 가서 **`Use CMD viewer values as seed`** 를 눌러 그 값을 씨앗으로 가져옵니다.
-5. **`Run Auto Fit`**(주황, 다중 시작 최소제곱) 또는 **`Run Grid Scan`**(보라, 격자 탐색)으로 정밀화.
-6. (정밀 분석) **`Auto-fit (MCMC)`** 탭에서 Gaia 멤버십·시차 거리 사전(prior)을 켜고 **`Run MCMC Auto-Fit`**.
+3. **`Auto-fit (MCMC)`** 탭(기본)에서 색 체크박스를 확인하고, Gaia 멤버십·시차 거리 prior(기본 ON)를 켠 채 **`Run MCMC Auto-Fit`**.
+   - 데이터에 **u/U 밴드가 없으면 [M/H]는 분광 prior 가 공식 경로**입니다 — 경고 배너가 뜨면 문헌 [Fe/H](APOGEE 등)를 `[M/H] prior` 에 입력하세요.
+   - E(B−V) prior 는 먼지지도(SFD/Bayestar)·성단 카탈로그(Cantat-Gaudin+2020, Dias+2021) 값을 권장.
+4. **`CMD Viewer`** 탭에서 적합 결과를 눈으로 확인하고, 필요하면 슬라이더로 주변 파라미터를 탐색합니다.
 
 ![Step 12 Auto Fit 탭](img/cmd_step12_auto_fit.png)
 
@@ -199,7 +200,6 @@
 | `E(color)` | 적색화 E(색) (예: E(g-r)) |
 | `Dist. Mod` | 거리 지수 (m−M)₀ |
 | `SNR >=` (기본 ON, 20) | CMD 표시·피팅 SNR 게이트 |
-| (Color-Color) `Estimate E(B-V)` | 색-색도로 적색화 추정 |
 | (MCMC) `walkers/steps/burn-in` | MCMC 샘플링 설정 |
 
 ### 관련 파라미터 — `[isochrone]`

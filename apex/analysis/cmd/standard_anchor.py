@@ -346,8 +346,25 @@ def discover_standard_catalogs(
         tables = v.get_catalogs(cid)
         return tables[0].to_pandas() if tables else None
 
+    # Pre-rank by description before probing: keyword hits are NOT
+    # relevance-ordered (M67 returned 301 candidates), so probing the first
+    # N dict entries can miss the right catalog entirely (false negative).
+    # Photometry-looking descriptions mentioning the target go first.
+    def _desc_score(item: tuple[str, str]) -> int:
+        desc = item[1].lower()
+        score = 0
+        for kw in ("photometr", "ubv", "ugriz", "ubvri", "standard", "ccd"):
+            if kw in desc:
+                score += 2
+        for v in variants:
+            if v.lower() in desc:
+                score += 3
+        return score
+
+    ranked = sorted(seen.items(), key=_desc_score, reverse=True)
+
     out: list[CatalogCandidate] = []
-    for cid, desc in list(seen.items())[:max_candidates]:
+    for cid, desc in ranked[:max_candidates]:
         cand = _probe_candidate(cid, ra_deg, dec_deg, radius_deg, bands, fetch_sample)
         if cand is None:
             continue
