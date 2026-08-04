@@ -45,6 +45,11 @@
 - 신규: `run_step12_headless --dm-prior`(구상성단용)·`--mh-bounds`,
   `recalibrate_u_mmj93.py`(--source-result/--suffix). 상세:
   `validation/psf_crossinstrument/REPORT_UB_DEGENERACY.md` 후속절.
+- **나머지 성단(M5·M37·NGC457)은 구경 wide 로만 적합** — M5 나이·dm 문헌
+  일치 + [M/H] −1.50(gri 바닥 재현), M37·NGC457 은 [M/H] 상한 rail(차등적색화
+  / 수직 MS 정보 부족 — 정직하게 기록). **PSF 체인은 차단: 세 성단의 과학
+  프레임이 E: 에 없고 백업 드라이브 D:\APEX_backup 이 미연결.** D: 연결이
+  재개 조건(사용자 액션).
 - 마지막 커밋(직전): 2026-08-01 — fix(wcs): pixel_scale_arcsec 미설정 시 float(None) 크래시
 - 오라클 **722 passed, 0 failed** (2026-08-01, 5분 21초). 7-31 아침 625 → +97
 - 2026-08-02 워크트리(`claude2/festive-merkle-659e92`, 논문 fig 재작업 세션)에서
