@@ -25,7 +25,7 @@
 - The shared figure palette was accidentally monochrome; it is now restored to an Okabe–Ito colour-blind-safe palette and all non-slow final figures were regenerated consistently.
 - `fig_calibration_step0.py` was reduced from 12 to 8 panels: each master bias/dark/flat is paired with a distribution or profile, and the science before/after comparison carries a compact sky-profile inset. The inset annotation no longer collides with its legend.
 - `render_preview.py` now uses 11.2 px captions, slightly larger table text, and a relaxed figure height budget (0.54 per slot / 0.92 paired room). The regenerated preview has 18 A4 pages; figure images are no longer forced to thumbnail height.
-- Static checks: figure generator and renderer compile; `run_all.py --only 1 2 3 4 5 6 7 8 9 10 12 13 14 15 16 17 render` completed successfully. The unrelated working-tree changes in the core standard-anchor work and `validation/fig_dataviz_demo.png` were left untouched.
+- Static checks: figure generator and renderer compile; `run_all.py --only 1 2 3 4 5 6 7 8 9 10 12 13 14 15 16 17 render` completed successfully. Full oracle: **771 passed, 0 failed, 6 warnings** (455.66 s). The unrelated `validation/fig_dataviz_demo.png` was left untouched.
 
 **2026-08-04 · 사용자 지적 반영 — WCS 기본 경로, ccdproc 구분, 보조표와 패널 캡션**
 
