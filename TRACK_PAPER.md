@@ -550,3 +550,8 @@ Claude 의 오류 경위: 레포 전체 grep 이 타임아웃되자 `apex/` 로 
 ## 최근 세션 원문
 
 `C:\Users\bmffr\Desktop\Main\harvest\apex\` (논문 관련: 2026-07-09/12 PAPER.md 세션들)
+
+## 2026-08-04 · A4 페이지 경계 고정
+
+- 미리보기의 각 페이지를 A4 210×297 mm(794×1123 px) 한 장으로 고정하고, 화면·인쇄 양쪽에 `break-after: page`와 `break-inside: avoid`를 적용했다.
+- 표지·목차·본문 페이지가 물리적 A4 경계에서 분리되며, 현재 미리보기는 17쪽으로 렌더된다.

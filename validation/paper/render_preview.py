@@ -365,7 +365,9 @@ body{font-family:var(--serif);font-size:11.2px;line-height:1.32;color:var(--ink)
 #sizer{position:relative;}
 #book{transform-origin:top left;width:var(--pw);}
 .page{position:relative;width:var(--pw);height:var(--ph);background:#fff;
-  margin:0 0 14px;box-shadow:0 2px 10px rgba(0,0,0,.35);overflow:hidden;}
+  margin:0 0 14px;box-shadow:0 2px 10px rgba(0,0,0,.35);overflow:hidden;
+  break-after:page;page-break-after:always;break-inside:avoid;page-break-inside:avoid;}
+.page:last-child{break-after:auto;page-break-after:auto;}
 .pinner{position:absolute;left:var(--mx);right:var(--mx);top:var(--mt);bottom:var(--mb);
   display:flex;flex-direction:column;}
 .span:not(:empty){margin-bottom:10px;}
@@ -547,7 +549,9 @@ mark.apexnote{cursor:pointer;}
   #stage{overflow:visible;height:auto!important;}
   #sizer{width:auto!important;height:auto!important;margin:0!important;}
   #book{transform:none!important;margin:0!important;}
-  .page{box-shadow:none;margin:0;page-break-after:always;}
+  .page{box-shadow:none;margin:0;break-after:page;page-break-after:always;
+    break-inside:avoid;page-break-inside:avoid;}
+  .page:last-child{break-after:auto;page-break-after:auto;}
 }
 """
 
