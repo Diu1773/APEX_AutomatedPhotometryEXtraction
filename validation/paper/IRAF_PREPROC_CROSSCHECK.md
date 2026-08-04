@@ -13,7 +13,9 @@ in WSL with PyRAF 2.2.3.dev9 and IRAF `ccdred`:
 4. `ccdproc` bias + dark + flat correction on the science frame.
 
 Overscan, trim, cosmic-ray, and hot-pixel repair were disabled so the comparison
-tests detector-calibration arithmetic only. The compact measured summary is
-`data/iraf_preproc_stats.json`; the large IRAF FITS intermediates are ignored by
-the repository. Figure generation is performed by
-`fig12_preproc_crosscheck.py`.
+tests detector-calibration arithmetic only. The compact pixel-residual audit is
+`data/iraf_preproc_stats.json`; the absolute product values used in Figure 4 are
+recorded separately in `data/preproc_absolute_summary.json`. The large IRAF FITS
+intermediates are ignored by the repository. Figure generation is performed by
+`fig12_preproc_crosscheck.py`; the plotted quantity is the absolute product
+level, not an APEX-minus-reference residual.

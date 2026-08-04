@@ -1,0 +1,27 @@
+{
+  "statistic": "full-frame median ± 1.4826 MAD",
+  "unit": "DN (master flat is unit-median normalized)",
+  "input": "E:/APEX_validation/crosscheck_iraf (NGC 6811 B, 60 s, 2026-06-11)",
+  "n_bias": 8,
+  "n_dark_60s": 8,
+  "n_flat_B": 5,
+  "apex": {
+    "master_bias": {"median": 512.0, "robust_sigma": 1.4826},
+    "master_dark": {"median": 1.0, "robust_sigma": 2.2239},
+    "master_flat": {"median": 1.0, "robust_sigma": 0.0442771813},
+    "full_pipeline": {"median": 633.4616089, "robust_sigma": 31.3895124}
+  },
+  "python_ccdproc": {
+    "master_bias": {"median": 512.0, "robust_sigma": 1.4826},
+    "master_dark": {"median": 1.0, "robust_sigma": 2.2239},
+    "master_flat": {"median": 1.0, "robust_sigma": 0.0442771813},
+    "full_pipeline": {"median": 633.4616089, "robust_sigma": 31.3895124}
+  },
+  "iraf_ccdproc": {
+    "master_bias": {"median": 512.0, "robust_sigma": 1.4826},
+    "master_dark": {"median": 1.0, "robust_sigma": 2.2239},
+    "master_flat": {"median": 1.0007535219, "robust_sigma": 0.0443097014},
+    "full_pipeline": {"median": 632.9905396, "robust_sigma": 31.3666182}
+  },
+  "python_note": "Independent Python ccdproc values agree with APEX to the displayed precision; residual maps are intentionally not plotted in Figure 4."
+}

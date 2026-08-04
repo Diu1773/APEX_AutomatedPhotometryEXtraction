@@ -11,7 +11,7 @@ marker shape, and hatching. Each final figure prints its data provenance.
 | 1 | `fig_architecture.py` | Workflow and software layers | repository structure |
 | 2 | `fig_calibration_step0.py` | Step-0 calibration data and effect | NGC 6811 calibration/science frames |
 | 3 | `fig11_detector.py` | Gain, read noise, and dark current | retained detector-characterization data |
-| 4 | `fig12_preproc_crosscheck.py` | APEX–ccdproc pixel arithmetic | retained NGC 6811 calibration products |
+| 4 | `fig12_preproc_crosscheck.py` | APEX·Python ccdproc·IRAF ccdproc absolute product table | retained NGC 6811 calibration products |
 | 5 | `fig13_cross_instrument.py` | Cross-instrument calibration | LCO QHY600 and Sinistro products |
 | 6 | `fig6_qc_validation.py` | Frame-QC decisions | fixed-seed synthetic night |
 | 7 | `fig_completeness_realvssynth.py` | Detection completeness | artificial stars in seven real frames |

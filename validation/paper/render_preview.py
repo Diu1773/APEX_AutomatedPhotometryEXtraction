@@ -46,10 +46,10 @@ def fig_uri(p):
 
 # descriptive captions, keyed by pipeline figure number
 CAPTIONS = {
- 2: r"검출기 보정(0단계): 적용하는 프레임과 그 효과. \textbf{(a–c)} 그 밤의 보정 노출로 APEX가 만든 마스터 bias(중앙값 512 DN, 8장)·dark(60초에 1.0 DN, 8장)·flat(중앙값 1.000, 5장). \textbf{(d)} flat의 가로 프로파일 — 시야를 가로지르는 12\% 감도 기울기가 나눠 내는 대상이다. \textbf{(e–g)} 같은 NGC 6811 $B$ 60초 프레임을 연산마다 본 것: raw, bias·dark를 뺀 뒤, flat으로 나눈 뒤. (f)와 (g)는 같은 회색조라 차이가 flat 보정 몫이다. \textbf{(h)} 각자의 중앙값으로 정규화한 하늘 프로파일 — 좌우 진폭이 12.9\%에서 1.6\%로 줄어든다. 전부 실측 프레임이다(Moravian C3-61000, $2\times2$, 2026-06-11 밤). 이 연산들의 수치 검증은 따로다: 참값 복원(본문), 검출기 상수(그림 3), ccdproc 화소 대조(그림 4), 카메라 두 대 추가 재현(그림 5).",
+ 2: r"검출기 보정(0단계): 적용하는 프레임과 그 효과. \textbf{(a–c)} 그 밤의 보정 노출로 APEX가 만든 마스터 bias(중앙값 512 DN, 8장)·dark(60초에 1.0 DN, 8장)·flat(중앙값 1.000, 5장). \textbf{(d)} flat의 가로 프로파일 — 시야를 가로지르는 12\% 감도 기울기가 나눠 내는 대상이다. \textbf{(e–g)} 같은 NGC 6811 $B$ 60초 프레임을 연산마다 본 것: raw, bias·dark를 뺀 뒤, flat으로 나눈 뒤. (f)와 (g)는 같은 회색조라 차이가 flat 보정 몫이다. \textbf{(h)} 각자의 중앙값으로 정규화한 하늘 프로파일 — 좌우 진폭이 12.9\%에서 1.6\%로 줄어든다. 전부 실측 프레임이다(Moravian C3-61000, $2\times2$, 2026-06-11 밤). 이 연산들의 수치 검증은 따로다: 참값 복원(본문), 검출기 상수(그림 3), 세 경로의 절대 산출값 표(그림 4), 카메라 두 대 추가 재현(그림 5).",
  1: r"APEX의 작업 흐름과 계층. 0–7단계는 두 모드가 공유하며, 측광이 끝난 뒤에야 CMD 모드와 LC 모드로 갈라진다. 각 단계는 관측자에게 **결정 하나**를 요구하고(어떤 보정 프레임을 쓸지, 이 프레임을 받아들일지, 검출 문턱을 어디에 둘지, 몇 장에서 보여야 별로 인정할지, 구경을 얼마로 할지) 정해진 경로에 검사 가능한 산출물을 남긴다. 계산은 Qt를 부르지 않는 핵심부에 있고 그래픽 계층은 그것을 부르기만 하므로, 3절의 화면 없는 검증이 곧 화면이 돌리는 코드를 시험한다. 각 단계 아래의 붉은 번호는 그 단계를 검증하는 절이다.",
- 3: r"같은 2026-06-11 보정 자료를 APEX, Python `ccdproc`, IRAF `ccdproc`으로 각각 줄여 얻은 검출기 상수. **(a)** 표는 gain $0.681\pm0.014$ e$^-$/ADU, 읽기잡음 $2.35$ e$^-$, 암전류 $0.0077$ e$^-$/s를 도구별로 나란히 보인다. **(b)** 물리량별 막대는 서로 다른 단위를 한 축에 섞지 않고 각각의 실제 값으로 비교한다. 세 결과가 표시 정밀도에서 겹치는 것은 일치 결과이며, 화소 단위 차이는 그림 4에 따로 제시한다. 헤더·제조사·실험실 gain은 이 비교에 넣지 않았다.",
- 4: r"보정 각 단계의 $|$APEX$-$ccdproc$|$ 차이 지도(전체 프레임, 8×8 최대값 풀링). **(a–f)** 마스터 bias·dark·flat 구성과 bias·dark·flat 적용 여섯 단계는 모든 화소에서 비트동일($\Delta=0$ — 빈 지도가 그 증거다). **(g)** 완전 사슬만 float32 반올림 먼지(최대 $8.6\times10^{-4}$ DN)를 남긴다. **(h)** 그 최대 불일치를 읽기잡음(3.5 DN)·하늘 산탄잡음(41 DN)과 견준 잡음 예산 — 세 자릿수 이상 아래. NGC 6811 $B$ 60초 1장, bias 8·dark 8·flat 5, 2026-06-11 밤, Moravian C3-61000; 우주선·핫픽셀 수리 단계는 산술 비교라 끔(주입 시험이 따로 검증).",
+ 3: r"같은 2026-06-11 보정 자료를 APEX, Python `ccdproc`, IRAF `ccdproc`으로 각각 줄여 얻은 검출기 상수. **(a)** 표는 gain $0.681\pm0.014$ e$^-$/ADU, 읽기잡음 $2.35$ e$^-$, 암전류 $0.0077$ e$^-$/s를 도구별로 나란히 보인다. **(b)** 물리량별 막대는 서로 다른 단위를 한 축에 섞지 않고 각각의 실제 값으로 비교한다. 세 결과가 표시 정밀도에서 겹치는 것은 상수 추정의 일치 결과이며, 실제 보정 영상의 절대 산출값은 그림 4의 표에 따로 제시한다. 헤더·제조사·실험실 gain은 이 비교에 넣지 않았다.",
+ 4: r"같은 NGC 6811 $B$ 60초 자료를 세 경로로 줄인 **절대 산출값**. 각 칸은 전체 프레임의 중앙값 $\pm$ robust $\sigma$($1.4826\times$MAD)이며, APEX에서 뺀 차이값을 그리지 않았다. 행은 master bias, 60초 master dark, 중앙값 1로 정규화한 master flat, bias·dark·flat을 모두 적용한 과학 영상이다. 열은 APEX, 독립적인 Python `ccdproc`, PyRAF로 실행한 IRAF `ccdproc`이다. Python 값은 표시 정밀도에서 APEX와 일치하며, 별도의 화소 잔차 감사 자료는 그림의 수치가 아니다. 2026-06-11 밤, Moravian C3-61000($2\times2$), bias 8·dark 8·flat 5; 우주선·핫픽셀 수리는 산술 비교에서 제외했다.",
  5: r"두 LCO 카메라의 raw를 APEX로 보정해 독립 파이프라인 BANZAI 산출물과 비교. QHY600 CMOS는 전체가 균일한 $+0.06$ e$^-$, 4-앰프 Sinistro CCD는 $\approx0.3\%$ 일치(사분면 패턴은 앰프별 조립의 차이). 보정 산술이 검출기를 넘어 일반화됨을 보인다.",
  6: r"주입 결함으로 만든 44-프레임 밤에서 자동 프레임 QC. 정상 24장을 오탐 없이 통과, 나쁜 시상·밝은 하늘·거짓 헤더 프레임을 모두 검출. 회색 투명도 손실만 놓치는데(균일 변화라 영상 통계에 안 잡힘), 이것이 2단계 측광-QC의 근거다.",
  7: r"검출 문턱값에 따른 헛검출 오염을, 외부 목록 없이 프레임 자신에게서 잰 것. 배경을 뺀 영상의 부호를 뒤집어 같은 검출기를 다시 돌리면 잡음에서 기원한 헛검출이 그대로 세어진다 \citep{serra2012, molino2014}. **(a)** 구상성단 둘·산개성단 둘의 실측 단일 노출 다섯 장($B$·$R$·$g'$). 빈 역삼각형은 상한이다 — 부호를 뒤집은 영상에서 검출이 하나도 안 나온 경우로, $1/N_+$에 찍고 잇는 선에서는 뺐다(이으면 오염이 아니라 $N_+$가 만든 기울기가 그려진다). 큰 빈 기호는 각 프레임 자신의 하한, 곧 오염이 5\% 아래로 유지되는 가장 낮은 문턱값이며 **그 값이 $1.5,\,1.5,\,1.8,\,2.0,\,2.2$로 프레임마다 다르다.** M13의 두 곡선은 **같은 성단을 같은 밤에 찍은 두 필터**라 이 갈림을 대상 탓으로 돌릴 수 없음을 보인다. 기본값 $3.2\sigma$(세로선)에서는 다섯 장 모두 오염 2\% 이하다. 음영은 다섯이 함께 무너지는 $1.5$–$1.2\sigma$ 구간으로, 잡음이 최소 연결 면적에 걸쳐 문턱을 넘을 확률은 문턱값만의 함수이므로 프레임의 별 개수와 무관하다. **(b)** Gaia DR3 대조 검증. 가로축은 Gaia와 짝지어지지 않은 실측 헛검출 수, 세로축은 목록 없이 낸 추정값이며, 44점이 네 자릿수에 걸쳐 2배(음영) 안에 든다. 무너지는 구간에서 2.4\%로 맞고, 그 위에서는 추정이 실측보다 크다 — 게이트로서는 안전한 방향이고, Gaia 한계보다 어두운 진짜 별이 가로축에서 헛검출로 세어지는 탓도 있다.",
@@ -73,7 +73,7 @@ CAPTIONS.update({
   1: r"APEX의 작업 흐름과 소프트웨어 계층. 0–7단계는 CMD와 LC 모드가 공유하며 측광 뒤에 분기한다. 그래픽 계층은 Qt와 분리된 계산 핵심부를 호출하므로, 3절의 화면 없는 시험은 GUI가 사용하는 것과 같은 계산 경로를 거친다. 상자 아래 번호는 해당 단계의 검증 또는 적용 절이다.",
   2: r"0단계 보정 자료와 보정 효과. **(a)** master bias 영상과 **(b)** 그 화소값 분포·중앙값·산포, **(c)** master dark 영상과 **(d)** 그 분포·상위 백분위, **(e)** master flat 영상과 **(f)** flat 가로 프로파일을 짝지어 보인다. **(g)** raw NGC 6811 $B$ 과학 영상, **(h)** bias·dark 제거와 flat 나눗셈을 끝낸 영상이다. (h)의 작은 삽입도에서 보정 전후 하늘 프로파일을 각 중앙값으로 정규화해 비교한다. master는 bias 8장, 60초 dark 8장, flat 5장으로 만들었고, 전부 Moravian C3-61000의 2026-06-11 실측 프레임이다. 하늘 배경 좌우 진폭은 12.9\%에서 1.6\%로 줄었다.",
   3: r"광자전달곡선으로 측정한 검출기 상수. **(a)** flat 쌍의 신호-분산 관계에서 gain $0.681\pm0.014$ e$^-$/ADU를 얻었고, **(b)** dark 노출 사다리의 기울기에서 암전류 $0.0077$ e$^-$/s를 얻었다. (b) 아래 잔차는 선형 적합의 $R^2=0.998$을 보인다. 읽기잡음은 $2.35$ e$^-$이며 FITS 헤더 EGAIN은 측정값보다 약 16배 작다.",
-  4: r"APEX와 독립적인 Python `ccdproc` 패키지 및 IRAF `ccdproc` 태스크의 단계별 보정 대조. **(a)** master bias·dark·flat과 완전 사슬에서 각각의 최대 $|\Delta|$/robust $\sigma$를 표로 제시한다. Python은 bias·dark·flat과 개별 적용이 비트 동일하고 완전 사슬 차이는 $8.6\times10^{-4}$ DN이다. IRAF는 bias·dark가 비트 동일하며 unit-median flat의 최대 차이는 $2.8\times10^{-3}$ DN, 완전 사슬은 $34.4$ DN이다. **(b)** 두 독립 구현의 최대 차이를 그룹 막대로 비교하고, 3.5 DN 읽기잡음과 41 DN 하늘 산탄잡음 선을 함께 놓았다. 0은 표에 실제 측정값으로 적고 막대에서는 표시 바닥에 둔다. IRAF의 전체 사슬 차이는 독립적인 조합·평탄화 산술 경로를 반영한다.",
+  4: r"같은 NGC 6811 $B$ 60초 자료를 세 경로로 줄인 **절대 산출값**. 각 칸은 전체 프레임의 중앙값 $\pm$ robust $\sigma$($1.4826\times$MAD)이며, APEX에서 뺀 차이값을 그리지 않았다. 행은 master bias, 60초 master dark, 중앙값 1로 정규화한 master flat, bias·dark·flat을 모두 적용한 과학 영상이다. 열은 APEX, 독립적인 Python `ccdproc`, PyRAF로 실행한 IRAF `ccdproc`이다. Python 값은 표시 정밀도에서 APEX와 일치하며, 별도의 화소 잔차 감사 자료는 그림의 수치가 아니다. 2026-06-11 밤, Moravian C3-61000($2\times2$), bias 8·dark 8·flat 5; 우주선·핫픽셀 수리는 산술 비교에서 제외했다.",
   5: r"서로 다른 두 LCO 카메라에서 APEX 보정 영상과 BANZAI 산출물을 비교한 결과. **위 행**은 0.4 m의 QHY600 단일 증폭기 CMOS와 Proxima Cen 장이며, **아래 행**은 1 m의 Sinistro 네 증폭기 CCD와 NGC 5985 장이다. QHY600 차이는 거의 균일한 $+0.06$ e$^-$이고, Sinistro 화소값은 약 0.3\% 범위에서 일치하지만 증폭기 사분면 구조가 남는다.",
   6: r"주입 결함으로 구성한 44장 자료에서 자동 프레임 QC의 판정. **(a)** 주입한 정상·불량 종류와 QC 판정의 혼동행렬: 정상 24장은 모두 PASS, 나쁜 시상은 FAIL, 밝은 하늘과 헤더와 실제 읽기잡음이 다른 영상은 REVIEW로 분류됐다. **(b)** QC가 사용하는 진단 평면에서 균일한 0.7등급 투과율 손실은 영상 통계만으로 분리되지 않는다.",
  7: r"검출 문턱값에 따른 헛검출 오염. **(a)** 실제 영상의 부호를 뒤집은 검출로 얻은 프레임별 안전 하한과 기본값 $3.2\sigma$의 오염률(다섯 영상 모두 2\% 이하). **(b)** Gaia DR3와의 독립 대조에서 목록 없이 추정한 헛검출 수가 44개 자료점에서 실측값의 2배 이내에 드는지 보인다. 부호반전은 대칭 잡음을 세는 상한이며 우주선·핫픽셀 같은 양의 결함은 별도 단계의 대상이다.",
@@ -92,7 +92,7 @@ CAPTIONS.update({
 # Figure 3 is a cross-tool detector-constant comparison.  Keep this override
 # after the legacy caption table above so the preview cannot silently show the
 # former single-pipeline PTC description.
-CAPTIONS[3] = r"같은 2026-06-11 보정 자료를 APEX, Python ccdproc, IRAF ccdproc으로 각각 줄여 얻은 검출기 상수. **(a)** 표는 gain $0.681\pm0.014$ e$^-$/ADU, 읽기잡음 $2.35$ e$^-$, 암전류 $0.0077$ e$^-$/s를 도구별로 나란히 보인다. **(b)** 물리량별 막대는 서로 다른 단위를 한 축에 섞지 않고 각각의 실제 값으로 비교한다. 세 결과가 표시 정밀도에서 겹치는 것은 일치 결과이며, 화소 단위 차이는 그림 4에 따로 제시한다. 헤더·제조사·실험실 gain은 이 비교에 넣지 않았다."
+CAPTIONS[3] = r"같은 2026-06-11 보정 자료를 APEX, Python ccdproc, IRAF ccdproc으로 각각 줄여 얻은 검출기 상수. **(a)** 표는 gain $0.681\pm0.014$ e$^-$/ADU, 읽기잡음 $2.35$ e$^-$, 암전류 $0.0077$ e$^-$/s를 도구별로 나란히 보인다. **(b)** 물리량별 막대는 서로 다른 단위를 한 축에 섞지 않고 각각의 실제 값으로 비교한다. 세 결과가 표시 정밀도에서 겹치는 것은 상수 추정의 일치 결과이며, 실제 보정 영상의 절대 산출값은 그림 4의 표에 따로 제시한다. 헤더·제조사·실험실 gain은 이 비교에 넣지 않았다."
 
 # ---------- bibliography ----------
 def parse_bib(text):
@@ -195,8 +195,29 @@ out = []
 para = []
 sub_title = ""
 sub_figs = []   # figure numbers referenced in current subsection (in order)
+emitted = set()
+
+def emit_fig_numbers(numbers):
+    """Emit figures at the paragraph that introduces them.
+
+    The previous renderer accumulated all references until the subsection
+    ended.  That made a numerical sentence in §3.2 and its evidence figure
+    drift apart by several pages.  Keep the old subsection fallback for
+    unusual references, but place ordinary paragraph references immediately.
+    """
+    if not re.match(r"^\d+(\.\d+)?[\.\s]", sub_title):
+        return
+    title = re.sub(r"^\d+(\.\d+)?\.?\s*", "", sub_title)
+    for n in numbers:
+        if n in FIGMAP and n not in emitted:
+            emitted.add(n)
+            body = inline(CAPTIONS[n]) if n in CAPTIONS else html.escape(title)
+            cap = f"<b>그림 {n}.</b> {body}"
+            out.append(f'<figure><img alt="그림 {n}" src="{fig_uri(FIGMAP[n])}">'
+                       f'<figcaption>{cap}</figcaption></figure>')
 
 def flush_para(buf):
+    global sub_figs
     if buf:
         txt = " ".join(buf).strip()
         if txt:
@@ -204,22 +225,23 @@ def flush_para(buf):
             if txt.startswith("*[") or txt.startswith("["): cls = ' class="pending"'
             elif re.match(r"\*?영문 제출본", txt): cls = ' class="docnote"'
             out.append(f"<p{cls}>{inline(txt)}</p>")
+            refs = []
+            for mm in re.finditer(r"그림\s*(\d+)", txt):
+                n = int(mm.group(1))
+                if n not in refs:
+                    refs.append(n)
+            if refs:
+                emit_fig_numbers(refs)
+                sub_figs = [n for n in sub_figs if n not in refs]
     return []
 
-emitted = set()
 def emit_figs():
     global sub_figs
     # 번호가 붙은 절이면 그림을 받는다. 하위절(3.6)뿐 아니라 최상위 절(4. 과학 적용)도 —
     # 예전 조건은 "N.M" 만 허용해서 §4 의 그림이 통째로 빠졌다.
     if re.match(r"^\d+(\.\d+)?[\.\s]", sub_title):
         title = re.sub(r"^\d+(\.\d+)?\.?\s*", "", sub_title)
-        for n in sub_figs:
-            if n in FIGMAP and n not in emitted:
-                emitted.add(n)
-                body = inline(CAPTIONS[n]) if n in CAPTIONS else html.escape(title)
-                cap = f"<b>그림 {n}.</b> {body}"
-                out.append(f'<figure><img alt="그림 {n}" src="{fig_uri(FIGMAP[n])}">'
-                           f'<figcaption>{cap}</figcaption></figure>')
+        emit_fig_numbers(sub_figs)
     sub_figs = []
 
 i = 0
@@ -582,7 +604,21 @@ JS = r"""
 
   function el(t,c){ var e=document.createElement(t); if(c) e.className=c; return e; }
   function isHead(n){ return n && /^H[234]$/.test(n.tagName); }
-  function isSpanBlock(n){ return n && (n.tagName==='FIGURE' || n.classList.contains('tw')); }
+  // Tables remain float-like because a wide table can consume the whole page.
+  // The detector-calibration figures are kept in source order: moving them to
+  // a subsection-end float was the reason a numerical paragraph in §3.2 and
+  // its evidence appeared pages apart.  The later figure series keeps the
+  // compact two-figure-per-page float treatment.
+  var INLINE_FIGURES={2:true,3:true,4:true,5:true};
+  function isInlineFigure(n){
+    if (!n || n.tagName!=='FIGURE') return false;
+    var im=n.querySelector('img'), m=im && /그림\s*(\d+)/.exec(im.alt||'');
+    return !!(m && INLINE_FIGURES[parseInt(m[1],10)]);
+  }
+  function isSpanBlock(n){
+    return n && (n.classList.contains('tw') ||
+                 (n.tagName==='FIGURE' && !isInlineFigure(n)));
+  }
 
   /* 판면 치수는 CSS 변수가 아니라 여기서 정하고 인라인으로 박는다.
      아티팩트처럼 호스트가 자기 스타일시트를 얹는 환경에서 :root 변수나 클래스
@@ -782,7 +818,50 @@ JS = r"""
   }
 
   function place(node, P){
-    if (isSpanBlock(node)){ pending.push(node); return P; }
+    // A wide table belongs after the preceding text, not after the next
+    // subsection.  Put it at the foot of the current sheet when there is room;
+    // otherwise flush it on a fresh sheet before continuing with the heading.
+    if (isSpanBlock(node)){
+      if (node.classList.contains('tw') && !pending.length && !P._bottomUsed){
+        var tsp=P.spanB;
+        tsp.appendChild(node);
+        if (tsp.offsetHeight<=spanCap(P,tsp) && P.cols.every(fits)){
+          P._bottomUsed=true;
+          return P;
+        }
+        tsp.removeChild(node);
+      }
+      pending.push(node); return P;
+    }
+    // A bottom float occupies the visual end of this A4 sheet.  The next
+    // source block must therefore begin on the following sheet, otherwise it
+    // would be painted above the float by the two-column flex layout.
+    if (P._bottomUsed) P=fresh();
+    // Do not defer a wide table across a section heading: that reverses the
+    // table and heading in the rendered reading order.
+    if (pending.length && isHead(node)) P=fresh();
+    if (isInlineFigure(node)){
+      // Finish any wide table that is waiting.  Prefer the bottom of the
+      // current sheet so a numeric paragraph and its evidence are adjacent;
+      // if it does not fit, start a fresh sheet and place the figure at the top.
+      if (pending.length) P=fresh();
+      var c0=P.cols[P.ci];
+      if (c0.children.length && !P.spanB.firstChild){
+        var bsp=P.spanB;
+        bsp.appendChild(node);
+        var bcap=spanCap(P,bsp);
+        if ((bsp.offsetHeight<=bcap || sizeTo(node,bsp,bcap) && bsp.offsetHeight<=bcap) &&
+            P.cols.every(fits)){
+          P._bottomUsed=true;
+          return P;
+        }
+        bsp.removeChild(node);
+      }
+      if (c0.children.length || P.span.firstChild || P.spanB.firstChild) P=fresh();
+      P.span.appendChild(node);
+      sizeTo(node, P.span, spanCap(P, P.span));
+      return P;
+    }
     var c=P.cols[P.ci];
     c.appendChild(node);
     if (fits(c)){
