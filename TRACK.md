@@ -47,9 +47,15 @@
   `validation/psf_crossinstrument/REPORT_UB_DEGENERACY.md` 후속절.
 - **나머지 성단(M5·M37·NGC457)은 구경 wide 로만 적합** — M5 나이·dm 문헌
   일치 + [M/H] −1.50(gri 바닥 재현), M37·NGC457 은 [M/H] 상한 rail(차등적색화
-  / 수직 MS 정보 부족 — 정직하게 기록). **PSF 체인은 차단: 세 성단의 과학
-  프레임이 E: 에 없고 백업 드라이브 D:\APEX_backup 이 미연결.** D: 연결이
-  재개 조건(사용자 액션).
+  / 수직 MS 정보 부족 — 정직하게 기록).
+- **M5 는 이후 E: 재처리본(calibrated/20250308 41장)으로 PSF 까지 완주** —
+  reprocess_batch --only M5(1-7+Step10 2,084별) → Step8 41/41(57분) → Step10
+  재구축(1,913별 psf) → 적합 12.79/−1.55/14.26 **수렴 ✓**. 3중 비교(구 AIPPI
+  구경/신 APEX 구경/신 PSF)가 ±0.05 dex 안에서 일치, Gaia 밝기 드리프트
+  구경 −0.144 → PSF −0.021. **함정 적발: M37 프레임 "24/24 발견"은 같은 밤
+  AIPPI 넘버링(pp_NNNN) 충돌 가짜 매치** — 헤더 열어보니 전부 M5 였다.
+  M37·NGC457 은 진짜 부재 → **CR 세션 때 D:\APEX_backup 에서 재처리(사용자
+  결정 2026-08-04)**.
 - 마지막 커밋(직전): 2026-08-01 — fix(wcs): pixel_scale_arcsec 미설정 시 float(None) 크래시
 - 오라클 **722 passed, 0 failed** (2026-08-01, 5분 21초). 7-31 아침 625 → +97
 - 2026-08-02 워크트리(`claude2/festive-merkle-659e92`, 논문 fig 재작업 세션)에서
