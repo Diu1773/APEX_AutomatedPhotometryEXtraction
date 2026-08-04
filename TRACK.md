@@ -61,13 +61,23 @@
 - **통합 코드리뷰 + 의심 5종 조사 (2026-08-04 밤)** — 리뷰 발견: 앵커-syn
   순서(수정 `6e3c754`), 탐색 컷라인 위음성(Sprint 2), 매뉴얼 03-cmd 구탭
   잔존, step12 죽은 코드(-84줄 정리). 조사 판정: ① Gaia 부가값 로딩 3개
-  실데이터 무오류, **pmem 은 소비자만 있고 생산자 없는 흔적기관**(gaia.
-  pmem_method 기본 gmm3d 를 읽는 코드 0개; 멤버십은 step12 PM+시차 필터가
-  실담당). ruwe 는 최신 재처리본만 채워짐(Step6 스키마 세대차). ② ROI
+  실데이터 무오류. **pmem "흔적기관" 판정은 오판이었다(정정)** — 생산자는
+  Step 9 master ID editor 의 3D GMM(`_fit_two_component_gmm`→`p_cluster`,
+  step9_master_id_editor.py:709-860)에 살아 있고, 오늘 wide 3개에 없었던
+  이유는 **헤드리스 체인이 Step 9 를 건너뛰어서**(설계)다. GUI 로 Step 9
+  를 돌리면 생산됨(사용자가 "원래 썼다"고 확인). 오판 원인: 전수 grep 을
+  head -12 로 자른 실수. ruwe 는 최신 재처리본만 채워짐(Step6 스키마 세대차). ② ROI
   생존·스키마 일치({ra_deg,dec_deg,radius_arcsec}) — GUI 클릭 확인만 잔여.
   ③ '자동중심 마스킹'=Step8 PSF core cut(기본 off, 구상성단 코어 ePSF
   보호용) — ROI 와 **반대 방향**(측광 제외 vs 표본 선택)이라 중복 아님,
-  사용자 결정: 셋 다 유지(core cut/멤버십/ROI 역할 분담). ④ PSF 오차전파
+  사용자 결정: 셋 다 유지(core cut/멤버십/ROI 역할 분담).
+  **core cut 검증도(사용자 질문 "논문급이냐")**: 단위테스트 6개 + 7-15
+  PSF 아카이브의 core-policy 비교는 있으나, **그 검증의 결론이 "hard core
+  cut off"** — 채택된 현행 정책은 「모든 소스 적합 + 미분해 블렌드는
+  마스킹 대신 플래그」(psf_archive/README 33-35행)이고 논문 수치(M13
+  98.0% clean 등)도 core cut OFF 로 얻은 것. 즉 core cut 은 논문에 기대는
+  기능이 아니라 검증 과정에서 기본 off 로 밀려난 보조 옵션. 논문 서술은
+  블렌드 플래그 정책 쪽으로. ④ PSF 오차전파
   사슬 건전(fit 공분산→1.0857·σF/F→w=1/σ² WLS, 규약 일치). ⑤ 잔차검출
   신규별 = 음수 det_uid 로 TSV 까지만(설계) — 마스터 부재라 CMD 탈락,
   union 마스터(로드맵 B1)가 살릴 통로. — ① VizieR: 시야 내 UBV 표준
