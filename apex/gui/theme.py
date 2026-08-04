@@ -41,7 +41,7 @@ class Tokens:
     # Text
     TEXT        = "#1F2933"   # primary
     TEXT_SUB    = "#5B6573"   # secondary
-    TEXT_MUTED  = "#98A2B3"   # captions / disabled
+    TEXT_MUTED  = "#8692A6"   # captions / disabled
 
     # Single calm accent (replaces the rainbow of material primaries).
     # ACCENT is the *fill* colour (primary buttons, selected underline bars);
@@ -55,9 +55,9 @@ class Tokens:
     ACCENT_TEXT = "#3A66DB"
 
     # Semantic, desaturated vs. material 2014
-    OK          = "#2E9E5B"
-    WARN        = "#C77A12"
-    ERROR       = "#D24343"
+    OK          = "#247A46"
+    WARN        = "#985D0E"
+    ERROR       = "#C73030"
     # Soft tinted backgrounds for status banners (status="warn"/"error" cards)
     OK_SOFT     = "#E5F4EB"
     WARN_SOFT   = "#FBF1E2"
@@ -112,10 +112,10 @@ class Tokens:
 _LIGHT = {
     "BG": "#E9ECF1", "SURFACE": "#FFFFFF", "SURFACE_ALT": "#F1F3F5",
     "BORDER": "#CDD4DE", "BORDER_STRONG": "#AEB8C6",
-    "TEXT": "#1F2933", "TEXT_SUB": "#5B6573", "TEXT_MUTED": "#98A2B3",
+    "TEXT": "#1F2933", "TEXT_SUB": "#5B6573", "TEXT_MUTED": "#8692A6",
     "ACCENT": "#3A66DB", "ACCENT_HOVER": "#2F56C0", "ACCENT_PRESS": "#274AA6",
     "ACCENT_SOFT": "#EAF0FE", "ACCENT_TEXT": "#3A66DB",
-    "OK": "#2E9E5B", "WARN": "#C77A12", "ERROR": "#D24343",
+    "OK": "#247A46", "WARN": "#985D0E", "ERROR": "#C73030",
     "OK_SOFT": "#E5F4EB", "WARN_SOFT": "#FBF1E2", "ERROR_SOFT": "#FBE9E9",
     "ACCENT_MUTED": "#C2CCEA", "ERROR_MUTED": "#E6C5C5",
     # Geometry participates in presets. Squared corners are the app standard
@@ -139,7 +139,7 @@ PALETTES: dict[str, dict[str, str]] = {
         "TEXT": "#141414", "TEXT_SUB": "#454545", "TEXT_MUTED": "#7E7E7E",
         "ACCENT": "#2F6FB0", "ACCENT_HOVER": "#3A80C6", "ACCENT_PRESS": "#275E96",
         "ACCENT_SOFT": "#D6DEE6", "ACCENT_TEXT": "#1F5187",
-        "OK": "#1F7442", "WARN": "#9A6300", "ERROR": "#A83A31",
+        "OK": "#1F7442", "WARN": "#8B5900", "ERROR": "#A83A31",
         "OK_SOFT": "#DCE8E0", "WARN_SOFT": "#EDE4D1", "ERROR_SOFT": "#EAD9D7",
         "ACCENT_MUTED": "#AFC2D5", "ERROR_MUTED": "#D5BAB6",
         "RADIUS": 2, "RADIUS_SM": 1,
@@ -153,7 +153,7 @@ PALETTES: dict[str, dict[str, str]] = {
         "TEXT": "#EDEDED", "TEXT_SUB": "#B4B4B4", "TEXT_MUTED": "#8A8A8A",
         "ACCENT": "#2F78AD", "ACCENT_HOVER": "#3A8AC4", "ACCENT_PRESS": "#27638F",
         "ACCENT_SOFT": "#243A4A", "ACCENT_TEXT": "#67B7FF",
-        "OK": "#2E9E5B", "WARN": "#C08A28", "ERROR": "#C75048",
+        "OK": "#33B267", "WARN": "#C8902A", "ERROR": "#D57D77",
         "OK_SOFT": "#22352A", "WARN_SOFT": "#38301D", "ERROR_SOFT": "#3A2626",
         "ACCENT_MUTED": "#2B4356", "ERROR_MUTED": "#5A3535",
         "RADIUS": 2, "RADIUS_SM": 1,
@@ -167,7 +167,7 @@ PALETTES: dict[str, dict[str, str]] = {
         "TEXT": "#E6EBF1", "TEXT_SUB": "#AEB9C6", "TEXT_MUTED": "#77828F",
         "ACCENT": "#2A7480", "ACCENT_HOVER": "#338B99", "ACCENT_PRESS": "#22606A",
         "ACCENT_SOFT": "#1C3238", "ACCENT_TEXT": "#4FC8CF",
-        "OK": "#3FA56C", "WARN": "#C69B3D", "ERROR": "#CC5F55",
+        "OK": "#40A96E", "WARN": "#C69B3D", "ERROR": "#D3756D",
         "OK_SOFT": "#1C3226", "WARN_SOFT": "#332B18", "ERROR_SOFT": "#38221F",
         "ACCENT_MUTED": "#24444B", "ERROR_MUTED": "#54322E",
         "RADIUS": 2, "RADIUS_SM": 1,
@@ -181,7 +181,7 @@ PALETTES: dict[str, dict[str, str]] = {
         "TEXT": "#CDD8EE", "TEXT_SUB": "#9DABC9", "TEXT_MUTED": "#66748F",
         "ACCENT": "#23558F", "ACCENT_HOVER": "#2C67AC", "ACCENT_PRESS": "#1C4574",
         "ACCENT_SOFT": "#16294D", "ACCENT_TEXT": "#5A93E0",
-        "OK": "#4CB87C", "WARN": "#CCAE52", "ERROR": "#CC5F55",
+        "OK": "#4CB87C", "WARN": "#CCAE52", "ERROR": "#D67C75",
         "OK_SOFT": "#143832", "WARN_SOFT": "#31301F", "ERROR_SOFT": "#3A2430",
         "ACCENT_MUTED": "#1B3455", "ERROR_MUTED": "#4E3048",
         "RADIUS": 2, "RADIUS_SM": 1,
@@ -193,6 +193,13 @@ PALETTES: dict[str, dict[str, str]] = {
     # Surfaces, text and accents are the published values of each design; only
     # the tokens APEX needs but the original doesn't define (SOFT/MUTED fills)
     # are derived, by blending the accent or status colour into the surface.
+    #
+    # Three ERROR values are lifted a few percent in lightness off their
+    # published hex (VS Code #F14C4C, One Dark #E06C75, Gruvbox #FB4934).
+    # Those are editor *syntax* colours, tuned against each editor's own
+    # background; on APEX's panel surface they land at 3.8-4.4 contrast, and
+    # APEX also uses ERROR as label text, not just as a token tint. Hue and
+    # saturation are untouched, so the designs still read as themselves.
 
     # Chrome dark mode (Google). Neutral greys, no blue cast in the surfaces —
     # the blue lives only in the accent. RADIUS 4 matches Chrome's rounding.
@@ -218,7 +225,7 @@ PALETTES: dict[str, dict[str, str]] = {
         "TEXT": "#D4D4D4", "TEXT_SUB": "#BBBBBB", "TEXT_MUTED": "#858585",
         "ACCENT": "#0E639C", "ACCENT_HOVER": "#1177BB", "ACCENT_PRESS": "#0A4C78",
         "ACCENT_SOFT": "#1B2C38", "ACCENT_TEXT": "#3794FF",
-        "OK": "#4EC9B0", "WARN": "#CCA700", "ERROR": "#F14C4C",
+        "OK": "#4EC9B0", "WARN": "#CCA700", "ERROR": "#F25A5A",
         "OK_SOFT": "#1D3330", "WARN_SOFT": "#332E1A", "ERROR_SOFT": "#2C1A1A",
         "ACCENT_MUTED": "#28394A", "ERROR_MUTED": "#4A2E2E",
         "RADIUS": 2, "RADIUS_SM": 1,
@@ -233,7 +240,7 @@ PALETTES: dict[str, dict[str, str]] = {
         "TEXT": "#ABB2BF", "TEXT_SUB": "#9199A6", "TEXT_MUTED": "#727986",
         "ACCENT": "#3D6FB5", "ACCENT_HOVER": "#4B84D4", "ACCENT_PRESS": "#325C96",
         "ACCENT_SOFT": "#25303F", "ACCENT_TEXT": "#61AFEF",
-        "OK": "#98C379", "WARN": "#E5C07B", "ERROR": "#E06C75",
+        "OK": "#98C379", "WARN": "#E5C07B", "ERROR": "#E2747D",
         "OK_SOFT": "#28331F", "WARN_SOFT": "#332E1F", "ERROR_SOFT": "#33242A",
         "ACCENT_MUTED": "#2C3A4B", "ERROR_MUTED": "#432E33",
         "RADIUS": 3, "RADIUS_SM": 2,
@@ -265,7 +272,7 @@ PALETTES: dict[str, dict[str, str]] = {
         "TEXT": "#EBDBB2", "TEXT_SUB": "#D5C4A1", "TEXT_MUTED": "#A89984",
         "ACCENT": "#AF7A18", "ACCENT_HOVER": "#C88F22", "ACCENT_PRESS": "#8F6412",
         "ACCENT_SOFT": "#3B3223", "ACCENT_TEXT": "#FABD2F",
-        "OK": "#B8BB26", "WARN": "#FE8019", "ERROR": "#FB4934",
+        "OK": "#B8BB26", "WARN": "#FE8019", "ERROR": "#FC6D5C",
         "OK_SOFT": "#333520", "WARN_SOFT": "#3B3123", "ERROR_SOFT": "#2D1E1B",
         "ACCENT_MUTED": "#463B29", "ERROR_MUTED": "#4C332D",
         "RADIUS": 2, "RADIUS_SM": 1,

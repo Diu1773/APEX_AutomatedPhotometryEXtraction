@@ -26,10 +26,10 @@ from apex.gui.theme import (  # noqa: E402
 # apex-light is the reference: it defines every token a preset may override.
 REFERENCE_KEYS = set(PALETTES["apex-light"])
 
-# The presets added as industry-standard darks are held to the full bar. The
-# older bespoke palettes predate this guard and are covered by the weaker
-# body-text check below; tightening them changes a look the owner approved.
-STRICT = ("chrome-dark", "vscode-dark", "one-dark", "dracula", "gruvbox-dark")
+# Every preset is held to the same bar (owner decision, 2026-08-05). The five
+# original palettes were corrected to clear it by hue-preserving lightness
+# moves, so a new preset can't be added below the standard either.
+STRICT = tuple(sorted(PALETTES))
 
 
 def _cr(a: str, b: str) -> float:
@@ -93,6 +93,37 @@ def test_accent_text_reads_on_the_surface(name):
     p = PALETTES[name]
     ratio = _cr(p["ACCENT_TEXT"], p["SURFACE"])
     assert ratio >= 4.5, f"{name}: ACCENT_TEXT on SURFACE is {ratio:.2f}, below 4.5"
+
+
+@pytest.mark.parametrize("name", STRICT)
+def test_status_colours_read_as_labels_on_a_panel(name):
+    """``QLabel[status="ok"|"warn"|"error"]`` puts the status colour straight
+    on a panel, with no tint behind it — a separate pairing from the banner."""
+    p = PALETTES[name]
+    for key in ("OK", "WARN", "ERROR"):
+        ratio = _cr(p[key], p["SURFACE"])
+        assert ratio >= 4.5, f"{name}: {key} on SURFACE is {ratio:.2f}, below 4.5"
+
+
+@pytest.mark.parametrize("name", STRICT)
+def test_captions_clear_the_large_text_bar(name):
+    p = PALETTES[name]
+    ratio = _cr(p["TEXT_MUTED"], p["SURFACE"])
+    assert ratio >= 3.0, f"{name}: TEXT_MUTED on SURFACE is {ratio:.2f}, below 3.0"
+
+
+@pytest.mark.parametrize("name", STRICT)
+def test_banner_tints_stay_subtle(name):
+    """A status banner is a wash behind its text, not a solid block: if the
+    tint drifts too far from the panel it reads as a filled bar instead. This
+    caught a solver that 'fixed' the light theme's pink card by blacking it."""
+    p = PALETTES[name]
+    for key in ("OK_SOFT", "WARN_SOFT", "ERROR_SOFT"):
+        ratio = _cr(p[key], p["SURFACE"])
+        assert 1.0 <= ratio <= 2.0, (
+            f"{name}: {key} sits at {ratio:.2f} against SURFACE; a banner tint "
+            "should stay within 2.0 of the panel it covers"
+        )
 
 
 def test_shade_lightens_and_darkens():
