@@ -216,3 +216,19 @@
 
 **우선순위** — 본문에서 그 내용을 근거로 삼는 순서대로: `stetson1987` · `bertin1996` ·
 `janesick2007` · `stetson1994` · `mccully2018` · `riello2021`.
+
+### 2026-08-04 · Appendix B instrument specifications
+
+The following manufacturer/observatory pages are recorded as specification
+sources, separate from the measured detector constants in Fig. 3:
+
+| BibTeX key | source | status | use in manuscript |
+|---|---|---|---|
+| `qhy600_specs` | QHYCCD, QHY600PH Series, https://www.qhyccd.com/astronomical-camera-qhy600/ | source page checked | Appendix B: IMX455, 3.76 μm, 9576×6388, 16-bit |
+| `lco_sinistro_specs` | Las Cumbres Observatory, Sinistro instrument, https://lco.global/observatory/instruments/sinistro/ | source page checked | Appendix B: CCD486, 4096×4097, 15 μm, four amplifiers |
+| `moravian_c361000_specs` | Moravian Instruments, C3-61000, https://www.gxccd.com/shop?action=product&cat=28&lang=405&page=1348&subcat=0 | source page checked | Appendix B: IMX455, 9576×6388, 3.76 μm |
+
+These entries support hardware specifications only. Gain, read noise,
+dark current, and the 2×2 pixel scale used in the main validation remain the
+measured or configured values reported in the manuscript, not values inferred
+from the product pages.

@@ -729,7 +729,7 @@ class Parameters:
             astap_downsample_z=_geti(raw, "astap_downsample_z", 2),
             astap_max_stars_s=_geti(raw, "astap_max_stars_s", 500),
             # 헤드리스 솔버 엔진 선택 ([wcs] engine = "astap"|"astnet"|"internal").
-            # 없으면 None → resolve_wcs_engine 이 astnet_local_enable 로 판단.
+            # 없으면 None → resolve_wcs_engine 이 내장 엔진을 기본으로 선택.
             wcs_engine=(str(raw.get("wcs_engine", "")).strip().lower() or None),
             astnet_local_enable=_as_bool(raw.get("astnet_local_enable", "false"), False),
             astnet_local_use_wsl=_as_bool(raw.get("astnet_local_use_wsl", "true"), True),

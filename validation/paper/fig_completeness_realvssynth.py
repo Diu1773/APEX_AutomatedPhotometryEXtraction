@@ -153,7 +153,9 @@ def main() -> int:
     # ── layout: (a) mag space | (b) S/N collapse ; bottom cutouts ──
     fig = plt.figure(figsize=(DOUBLE_COL, 4.9))
     gs = fig.add_gridspec(2, 1, height_ratios=[3.0, 0.95], hspace=0.46)
-    gst = gs[0].subgridspec(1, 2, width_ratios=[1.25, 1.0], wspace=0.24)
+    # Panel (b) is the main result: give the S/N collapse more horizontal room
+    # than the descriptive magnitude-space panel (a).
+    gst = gs[0].subgridspec(1, 2, width_ratios=[0.95, 1.35], wspace=0.24)
     ax = fig.add_subplot(gst[0])
     axb = fig.add_subplot(gst[1])
 
@@ -190,7 +192,7 @@ def main() -> int:
     ax.set_xlim(12.3, 20.2)
     ax.set_ylim(-0.03, 1.11)
     ax.legend(loc="lower left", fontsize=6.9, framealpha=0.93)
-    ax.set_title("(a) depth is a frame property (sky + seeing)", loc="left", fontsize=9.5)
+    ax.set_title("(a) $m_{50}$ depends on the frame", loc="left", fontsize=9.5)
 
     # (b) the collapse — all seven frames in peak-S/N space.
     # Data are POINTS (binned recovered fractions, one symbol set per frame);
@@ -213,14 +215,15 @@ def main() -> int:
     axb.set_xlim(0.7, 300)
     axb.set_ylim(-0.03, 1.11)
     axb.set_xlabel("expected peak S/N")
-    axb.set_title("(b) all seven frames, one law", loc="left", fontsize=9.5)
+    axb.set_title("(b) primary result: all seven frames, one law", loc="left",
+                  fontsize=9.5, fontweight="bold")
     axb.legend(loc="lower right", fontsize=6.8, framealpha=0.93)
     axb.text(0.045, 0.965,
              f"per-frame S/N$_{{50}}$ = {s50s.mean():.1f} ± {s50s.std():.1f}",
              transform=axb.transAxes, fontsize=7.2, color="0.25",
              va="top", ha="left")
 
-    fig.suptitle("real-frame injection: per-frame depths are one detection law in S/N",
+    fig.suptitle("real-frame injection: per-frame depths collapse to one S/N law",
                  x=0.01, ha="left", fontsize=11)
 
     # bottom strip: real injected-star cutouts (M13, the shallowest frame)

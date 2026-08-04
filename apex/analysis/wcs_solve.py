@@ -4832,9 +4832,10 @@ def resolve_wcs_engine(params) -> str:
     """Pick the solver engine for headless runs from params.
 
     Honors an explicit ``wcs_engine`` if set; otherwise defaults to the internal
-    Python engine unless an external solver is explicitly enabled. ASTAP is
-    preferred over astrometry.net when both are enabled (mirrors the GUI where
-    ASTAP runs first and astrometry.net is the fallback).
+    Python engine. ``astnet_local_enable`` is a fallback capability for an
+    explicitly selected ASTAP run, not a request to replace the default engine.
+    ASTAP or astrometry.net can be selected explicitly with ``wcs_engine`` (or
+    the legacy ``astap_enable`` switch for ASTAP).
     """
     P = params.P
     explicit = getattr(P, "wcs_engine", None)
@@ -4842,8 +4843,6 @@ def resolve_wcs_engine(params) -> str:
         return _normalize_engine(explicit)
     if bool(getattr(P, "astap_enable", False)):
         return "astap"
-    if bool(getattr(P, "astnet_local_enable", False)):
-        return "astnet"
     return "internal"
 
 

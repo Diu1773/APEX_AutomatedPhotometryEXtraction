@@ -1,9 +1,11 @@
 # -*- coding: utf-8 -*-
-r"""Per-stage calibration cross-check against astropy ccdproc.
+r"""Per-stage calibration cross-check against the Python ccdproc package.
 
-Every calibration stage remains an explicit datum. Bit-identical stages are
-shown as labelled zero markers rather than empty image panels, and the sole
-non-zero end-to-end difference is compared with detector and sky noise.
+Every calibration stage remains an explicit datum. The left panel is a compact
+numeric audit table (maximum absolute difference, robust scatter, and status),
+while the right panel compares the only non-zero end-to-end difference with
+detector and sky noise. This is a pixel-level arithmetic test, not only a chart
+comparison.
 
 Run: .venv-deploy\Scripts\python -X utf8 validation\paper\fig12_preproc_crosscheck.py
 """
@@ -47,43 +49,46 @@ def main() -> int:
     worst = max(steps[key]["max_abs"] for key, _ in STEPS)
 
     fig, (axa, axb) = plt.subplots(
-        1, 2, figsize=(DOUBLE_COL, 2.75),
+        1, 2, figsize=(DOUBLE_COL, 2.95),
         gridspec_kw={"width_ratios": [1.55, 1.0]},
     )
 
-    # Exact zeros are placed at a display floor. Their labels retain the
-    # measured value so the visual position cannot be read as a measurement.
-    x = list(range(len(STEPS)))
-    display_floor = 1e-6
-    y = [max(steps[key]["max_abs"], display_floor) for key, _ in STEPS]
-    axa.vlines(x, display_floor, y, color=PALETTE["grey"], lw=0.9, zorder=2)
-    for xi, ((key, _label), yi) in enumerate(zip(STEPS, y)):
-        exact_zero = steps[key]["max_abs"] == 0.0
-        axa.plot(
-            xi, yi, marker="o" if exact_zero else "s", ms=5.0,
-            mfc="white" if exact_zero else C["data"], mec=C["data"],
-            ls="none", zorder=3,
-        )
-        note = "0" if exact_zero else f"{steps[key]['max_abs']:.1e}"
-        axa.annotate(
-            note, (xi, yi), xytext=(0, 6), textcoords="offset points",
-            ha="center", va="bottom", fontsize=6.3,
-        )
-    axa.set_yscale("log")
-    axa.set_ylim(5e-7, 4e-3)
-    axa.set_xticks(x)
-    axa.set_xticklabels(
-        [label.replace(" ", "\n", 1) for _, label in STEPS], fontsize=6.6,
+    # A table is more honest than plotting six exact zeros at an arbitrary
+    # logarithmic display floor. It retains both measured metrics and makes
+    # the full-chain rounding residual explicit.
+    axa.axis("off")
+    axa.set_title("(a) stage-wise pixel audit", loc="left", pad=4)
+    headers = ["stage", "max |Δ|\n(DN)", "robust σ\n(DN)", "result"]
+    rows = []
+    for key, label in STEPS:
+        mx = float(steps[key]["max_abs"])
+        rs = float(steps[key]["robust_sigma"])
+        if mx == 0.0:
+            mx_s, rs_s, status = "0", "0", "bit exact"
+        else:
+            mx_s, rs_s, status = f"{mx:.2e}", f"{rs:.2e}", "float32 round"
+        rows.append([label, mx_s, rs_s, status])
+    table = axa.table(
+        cellText=rows, colLabels=headers, cellLoc="center", colLoc="center",
+        colWidths=[0.35, 0.22, 0.22, 0.21], bbox=[0.0, 0.08, 1.0, 0.78],
     )
-    axa.set_ylabel(r"max $|\mathrm{APEX}-\mathrm{ccdproc}|$ (DN)")
-    axa.set_title("(a) six stages are bit-identical", loc="left")
+    table.auto_set_font_size(False)
+    table.set_fontsize(6.6)
+    for (row, col), cell in table.get_celld().items():
+        cell.set_edgecolor("#777777")
+        cell.set_linewidth(0.35)
+        if row == 0:
+            cell.set_text_props(weight="bold")
+            cell.set_facecolor("#eeeeee")
+        elif col == 0:
+            cell.get_text().set_ha("left")
     axa.text(
-        0.01, 0.95,
-        "six open circles = measured zero (shown at a display floor)",
-        transform=axa.transAxes, va="top", fontsize=5.8, color=PALETTE["grey"],
+        0.0, 0.01,
+        "master construction + bias/dark/flat application; zero means every pixel matched",
+        transform=axa.transAxes, va="bottom", fontsize=5.8, color=PALETTE["grey"],
     )
 
-    names = ["APEX vs\nccdproc", "read\nnoise", "sky shot\nnoise"]
+    names = ["APEX vs Python\nccdproc", "read\nnoise", "sky shot\nnoise"]
     vals = [max(worst, 1e-5), rn_dn, sky_shot_dn]
     xb = list(range(3))
     bars = axb.bar(
@@ -125,14 +130,14 @@ def main() -> int:
 
     CAPDIR.mkdir(parents=True, exist_ok=True)
     (CAPDIR / "fig12_preproc_crosscheck.md").write_text(
-        f"""# Figure — per-step preprocessing cross-check vs ccdproc
+        f"""# Figure — per-step preprocessing cross-check vs Python ccdproc
 
-**(a)** Maximum absolute APEX−ccdproc difference at every calibration stage.
-Master bias/dark/flat construction and the three individual corrections are
-bit-identical; open circles are labelled measured zeros and placed on a display
-floor only so that all stages remain visible. The full chain differs by at most
+**(a)** Numeric audit against the independent Python `ccdproc` package
+(`ccdproc` is not the IRAF task of the same name). The table reports the
+maximum absolute difference and robust scatter for each stage; six rows are
+bit-identical at every pixel, while the full chain leaves only
 {steps['full_pipeline']['max_abs']:.1e} DN (robust σ =
-{steps['full_pipeline']['robust_sigma']:.1e} DN) because of float32 rounding.
+{steps['full_pipeline']['robust_sigma']:.1e} DN) from float32 rounding.
 **(b)** The end-to-end difference beside the read-noise ({rn_dn:.2f} DN) and
 sky-shot-noise ({sky_shot_dn:.0f} DN) scales. Inputs: {res['n_bias']} bias,
 {res['n_dark']} darks (60 s), {res['n_flat']} flats, one 60 s NGC 6811 $B$

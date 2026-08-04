@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 """Figure — detector calibration (Step 0): the frames applied, and their effect.
 
-2026-08-03 second design. The first attempt put three abstract bar charts next
+2026-08-04 paired design. The first attempt put three abstract bar charts next
 to one before/after pair; the user's objections were all correct:
   * the before/after cutouts looked identical, so the panel proved nothing
   * "recovered - true" was an opaque axis label
@@ -10,10 +10,10 @@ to one before/after pair; the user's objections were all correct:
   * what a reader actually wants is the calibration frames themselves, and the
     light frame before and after each operation
 
-So this figure shows exactly that: the three masters as images (top row), the
-same science frame after each operation (bottom row), and the sky profile that
-makes the vignette removal visible. The quantitative validation lives in the
-text and in Figs 3-5 (detector constants, ccdproc, cross-instrument).
+So this figure pairs each master image with a distribution or profile, then
+shows the science frame before and after each operation. The quantitative
+pixel-level cross-check remains Fig. 4; this figure explains what was applied
+and makes the effect legible.
 
 Data: data/calib_stages.npz, written by calib_crosscheck_ngc6811.py from the
 real 2026-06-11 night (8 bias, 8x60 s dark, 5 B flats, one 60 s NGC 6811 B).
@@ -62,7 +62,40 @@ def inset_note(ax, text, x=0.5, y=0.055, ha="center", color=None):
     """눈금이 있는 선 그래프는 축 안에 적는다 — 축 밖에 두면 눈금과 겹친다."""
     ax.text(x, y, text, transform=ax.transAxes, fontsize=6.6,
             ha=ha, va="bottom", color=color or PALETTE["grey"],
-            bbox=dict(fc="white", ec="none", alpha=0.8, pad=1.0))
+             bbox=dict(fc="white", ec="none", alpha=0.8, pad=1.0))
+
+
+def histogram(ax, image, title, color, stat_text, lo=0.2, hi=99.8):
+    """Show a calibration-frame value distribution beside its image."""
+    v = image[np.isfinite(image)]
+    low, high = np.percentile(v, [lo, hi])
+    if high <= low:
+        high = low + 1.0
+    ax.hist(v, bins=42, range=(low, high), color=color, edgecolor="white",
+            linewidth=0.25, density=True)
+    med = float(np.median(v))
+    ax.axvline(med, color="k", lw=0.85, ls="--")
+    ax.set_title(title, loc="left", fontsize=7.6, pad=2.5)
+    ax.set_xlabel("DN", fontsize=7.0, labelpad=1)
+    ax.set_ylabel("density", fontsize=7.0, labelpad=1)
+    ax.tick_params(labelsize=6.2)
+    ax.text(0.03, 0.95, stat_text, transform=ax.transAxes, va="top",
+            fontsize=6.2, color=PALETTE["grey"],
+            bbox=dict(fc="white", ec="none", alpha=0.82, pad=1.0))
+
+
+def profile(ax, values, title, ylabel, color, labels=True):
+    x = np.linspace(0, 1, values.size)
+    ax.plot(x, values, color=color, lw=1.25)
+    ax.set_xlim(0, 1)
+    ax.set_xticks([0, 0.5, 1.0])
+    if labels:
+        ax.set_xticklabels(["left", "centre", "right"], fontsize=6.2)
+    else:
+        ax.set_xticklabels([])
+    ax.set_ylabel(ylabel, fontsize=7.0, labelpad=1)
+    ax.tick_params(labelsize=6.2)
+    ax.set_title(title, loc="left", fontsize=7.6, pad=2.5)
 
 
 def main() -> int:
@@ -72,56 +105,45 @@ def main() -> int:
     mb, md, mf = d["master_bias"], d["master_dark"], d["master_flat"]
     raw, bd, cal = d["light_raw"], d["light_bd"], d["light_cal"]
     p_bd, p_cal, p_flat = d["prof_bd"], d["prof_cal"], d["prof_flat"]
+    fig = plt.figure(figsize=(DOUBLE_COL, 5.85))
+    gs = fig.add_gridspec(3, 4, wspace=0.28, hspace=0.72,
+                          left=0.040, right=0.985, top=0.925, bottom=0.145)
 
-    fig = plt.figure(figsize=(DOUBLE_COL, 4.35))
-    gs = fig.add_gridspec(2, 4, wspace=0.16, hspace=0.40,
-                          left=0.035, right=0.985, top=0.925, bottom=0.145)
-
-    # ── 윗줄: 적용되는 세 마스터 ──
-    ax = fig.add_subplot(gs[0, 0])
-    show(ax, mb, "(a) master bias")
+    # ── row 1: each master is paired with a quantitative view ──
+    ax = fig.add_subplot(gs[0, 0]); show(ax, mb, "(a) master bias")
     note(ax, f"median {float(d['bias_med']):.0f} DN · 8 frames")
+    v = mb[np.isfinite(mb)]
+    histogram(fig.add_subplot(gs[0, 1]), mb, "(b) bias distribution", C["data"],
+              f"median {np.median(v):.2f}\nσ {np.std(v):.2f} DN")
 
-    ax = fig.add_subplot(gs[0, 1])
-    show(ax, md, "(b) master dark", lo=1.0, hi=99.5)
-    note(ax, f"median {float(d['dark_med']):.1f} DN in {float(d['dark_exp']):.0f} s · 8 frames")
+    ax = fig.add_subplot(gs[0, 2]); show(ax, md, "(c) master dark", lo=1.0, hi=99.5)
+    note(ax, f"median {float(d['dark_med']):.1f} DN · {float(d['dark_exp']):.0f} s · 8 frames")
+    v = md[np.isfinite(md)]
+    histogram(fig.add_subplot(gs[0, 3]), md, "(d) dark distribution", C["reference"],
+              f"median {np.median(v):.2f}\n95th pct {np.percentile(v, 95):.2f} DN",
+              lo=0.2, hi=99.5)
 
-    ax = fig.add_subplot(gs[0, 2])
-    show(ax, mf, "(c) master flat", lo=0.5, hi=99.5)
+    # ── row 2: flat pair and the first two science states ──
+    ax = fig.add_subplot(gs[1, 0]); show(ax, mf, "(e) master flat", lo=0.5, hi=99.5)
     note(ax, f"median {float(d['flat_med']):.3f} · 5 frames")
+    axf = fig.add_subplot(gs[1, 1]); profile(axf, p_flat, "(f) flat profile", "flat", C["reference"])
+    axf.axhline(1.0, color=PALETTE["grey"], lw=0.8, ls=":")
+    lo_f, hi_f = float(np.min(p_flat)), float(np.max(p_flat))
+    axf.set_ylim(lo_f - 0.015, hi_f + 0.02)
+    inset_note(axf, f"{(hi_f - lo_f) * 100:.0f}% across field", x=0.03, y=0.80, ha="left")
 
-    # (d) flat 의 가로 프로파일 — 무엇이 나눠지는지
-    axd = fig.add_subplot(gs[0, 3])
-    x = np.linspace(0, 1, p_flat.size)
-    axd.plot(x, p_flat, color=C["reference"], lw=1.4)
-    axd.axhline(1.0, color=PALETTE["grey"], lw=0.8, ls=":")
-    lo, hi = float(np.min(p_flat)), float(np.max(p_flat))
-    axd.set_ylim(lo - 0.015, hi + 0.02)
-    axd.set_xlim(0, 1)
-    axd.set_xticks([0, 0.5, 1.0]); axd.set_xticklabels(["left", "centre", "right"],
-                                                       fontsize=6.6)
-    axd.set_ylabel("flat", fontsize=7.0, labelpad=1.5)
-    axd.tick_params(labelsize=6.4)
-    axd.set_title("(d) what the flat divides out", loc="left", fontsize=7.6, pad=2.5)
-    inset_note(axd, f"{(hi - lo) * 100:.0f}% across the field")
-
-    # ── 아랫줄: 같은 과학 프레임, 연산마다 ──
-    ax = fig.add_subplot(gs[1, 0])
-    show(ax, raw, "(e) raw science frame")
+    ax = fig.add_subplot(gs[1, 2]); show(ax, raw, "(g) raw science frame")
     note(ax, f"NGC 6811 $B$, {float(d['light_exp']):.0f} s")
-
-    # (f)(g) 는 같은 눈금이라야 flat 효과가 보인다
     v = bd[np.isfinite(bd)]
     vmin, vmax = np.percentile(v, 1.0), np.percentile(v, 99.0)
-    ax = fig.add_subplot(gs[1, 1])
-    show(ax, bd, "(f) $-$ bias $-$ dark", vmin=vmin, vmax=vmax)
-    note(ax, "offset and dark current gone")
-    ax = fig.add_subplot(gs[1, 2])
-    show(ax, cal, "(g) $\\div$ flat  = calibrated", vmin=vmin, vmax=vmax)
-    note(ax, "same greyscale as (f)")
+    ax = fig.add_subplot(gs[1, 3]); show(ax, bd, "(h) $-$ bias $-$ dark", vmin=vmin, vmax=vmax)
+    note(ax, "same science frame · offset removed")
 
-    # (h) 하늘 프로파일 — 비네팅이 실제로 평평해진다
-    axh = fig.add_subplot(gs[1, 3])
+    # ── row 3: calibrated state, profiles, and an explicit numerical summary ──
+    ax = fig.add_subplot(gs[2, 0]); show(ax, cal, "(i) $\\div$ flat = calibrated", vmin=vmin, vmax=vmax)
+    note(ax, "same greyscale as (h)")
+
+    axh = fig.add_subplot(gs[2, 1])
     xb = np.linspace(0, 1, p_bd.size)
     n_bd = p_bd / float(np.median(p_bd))
     n_cal = p_cal / float(np.median(p_cal))
@@ -135,18 +157,37 @@ def main() -> int:
     axh.tick_params(labelsize=6.4)
     axh.legend(fontsize=6.2, loc="lower left", handlelength=1.4,
                framealpha=0.9, borderpad=0.25)
-    axh.set_title("(h) sky flattens", loc="left", fontsize=7.6, pad=2.5)
+    axh.set_title("(j) sky profile before / after", loc="left", fontsize=7.6, pad=2.5)
     span_before = (float(np.max(n_bd)) - float(np.min(n_bd))) * 100
     span_after = (float(np.max(n_cal)) - float(np.min(n_cal))) * 100
     # 곡선이 가운데서 솟으므로 왼쪽 위가 유일하게 빈 자리다
     inset_note(axh, f"peak-to-peak\n{span_before:.1f}% $\\to$ {span_after:.1f}%",
                x=0.035, y=0.80, ha="left")
 
+    axk = fig.add_subplot(gs[2, 2])
+    ratio = p_cal / np.maximum(p_bd, np.finfo(float).eps)
+    axk.plot(np.linspace(0, 1, ratio.size), ratio, color=C["accent"], lw=1.25)
+    axk.axhline(1.0, color=PALETTE["grey"], lw=0.8, ls=":")
+    axk.set_xlim(0, 1); axk.set_ylim(np.percentile(ratio, 1) - 0.02, np.percentile(ratio, 99) + 0.02)
+    axk.set_xticks([0, 0.5, 1.0]); axk.set_xticklabels(["left", "centre", "right"], fontsize=6.2)
+    axk.set_ylabel("cal / (bias−dark)", fontsize=6.7, labelpad=1)
+    axk.tick_params(labelsize=6.2)
+    axk.set_title("(k) flat multiplier in science", loc="left", fontsize=7.6, pad=2.5)
+
+    axl = fig.add_subplot(gs[2, 3])
+    medians = [float(np.nanmedian(raw)), float(np.nanmedian(bd)), float(np.nanmedian(cal))]
+    bars = axl.bar([0, 1, 2], medians, color=["#bdbdbd", "#777777", "#252525"], width=0.62)
+    axl.set_xticks([0, 1, 2]); axl.set_xticklabels(["raw", "−B−D", "cal"], fontsize=6.4)
+    axl.set_ylabel("median DN", fontsize=7.0, labelpad=1); axl.tick_params(labelsize=6.2)
+    axl.set_title("(l) science level after each step", loc="left", fontsize=7.6, pad=2.5)
+    for bar, value in zip(bars, medians):
+        axl.text(bar.get_x() + bar.get_width() / 2, value, f"{value:.0f}", ha="center", va="bottom", fontsize=6.2)
+
     # 한 줄로 쓰면 그림 폭을 넘어 tight-bbox 가 캔버스를 왼쪽으로 늘린다
     # (2026-08-03 실측: 그림 왼쪽에 빈 여백 2인치). 두 줄로 나눈다.
     prov1 = (f"All frames real: Moravian C3-61000 (2$\\times$2), night {res['night']} · "
              f"{res['n_bias']} bias, {res['n_dark']} dark ({float(d['dark_exp']):.0f} s), "
-             f"{res['n_flat']} flat, one {float(d['light_exp']):.0f} s NGC 6811 $B$ light")
+              f"{res['n_flat']} flat, one {float(d['light_exp']):.0f} s NGC 6811 $B$ light")
     prov2 = (f"displayed at 1/{int(d['shrink'])} scale (block-mean) · "
              "gen: calib_crosscheck_ngc6811.py $\\to$ fig_calibration_step0.py")
     fig.text(0.985, 0.048, prov1, ha="right", va="bottom", fontsize=5.9,
@@ -161,23 +202,21 @@ def main() -> int:
     (CAPDIR / "fig_calibration_step0.md").write_text(
         f"""# Figure — detector calibration (Step 0)
 
-**(a)-(c)** The three master frames APEX builds from the night's own
-calibration exposures: bias (median {float(d['bias_med']):.0f} DN),
-dark ({float(d['dark_med']):.1f} DN in {float(d['dark_exp']):.0f} s) and flat
-(unit median). **(d)** The flat's horizontal profile — a
-{(float(np.max(p_flat)) - float(np.min(p_flat))) * 100:.0f} per cent
-response gradient across the field, which is what the division removes.
-**(e)-(g)** The same NGC 6811 $B$ science frame after each operation: raw,
-then bias- and dark-subtracted, then flat-fielded. Panels (f) and (g) share a
-greyscale so the change is the flat-fielding alone. **(h)** The sky profile
-before and after flat-fielding, each normalised to its own median: the
-peak-to-peak gradient falls from {span_before:.1f} to {span_after:.1f} per
-cent. All frames are real (Moravian C3-61000, 2x2, night {res['night']};
-{res['n_bias']} bias, {res['n_dark']} darks, {res['n_flat']} flats), shown at
-1/{int(d['shrink'])} scale. Numerical validation of these operations is
-separate: recovery of injected truth (text), the detector constants (Fig. 3),
-pixel-for-pixel agreement with ccdproc (Fig. 4) and reproduction on two more
-cameras (Fig. 5).
+**(a)** Master bias image and **(b)** its pixel-value distribution, including
+the median and within-frame scatter. **(c)** Master dark image and **(d)** its
+distribution; the long positive tail is retained in the displayed percentile
+stretch. **(e)** Master flat image and **(f)** its horizontal profile, showing a
+{(float(np.max(p_flat)) - float(np.min(p_flat))) * 100:.0f} per cent response
+gradient. **(g)-(i)** The same NGC 6811 $B$ science frame as raw, after bias/dark
+subtraction, and after flat division, with the latter two using one greyscale.
+**(j)** Sky profile before and after flat-fielding, normalised to each median;
+the peak-to-peak gradient falls from {span_before:.1f} to {span_after:.1f} per
+cent. **(k)** The flat multiplier sampled along the science profile.
+**(l)** Median science level after each operation. All frames are real
+(Moravian C3-61000, 2x2, night {res['night']}; {res['n_bias']} bias,
+{res['n_dark']} darks, {res['n_flat']} flats), shown at 1/{int(d['shrink'])}
+scale. Numerical equivalence to the independent Python `ccdproc` package is
+tested separately in Fig. 4.
 """, encoding="utf-8")
 
     print("=== fig_calibration_step0 (v2) ===")

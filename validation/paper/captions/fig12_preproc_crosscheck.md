@@ -1,11 +1,11 @@
-# Figure — per-step preprocessing cross-check vs ccdproc
+# Figure — per-step preprocessing cross-check vs Python ccdproc
 
-**(a)** Maximum absolute APEX−ccdproc difference at every calibration stage.
-Master bias/dark/flat construction and the three individual corrections are
-bit-identical; open circles are labelled measured zeros and placed on a display
-floor only so that all stages remain visible. The full chain differs by at most
+**(a)** Numeric audit against the independent Python `ccdproc` package
+(`ccdproc` is not the IRAF task of the same name). The table reports the
+maximum absolute difference and robust scatter for each stage; six rows are
+bit-identical at every pixel, while the full chain leaves only
 8.6e-04 DN (robust σ =
-2.6e-05 DN) because of float32 rounding.
+2.6e-05 DN) from float32 rounding.
 **(b)** The end-to-end difference beside the read-noise (3.45 DN) and
 sky-shot-noise (41 DN) scales. Inputs: 8 bias,
 8 darks (60 s), 5 flats, one 60 s NGC 6811 $B$
