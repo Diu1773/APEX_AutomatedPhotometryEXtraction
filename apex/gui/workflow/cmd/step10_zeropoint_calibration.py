@@ -3011,6 +3011,12 @@ class ZeropointCalibrationWorker(QThread):
                     _band_counts.append(f"{c_cal}={_nf}/{len(df_out)}")
                 self._log("CMD export: calibrated-band finite counts | " + ", ".join(_band_counts))
 
+            # External standard anchor must shift mag_std_* BEFORE anything is
+            # derived from them — the synthetic Gaia columns below feed the
+            # Gaia CMD QC, and computing them from pre-anchor magnitudes would
+            # bias the QC drift metric by exactly the anchor offset.
+            df_out = self._apply_standard_anchor(df_out, output_dir)
+
             # Synthetic Gaia magnitudes: prefer SDSS g-i, fall back to Johnson V-I
             gaia_G_syn     = np.full(len(df_out), np.nan)
             gaia_BP_RP_syn = np.full(len(df_out), np.nan)
@@ -3031,8 +3037,6 @@ class ZeropointCalibrationWorker(QThread):
 
             df_out["gaia_G_syn"]     = gaia_G_syn
             df_out["gaia_BP_RP_syn"] = gaia_BP_RP_syn
-
-            df_out = self._apply_standard_anchor(df_out, output_dir)
 
             out_cmd_path = output_dir / "median_by_ID_filter_wide_cmd.csv"
             df_out.to_csv(out_cmd_path, index=False, na_rep="NaN")

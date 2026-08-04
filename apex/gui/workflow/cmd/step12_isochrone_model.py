@@ -41,7 +41,6 @@ from apex.utils.photometry_provenance import (
     format_photometry_provenance,
     summarize_photometry_table,
 )
-from apex.analysis.cmd.isochrone_fitter_v2 import IsochroneFitterV2
 
 # Extinction coefficients R = A/E(B-V) (Cardelli+1989 / Fitzpatrick+1999)
 EXTINCTION_R: dict[str, float] = {
@@ -748,7 +747,6 @@ class IsochroneModelWindow(StepWindowBase):
         self._iso_band_columns: dict[str, int] = {}
         self._iso_photometric_system = "Unknown"
         self._iso_header_key = None
-        self._fitter_cache_key = None
         self._pending_band_color_text = None
         self._pending_band_mag_text = None
 
@@ -960,7 +958,6 @@ class IsochroneModelWindow(StepWindowBase):
         log_layout.addWidget(self.log_text)
 
         # Internal state
-        self.fitter: Optional[IsochroneFitterV2] = None
         self.cmd_df: Optional[pd.DataFrame] = None
 
     def log(self, message: str):
@@ -1799,7 +1796,6 @@ class IsochroneModelWindow(StepWindowBase):
 
     def _on_band_changed(self):
         """Refresh CMD viewer when band selection changes."""
-        self.fitter = None
         if self._get_iso_path():
             self.refresh_cmd_viewer(show_error=False)
 
@@ -2001,8 +1997,6 @@ class IsochroneModelWindow(StepWindowBase):
         self._iso_band_columns = {}
         self._iso_photometric_system = "Unknown"
         self._iso_header_key = None
-        self._fitter_cache_key = None
-        self.fitter = None
 
     def _show_viewer_placeholder(self, message: str):
         self._clear_viewer_widget()
@@ -2098,87 +2092,6 @@ class IsochroneModelWindow(StepWindowBase):
         )
         return True
 
-    def _extract_cmd_columns(self):
-        """Extract color/mag arrays from self.cmd_df using current band selection.
-        Returns (color, mag, color_err, mag_err) or None on failure.
-        """
-        bc = self._get_band_config()
-        b1, b2 = bc["band_color"]
-        bm = bc["band_mag"]
-
-        def _get_col(band):
-            mag_col, _ = _preferred_mag_col(self.cmd_df.columns, band)
-            if mag_col is None:
-                return None, None
-            vals = self.cmd_df[mag_col].to_numpy(float)
-            err_col = _preferred_err_col(self.cmd_df.columns, band)
-            errs = (
-                self.cmd_df[err_col].to_numpy(float)
-                if err_col is not None
-                else np.full(len(vals), 0.01, dtype=float)
-            )
-            return vals, errs
-
-        v1, e1 = _get_col(b1)
-        v2, e2 = _get_col(b2)
-        if v1 is None or v2 is None:
-            QMessageBox.critical(self, "Error", f"CMD data missing {b1}/{b2} magnitude columns")
-            return None
-        vm, em = _get_col(bm)
-        if vm is None:
-            vm, em = v1.copy(), e1.copy()
-
-        color = v1 - v2
-        color_err = np.sqrt(e1**2 + e2**2)
-        return color, vm, color_err, em
-
-    def _create_fitter(self, iso_path: str, iso_raw: Optional[np.ndarray] = None):
-        """Create IsochroneFitterV2 with current band config."""
-        bc = self._get_band_config()
-        if not self._require_iso_config(bc):
-            self.fitter = None
-            self._fitter_cache_key = None
-            return None
-        col_mh = int(getattr(self.params.P, "iso_col_mh", 1))
-        col_age = int(getattr(self.params.P, "iso_col_age", 2))
-        fit_fraction = float(getattr(self.params.P, "iso_fit_fraction", 0.85))
-
-        fitter_key = (
-            self._cache_key,
-            col_mh,
-            col_age,
-            bc["iso_col_1"],
-            bc["iso_col_2"],
-            bc["iso_col_mag"],
-            fit_fraction,
-            bc["R_band1"],
-            bc["R_band2"],
-            bc["R_mag"],
-        )
-        if self.fitter is not None and self._fitter_cache_key == fitter_key:
-            return self.fitter
-
-        fitter = IsochroneFitterV2(
-            iso_path,
-            col_mh=col_mh,
-            col_age=col_age,
-            col_g=bc["iso_col_1"],
-            col_r=bc["iso_col_2"],
-            col_mag=bc["iso_col_mag"],
-            fit_fraction=fit_fraction,
-            R_band1=bc["R_band1"],
-            R_band2=bc["R_band2"],
-            R_mag=bc["R_mag"],
-            iso_data=iso_raw,
-        )
-        self.fitter = fitter
-        self._fitter_cache_key = fitter_key
-        return fitter
-
-    # =========================================================================
-    # Fitting Methods
-    # =========================================================================
-
     def show_log_window(self):
         self.log_window.show()
         self.log_window.raise_()
@@ -2196,7 +2109,6 @@ class IsochroneModelWindow(StepWindowBase):
             self.params.P.iso_file_path = path
             self._set_iso_status("Single file mode")
             self._invalidate_cache()
-            self.fitter = None
             self.save_state()
             self.persist_params()
             self.refresh_cmd_viewer(show_error=True)
@@ -2213,7 +2125,6 @@ class IsochroneModelWindow(StepWindowBase):
             self.params.P.iso_file_path = path
             self._set_iso_status("Folder mode")
             self._invalidate_cache()
-            self.fitter = None
             self.save_state()
             self.persist_params()
             self.refresh_cmd_viewer(show_error=True)
