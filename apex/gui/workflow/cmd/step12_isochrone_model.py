@@ -41,7 +41,7 @@ from apex.utils.photometry_provenance import (
     format_photometry_provenance,
     summarize_photometry_table,
 )
-from apex.analysis.cmd.isochrone_fitter_v2 import IsochroneFitterV2, FitMode, FitResult, FitBounds, GridScanResult
+from apex.analysis.cmd.isochrone_fitter_v2 import IsochroneFitterV2
 
 # Extinction coefficients R = A/E(B-V) (Cardelli+1989 / Fitzpatrick+1999)
 EXTINCTION_R: dict[str, float] = {
@@ -256,88 +256,10 @@ class IsoCacheWorker(QThread):
             self.finished_ok.emit(str(self.iso_file))
 
 
-class FitWorker(QThread):
-    """Background worker for isochrone fitting"""
-
-    finished = pyqtSignal(object)  # FitResult or Exception
-    progress = pyqtSignal(float, str)  # progress (0-1), message
-
-    def __init__(self, fitter: IsochroneFitterV2,
-                 obs_color: np.ndarray, obs_mag: np.ndarray,
-                 obs_color_err: np.ndarray, obs_mag_err: np.ndarray,
-                 mode: FitMode, bounds: FitBounds, snr_min: float,
-                 fit_kwargs: Optional[dict] = None):
-        super().__init__()
-        self.fitter = fitter
-        self.obs_color = obs_color
-        self.obs_mag = obs_mag
-        self.obs_color_err = obs_color_err
-        self.obs_mag_err = obs_mag_err
-        self.mode = mode
-        self.bounds = bounds
-        self.snr_min = snr_min
-        self.fit_kwargs = fit_kwargs or {}
-
-    def run(self):
-        try:
-            # Set progress callback
-            self.fitter.progress_callback = lambda p, m: self.progress.emit(p, m)
-
-            result = self.fitter.fit(
-                self.obs_color, self.obs_mag,
-                self.obs_color_err, self.obs_mag_err,
-                mode=self.mode,
-                bounds=self.bounds,
-                snr_min=self.snr_min,
-                **self.fit_kwargs
-            )
-            self.finished.emit(result)
-
-        except Exception as e:
-            self.finished.emit(e)
-
-
-class GridScanWorker(QThread):
-    """Background worker for grid scan fitting."""
-
-    finished = pyqtSignal(object)  # GridScanResult or Exception
-    progress = pyqtSignal(float, str)
-
-    def __init__(self, fitter: IsochroneFitterV2,
-                 obs_color: np.ndarray, obs_mag: np.ndarray,
-                 obs_color_err: np.ndarray, obs_mag_err: np.ndarray,
-                 bounds: FitBounds, snr_min: float,
-                 fit_kwargs: Optional[dict] = None):
-        super().__init__()
-        self.fitter = fitter
-        self.obs_color = obs_color
-        self.obs_mag = obs_mag
-        self.obs_color_err = obs_color_err
-        self.obs_mag_err = obs_mag_err
-        self.bounds = bounds
-        self.snr_min = snr_min
-        self.fit_kwargs = fit_kwargs or {}
-
-    def run(self):
-        try:
-            self.fitter.progress_callback = lambda p, m: self.progress.emit(p, m)
-            result = self.fitter.fit_grid_scan(
-                self.obs_color, self.obs_mag,
-                self.obs_color_err, self.obs_mag_err,
-                bounds=self.bounds,
-                snr_min=self.snr_min,
-                **self.fit_kwargs,
-            )
-            self.finished.emit(result)
-        except Exception as e:
-            self.finished.emit(e)
-
-
 class McmcFitWorker(QThread):
     """Background worker for the automatic MCMC isochrone fit (Bayesian).
 
-    Distinct from :class:`FitWorker` (the manual-seed grid/least-squares auto-fit):
-    this runs the full generative-mixture MCMC via the shared, Qt-free service
+    Runs the full generative-mixture MCMC via the shared, Qt-free service
     :func:`apex.analysis.cmd.isochrone_fit_service.fit_cluster_isochrone` and
     returns posterior summary + paper-quality CMD/corner figures.
     """
@@ -829,11 +751,6 @@ class IsochroneModelWindow(StepWindowBase):
         self._fitter_cache_key = None
         self._pending_band_color_text = None
         self._pending_band_mag_text = None
-        self._active_fit_labels = None
-        self._cc_ax = None              # color-color axes cache
-        # ZP perpendicular offset from auto-fit
-        self._cc_zp_perp = 0.0
-        self._cc_perp_norm = np.array([0.0, 0.0])
 
         super().__init__(
             step_index=11,
@@ -979,290 +896,6 @@ class IsochroneModelWindow(StepWindowBase):
         self.tabs = QTabWidget()
         self.content_layout.addWidget(self.tabs, stretch=1)
 
-        # --- Tab 0: Color-Color Diagram ---
-        cc_tab = QWidget()
-        cc_layout = QVBoxLayout(cc_tab)
-        cc_layout.setContentsMargins(6, 6, 6, 6)
-
-        # Plot container
-        self.cc_fig = Figure(figsize=(9, 7))
-        self.cc_canvas = FigureCanvas(self.cc_fig)
-        self.cc_canvas.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
-        cc_layout.addWidget(self.cc_canvas, stretch=1)
-
-        # Controls row
-        cc_controls = QHBoxLayout()
-        cc_controls.addWidget(QLabel("E(B-V):"))
-        self.cc_ebv_spin = QDoubleSpinBox()
-        self.cc_ebv_spin.setRange(0.0, 2.0)
-        self.cc_ebv_spin.setValue(0.0)
-        self.cc_ebv_spin.setDecimals(4)
-        self.cc_ebv_spin.setSingleStep(0.01)
-        self.cc_ebv_spin.valueChanged.connect(self._update_cc_plot)
-        cc_controls.addWidget(self.cc_ebv_spin)
-
-        cc_controls.addWidget(QLabel("Ref log(Age):"))
-        self.cc_age_spin = QDoubleSpinBox()
-        self.cc_age_spin.setRange(6.0, 10.5)
-        self.cc_age_spin.setValue(8.5)
-        self.cc_age_spin.setDecimals(2)
-        self.cc_age_spin.setSingleStep(0.05)
-        self.cc_age_spin.valueChanged.connect(self._update_cc_plot)
-        cc_controls.addWidget(self.cc_age_spin)
-
-        cc_controls.addWidget(QLabel("Ref [M/H]:"))
-        self.cc_mh_spin = QDoubleSpinBox()
-        self.cc_mh_spin.setRange(-2.2, 1.0)
-        self.cc_mh_spin.setValue(0.0)
-        self.cc_mh_spin.setDecimals(2)
-        self.cc_mh_spin.setSingleStep(0.05)
-        self.cc_mh_spin.valueChanged.connect(self._update_cc_plot)
-        cc_controls.addWidget(self.cc_mh_spin)
-
-        cc_layout.addLayout(cc_controls)
-
-        self.cc_source_label = QLabel("Observed: not loaded")
-        self.cc_source_label.setStyleSheet("QLabel { color: #455A64; font-size: 9pt; }")
-        cc_layout.addWidget(self.cc_source_label)
-
-        # Action buttons row
-        cc_action = QHBoxLayout()
-        btn_cc_autofit = QPushButton("Estimate E(B-V)")
-        btn_cc_autofit.setStyleSheet(
-            "QPushButton { background-color: #00897B; color: white; font-weight: bold; padding: 8px 16px; border-radius: 4px; }"
-            "QPushButton:hover { background-color: #00796B; }"
-        )
-        btn_cc_autofit.clicked.connect(self._autofit_ebv)
-        cc_action.addWidget(btn_cc_autofit)
-
-        btn_cc_apply = QPushButton("Apply E to Bounds")
-        btn_cc_apply.setStyleSheet(
-            "QPushButton { background-color: #1565C0; color: white; font-weight: bold; padding: 8px 16px; border-radius: 4px; }"
-            "QPushButton:hover { background-color: #0D47A1; }"
-        )
-        btn_cc_apply.clicked.connect(self._apply_ebv_to_bounds)
-        cc_action.addWidget(btn_cc_apply)
-
-        self.cc_result_label = QLabel("")
-        self.cc_result_label.setStyleSheet("QLabel { color: #333; font-weight: bold; }")
-        cc_action.addWidget(self.cc_result_label)
-        cc_action.addStretch()
-        cc_layout.addLayout(cc_action)
-
-        self.cc_tab_index = self.tabs.addTab(cc_tab, "Color-Color")
-
-        # --- Tab 1: Auto Fit ---
-        fit_tab = QWidget()
-        fit_layout = QVBoxLayout(fit_tab)
-
-        # Search Region (Seed ± Delta)
-        # ──────────────────────────────────────────────────────────────────
-        # Reworked from raw min/max into a "best-guess seed ± tolerance"
-        # form so the user only has to know roughly where the cluster sits
-        # in parameter space.  The fit & grid-scan code still ultimately
-        # works in (low, high) bounds; we compute those from seed ± delta
-        # in `_get_fit_bounds()` below.
-        bounds_group = QGroupBox("Search Region (Seed ± Delta)")
-        bounds_outer = QVBoxLayout(bounds_group)
-        bounds_outer.setContentsMargins(8, 10, 8, 8)
-        bounds_outer.setSpacing(6)
-
-        seed_hint = QLabel(
-            "Enter a best-guess value and how much it can drift; the grid "
-            "scan and auto-fit explore [seed − Δ, seed + Δ]."
-        )
-        seed_hint.setStyleSheet("QLabel { color: #546E7A; font-style: italic; }")
-        seed_hint.setWordWrap(True)
-        bounds_outer.addWidget(seed_hint)
-
-        bounds_form = QFormLayout()
-        bounds_form.setLabelAlignment(Qt.AlignRight | Qt.AlignVCenter)
-        bounds_form.setHorizontalSpacing(8)
-
-        def _seed_delta_row(seed_default, delta_default, seed_range,
-                            delta_range, decimals, step):
-            row = QHBoxLayout()
-            row.setSpacing(6)
-            seed_spin = QDoubleSpinBox()
-            seed_spin.setRange(*seed_range)
-            seed_spin.setDecimals(decimals)
-            seed_spin.setSingleStep(step)
-            seed_spin.setValue(seed_default)
-            row.addWidget(QLabel("seed:"))
-            row.addWidget(seed_spin)
-            row.addSpacing(6)
-            delta_spin = QDoubleSpinBox()
-            delta_spin.setRange(*delta_range)
-            delta_spin.setDecimals(decimals)
-            delta_spin.setSingleStep(step)
-            delta_spin.setPrefix("± ")
-            delta_spin.setValue(delta_default)
-            row.addWidget(QLabel("Δ:"))
-            row.addWidget(delta_spin)
-            row.addStretch()
-            return row, seed_spin, delta_spin
-
-        age_row, self.age_seed, self.age_delta = _seed_delta_row(
-            seed_default=8.5, delta_default=0.5,
-            seed_range=(6.0, 10.5), delta_range=(0.0, 3.0),
-            decimals=2, step=0.05,
-        )
-        bounds_form.addRow("log(Age):", age_row)
-
-        mh_row, self.mh_seed, self.mh_delta = _seed_delta_row(
-            seed_default=0.0, delta_default=0.3,
-            seed_range=(-2.2, 1.0), delta_range=(0.0, 2.0),
-            decimals=2, step=0.05,
-        )
-        bounds_form.addRow("[M/H]:", mh_row)
-
-        dm_row, self.dm_seed, self.dm_delta = _seed_delta_row(
-            seed_default=10.5, delta_default=1.5,
-            seed_range=(0.0, 20.0), delta_range=(0.0, 5.0),
-            decimals=2, step=0.1,
-        )
-        bounds_form.addRow("(m-M)₀:", dm_row)
-
-        egr_row, self.egr_seed, self.egr_delta = _seed_delta_row(
-            seed_default=0.1, delta_default=0.2,
-            seed_range=(-0.2, 1.5), delta_range=(0.0, 1.0),
-            decimals=3, step=0.01,
-        )
-        bounds_form.addRow("E(color):", egr_row)
-
-        # SNR minimum (kept as before — applies to the source filter, not the seed grid)
-        snr_row = QHBoxLayout()
-        self.snr_min_spin = QDoubleSpinBox()
-        self.snr_min_spin.setRange(1.0, 100.0)
-        self.snr_min_spin.setValue(20.0)
-        self.snr_min_spin.setDecimals(1)
-        snr_row.addWidget(self.snr_min_spin)
-        snr_row.addStretch()
-        bounds_form.addRow("Min SNR:", snr_row)
-
-        bounds_outer.addLayout(bounds_form)
-
-        seed_btn_row = QHBoxLayout()
-        self.btn_seed_from_viewer = QPushButton("Use CMD viewer values as seed")
-        self.btn_seed_from_viewer.setStyleSheet(
-            "QPushButton { background-color: #455A64; color: white; padding: 6px 12px; }"
-            "QPushButton:hover { background-color: #607D8B; }"
-        )
-        self.btn_seed_from_viewer.setToolTip(
-            "Copy log Age / [Fe/H] / DM / E(color) from the CMD Viewer sliders.\n"
-            "Load the isochrone in the viewer first, drag sliders until the "
-            "isochrone roughly hugs the data, then click here."
-        )
-        self.btn_seed_from_viewer.clicked.connect(self._copy_seed_from_viewer)
-        seed_btn_row.addWidget(self.btn_seed_from_viewer)
-        seed_btn_row.addStretch()
-        bounds_outer.addLayout(seed_btn_row)
-
-        fit_layout.addWidget(bounds_group)
-
-        # Fitting button (single recommended method)
-        btn_group = QGroupBox("Run Fitting")
-        btn_layout = QHBoxLayout(btn_group)
-
-        self.btn_autofit = QPushButton("Run Auto Fit\nUse after manual seed")
-        self.btn_autofit.setStyleSheet("""
-            QPushButton {
-                background-color: #FF9800;
-                color: white;
-                font-weight: bold;
-                padding: 14px 22px;
-                font-size: 11pt;
-                border-radius: 5px;
-            }
-            QPushButton:hover { background-color: #F57C00; }
-            QPushButton:disabled { background-color: #BDBDBD; }
-        """)
-        self.btn_autofit.clicked.connect(self.run_fitting)
-        btn_layout.addWidget(self.btn_autofit)
-
-        self.btn_gridscan = QPushButton("Run Grid Scan\nExhaustive age/[M/H] search")
-        self.btn_gridscan.setStyleSheet("""
-            QPushButton {
-                background-color: #7B1FA2;
-                color: white;
-                font-weight: bold;
-                padding: 14px 22px;
-                font-size: 11pt;
-                border-radius: 5px;
-            }
-            QPushButton:hover { background-color: #6A1B9A; }
-            QPushButton:disabled { background-color: #BDBDBD; }
-        """)
-        self.btn_gridscan.clicked.connect(self.run_grid_scan)
-        btn_layout.addWidget(self.btn_gridscan)
-
-        btn_layout.addStretch()
-
-        fit_layout.addWidget(btn_group)
-        fit_hint = QLabel("Auto fit is an initial guess tool. Final science fit should be validated with CMD viewer sliders.")
-        fit_hint.setStyleSheet("QLabel { color: #546E7A; font-style: italic; }")
-        fit_layout.addWidget(fit_hint)
-
-        # Progress bar
-        self.progress_bar = QProgressBar()
-        self.progress_bar.setVisible(False)
-        self.progress_bar.setTextVisible(True)
-        self.progress_bar.setFormat("%p% - %v")
-        fit_layout.addWidget(self.progress_bar)
-
-        self.progress_label = QLabel("")
-        self.progress_label.setStyleSheet("QLabel { color: #666; font-style: italic; }")
-        fit_layout.addWidget(self.progress_label)
-
-        # Results display
-        results_group = QGroupBox("Fit Results")
-        results_layout = QVBoxLayout(results_group)
-        self.results_text = QTextEdit()
-        self.results_text.setReadOnly(True)
-        self.results_text.setStyleSheet("""
-            QTextEdit {
-                font-family: 'Consolas', 'Monaco', monospace;
-                font-size: 10pt;
-                background-color: #1E1E1E;
-                color: #D4D4D4;
-                border: 1px solid #3C3C3C;
-            }
-        """)
-        self.results_text.setMinimumHeight(200)
-        self.results_text.setPlaceholderText("Fit results will appear here...")
-        results_layout.addWidget(self.results_text)
-
-        # Action buttons after fitting
-        action_row = QHBoxLayout()
-        self.btn_apply = QPushButton("Apply to CMD Viewer")
-        self.btn_apply.setEnabled(False)
-        self.btn_apply.clicked.connect(self.apply_fit_to_viewer)
-        action_row.addWidget(self.btn_apply)
-
-        self.btn_export = QPushButton("Export Results")
-        self.btn_export.setEnabled(False)
-        self.btn_export.clicked.connect(self.export_fit_results)
-        action_row.addWidget(self.btn_export)
-
-        self.btn_membership = QPushButton("Compute Membership")
-        self.btn_membership.setEnabled(False)
-        self.btn_membership.clicked.connect(self.compute_membership)
-        action_row.addWidget(self.btn_membership)
-
-        action_row.addStretch()
-        results_layout.addLayout(action_row)
-
-        fit_layout.addWidget(results_group)
-        fit_layout.addStretch()
-
-        fit_scroll = QScrollArea()
-        fit_scroll.setWidgetResizable(True)
-        fit_scroll.setFrameShape(QFrame.NoFrame)
-        fit_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAsNeeded)
-        fit_scroll.setVerticalScrollBarPolicy(Qt.ScrollBarAsNeeded)
-        fit_scroll.setWidget(fit_tab)
-        self.auto_fit_tab_index = self.tabs.addTab(fit_scroll, "Quick Fit (grid)")
-
         # --- Tab: Auto-fit (MCMC) — Bayesian, paper-quality figures ---
         self._build_mcmc_autofit_tab()
 
@@ -1294,14 +927,12 @@ class IsochroneModelWindow(StepWindowBase):
         self.viewer_placeholder = None
         self._show_viewer_placeholder(
             "Select an isochrone file to render CMD + sliders.\n"
-            "Auto Fit results can be applied directly to this viewer."
+            "Auto-fit (MCMC) results and sliders share this viewer."
         )
 
         manual_scroll.setWidget(manual_inner)
         manual_outer.addWidget(manual_scroll)
         self.cmd_viewer_tab_index = self.tabs.insertTab(0, manual_tab, "CMD Viewer")
-        self.cc_tab_index = self.tabs.indexOf(cc_tab)
-        self.auto_fit_tab_index = self.tabs.indexOf(fit_scroll)
         self.tabs.setCurrentIndex(self.cmd_viewer_tab_index)
         # Lazy load: defer the (slow) CMD Viewer first render until the
         # user actually opens that tab.  See _on_tab_changed below.
@@ -1328,11 +959,6 @@ class IsochroneModelWindow(StepWindowBase):
 
         # Internal state
         self.fitter: Optional[IsochroneFitterV2] = None
-        self.fit_result: Optional[FitResult] = None
-        self.fit_worker: Optional[FitWorker] = None
-        self.grid_scan_worker: Optional[GridScanWorker] = None
-        self.grid_scan_result: Optional[GridScanResult] = None
-        self.heatmap_tab_index: Optional[int] = None
         self.cmd_df: Optional[pd.DataFrame] = None
 
     def log(self, message: str):
@@ -1503,9 +1129,6 @@ class IsochroneModelWindow(StepWindowBase):
 
     def _on_source_filter_changed(self):
         """Called when any source filter widget changes."""
-        self._clear_fit_outputs("Source filters changed; rerun fit for the filtered CMD sample.")
-        self._cc_ax = None          # force full redraw of color-color plot
-        self._update_cc_plot()
         self.refresh_cmd_viewer(show_error=False)
 
     def _get_iso_path(self) -> str:
@@ -1611,27 +1234,52 @@ class IsochroneModelWindow(StepWindowBase):
         prior_group = QGroupBox("External priors (Gaussian: mean ± σ; small σ ≈ fixed)")
         prior_form = QFormLayout(prior_group)
 
-        self.mcmc_mh_prior_chk = QCheckBox("[M/H] prior")
+        self.mcmc_mh_prior_chk = QCheckBox("[M/H] prior (spectroscopy)")
+        self.mcmc_mh_prior_chk.setToolTip(
+            "분광 문헌값을 입력하세요 — 예: APOGEE/GALAH의 성단 [Fe/H].\n"
+            "U/u 청색 밴드가 없는 자료에서 [M/H]를 정하는 표준 경로입니다\n"
+            "(gri·BVR 색만으로는 ~0.2 dex 금속결핍으로 치우침, docs §10.9).\n"
+            "σ는 그 측정의 실제 정밀도(보통 0.03~0.10 dex).")
         mh_row = QHBoxLayout()
         self.mcmc_mh_mean = QDoubleSpinBox(); self.mcmc_mh_mean.setRange(-2.5, 1.0)
         self.mcmc_mh_mean.setDecimals(3); self.mcmc_mh_mean.setSingleStep(0.05)
+        self.mcmc_mh_mean.setToolTip("문헌 [Fe/H]/[M/H] 값 [dex]")
         self.mcmc_mh_sigma = QDoubleSpinBox(); self.mcmc_mh_sigma.setRange(0.001, 1.0)
         self.mcmc_mh_sigma.setDecimals(3); self.mcmc_mh_sigma.setSingleStep(0.01)
         self.mcmc_mh_sigma.setValue(0.10)
+        self.mcmc_mh_sigma.setToolTip("측정 정밀도 [dex] — 너무 크면 축퇴를 못 깹니다")
         mh_row.addWidget(QLabel("μ")); mh_row.addWidget(self.mcmc_mh_mean)
         mh_row.addWidget(QLabel("σ")); mh_row.addWidget(self.mcmc_mh_sigma)
         prior_form.addRow(self.mcmc_mh_prior_chk, self._wrap(mh_row))
 
-        self.mcmc_ebv_prior_chk = QCheckBox("E(B−V) prior")
+        self.mcmc_ebv_prior_chk = QCheckBox("E(B−V) prior (dust map)")
+        self.mcmc_ebv_prior_chk.setToolTip(
+            "먼지지도/문헌 적색화 — 예: SFD98·Green+2019(Bayestar), 성단\n"
+            "카탈로그(Cantat-Gaudin+2020, Dias+2021). 젊은 산개성단의 단색\n"
+            "적합은 이 prior 없이는 나이·E가 축퇴로 rail 합니다(NGC 6811 실측).")
         ebv_row = QHBoxLayout()
         self.mcmc_ebv_mean = QDoubleSpinBox(); self.mcmc_ebv_mean.setRange(0.0, 3.0)
         self.mcmc_ebv_mean.setDecimals(3); self.mcmc_ebv_mean.setSingleStep(0.01)
+        self.mcmc_ebv_mean.setToolTip("문헌 E(B−V) [mag]")
         self.mcmc_ebv_sigma = QDoubleSpinBox(); self.mcmc_ebv_sigma.setRange(0.001, 1.0)
         self.mcmc_ebv_sigma.setDecimals(3); self.mcmc_ebv_sigma.setSingleStep(0.01)
         self.mcmc_ebv_sigma.setValue(0.02)
+        self.mcmc_ebv_sigma.setToolTip("불확실성 [mag] — 차등적색화 성단이면 크게")
         ebv_row.addWidget(QLabel("μ")); ebv_row.addWidget(self.mcmc_ebv_mean)
         ebv_row.addWidget(QLabel("σ")); ebv_row.addWidget(self.mcmc_ebv_sigma)
         prior_form.addRow(self.mcmc_ebv_prior_chk, self._wrap(ebv_row))
+
+        # visual affordance: μ/σ fields live only while their prior is on
+        def _bind_prior_row(chk, widgets):
+            def _sync(_state=None):
+                for w in widgets:
+                    w.setEnabled(chk.isChecked())
+            chk.stateChanged.connect(_sync)
+            _sync()
+        _bind_prior_row(self.mcmc_mh_prior_chk,
+                        (self.mcmc_mh_mean, self.mcmc_mh_sigma))
+        _bind_prior_row(self.mcmc_ebv_prior_chk,
+                        (self.mcmc_ebv_mean, self.mcmc_ebv_sigma))
 
         hint = QLabel("Gaia parallax → (m−M)₀ is set from the membership clump when available.")
         hint.setStyleSheet("QLabel { color: #607D8B; font-size: 8pt; }")
@@ -1674,6 +1322,9 @@ class IsochroneModelWindow(StepWindowBase):
 
         self._mcmc_worker = None
         self._mcmc_last_output = None
+        saved = getattr(self, "_mcmc_saved_state", None)
+        if saved:
+            self._restore_mcmc_state(saved)
         self.mcmc_tab_index = self.tabs.addTab(tab, "Auto-fit (MCMC)")
         # Auto-detect available colours when the user opens this tab.
         self.tabs.currentChanged.connect(self._on_mcmc_tab_changed)
@@ -1723,7 +1374,9 @@ class IsochroneModelWindow(StepWindowBase):
         for i in range(len(bands) - 1):
             b1, b2 = bands[i], bands[i + 1]
             chk = QCheckBox(f"{b1}-{b2}")
-            chk.setChecked(True)
+            saved_colors = getattr(self, "_mcmc_saved_colors", None)
+            chk.setChecked(True if not saved_colors
+                           else f"{b1}-{b2}" in saved_colors)
             if b1 in ("u", "U"):
                 chk.setToolTip("Blue/UV colour — this is the one that constrains [M/H].")
             self.mcmc_color_checks[(b1, b2)] = chk
@@ -1747,6 +1400,7 @@ class IsochroneModelWindow(StepWindowBase):
     def _run_mcmc_autofit(self):
         if self._mcmc_worker is not None and self._mcmc_worker.isRunning():
             return
+        self.save_state()   # persist priors/settings the moment they are used
         bc = self._get_band_config()
         if not self._require_iso_config(bc):
             return
@@ -1994,68 +1648,6 @@ class IsochroneModelWindow(StepWindowBase):
         QMessageBox.warning(self, "Isochrone Filter Mismatch", "\n\n".join(parts))
         return False
 
-    def _current_fit_labels(self) -> dict[str, str]:
-        """Return display labels for the active CMD axes."""
-        bc = self._get_band_config()
-        b1, b2 = bc["band_color"]
-        bm = bc["band_mag"]
-        color_label = f"{b1}-{b2}"
-        return {
-            "extinction_label": f"E({color_label})",
-            "color_label": color_label,
-            "mag_label": bm,
-        }
-
-    def _annotate_fit_result(self, result: Optional[FitResult]) -> None:
-        """Attach current CMD-axis labels to a fit result before displaying/exporting."""
-        if result is None:
-            return
-        labels = self._current_fit_labels()
-        result.extinction_label = labels["extinction_label"]
-        result.color_label = labels["color_label"]
-        result.mag_label = labels["mag_label"]
-
-    def _fit_result_matches_current_axes(self) -> bool:
-        if self.fit_result is None:
-            return False
-        labels = self._current_fit_labels()
-        return (
-            getattr(self.fit_result, "color_label", "") == labels["color_label"]
-            and getattr(self.fit_result, "mag_label", "") == labels["mag_label"]
-            and getattr(self.fit_result, "extinction_label", "") == labels["extinction_label"]
-        )
-
-    def _remove_grid_heatmap_tab(self) -> None:
-        if not hasattr(self, "tabs"):
-            return
-        for i in range(self.tabs.count()):
-            if self.tabs.tabText(i) == "Grid Heatmap":
-                self.tabs.removeTab(i)
-                break
-        self.heatmap_tab_index = None
-
-    def _clear_fit_outputs(self, reason: str = "", reset_fitter: bool = False) -> None:
-        """Clear fit-dependent outputs so stale results cannot be exported/applied."""
-        self.fit_result = None
-        self.grid_scan_result = None
-        self._active_fit_labels = None
-        if reset_fitter:
-            self.fitter = None
-            self._fitter_cache_key = None
-        if hasattr(self, "btn_apply"):
-            self.btn_apply.setEnabled(False)
-        if hasattr(self, "btn_export"):
-            self.btn_export.setEnabled(False)
-        if hasattr(self, "btn_membership"):
-            self.btn_membership.setEnabled(False)
-        if hasattr(self, "results_text") and reason:
-            self.results_text.clear()
-            self.results_text.setPlaceholderText(f"Fit results cleared: {reason}")
-        if hasattr(self, "progress_label") and reason:
-            self.progress_label.setText(reason)
-        if hasattr(self, "heatmap_tab_index"):
-            self._remove_grid_heatmap_tab()
-
     def _default_iso_dir(self) -> Path:
         preferred = Path.cwd() / "isochrone"
         if preferred.exists():
@@ -2180,7 +1772,7 @@ class IsochroneModelWindow(StepWindowBase):
 
     def _on_band_changed(self):
         """Refresh CMD viewer when band selection changes."""
-        self._clear_fit_outputs("Band selection changed; rerun fit for the selected CMD axes.", reset_fitter=True)
+        self.fitter = None
         if self._get_iso_path():
             self.refresh_cmd_viewer(show_error=False)
 
@@ -2384,7 +1976,6 @@ class IsochroneModelWindow(StepWindowBase):
         self._iso_header_key = None
         self._fitter_cache_key = None
         self.fitter = None
-        self._cc_ax = None  # force full redraw of color-color plot
 
     def _show_viewer_placeholder(self, message: str):
         self._clear_viewer_widget()
@@ -2480,298 +2071,6 @@ class IsochroneModelWindow(StepWindowBase):
         )
         return True
 
-    def _get_fit_initial_guess(self):
-        """Build fit initial guess from current CMD slider state when available."""
-        values = None
-        if self.viewer is not None and hasattr(self.viewer, "current_slider_values"):
-            try:
-                values = self.viewer.current_slider_values()
-            except Exception:
-                values = None
-
-        if not values:
-            values = {
-                "log_age": float(getattr(self.params.P, "iso_age_init", 9.7)),
-                "metallicity": float(getattr(self.params.P, "iso_mh_init", -0.1)),
-                "distance_mod": float(getattr(self.params.P, "iso_dm_init", 9.46)),
-                "extinction_gr": float(getattr(self.params.P, "iso_eg_r_init", 0.0033)),
-            }
-
-        return np.array(
-            [
-                values["log_age"],
-                values["metallicity"],
-                values["distance_mod"],
-                values["extinction_gr"],
-            ],
-            dtype=float,
-        )
-
-    # =========================================================================
-    # Color-Color Diagram
-    # =========================================================================
-
-    def _get_cc_bands(self, df: "pd.DataFrame"):
-        """Return (b1, b2, b3) — three wavelength-adjacent bands for the cc diagram, or None.
-
-        Prefers calibrated bands; falls back to instrumental.  When the
-        user has already chosen an X color in the main fit panel, the first two
-        bands match that choice so the cc diagram stays consistent.
-        """
-        from apex.utils.gaia_transforms import filter_bands_from_columns
-        bands = (
-            filter_bands_from_columns(df.columns, "mag_cal_")
-            or filter_bands_from_columns(df.columns, "mag_std_")
-            or filter_bands_from_columns(df.columns, "mag_inst_")
-        )
-        if len(bands) < 3:
-            return None
-
-        sel = self.color_combo.currentText().split("-") if hasattr(self, "color_combo") else []
-        if len(sel) == 2 and sel[0] in bands and sel[1] in bands:
-            b1, b2 = sel
-            i2 = bands.index(b2)
-            if i2 + 1 < len(bands):
-                return (b1, b2, bands[i2 + 1])
-            if i2 - 2 >= 0:
-                return (bands[i2 - 2], bands[i2 - 1], b2)
-        return tuple(bands[:3])
-
-    def _get_cc_mag_data(self, df: "pd.DataFrame", bands: tuple[str, str, str]):
-        arrays = []
-        systems = []
-        cols = []
-        for band in bands:
-            col, label = _preferred_mag_col(df.columns, band)
-            if col is None:
-                return None, None, None
-            arrays.append(df[col].to_numpy(float))
-            systems.append(label)
-            cols.append(col)
-        system_label = systems[0] if all(s == systems[0] for s in systems) else "Mixed"
-        return arrays, system_label, cols
-
-    def _update_cc_plot(self):
-        """Draw/update the color-color diagram (cached – fast on slider changes)."""
-        df, iso_raw, iso_file = self._load_cmd_and_iso_data(show_error=False)
-        if df is None or iso_raw is None:
-            return
-        df = self._apply_source_filters(df)
-
-        cc_bands = self._get_cc_bands(df)
-        cc_mag_data = self._get_cc_mag_data(df, cc_bands) if cc_bands is not None else (None, None, None)
-        cc_arrays, cc_system_label, cc_cols = cc_mag_data
-        cc_signature = (cc_bands, cc_system_label, tuple(cc_cols or []))
-
-        need_full = not hasattr(self, "_cc_ax") or self._cc_ax is None or \
-                    getattr(self, "_cc_signature_drawn", None) != cc_signature
-
-        if need_full:
-            self.cc_fig.clear()
-            ax = self.cc_fig.add_subplot(111)
-            self._cc_ax = ax
-            self._cc_signature_drawn = cc_signature
-
-            if cc_bands is None:
-                ax.text(0.5, 0.5, "Need at least 3 filters for color-color diagram",
-                        ha='center', va='center', transform=ax.transAxes, fontsize=12)
-                self.cc_canvas.draw()
-                return
-
-            b1, b2, b3 = cc_bands
-
-            if cc_arrays is None:
-                ax.text(0.5, 0.5, f"Missing band data for {b1}/{b2}/{b3}",
-                        ha='center', va='center', transform=ax.transAxes, fontsize=12)
-                self.cc_canvas.draw()
-                return
-
-            m1, m2, m3 = cc_arrays
-            c_y = m1 - m2   # e.g. B-V
-            c_x = m2 - m3   # e.g. V-R
-            mask = np.isfinite(c_y) & np.isfinite(c_x)
-            ax.scatter(c_x[mask], c_y[mask], s=3, alpha=0.6, color="gray", label=f"Observed ({cc_system_label})", zorder=1)
-            ax.set_xlabel(f"{cc_system_label} ({b2} - {b3})", fontsize=12)
-            ax.set_ylabel(f"{cc_system_label} ({b1} - {b2})", fontsize=12)
-            ax.grid(True, linestyle=":", alpha=0.4)
-
-            self._cc_line_unred, = ax.plot([], [], 'c-', lw=1.5, alpha=0.7, label="Unreddened isochrone", zorder=2)
-            self._cc_line_red,   = ax.plot([], [], 'r-', lw=2.0, alpha=0.9, zorder=3)
-            self._cc_arrow = None
-            ax.legend(loc="upper left", fontsize=9)
-            self.cc_fig.tight_layout()
-
-        ax = self._cc_ax
-        if cc_bands is None:
-            return
-
-        b1, b2, b3 = cc_bands
-        if hasattr(self, "cc_source_label"):
-            cols_text = ", ".join(cc_cols or [])
-            self.cc_source_label.setText(
-                f"Observed: {cc_system_label} magnitudes | X=({b2}-{b3}), Y=({b1}-{b2}) | {cols_text}"
-            )
-
-        ref_age = self.cc_age_spin.value()
-        ref_mh  = self.cc_mh_spin.value()
-        col_1 = self._iso_band_columns.get(b1)
-        col_2 = self._iso_band_columns.get(b2)
-        col_3 = self._iso_band_columns.get(b3)
-        if col_1 is None or col_2 is None or col_3 is None:
-            target = target_display_name(self.params)
-            ax.set_title(f"{target} - Color-Color: no isochrone column mapping for {b1}/{b2}/{b3}")
-            self.cc_canvas.draw_idle()
-            return
-
-        available_ages = np.unique(iso_raw[:, 2])
-        available_mhs  = np.unique(iso_raw[:, 1])
-        nearest_age = float(available_ages[np.argmin(np.abs(available_ages - ref_age))])
-        nearest_mh  = float(available_mhs[np.argmin(np.abs(available_mhs - ref_mh))])
-        iso_mask = (iso_raw[:, 2] == nearest_age) & (iso_raw[:, 1] == nearest_mh)
-        iso_sub  = iso_raw[iso_mask]
-
-        if len(iso_sub) > 0:
-            i1, i2, i3 = iso_sub[:, col_1], iso_sub[:, col_2], iso_sub[:, col_3]
-            cy0 = i1 - i2
-            cx0 = i2 - i3
-            sort_idx = np.argsort(cx0)
-            cy0, cx0 = cy0[sort_idx], cx0[sort_idx]
-            self._cc_line_unred.set_data(cx0, cy0)
-
-            ebv  = self.cc_ebv_spin.value()
-            R1   = EXTINCTION_R.get(b1, 3.0)
-            R2   = EXTINCTION_R.get(b2, 3.0)
-            R3   = EXTINCTION_R.get(b3, 3.0)
-            dEy  = (R1 - R2) * ebv
-            dEx  = (R2 - R3) * ebv
-            self._cc_line_red.set_data(cx0 + dEx, cy0 + dEy)
-            self._cc_line_red.set_label(f"Reddened E(B-V)={ebv:.4f}")
-
-            if self._cc_arrow is not None:
-                self._cc_arrow.remove()
-                self._cc_arrow = None
-            mid = len(cx0) // 3
-            if mid < len(cx0) and ebv > 1e-6:
-                self._cc_arrow = ax.annotate(
-                    "", xy=(cx0[mid] + dEx, cy0[mid] + dEy),
-                    xytext=(cx0[mid], cy0[mid]),
-                    arrowprops=dict(arrowstyle="->", color="yellow", lw=2))
-
-            self.cc_result_label.setText(
-                f"E(B-V)={ebv:.4f}  |  E({b1}-{b2})={dEy:.4f}  |  E({b2}-{b3})={dEx:.4f}"
-            )
-
-        target = target_display_name(self.params)
-        ax.set_title(
-            f"{target} - Color-Color {cc_system_label}: ({b1}-{b2}) vs ({b2}-{b3})  |  "
-            f"log(Age)={nearest_age:.2f}, [M/H]={nearest_mh:.2f}"
-        )
-        ax.legend(loc="upper left", fontsize=9)
-        self.cc_canvas.draw_idle()
-
-    def _autofit_ebv(self):
-        """Auto-fit E(B-V) by sliding the isochrone along the reddening vector."""
-        df, iso_raw, _ = self._load_cmd_and_iso_data(show_error=True)
-        if df is None or iso_raw is None:
-            return
-        df = self._apply_source_filters(df)
-
-        cc_bands = self._get_cc_bands(df)
-        if cc_bands is None:
-            QMessageBox.warning(self, "Missing Data", "Need at least 3 filter bands for color-color fitting")
-            return
-        b1, b2, b3 = cc_bands
-
-        col_1 = self._iso_band_columns.get(b1)
-        col_2 = self._iso_band_columns.get(b2)
-        col_3 = self._iso_band_columns.get(b3)
-        if col_1 is None or col_2 is None or col_3 is None:
-            QMessageBox.warning(self, "Missing Data",
-                                f"No isochrone column mapping for {b1}/{b2}/{b3}.\n"
-                                "Select an isochrone matching your filter system.")
-            return
-
-        cc_arrays, cc_system_label, _ = self._get_cc_mag_data(df, cc_bands)
-        if cc_arrays is None:
-            QMessageBox.warning(self, "Missing Data", f"Missing magnitude data for {b1}/{b2}/{b3}")
-            return
-        m1, m2, m3 = cc_arrays
-
-        cy_obs = m1 - m2
-        cx_obs = m2 - m3
-        mask = np.isfinite(cy_obs) & np.isfinite(cx_obs)
-        cy_obs, cx_obs = cy_obs[mask], cx_obs[mask]
-
-        ref_age = self.cc_age_spin.value()
-        ref_mh  = self.cc_mh_spin.value()
-        available_ages = np.unique(iso_raw[:, 2])
-        available_mhs  = np.unique(iso_raw[:, 1])
-        nearest_age = float(available_ages[np.argmin(np.abs(available_ages - ref_age))])
-        nearest_mh  = float(available_mhs[np.argmin(np.abs(available_mhs - ref_mh))])
-        iso_mask = (iso_raw[:, 2] == nearest_age) & (iso_raw[:, 1] == nearest_mh)
-        iso_sub  = iso_raw[iso_mask]
-        if len(iso_sub) < 10:
-            QMessageBox.warning(self, "No Data", "Not enough isochrone points for this age/[M/H]")
-            return
-
-        cy0 = iso_sub[:, col_1] - iso_sub[:, col_2]
-        cx0 = iso_sub[:, col_2] - iso_sub[:, col_3]
-
-        R1, R2, R3 = EXTINCTION_R.get(b1, 3.0), EXTINCTION_R.get(b2, 3.0), EXTINCTION_R.get(b3, 3.0)
-        dy_per_ebv = R1 - R2
-        dx_per_ebv = R2 - R3
-
-        obs_pts = np.column_stack([cx_obs, cy_obs])
-        sigma = 0.05
-        ebv_trials = np.linspace(-0.1, 1.5, 800)
-        scores = np.empty(len(ebv_trials))
-        for j, ebv in enumerate(ebv_trials):
-            shifted = np.column_stack([cx0 + dx_per_ebv * ebv, cy0 + dy_per_ebv * ebv])
-            iso_tree = cKDTree(shifted)
-            dist, _ = iso_tree.query(obs_pts)
-            scores[j] = np.sum(np.exp(-0.5 * (dist / sigma) ** 2))
-
-        best_ebv = max(0.0, float(ebv_trials[int(np.argmax(scores))]))
-        self._cc_zp_perp = 0.0
-        self._cc_perp_norm = np.array([0.0, 0.0])
-        self.cc_ebv_spin.setValue(best_ebv)
-
-        warning = " ⚠ Low E(B-V): result may be unreliable" if best_ebv < 0.1 else ""
-        self.log(f"Color-color estimate ({cc_system_label}): E(B-V)={best_ebv:.4f}, "
-                 f"E({b1}-{b2})={dy_per_ebv * best_ebv:.4f}, "
-                 f"E({b2}-{b3})={dx_per_ebv * best_ebv:.4f}{warning}")
-
-    def _apply_ebv_to_bounds(self):
-        """Apply the determined E(B-V) to the fitting bounds as E(color)."""
-        ebv = self.cc_ebv_spin.value()
-        bc = self._get_band_config()
-        if not self._require_iso_config(bc):
-            return
-        R1 = bc["R_band1"]
-        R2 = bc["R_band2"]
-        e_color = (R1 - R2) * ebv
-
-        # Set tight bounds: ±20% or ±0.02, whichever is larger
-        margin = max(e_color * 0.2, 0.02)
-        lo = max(0.0, e_color - margin)
-        hi = e_color + margin
-
-        self.egr_min.setValue(round(lo, 4))
-        self.egr_max.setValue(round(hi, 4))
-
-        b1, b2 = bc["band_color"]
-        self.log(f"Applied E(B-V)={ebv:.4f} → E({b1}-{b2})={e_color:.4f}, bounds=[{lo:.4f}, {hi:.4f}]")
-        QMessageBox.information(
-            self, "Applied",
-            f"E(B-V) = {ebv:.4f}\n"
-            f"E({b1}-{b2}) = {e_color:.4f}\n\n"
-            f"Extinction bounds set to [{lo:.4f}, {hi:.4f}]"
-        )
-
-    # =========================================================================
-    # Fitting Helpers
-    # =========================================================================
-
     def _extract_cmd_columns(self):
         """Extract color/mag arrays from self.cmd_df using current band selection.
         Returns (color, mag, color_err, mag_err) or None on failure.
@@ -2853,531 +2152,6 @@ class IsochroneModelWindow(StepWindowBase):
     # Fitting Methods
     # =========================================================================
 
-    def _get_fit_bounds(self) -> FitBounds:
-        """Build a FitBounds from the (seed, Δ) spinboxes in the Auto Fit tab.
-
-        Bounds = [seed − Δ, seed + Δ].  Δ is clamped to a small positive
-        floor so a user accidentally setting Δ=0 still yields a workable
-        (but tiny) search window instead of an empty range that breaks the
-        downstream fitter.
-        """
-        def _band(seed_w, delta_w, lo_clip, hi_clip, floor=1e-3):
-            seed = float(seed_w.value())
-            delta = max(float(delta_w.value()), floor)
-            lo = max(lo_clip, seed - delta)
-            hi = min(hi_clip, seed + delta)
-            if hi <= lo:
-                hi = lo + 2 * floor
-            return (lo, hi)
-
-        return FitBounds(
-            log_age=_band(self.age_seed, self.age_delta, 6.0, 10.5),
-            metallicity=_band(self.mh_seed, self.mh_delta, -2.2, 1.0),
-            distance_mod=_band(self.dm_seed, self.dm_delta, 0.0, 25.0),
-            extinction_gr=_band(self.egr_seed, self.egr_delta, -0.2, 2.0),
-        )
-
-    def _copy_seed_from_viewer(self) -> None:
-        """Populate Seed fields from the CMD viewer's current slider state."""
-        vals = None
-        if getattr(self, "viewer", None) is not None and hasattr(self.viewer, "current_slider_values"):
-            try:
-                vals = self.viewer.current_slider_values()
-            except Exception:
-                vals = None
-        if not vals:
-            QMessageBox.information(
-                self,
-                "CMD viewer not ready",
-                "Load the isochrone in the CMD Viewer tab first, then drag "
-                "the sliders so the isochrone roughly hugs the data.  Click "
-                "this button again afterwards.",
-            )
-            return
-        try:
-            self.age_seed.setValue(float(vals.get("log_age", self.age_seed.value())))
-            self.mh_seed.setValue(float(vals.get("metallicity", self.mh_seed.value())))
-            self.dm_seed.setValue(float(vals.get("distance_mod", self.dm_seed.value())))
-            self.egr_seed.setValue(float(vals.get("extinction_gr", self.egr_seed.value())))
-            self.log(
-                "Seed updated from CMD viewer: "
-                f"logAge={self.age_seed.value():.3f}, [M/H]={self.mh_seed.value():.3f}, "
-                f"DM={self.dm_seed.value():.3f}, E={self.egr_seed.value():.4f}"
-            )
-        except Exception as exc:
-            QMessageBox.warning(self, "Seed copy failed", str(exc))
-
-    def run_fitting(self):
-        """Run the single recommended auto-fit pipeline."""
-
-        cmd_df, iso_raw, iso_file = self._load_cmd_and_iso_data(show_error=True)
-        if cmd_df is None or iso_file is None:
-            return
-        self.cmd_df = self._apply_source_filters(cmd_df)
-
-        extracted = self._extract_cmd_columns()
-        if extracted is None:
-            return
-        color, mag, color_err, mag_err = extracted
-
-        try:
-            fitter = self._create_fitter(str(iso_file), iso_raw=iso_raw)
-        except Exception as e:
-            QMessageBox.critical(self, "Error", f"Failed to load isochrone: {e}")
-            return
-        if fitter is None:
-            return
-
-        # Bounds = seed ± delta (see "Search Region" UI block).
-        bounds = self._get_fit_bounds()
-
-        snr_min = self.snr_min_spin.value()
-
-        # Disable buttons during fitting
-        self._set_fitting_ui_enabled(False)
-        self.progress_bar.setVisible(True)
-        self.progress_bar.setRange(0, 100)
-        self.progress_bar.setValue(0)
-        self.progress_label.setText("Starting autofit...")
-
-        self.log(f"Starting autofit (hessian mode, multi-start) with {len(mag)} stars...")
-
-        # Run in background thread
-        initial_guess = self._get_fit_initial_guess()
-        n_starts = int(getattr(self.params.P, "iso_autofit_starts", 6))
-        de_maxiter = int(getattr(self.params.P, "iso_autofit_de_maxiter", 120))
-        local_maxiter = int(getattr(self.params.P, "iso_autofit_local_maxiter", 200))
-        fit_seed = int(getattr(self.params.P, "iso_autofit_seed", 42))
-        em_iters = int(getattr(self.params.P, "iso_autofit_em_iters", 3))
-        fit_labels = self._current_fit_labels()
-        self._active_fit_labels = dict(fit_labels)
-        fit_kwargs = {
-            "de_maxiter": de_maxiter,
-            "local_maxiter": local_maxiter,
-            "n_starts": n_starts,
-            "seed": fit_seed,
-            "initial_guess": initial_guess,
-            "em_iters": em_iters,
-            "membership_sigma_scale": float(getattr(self.params.P, "iso_autofit_membership_sigma_scale", 1.3)),
-            "weight_floor": float(getattr(self.params.P, "iso_autofit_weight_floor", 0.05)),
-        }
-        self.log(
-            "Initial guess | "
-            f"logAge={initial_guess[0]:.3f}, [M/H]={initial_guess[1]:.3f}, "
-            f"DM={initial_guess[2]:.3f}, {fit_labels['extinction_label']}={initial_guess[3]:.4f}"
-        )
-        self.log(
-            f"AutoFit settings | n_starts={n_starts}, de_maxiter={de_maxiter}, "
-            f"local_maxiter={local_maxiter}, em_iters={em_iters}, seed={fit_seed}"
-        )
-        self.fit_worker = FitWorker(
-            fitter, color, mag, color_err, mag_err,
-            FitMode.HESSIAN, bounds, snr_min,
-            fit_kwargs=fit_kwargs
-        )
-        self.fit_worker.progress.connect(self._on_fit_progress)
-        self.fit_worker.finished.connect(self._on_fit_complete)
-        self.fit_worker.start()
-
-    def _set_fitting_ui_enabled(self, enabled: bool):
-        """Enable/disable fitting UI elements"""
-        self.btn_autofit.setEnabled(enabled)
-        self.btn_gridscan.setEnabled(enabled)
-
-    def _on_fit_progress(self, progress: float, message: str):
-        """Update progress bar"""
-        pct = int(np.clip(progress, 0.0, 1.0) * 100.0)
-        self.progress_bar.setValue(pct)
-        self.progress_bar.setFormat(f"{pct}%")
-        self.progress_label.setText(message)
-
-    def _on_fit_complete(self, result):
-        """Handle fitting completion"""
-        self.progress_bar.setVisible(False)
-        self._set_fitting_ui_enabled(True)
-
-        active_labels = getattr(self, "_active_fit_labels", None)
-        self.fit_worker = None
-        if active_labels is None:
-            self.log("Discarded autofit result because inputs changed during the run")
-            self.progress_label.setText("Fit discarded because inputs changed; rerun fit.")
-            return
-        if active_labels != self._current_fit_labels():
-            self.log("Discarded autofit result because CMD axes changed during the run")
-            self.progress_label.setText("Fit discarded because CMD axes changed; rerun fit.")
-            self._active_fit_labels = None
-            return
-
-        if isinstance(result, Exception):
-            self.log(f"Fitting failed: {result}")
-            QMessageBox.critical(self, "Fitting Error", str(result))
-            self.progress_label.setText("Fitting failed")
-            self._active_fit_labels = None
-            return
-
-        self._annotate_fit_result(result)
-        self.fit_result = result
-        self._active_fit_labels = None
-        self.log(f"Fitting complete in {result.elapsed_sec:.2f} sec")
-        if not result.converged:
-            self.log("Auto fit did not fully converge; use CMD Viewer sliders for manual refinement.")
-        self.progress_label.setText(f"Complete in {result.elapsed_sec:.2f} sec")
-
-        # Display results
-        self.results_text.setPlainText(result.summary())
-
-        # Enable action buttons
-        self.btn_apply.setEnabled(True)
-        self.btn_export.setEnabled(True)
-        self.btn_membership.setEnabled(True)
-
-    def apply_fit_to_viewer(self):
-        """Apply fit results to CMD viewer parameters and refresh the viewer."""
-        if self.fit_result is None:
-            return
-        if not self._fit_result_matches_current_axes():
-            QMessageBox.warning(
-                self,
-                "Stale Fit Result",
-                "The saved fit result does not match the current band selection.\n"
-                "Run the fit again for the selected CMD axes.",
-            )
-            self._clear_fit_outputs("Fit result did not match current CMD axes.", reset_fitter=True)
-            return
-
-        # Store in params for viewer to use
-        self.params.P.iso_age_init = self.fit_result.log_age
-        self.params.P.iso_mh_init = self.fit_result.metallicity
-        self.params.P.iso_dm_init = self.fit_result.distance_mod
-        self.params.P.iso_eg_r_init = self.fit_result.extinction_gr
-
-        self.save_state()
-        self.persist_params()
-        self.log("Applied fit results to parameters")
-        if self.refresh_cmd_viewer(show_error=True):
-            self.tabs.setCurrentIndex(self.cmd_viewer_tab_index)
-
-    # -----------------------------------------------------------------
-    # Grid Scan
-    # -----------------------------------------------------------------
-
-    def run_grid_scan(self):
-        """Run exhaustive grid scan over all (age, mh) pairs within bounds."""
-        cmd_df, iso_raw, iso_file = self._load_cmd_and_iso_data(show_error=True)
-        if cmd_df is None or iso_file is None:
-            return
-        self.cmd_df = self._apply_source_filters(cmd_df)
-
-        extracted = self._extract_cmd_columns()
-        if extracted is None:
-            return
-        color, mag, color_err, mag_err = extracted
-
-        try:
-            fitter = self._create_fitter(str(iso_file), iso_raw=iso_raw)
-        except Exception as e:
-            QMessageBox.critical(self, "Error", f"Failed to load isochrone: {e}")
-            return
-        if fitter is None:
-            return
-
-        bounds = self._get_fit_bounds()
-        snr_min = self.snr_min_spin.value()
-
-        # Count grid cells
-        n_ages = int(np.sum(
-            (fitter.ages >= bounds.log_age[0]) & (fitter.ages <= bounds.log_age[1])
-        ))
-        n_mhs = int(np.sum(
-            (fitter.metallicities >= bounds.metallicity[0])
-            & (fitter.metallicities <= bounds.metallicity[1])
-        ))
-
-        self._set_fitting_ui_enabled(False)
-        self.progress_bar.setVisible(True)
-        self.progress_bar.setRange(0, 100)
-        self.progress_bar.setValue(0)
-        self.progress_label.setText(f"Grid scan: {n_ages} x {n_mhs} = {n_ages * n_mhs} cells...")
-        self.log(f"Starting grid scan: {n_ages} ages x {n_mhs} [M/H] = {n_ages * n_mhs} cells")
-
-        initial_guess = self._get_fit_initial_guess()
-        self._active_fit_labels = self._current_fit_labels()
-        fit_kwargs = {
-            "initial_dm": float(initial_guess[2]),
-            "initial_egr": float(initial_guess[3]),
-            "local_maxiter": int(getattr(self.params.P, "iso_gridscan_local_maxiter", 50)),
-        }
-
-        self.grid_scan_worker = GridScanWorker(
-            fitter, color, mag, color_err, mag_err,
-            bounds, snr_min, fit_kwargs=fit_kwargs,
-        )
-        self.grid_scan_worker.progress.connect(self._on_fit_progress)
-        self.grid_scan_worker.finished.connect(self._on_grid_scan_complete)
-        self.grid_scan_worker.start()
-
-    def _on_grid_scan_complete(self, result):
-        """Handle grid scan completion."""
-        self.progress_bar.setVisible(False)
-        self._set_fitting_ui_enabled(True)
-
-        active_labels = getattr(self, "_active_fit_labels", None)
-        self.grid_scan_worker = None
-        if active_labels is None:
-            self.log("Discarded grid scan result because inputs changed during the run")
-            self.progress_label.setText("Grid scan discarded because inputs changed; rerun scan.")
-            return
-        if active_labels != self._current_fit_labels():
-            self.log("Discarded grid scan result because CMD axes changed during the run")
-            self.progress_label.setText("Grid scan discarded because CMD axes changed; rerun scan.")
-            self._active_fit_labels = None
-            return
-
-        if isinstance(result, Exception):
-            self.log(f"Grid scan failed: {result}")
-            QMessageBox.critical(self, "Grid Scan Error", str(result))
-            self.progress_label.setText("Grid scan failed")
-            self._active_fit_labels = None
-            return
-
-        self._annotate_fit_result(result.best_fit)
-        self.grid_scan_result = result
-        self.fit_result = result.best_fit
-        self._active_fit_labels = None
-
-        self.log(f"Grid scan complete: {result.n_evaluated} cells in {result.elapsed_sec:.2f} sec")
-        self.progress_label.setText(f"Grid scan: {result.n_evaluated} cells in {result.elapsed_sec:.2f} sec")
-
-        self.results_text.setPlainText(result.summary())
-
-        self.btn_apply.setEnabled(True)
-        self.btn_export.setEnabled(True)
-        self.btn_membership.setEnabled(True)
-
-        self._show_grid_heatmap(result)
-
-    def _show_grid_heatmap(self, grid_result: GridScanResult):
-        """Create or update the Grid Heatmap tab."""
-        # Remove old heatmap tab if exists
-        if self.heatmap_tab_index is not None:
-            for i in range(self.tabs.count()):
-                if self.tabs.tabText(i) == "Grid Heatmap":
-                    self.tabs.removeTab(i)
-                    break
-            self.heatmap_tab_index = None
-
-        heatmap_widget = QWidget()
-        heatmap_layout = QVBoxLayout(heatmap_widget)
-        heatmap_layout.setContentsMargins(5, 5, 5, 5)
-
-        fig = Figure(figsize=(10, 7))
-        canvas = FigureCanvas(fig)
-        canvas.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
-        heatmap_layout.addWidget(canvas, stretch=1)
-
-        ax = fig.add_subplot(111)
-
-        chi2 = grid_result.chi2_grid
-        ages = grid_result.grid_ages
-        mhs = grid_result.grid_mhs
-
-        finite_vals = chi2[np.isfinite(chi2)]
-        if len(finite_vals) == 0:
-            ax.text(0.5, 0.5, "No valid grid cells", ha='center', va='center',
-                    transform=ax.transAxes, fontsize=14)
-            canvas.draw()
-            self.heatmap_tab_index = self.tabs.addTab(heatmap_widget, "Grid Heatmap")
-            self.tabs.setCurrentIndex(self.heatmap_tab_index)
-            return
-
-        vmin = np.nanmin(chi2)
-        vmax = np.nanpercentile(finite_vals, 95)
-
-        masked_chi2 = np.ma.masked_invalid(chi2)
-
-        im = ax.pcolormesh(
-            mhs, ages, masked_chi2,
-            cmap='viridis_r',
-            vmin=vmin, vmax=vmax,
-            shading='nearest',
-        )
-        cbar = fig.colorbar(im, ax=ax, label='$\\chi^2$')
-
-        # Mark best-fit point
-        best_idx = np.unravel_index(np.nanargmin(chi2), chi2.shape)
-        best_age = ages[best_idx[0]]
-        best_mh = mhs[best_idx[1]]
-        best_chi2 = chi2[best_idx[0], best_idx[1]]
-        best_dm = grid_result.dm_grid[best_idx[0], best_idx[1]]
-        best_egr = grid_result.egr_grid[best_idx[0], best_idx[1]]
-
-        ax.plot(best_mh, best_age, 'r*', markersize=18, markeredgecolor='white',
-                markeredgewidth=1.2, zorder=10,
-                label=f'Best: age={best_age:.2f}, [M/H]={best_mh:.2f}')
-
-        ax.set_xlabel('[M/H]', fontsize=12)
-        ax.set_ylabel('log(Age)', fontsize=12)
-        bc = self._get_band_config()
-        elabel = f"E({bc['band_color'][0]}-{bc['band_color'][1]})"
-        ax.set_title(
-            f'Grid Scan  |  best $\\chi^2$={best_chi2:.1f}'
-            f'  DM={best_dm:.2f}  {elabel}={best_egr:.4f}',
-            fontsize=11,
-        )
-        ax.legend(loc='upper right', fontsize=10)
-
-        fig.tight_layout()
-        canvas.draw()
-
-        self.heatmap_tab_index = self.tabs.addTab(heatmap_widget, "Grid Heatmap")
-        self.tabs.setCurrentIndex(self.heatmap_tab_index)
-
-    def export_fit_results(self):
-        """Export fitting results to files"""
-        if self.fit_result is None:
-            return
-        if not self._fit_result_matches_current_axes():
-            QMessageBox.warning(
-                self,
-                "Stale Fit Result",
-                "The saved fit result does not match the current band selection.\n"
-                "Run the fit again before exporting.",
-            )
-            self._clear_fit_outputs("Fit result did not match current CMD axes.", reset_fitter=True)
-            return
-        self._annotate_fit_result(self.fit_result)
-        bc = self._get_band_config()
-        b1, b2 = bc["band_color"]
-        bm = bc["band_mag"]
-        color_index = f"{b1}-{b2}"
-        extinction_label = f"E({color_index})"
-
-        result_dir = step12_iso_dir(self.params.P.result_dir)
-        result_dir.mkdir(parents=True, exist_ok=True)
-
-        # Export summary text
-        summary_path = result_dir / "isochrone_fit_result.txt"
-        with open(summary_path, 'w') as f:
-            f.write(self.fit_result.summary())
-
-        # Export as JSON
-        import json
-        json_path = result_dir / "isochrone_fit_result.json"
-        fit_dict = {
-            "log_age": self.fit_result.log_age,
-            "log_age_err": self.fit_result.log_age_err,
-            "metallicity": self.fit_result.metallicity,
-            "metallicity_err": self.fit_result.metallicity_err,
-            "distance_mod": self.fit_result.distance_mod,
-            "distance_mod_err": self.fit_result.distance_mod_err,
-            "extinction_label": extinction_label,
-            "extinction_color": self.fit_result.extinction_gr,
-            "extinction_color_err": self.fit_result.extinction_gr_err,
-            "extinction_gr": self.fit_result.extinction_gr,
-            "extinction_gr_err": self.fit_result.extinction_gr_err,
-            "color_band_1": b1,
-            "color_band_2": b2,
-            "color_index": color_index,
-            "mag_band": bm,
-            "iso_col_1": bc["iso_col_1"],
-            "iso_col_2": bc["iso_col_2"],
-            "iso_col_mag": bc["iso_col_mag"],
-            "R_band1": bc["R_band1"],
-            "R_band2": bc["R_band2"],
-            "R_mag": bc["R_mag"],
-            "age_gyr": self.fit_result.age_gyr,
-            "distance_pc": self.fit_result.distance_pc,
-            "chi2": self.fit_result.chi2,
-            "reduced_chi2": self.fit_result.reduced_chi2,
-            "n_stars": self.fit_result.n_stars,
-            "fit_mode": self.fit_result.fit_mode,
-            "elapsed_sec": self.fit_result.elapsed_sec
-        }
-        with open(json_path, 'w') as f:
-            json.dump(fit_dict, f, indent=2)
-
-        export_paths = [str(summary_path), str(json_path)]
-
-        # Export grid scan data if available
-        if self.grid_scan_result is not None:
-            gs = self.grid_scan_result
-            npz_path = result_dir / "grid_scan_chi2.npz"
-            np.savez(
-                npz_path,
-                chi2_grid=gs.chi2_grid,
-                dm_grid=gs.dm_grid,
-                egr_grid=gs.egr_grid,
-                grid_ages=gs.grid_ages,
-                grid_mhs=gs.grid_mhs,
-                color_index=color_index,
-                mag_band=bm,
-                extinction_label=extinction_label,
-            )
-            export_paths.append(str(npz_path))
-
-        self.log(f"Exported results to {result_dir}")
-        QMessageBox.information(
-            self, "Exported",
-            "Results exported to:\n" + "\n".join(export_paths)
-        )
-
-    def compute_membership(self):
-        """Compute membership probabilities and save to CSV"""
-        if self.fit_result is None or self.fitter is None or self.cmd_df is None:
-            return
-        if not self._fit_result_matches_current_axes():
-            QMessageBox.warning(
-                self,
-                "Stale Fit Result",
-                "The saved fit result does not match the current band selection.\n"
-                "Run the fit again before computing membership.",
-            )
-            self._clear_fit_outputs("Fit result did not match current CMD axes.", reset_fitter=True)
-            return
-
-        # Get CMD data using current band selection
-        bc = self._get_band_config()
-        if not self._require_iso_config(bc):
-            return
-        b1, b2 = bc["band_color"]
-        bm = bc["band_mag"]
-        col1, _ = _preferred_mag_col(self.cmd_df.columns, b1)
-        col2, _ = _preferred_mag_col(self.cmd_df.columns, b2)
-        colm, _ = _preferred_mag_col(self.cmd_df.columns, bm)
-        if col1 is None or col2 is None:
-            QMessageBox.warning(self, "Missing Data", f"CMD data missing {b1}/{b2} magnitude columns")
-            return
-
-        v1 = self.cmd_df[col1].to_numpy(float)
-        v2 = self.cmd_df[col2].to_numpy(float)
-        vm = self.cmd_df[colm].to_numpy(float) if colm is not None else v1.copy()
-        color = v1 - v2
-
-        # Compute membership
-        prob = self.fitter.compute_membership(self.fit_result, color, vm)
-
-        # Add to dataframe
-        self.cmd_df["membership_prob"] = prob
-        self.cmd_df["is_member"] = prob > 0.5
-
-        n_members = (prob > 0.5).sum()
-        n_likely = (prob > 0.8).sum()
-
-        # Save
-        result_dir = step12_iso_dir(self.params.P.result_dir)
-        result_dir.mkdir(parents=True, exist_ok=True)
-        output_path = result_dir / "cmd_with_membership.csv"
-        self.cmd_df.to_csv(output_path, index=False)
-
-        self.log(f"Computed membership: {n_members} members (P>0.5), {n_likely} likely (P>0.8)")
-        QMessageBox.information(
-            self, "Membership Computed",
-            f"Membership probabilities computed:\n"
-            f"- {n_members} members (P > 0.5)\n"
-            f"- {n_likely} likely members (P > 0.8)\n\n"
-            f"Saved to: {output_path}"
-        )
-
     def show_log_window(self):
         self.log_window.show()
         self.log_window.raise_()
@@ -3395,11 +2169,10 @@ class IsochroneModelWindow(StepWindowBase):
             self.params.P.iso_file_path = path
             self._set_iso_status("Single file mode")
             self._invalidate_cache()
-            self._clear_fit_outputs("Isochrone source changed; rerun fit.", reset_fitter=True)
+            self.fitter = None
             self.save_state()
             self.persist_params()
             self.refresh_cmd_viewer(show_error=True)
-            self._update_cc_plot()
             self.update_navigation_buttons()
 
     def browse_iso_folder(self):
@@ -3413,11 +2186,10 @@ class IsochroneModelWindow(StepWindowBase):
             self.params.P.iso_file_path = path
             self._set_iso_status("Folder mode")
             self._invalidate_cache()
-            self._clear_fit_outputs("Isochrone source changed; rerun fit.", reset_fitter=True)
+            self.fitter = None
             self.save_state()
             self.persist_params()
             self.refresh_cmd_viewer(show_error=True)
-            self._update_cc_plot()
             self.update_navigation_buttons()
 
     def open_viewer(self):
@@ -3450,8 +2222,51 @@ class IsochroneModelWindow(StepWindowBase):
             "band_mag_idx": self.mag_combo.currentIndex(),
             "band_color_text": self.color_combo.currentText(),
             "band_mag_text": self.mag_combo.currentText(),
+            # Auto-fit (MCMC) settings — priors survive a restart (a re-typed
+            # prior is a re-typed literature lookup; persist it).
+            "mcmc": {
+                "membership": self.mcmc_membership_chk.isChecked(),
+                "parallax_prior": self.mcmc_parallax_chk.isChecked(),
+                "mh_prior_on": self.mcmc_mh_prior_chk.isChecked(),
+                "mh_mean": self.mcmc_mh_mean.value(),
+                "mh_sigma": self.mcmc_mh_sigma.value(),
+                "ebv_prior_on": self.mcmc_ebv_prior_chk.isChecked(),
+                "ebv_mean": self.mcmc_ebv_mean.value(),
+                "ebv_sigma": self.mcmc_ebv_sigma.value(),
+                "age_min": self.mcmc_age_min.value(),
+                "age_max": self.mcmc_age_max.value(),
+                "walkers": self.mcmc_walkers_spin.value(),
+                "steps": self.mcmc_steps_spin.value(),
+                "burn": self.mcmc_burn_spin.value(),
+                "max_stars": self.mcmc_maxstars_spin.value(),
+                "colors_checked": [f"{a}-{b}" for (a, b), chk
+                                   in self.mcmc_color_checks.items()
+                                   if chk.isChecked()],
+            },
         }
         self.project_state.store_step_data("isochrone_model", state_data)
+
+    def _restore_mcmc_state(self, m: dict):
+        """Apply saved Auto-fit (MCMC) settings back onto the widgets."""
+        try:
+            self.mcmc_membership_chk.setChecked(bool(m.get("membership", True)))
+            self.mcmc_parallax_chk.setChecked(bool(m.get("parallax_prior", True)))
+            self.mcmc_mh_prior_chk.setChecked(bool(m.get("mh_prior_on", False)))
+            self.mcmc_mh_mean.setValue(float(m.get("mh_mean", 0.0)))
+            self.mcmc_mh_sigma.setValue(float(m.get("mh_sigma", 0.10)))
+            self.mcmc_ebv_prior_chk.setChecked(bool(m.get("ebv_prior_on", False)))
+            self.mcmc_ebv_mean.setValue(float(m.get("ebv_mean", 0.0)))
+            self.mcmc_ebv_sigma.setValue(float(m.get("ebv_sigma", 0.02)))
+            self.mcmc_age_min.setValue(float(m.get("age_min", 0.20)))
+            self.mcmc_age_max.setValue(float(m.get("age_max", 6.0)))
+            self.mcmc_walkers_spin.setValue(int(m.get("walkers", 32)))
+            self.mcmc_steps_spin.setValue(int(m.get("steps", 2000)))
+            self.mcmc_burn_spin.setValue(int(m.get("burn", 600)))
+            self.mcmc_maxstars_spin.setValue(int(m.get("max_stars", 500)))
+            # colour checkboxes are rebuilt on tab open; remember the wish list
+            self._mcmc_saved_colors = list(m.get("colors_checked", []))
+        except Exception as exc:
+            self.log(f"[MCMC] saved settings restore skipped: {exc}")
 
     def restore_state(self):
         state_data = self.project_state.get_step_data("isochrone_model")
@@ -3472,6 +2287,8 @@ class IsochroneModelWindow(StepWindowBase):
                 idx = int(state_data["band_mag_idx"])
                 if 0 <= idx < self.mag_combo.count():
                     self.mag_combo.setCurrentIndex(idx)
+            # MCMC tab is built later in __init__ — stash and apply there.
+            self._mcmc_saved_state = state_data.get("mcmc") or {}
         if self.iso_path_edit is not None and not self.iso_path_edit.text().strip():
             iso_path = str(getattr(self.params.P, "iso_file_path", "") or "")
             if iso_path:
@@ -3547,10 +2364,6 @@ class IsochroneModelWindow(StepWindowBase):
         self._iso_cache_worker.start()
 
     def _render_pending_plots(self) -> None:
-        try:
-            self._update_cc_plot()
-        except Exception as exc:
-            self.log(f"[iso] cc plot error: {exc}")
         if not getattr(self, "_cmd_viewer_pending", False):
             try:
                 self.refresh_cmd_viewer(show_error=False)

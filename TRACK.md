@@ -45,6 +45,19 @@
 - 신규: `run_step12_headless --dm-prior`(구상성단용)·`--mh-bounds`,
   `recalibrate_u_mmj93.py`(--source-result/--suffix). 상세:
   `validation/psf_crossinstrument/REPORT_UB_DEGENERACY.md` 후속절.
+- **Step 12 피팅 단일화 + prior UX (2026-08-04 저녁, 사용자 결정)** —
+  「필요없는 피팅 다 없애고 MCMC 하나만」: Color-Color 탭·Quick Fit(grid)
+  탭·Grid Heatmap·CMD거리 멤버십 내보내기 제거(-1,250줄, 3,605→2,353).
+  남은 것 = CMD Viewer(수동 슬라이더, 시각화) + Auto-fit(MCMC).
+  그리드 스캔은 analysis 계층에 MCMC 초기화용으로 존속(UI만 제거).
+  prior UX: MCMC 설정 전체(prior on/μ/σ·색 선택·age범위·워커수)를
+  ProjectState 에 영속화(재시작 유지, 실행 시점 자동저장), prior
+  체크박스가 μ/σ 활성화를 연동, 분광([Fe/H])·먼지지도(E) 문헌 출처
+  툴팁. **NGC 6811 류의 [M/H]는 분광 prior 가 공식 경로**(사용자 결정 —
+  U 표준장 전이 사슬은 복잡해서 폐기, 아카이브 복권만 남김).
+  검증: 컴파일+임포트+이소크론 테스트 20 passed. **실 GUI 구동 확인은
+  미완**(offscreen 전체 창 생성이 침묵 크래시 — 기존 백로그 「GUI 실구동
+  사용감」과 함께 다음 GUI 세션에서).
 - **NGC 6811 U−B 경로 탐사 (2026-08-04 오후)** — ① VizieR: 시야 내 UBV 표준
   카탈로그 **없음** (자동탐색이 올바르게 빈손 보고; 옛 광전측광은 WEBDA에만).
   ② LCO 아카이브: `target_name="NGC 6811"` 공개 프레임 2,878장, **U raw 96장
