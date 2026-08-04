@@ -188,17 +188,113 @@ PALETTES: dict[str, dict[str, str]] = {
         "PLOT_BG": "#12233F", "PLOT_AXES_BG": "#182C4D",
         "PLOT_FG": "#CDD8EE", "PLOT_GRID": "#2C4470",
     },
+
+    # ---- Industry-standard dark presets -------------------------------------
+    # Surfaces, text and accents are the published values of each design; only
+    # the tokens APEX needs but the original doesn't define (SOFT/MUTED fills)
+    # are derived, by blending the accent or status colour into the surface.
+
+    # Chrome dark mode (Google). Neutral greys, no blue cast in the surfaces —
+    # the blue lives only in the accent. RADIUS 4 matches Chrome's rounding.
+    "chrome-dark": {
+        "BG": "#202124", "SURFACE": "#292A2D", "SURFACE_ALT": "#35363A",
+        "BORDER": "#3C4043", "BORDER_STRONG": "#5F6368",
+        "TEXT": "#E8EAED", "TEXT_SUB": "#BDC1C6", "TEXT_MUTED": "#9AA0A6",
+        "ACCENT": "#3B6FCC", "ACCENT_HOVER": "#4C82E0", "ACCENT_PRESS": "#2F5CAB",
+        "ACCENT_SOFT": "#26313F", "ACCENT_TEXT": "#8AB4F8",
+        "OK": "#81C995", "WARN": "#FDD663", "ERROR": "#F28B82",
+        "OK_SOFT": "#25342A", "WARN_SOFT": "#3A3222", "ERROR_SOFT": "#3E2A28",
+        "ACCENT_MUTED": "#2E3B4D", "ERROR_MUTED": "#4A3330",
+        "RADIUS": 4, "RADIUS_SM": 2,
+        "PLOT_BG": "#292A2D", "PLOT_AXES_BG": "#35363A",
+        "PLOT_FG": "#E8EAED", "PLOT_GRID": "#4A4D51",
+    },
+
+    # VS Code Dark+ (Microsoft). The most familiar developer dark: near-black
+    # neutral surfaces with the signature #007ACC chrome blue.
+    "vscode-dark": {
+        "BG": "#1E1E1E", "SURFACE": "#252526", "SURFACE_ALT": "#2D2D30",
+        "BORDER": "#3E3E42", "BORDER_STRONG": "#565659",
+        "TEXT": "#D4D4D4", "TEXT_SUB": "#BBBBBB", "TEXT_MUTED": "#858585",
+        "ACCENT": "#0E639C", "ACCENT_HOVER": "#1177BB", "ACCENT_PRESS": "#0A4C78",
+        "ACCENT_SOFT": "#1B2C38", "ACCENT_TEXT": "#3794FF",
+        "OK": "#4EC9B0", "WARN": "#CCA700", "ERROR": "#F14C4C",
+        "OK_SOFT": "#1D3330", "WARN_SOFT": "#332E1A", "ERROR_SOFT": "#2C1A1A",
+        "ACCENT_MUTED": "#28394A", "ERROR_MUTED": "#4A2E2E",
+        "RADIUS": 2, "RADIUS_SM": 1,
+        "PLOT_BG": "#252526", "PLOT_AXES_BG": "#2D2D30",
+        "PLOT_FG": "#D4D4D4", "PLOT_GRID": "#4A4A4E",
+    },
+
+    # One Dark (Atom). Slightly cool blue-grey surfaces, high-legibility text.
+    "one-dark": {
+        "BG": "#21252B", "SURFACE": "#282C34", "SURFACE_ALT": "#2F343D",
+        "BORDER": "#3E4451", "BORDER_STRONG": "#4F5666",
+        "TEXT": "#ABB2BF", "TEXT_SUB": "#9199A6", "TEXT_MUTED": "#727986",
+        "ACCENT": "#3D6FB5", "ACCENT_HOVER": "#4B84D4", "ACCENT_PRESS": "#325C96",
+        "ACCENT_SOFT": "#25303F", "ACCENT_TEXT": "#61AFEF",
+        "OK": "#98C379", "WARN": "#E5C07B", "ERROR": "#E06C75",
+        "OK_SOFT": "#28331F", "WARN_SOFT": "#332E1F", "ERROR_SOFT": "#33242A",
+        "ACCENT_MUTED": "#2C3A4B", "ERROR_MUTED": "#432E33",
+        "RADIUS": 3, "RADIUS_SM": 2,
+        "PLOT_BG": "#282C34", "PLOT_AXES_BG": "#2F343D",
+        "PLOT_FG": "#ABB2BF", "PLOT_GRID": "#3E4451",
+    },
+
+    # Dracula (official spec). Violet-leaning surfaces; the accent is purple,
+    # so filled buttons take dark ink automatically via ink_on().
+    "dracula": {
+        "BG": "#21222C", "SURFACE": "#282A36", "SURFACE_ALT": "#343746",
+        "BORDER": "#44475A", "BORDER_STRONG": "#5A5D75",
+        "TEXT": "#F8F8F2", "TEXT_SUB": "#D6D6D0", "TEXT_MUTED": "#6272A4",
+        "ACCENT": "#6D50B8", "ACCENT_HOVER": "#8062D0", "ACCENT_PRESS": "#5A4199",
+        "ACCENT_SOFT": "#2E2A44", "ACCENT_TEXT": "#BD93F9",
+        "OK": "#50FA7B", "WARN": "#F1FA8C", "ERROR": "#FF5555",
+        "OK_SOFT": "#23372B", "WARN_SOFT": "#36371F", "ERROR_SOFT": "#37232E",
+        "ACCENT_MUTED": "#37324F", "ERROR_MUTED": "#4A2F3A",
+        "RADIUS": 4, "RADIUS_SM": 2,
+        "PLOT_BG": "#282A36", "PLOT_AXES_BG": "#343746",
+        "PLOT_FG": "#F8F8F2", "PLOT_GRID": "#44475A",
+    },
+
+    # Gruvbox Dark (retro groove). Warm brown-grey surfaces and an amber
+    # accent — the one preset here with no blue anywhere.
+    "gruvbox-dark": {
+        "BG": "#282828", "SURFACE": "#32302F", "SURFACE_ALT": "#3C3836",
+        "BORDER": "#504945", "BORDER_STRONG": "#665C54",
+        "TEXT": "#EBDBB2", "TEXT_SUB": "#D5C4A1", "TEXT_MUTED": "#A89984",
+        "ACCENT": "#AF7A18", "ACCENT_HOVER": "#C88F22", "ACCENT_PRESS": "#8F6412",
+        "ACCENT_SOFT": "#3B3223", "ACCENT_TEXT": "#FABD2F",
+        "OK": "#B8BB26", "WARN": "#FE8019", "ERROR": "#FB4934",
+        "OK_SOFT": "#333520", "WARN_SOFT": "#3B3123", "ERROR_SOFT": "#2D1E1B",
+        "ACCENT_MUTED": "#463B29", "ERROR_MUTED": "#4C332D",
+        "RADIUS": 2, "RADIUS_SM": 1,
+        "PLOT_BG": "#32302F", "PLOT_AXES_BG": "#3C3836",
+        "PLOT_FG": "#EBDBB2", "PLOT_GRID": "#504945",
+    },
 }
 
 # (key, menu label) — drives the theme menu; add a preset to PALETTES and
 # list it here to expose it.
 THEME_PRESETS: tuple[tuple[str, str], ...] = (
-    ("apex-light", "APEX Light"),
-    ("lab",        "Lab Gray"),
-    ("charcoal",   "Charcoal"),
-    ("aurora",     "Aurora"),
-    ("midnight",   "Midnight Navy"),
+    ("apex-light",   "APEX Light"),
+    ("lab",          "Lab Gray"),
+    ("charcoal",     "Charcoal"),
+    ("aurora",       "Aurora"),
+    ("midnight",     "Midnight Navy"),
+    ("chrome-dark",  "Chrome Dark"),
+    ("vscode-dark",  "VS Code Dark+"),
+    ("one-dark",     "One Dark"),
+    ("dracula",      "Dracula"),
+    ("gruvbox-dark", "Gruvbox Dark"),
 )
+
+# Presets that reproduce a published third-party design rather than an APEX
+# one. The theme menu draws a separator before the first of these so the two
+# groups don't read as one long undifferentiated list.
+STANDARD_THEMES: frozenset[str] = frozenset({
+    "chrome-dark", "vscode-dark", "one-dark", "dracula", "gruvbox-dark",
+})
 
 DEFAULT_THEME = "lab"  # squared instrument look (owner pick, 2026-07-11)
 
@@ -270,6 +366,61 @@ def global_qss(t: type[Tokens] = Tokens) -> str:
     /* Labels/checks are transparent so they don't paint a BG-coloured
        rectangle over the white card surface they sit on. */
     QLabel, QCheckBox, QRadioButton {{ background: transparent; }}
+
+    /* Tick boxes, radio dots and slider handles used to be left to the native
+       Windows style, so they painted the *OS* accent (blue) in every preset —
+       fine while every APEX dark theme was navy, wrong the moment a palette
+       isn't blue. Drive them from the palette instead. */
+    QCheckBox::indicator, QRadioButton::indicator {{
+        width: 14px; height: 14px;
+        border: 1px solid {t.BORDER_STRONG};
+        background: {t.SURFACE};
+    }}
+    QCheckBox::indicator {{ border-radius: {t.RADIUS_SM}px; }}
+    QRadioButton::indicator {{ border-radius: 8px; }}
+    QCheckBox::indicator:hover, QRadioButton::indicator:hover {{
+        border-color: {t.ACCENT};
+    }}
+    /* A filled box is the checked state — APEX ships no tick glyph resource,
+       and pointing at a missing one would blank the indicator entirely. */
+    QCheckBox::indicator:checked {{
+        background: {t.ACCENT}; border-color: {t.ACCENT};
+    }}
+    QRadioButton::indicator:checked {{
+        background: {t.ACCENT}; border-color: {t.ACCENT};
+    }}
+    QCheckBox::indicator:disabled, QRadioButton::indicator:disabled {{
+        background: {t.SURFACE_ALT}; border-color: {t.BORDER};
+    }}
+    QCheckBox::indicator:checked:disabled, QRadioButton::indicator:checked:disabled {{
+        background: {t.ACCENT_MUTED}; border-color: {t.ACCENT_MUTED};
+    }}
+
+    QSlider::groove:horizontal {{
+        height: 4px; background: {t.BORDER}; border-radius: 2px;
+    }}
+    QSlider::sub-page:horizontal {{ background: {t.ACCENT}; border-radius: 2px; }}
+    QSlider::handle:horizontal {{
+        background: {t.ACCENT}; border: none;
+        width: 12px; margin: -5px 0; border-radius: {t.RADIUS_SM + 1}px;
+    }}
+    QSlider::handle:horizontal:hover {{ background: {t.ACCENT_HOVER}; }}
+    QSlider::handle:horizontal:disabled {{ background: {t.BORDER_STRONG}; }}
+
+    /* Same story as the indicators: unthemed, QProgressBar drew the native
+       near-white trough, so every dark preset had a glaring white bar across
+       its run row. Individual windows had started pasting their own fix. */
+    QProgressBar {{
+        background: {t.SURFACE_ALT};
+        border: 1px solid {t.BORDER};
+        border-radius: {t.RADIUS_SM}px;
+        text-align: center;
+        color: {t.TEXT};
+    }}
+    QProgressBar::chunk {{
+        background: {t.ACCENT};
+        border-radius: {t.RADIUS_SM}px;
+    }}
 
     /* Cards replace boxy nested QGroupBoxes: a flat surface + hairline + radius */
     QFrame#Card {{
@@ -346,25 +497,34 @@ def global_qss(t: type[Tokens] = Tokens) -> str:
     QPushButton:disabled {{ background: {t.SURFACE}; color: {t.TEXT_MUTED}; border-color: {t.BORDER}; }}
 
     QPushButton[variant="primary"] {{
-        background: {t.ACCENT}; color: #FFFFFF; border: none; font-weight: 600;
+        background: {t.ACCENT}; color: {ink_on(t.ACCENT)};
+        border: none; font-weight: 600;
     }}
     QPushButton[variant="primary"]:hover   {{ background: {t.ACCENT_HOVER}; }}
     QPushButton[variant="primary"]:pressed {{ background: {t.ACCENT_PRESS}; }}
-    QPushButton[variant="primary"]:disabled {{ background: {t.ACCENT_MUTED}; color: #FFFFFF; }}
+    QPushButton[variant="primary"]:disabled {{
+        background: {t.ACCENT_MUTED}; color: {ink_on(t.ACCENT_MUTED)};
+    }}
 
     QPushButton[variant="danger"] {{
-        background: {t.ERROR}; color: #FFFFFF; border: none; font-weight: 600;
+        background: {t.ERROR}; color: {ink_on(t.ERROR)};
+        border: none; font-weight: 600;
     }}
-    QPushButton[variant="danger"]:hover   {{ background: #BE3A3A; }}
-    QPushButton[variant="danger"]:pressed {{ background: #A83333; }}
-    QPushButton[variant="danger"]:disabled {{ background: {t.ERROR_MUTED}; color: #FFFFFF; }}
+    QPushButton[variant="danger"]:hover   {{ background: {shade(t.ERROR, 1.12)}; }}
+    QPushButton[variant="danger"]:pressed {{ background: {shade(t.ERROR, 0.86)}; }}
+    QPushButton[variant="danger"]:disabled {{
+        background: {t.ERROR_MUTED}; color: {ink_on(t.ERROR_MUTED)};
+    }}
 
     QPushButton[variant="success"] {{
-        background: {t.OK}; color: #FFFFFF; border: none; font-weight: 600;
+        background: {t.OK}; color: {ink_on(t.OK)};
+        border: none; font-weight: 600;
     }}
-    QPushButton[variant="success"]:hover {{ background: #2A8E51; }}
-    QPushButton[variant="success"]:pressed {{ background: #247D47; }}
-    QPushButton[variant="success"]:disabled {{ background: #BFE0CB; color: #FFFFFF; }}
+    QPushButton[variant="success"]:hover {{ background: {shade(t.OK, 1.12)}; }}
+    QPushButton[variant="success"]:pressed {{ background: {shade(t.OK, 0.86)}; }}
+    QPushButton[variant="success"]:disabled {{
+        background: {mix(t.OK, t.SURFACE, 0.62)}; color: {ink_on(mix(t.OK, t.SURFACE, 0.62))};
+    }}
 
     QPushButton[variant="ghost"] {{
         background: transparent; border: none; color: {t.ACCENT_TEXT};
@@ -529,6 +689,64 @@ def _contrast(a, b) -> float:
     return (hi + 0.05) / (lo + 0.05)
 
 
+def _parse_hex(value: str):
+    """``#rgb`` / ``#rrggbb`` -> (r, g, b), or None if it isn't a colour."""
+    value = str(value or "").strip().lstrip("#")
+    if len(value) == 3:
+        value = "".join(c * 2 for c in value)
+    if len(value) != 6:
+        return None
+    try:
+        return tuple(int(value[i:i + 2], 16) for i in (0, 2, 4))
+    except ValueError:
+        return None
+
+
+def _to_hex(rgb) -> str:
+    return "#{:02X}{:02X}{:02X}".format(
+        *(max(0, min(255, int(round(v)))) for v in rgb))
+
+
+def shade(color: str, factor: float) -> str:
+    """Lighten (``factor`` > 1) or darken (< 1) *color* for interaction states.
+
+    A design system derives a control's hover/pressed colours from its base
+    rather than pinning a second hex, so every palette gets a coherent set for
+    free — the old QSS hard-coded ``#BE3A3A``/``#2A8E51`` for those states,
+    which stayed put no matter which preset was loaded. Lightening blends
+    toward white so a near-black base still moves.
+    """
+    rgb = _parse_hex(color)
+    if rgb is None:
+        return color
+    r, g, b = rgb
+    if factor >= 1.0:
+        t = min(1.0, factor - 1.0)
+        return _to_hex((r + (255 - r) * t, g + (255 - g) * t, b + (255 - b) * t))
+    return _to_hex((r * factor, g * factor, b * factor))
+
+
+def mix(color: str, other: str, t: float) -> str:
+    """Blend *color* toward *other* by fraction *t* (0..1)."""
+    a, b = _parse_hex(color), _parse_hex(other)
+    if a is None or b is None:
+        return color
+    return _to_hex(tuple(a[i] + (b[i] - a[i]) * t for i in range(3)))
+
+
+def ink_on(background: str) -> str:
+    """Readable text colour for a *filled* control on ``background``.
+
+    Chrome's own filled buttons put dark text on their light blue; pinning
+    white — as the QSS used to — fails contrast on any light accent, so a
+    palette with a pale accent would ship unreadable button labels.
+    """
+    rgb = _parse_hex(background)
+    if rgb is None:
+        return "#FFFFFF"
+    return "#FFFFFF" if _contrast((255, 255, 255), rgb) >= 4.5 else "#111418"
+
+
 def readable_on(color: str, background: str | None = None,
                 min_ratio: float = 4.5) -> str:
     """Nudge ``color`` until it is legible on ``background``, keeping its hue.
@@ -540,19 +758,8 @@ def readable_on(color: str, background: str | None = None,
     the colour toward black or white (whichever raises contrast) in small steps
     until it clears ``min_ratio``, so one source of truth serves every theme.
     """
-    def _parse(value: str):
-        value = str(value or "").strip().lstrip("#")
-        if len(value) == 3:
-            value = "".join(c * 2 for c in value)
-        if len(value) != 6:
-            return None
-        try:
-            return tuple(int(value[i:i + 2], 16) for i in (0, 2, 4))
-        except ValueError:
-            return None
-
-    rgb = _parse(color)
-    bg = _parse(background if background is not None else Tokens.BG)
+    rgb = _parse_hex(color)
+    bg = _parse_hex(background if background is not None else Tokens.BG)
     if rgb is None or bg is None:
         return color
     # Blend toward whichever end is further from the background.

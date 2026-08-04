@@ -561,11 +561,16 @@ class MainWindowWorkflow(AutoFitMixin, QMainWindow):
 
         # Theme presets — applied app-wide immediately and persisted to
         # ~/.apex/theme.txt (picked up by all entry points on next launch).
-        from apex.gui.theme import THEME_PRESETS, current_theme
+        from apex.gui.theme import STANDARD_THEMES, THEME_PRESETS, current_theme
         theme_menu = settings_menu.addMenu("&Theme")
         self._theme_actions = {}
         active = current_theme()
+        separated = False
         for key, label in THEME_PRESETS:
+            # Split APEX's own presets from the published third-party designs.
+            if key in STANDARD_THEMES and not separated:
+                theme_menu.addSeparator()
+                separated = True
             act = QAction(label, self)
             act.setCheckable(True)
             act.setChecked(key == active)
