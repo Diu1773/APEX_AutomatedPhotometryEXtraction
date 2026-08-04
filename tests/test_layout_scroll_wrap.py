@@ -79,6 +79,43 @@ def test_scroll_wrap_keeps_the_content_reachable(qapp):
     )
 
 
+def _wide_column(width: int) -> QWidget:
+    page = QWidget()
+    lay = QVBoxLayout(page)
+    lay.setContentsMargins(0, 0, 0, 0)
+    label = QLabel("column")
+    lay.addWidget(label)
+    page.setFixedWidth(width)
+    return page
+
+
+def test_plain_wrap_asks_for_less_than_a_wide_column_needs(qapp):
+    """Baseline for ``preferred_width``: Qt caps a scroll area's width hint at a
+    generic character-cell box, so a wrapped fixed-width column is handed less
+    than its content and grows a horizontal scrollbar even on a wide screen."""
+    wrapped = scroll_wrap(_wide_column(540), horizontal=True)
+    assert wrapped.sizeHint().width() < 540
+
+
+def test_preferred_width_asks_for_the_column_width(qapp):
+    wrapped = scroll_wrap(_wide_column(540), horizontal=True, preferred_width=570)
+    assert wrapped.sizeHint().width() == 570
+
+
+def test_preferred_width_still_lets_the_column_shrink(qapp):
+    """The width preference must not become a floor — that would hand the window
+    back the hard minimum the wrap exists to remove."""
+    wrapped = scroll_wrap(_wide_column(540), horizontal=True, preferred_width=570)
+    assert wrapped.minimumSizeHint().width() < 300
+
+
+def test_preferred_width_is_adjustable_after_wrapping(qapp):
+    """Step 9 sets its column width at the end of the build, after the wrap."""
+    wrapped = scroll_wrap(_wide_column(540), horizontal=True, preferred_width=1)
+    wrapped.set_preferred_width(570)
+    assert wrapped.sizeHint().width() == 570
+
+
 def test_tab_widget_minimum_follows_the_tallest_page(qapp):
     """Baseline: a QTabWidget takes the MAX over its pages, so one fat tab
     drags the window up — this is the failure being guarded against."""
@@ -102,6 +139,11 @@ def test_wrapping_the_fat_tab_drops_the_tab_widget_minimum(qapp):
     [
         ("apex/gui/workflow/step6_ref_build.py", 'scroll_wrap(plot_tab)'),
         ("apex/gui/workflow/step7_forced_aperture_phot.py", 'scroll_wrap(tab0)'),
+        # LC Step 9 wraps its fixed 540px control column instead of a tab: the
+        # column plus the 841px plot splitter demanded 1451px, so every window
+        # narrower than that clipped the column's buttons and let Phase Folding
+        # overlap the light curve. Measured 1451 -> 1016 px.
+        ("apex/gui/workflow/lc/step9_lightcurve_builder.py", "scroll_wrap(left_col"),
         # Step 8 (qc_tab) and the variable-star tool (mm_tab) get the same
         # treatment; add them here once their files land — both currently sit
         # inside a larger in-flight change.

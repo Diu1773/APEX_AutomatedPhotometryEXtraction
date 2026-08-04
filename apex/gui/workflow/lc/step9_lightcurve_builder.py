@@ -52,7 +52,7 @@ from PyQt5.QtCore import Qt, QTimer, QThread, pyqtSignal
 from PyQt5.QtGui import QKeySequence, QColor
 from PyQt5.QtWidgets import QShortcut, QStyle, QStyleOptionSlider, QSplitter, QProgressBar
 
-from apex.gui.layout_rules import FittedDialog
+from apex.gui.layout_rules import FittedDialog, scroll_wrap
 from apex.gui.theme import Tokens, refresh, style_button
 from apex.gui.workflow.step_window_base import StepWindowBase
 from apex.gui.workflow.ui_helpers import (
@@ -1125,7 +1125,7 @@ class LightCurveBuilderWindow(StepWindowBase):
     def _setup_runtime_ui(self):
         """Build a lightweight runtime-only UI for merger inline execution."""
         note = QLabel("Runtime mode: merger inline Step10 execution")
-        note.setStyleSheet("QLabel { color: #607D8B; font-size: 9pt; }")
+        note.setProperty("role", "caption")
         self.content_layout.addWidget(note)
 
         self.target_edit = QLineEdit()
@@ -1170,7 +1170,19 @@ class LightCurveBuilderWindow(StepWindowBase):
         left_v = QVBoxLayout(left_col)
         left_v.setContentsMargins(0, 0, 0, 0)
         left_v.setSpacing(Tokens.S2)
-        root.addWidget(left_col)
+        # The column is a fixed 540 px (set at the end of this method) and the
+        # plot splitter needs 841, so the row's minimum was 1451x912 — wider
+        # and taller than a 1366x768 laptop. QHBoxLayout squeezes past the
+        # minimum when it can't fit, which clipped the column's buttons
+        # ("Save Par" -> "rve Par") and let Phase Folding overlap the plot.
+        # Wrapping the column drops its contribution to ~69 px so the row fits
+        # and the column scrolls instead. Horizontal scrolling stays on: the
+        # wrap hides the width minimum too, so a squeezed column would
+        # otherwise clip its own controls with no way to reach them.
+        # preferred_width is set below, once the column's own width is known.
+        self._left_scroll = scroll_wrap(left_col, horizontal=True,
+                                        preferred_width=1)
+        root.addWidget(self._left_scroll)
 
         # Hidden QLineEdits (used internally by build logic)
         self.target_edit = QLineEdit()
@@ -1264,7 +1276,8 @@ class LightCurveBuilderWindow(StepWindowBase):
         # Comparison 라벨 + 단축키 힌트를 한 줄로 (세로 예산 절약).
         info_row = QHBoxLayout()
         self.plot_info_label = QLabel("Comparison: (none)")
-        self.plot_info_label.setStyleSheet("QLabel { font-weight: bold; }")
+        _f = self.plot_info_label.font(); _f.setBold(True)
+        self.plot_info_label.setFont(_f)
         info_row.addWidget(self.plot_info_label)
         plot_hint = QLabel("←/→ 키로 비교성을 전환합니다.")
         plot_hint.setProperty("role", "caption")
@@ -1313,7 +1326,10 @@ class LightCurveBuilderWindow(StepWindowBase):
         # Low floor: both plot panes stack vertically now — 220+260 minimums
         # pushed the window past small laptop screens.
         self.plot_canvas.setMinimumHeight(150)
-        self.plot_canvas.setStyleSheet("background-color: #FFFFFF; border: 1px solid #ECEFF1;")
+        # Behind the figure, so normally invisible — but a hardcoded white
+        # flashes on resize and contradicts every dark preset.
+        self.plot_canvas.setStyleSheet(
+            f"background-color: {Tokens.PLOT_BG}; border: 1px solid {Tokens.BORDER};")
         self.plot_canvas.mpl_connect("button_press_event", self._on_plot_click)
         plot_layout.addWidget(self.plot_canvas, 1)
 
@@ -1355,7 +1371,8 @@ class LightCurveBuilderWindow(StepWindowBase):
         frame_qc_row = QHBoxLayout()
         frame_qc_row.addWidget(QLabel("더블클릭=선택  D=제외  A=복원  R=리셋"))
         self.frame_qc_selected_label = QLabel("Selected: (none)")
-        self.frame_qc_selected_label.setStyleSheet("QLabel { font-weight: 600; }")
+        _f = self.frame_qc_selected_label.font(); _f.setBold(True)
+        self.frame_qc_selected_label.setFont(_f)
         frame_qc_row.addWidget(self.frame_qc_selected_label, 1)
         self.frame_qc_summary_label = QLabel("Excluded: 0/0")
         self.frame_qc_summary_label.setProperty("role", "subtitle")
@@ -1406,7 +1423,8 @@ class LightCurveBuilderWindow(StepWindowBase):
         self.lbl_qc_thresholds.setWordWrap(True)  # column is narrow — wrap, don't clip
         qc_info_row.addWidget(self.lbl_qc_thresholds, 1)
         self.lbl_comp_count = QLabel("Active comps: 0")
-        self.lbl_comp_count.setStyleSheet("QLabel { font-weight: 600; }")
+        _f = self.lbl_comp_count.font(); _f.setBold(True)
+        self.lbl_comp_count.setFont(_f)
         qc_info_row.addWidget(self.lbl_comp_count)
         qc_layout.addLayout(qc_info_row)
         self._update_qc_threshold_label()
@@ -1501,7 +1519,8 @@ class LightCurveBuilderWindow(StepWindowBase):
         qc_frame_row = QHBoxLayout()
         qc_frame_row.addWidget(QLabel("더블클릭=선택  D=제외  A=복원  R=리셋"))
         self.qc_frame_selected_label = QLabel("Selected: (none)")
-        self.qc_frame_selected_label.setStyleSheet("QLabel { font-weight: 600; }")
+        _f = self.qc_frame_selected_label.font(); _f.setBold(True)
+        self.qc_frame_selected_label.setFont(_f)
         qc_frame_row.addWidget(self.qc_frame_selected_label, 1)
         self.qc_frame_summary_label = QLabel("Excluded: 0/0")
         self.qc_frame_summary_label.setProperty("role", "subtitle")
@@ -1547,6 +1566,13 @@ class LightCurveBuilderWindow(StepWindowBase):
         # Width measured on the real font stack after build (see step11):
         # the 7-column QC table dominates (540 clears its horizontal scrollbar).
         left_col.setFixedWidth(540)
+        # Ask for exactly that column plus its scrollbar, and refuse to stretch
+        # past it so the plot pane keeps every remaining pixel. Without the
+        # preferred width Qt caps a scroll area's hint at 449 px, which would
+        # put a horizontal scrollbar under the column even on a wide screen.
+        wrap_w = 540 + self._left_scroll.verticalScrollBar().sizeHint().width() + 4
+        self._left_scroll.set_preferred_width(wrap_w)
+        self._left_scroll.setMaximumWidth(wrap_w)
 
         self.log_window = QWidget(self, Qt.Window)
         self.log_window.setWindowTitle("Light Curve Log & Workers")
@@ -1559,7 +1585,7 @@ class LightCurveBuilderWindow(StepWindowBase):
         log_layout.addWidget(self._worker_panel)
         self.log_text = QTextEdit()
         self.log_text.setReadOnly(True)
-        self.log_text.setStyleSheet("QTextEdit { font-family: monospace; font-size: 9pt; }")
+        self.log_text.setObjectName("Log")     # themed mono surface
         log_layout.addWidget(self.log_text)
 
         # build button moved to plot group
@@ -1942,9 +1968,13 @@ class LightCurveBuilderWindow(StepWindowBase):
         return self.filter_colors.get(key, FILTER_COLORS.get(key, "#ff7f0e"))
 
     def _apply_filter_swatch_style(self, button: QPushButton, color: str) -> None:
+        # The fill IS the data (the filter's plot colour); only the outline
+        # follows the theme.
         button.setStyleSheet(
-            f"QPushButton {{ background-color: {color}; border: 1px solid #455A64; border-radius: 3px; min-width: 24px; min-height: 18px; }}"
-            "QPushButton:hover { border: 1px solid #263238; }"
+            f"QPushButton {{ background-color: {color}; "
+            f"border: 1px solid {Tokens.BORDER_STRONG}; border-radius: 3px; "
+            f"min-width: 24px; min-height: 18px; }}"
+            f"QPushButton:hover {{ border: 1px solid {Tokens.ACCENT}; }}"
         )
 
     def _ensure_filter_colors(self, filters: list[str]) -> None:
@@ -1996,7 +2026,7 @@ class LightCurveBuilderWindow(StepWindowBase):
         layout = QVBoxLayout(dialog)
 
         info = QLabel("필터별 색상을 선택합니다.")
-        info.setStyleSheet("QLabel { color: #455A64; }")
+        info.setProperty("role", "caption")
         layout.addWidget(info)
 
         swatch_buttons: dict[str, QPushButton] = {}
@@ -2006,7 +2036,7 @@ class LightCurveBuilderWindow(StepWindowBase):
 
         for row, key in enumerate(keys):
             label = QLabel(key)
-            label.setStyleSheet("QLabel { color: #37474F; font-weight: bold; }")
+            _f = label.font(); _f.setBold(True); label.setFont(_f)
             grid.addWidget(label, row, 0)
 
             swatch = QPushButton("")

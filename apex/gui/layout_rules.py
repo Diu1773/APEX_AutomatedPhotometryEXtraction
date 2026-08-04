@@ -173,7 +173,37 @@ def tame_canvas(canvas: QWidget, *, min_w: int = CANVAS_MIN_W,
     return canvas
 
 
-def scroll_wrap(widget: QWidget, *, horizontal: bool = False) -> QScrollArea:
+class _WidthHintScrollArea(QScrollArea):
+    """Scroll area that asks for its content's width instead of Qt's cap.
+
+    ``QScrollArea.sizeHint`` is clamped to a generic character-cell box — 449 px
+    on this font stack — no matter how wide the content is. A wrapped
+    fixed-width column is therefore handed less than it needs and grows a
+    horizontal scrollbar even on a wide screen, which is the very clipping the
+    wrap was meant to cure. Reporting the content width as the *hint* keeps the
+    column whole whenever the window can afford it, while the small
+    ``minimumSizeHint`` a scroll area reports is left untouched so the column
+    can still shrink and scroll on a laptop.
+    """
+
+    def __init__(self) -> None:
+        super().__init__()
+        self._preferred_width = 0
+
+    def set_preferred_width(self, width: int) -> None:
+        """Ask for *width* px, scrollbar allowance included, when there's room."""
+        self._preferred_width = max(0, int(width))
+        self.updateGeometry()
+
+    def sizeHint(self) -> QSize:
+        hint = super().sizeHint()
+        if self._preferred_width:
+            return QSize(self._preferred_width, hint.height())
+        return hint
+
+
+def scroll_wrap(widget: QWidget, *, horizontal: bool = False,
+                preferred_width: int | None = None) -> QScrollArea:
     """Put *widget* in a scroll area so it stops driving the window minimum.
 
     A ``QScrollArea`` reports a small fixed ``minimumSizeHint`` (~69 px)
@@ -192,18 +222,22 @@ def scroll_wrap(widget: QWidget, *, horizontal: bool = False) -> QScrollArea:
     * The wrap hides the *width* minimum as well, and the horizontal scrollbar
       is off by default — so a wrapped fixed-width column can be squeezed by
       its splitter and clip its own controls with no way to scroll sideways.
-      Pin the width yourself (``setMinimumWidth``) whenever the content has a
-      fixed or capped width; only the height minimum is meant to vanish.
+      Pass ``preferred_width`` whenever the content has a fixed or capped width:
+      the column then keeps that width while the window can afford it and only
+      shrinks on a small screen. ``setMinimumWidth`` also works but hands the
+      window a hard floor again, which defeats the wrap on a laptop.
     * Do **not** wrap a page that already contains a ``QScrollArea`` — nested
       scrolling leaves the user unsure which surface they are scrolling. Thin
       that page out (collapse groups, move rarely-used controls) instead.
     """
-    scroll = QScrollArea()
+    scroll = _WidthHintScrollArea() if preferred_width else QScrollArea()
     scroll.setWidgetResizable(True)
     scroll.setFrameShape(QFrame.NoFrame)
     if not horizontal:
         scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
     scroll.setWidget(widget)
+    if preferred_width:
+        scroll.set_preferred_width(preferred_width)
     return scroll
 
 
