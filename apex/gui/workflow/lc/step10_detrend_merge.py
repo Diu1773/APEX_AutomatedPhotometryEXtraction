@@ -52,7 +52,7 @@ from PyQt5.QtCore import Qt, QSignalBlocker, QThread, QTimer, pyqtSignal
 from PyQt5.QtGui import QColor, QFont
 
 from apex.gui.layout_rules import FittedDialog, scroll_wrap
-from apex.gui.theme import Tokens, refresh, style_button
+from apex.gui.theme import Tokens, readable_on, refresh, style_button
 from apex.gui.workflow.step_window_base import StepWindowBase
 from apex.analysis.light_curve.global_ensemble import solve_global_ensemble
 from apex.analysis.light_curve.photometry_source_service import (
@@ -401,7 +401,7 @@ class DetrendNightMergeWindow(StepWindowBase):
     def _setup_runtime_ui(self):
         """Build a lightweight runtime-only UI for merger inline execution."""
         note = QLabel("Runtime mode: merger inline Step11 execution")
-        note.setStyleSheet("QLabel { color: #607D8B; font-size: 9pt; }")
+        note.setProperty("role", "caption")
         self.content_layout.addWidget(note)
 
         rd = Path(self.params.P.result_dir)
@@ -592,7 +592,7 @@ class DetrendNightMergeWindow(StepWindowBase):
         self.analysis_panel = QGroupBox("데이터 분석 결과")
         self.analysis_panel.setStyleSheet(
             "QGroupBox { font-weight: bold; } "
-            "QGroupBox::title { color: #1565C0; }"
+            f"QGroupBox::title {{ color: {Tokens.ACCENT}; }}"
         )
         analysis_layout = QVBoxLayout(self.analysis_panel)
         analysis_layout.setSpacing(4)
@@ -600,15 +600,14 @@ class DetrendNightMergeWindow(StepWindowBase):
         self.analysis_text = QLabel("Step 10 결과가 있으면 자동 로드되어 분석 결과가 표시됩니다.")
         self.analysis_text.setWordWrap(True)
         self.analysis_text.setStyleSheet(
-            "QLabel { background-color: #FAFAFA; padding: 8px; border-radius: 4px; font-size: 9pt; }"
+            f"QLabel {{ background-color: {Tokens.SURFACE_ALT}; padding: 8px; "
+            "border-radius: 4px; font-size: 9pt; }"
         )
         analysis_layout.addWidget(self.analysis_text)
 
         self.recommendation_label = QLabel("")
         self.recommendation_label.setWordWrap(True)
-        self.recommendation_label.setStyleSheet(
-            "QLabel { background-color: #E8F5E9; padding: 8px; border-radius: 4px; font-size: 9pt; font-weight: bold; }"
-        )
+        self.recommendation_label.setProperty("banner", "ok")
         analysis_layout.addWidget(self.recommendation_label)
         mode_layout.addWidget(self.analysis_panel)
 
@@ -627,8 +626,8 @@ class DetrendNightMergeWindow(StepWindowBase):
         btn_mode_help.setFixedSize(24, 24)
         btn_mode_help.setToolTip("보정 모드 도움말")
         btn_mode_help.setStyleSheet(
-            "QPushButton { font-weight: bold; border: 1px solid #90A4AE; "
-            "border-radius: 12px; background: white; }"
+            f"QPushButton {{ font-weight: bold; border: 1px solid {Tokens.BORDER_STRONG}; "
+            f"border-radius: 12px; background: {Tokens.SURFACE}; }}"
         )
         btn_mode_help.clicked.connect(self._show_mode_help_dialog)
         mode_header.addWidget(btn_mode_help)
@@ -638,11 +637,14 @@ class DetrendNightMergeWindow(StepWindowBase):
 
         # Offset mode
         offset_frame = QFrame()
-        offset_frame.setStyleSheet("QFrame { border: 1px solid #E0E0E0; border-radius: 4px; padding: 4px; }")
+        offset_frame.setStyleSheet(
+            f"QFrame {{ border: 1px solid {Tokens.BORDER}; "
+            "border-radius: 4px; padding: 4px; }"
+        )
         offset_layout = QVBoxLayout(offset_frame)
         offset_layout.setSpacing(2)
         self.mode_offset = QRadioButton("Offset Only (ZP₀)")
-        self.mode_offset.setStyleSheet("QRadioButton { font-weight: bold; }")
+        _f = self.mode_offset.font(); _f.setBold(True); self.mode_offset.setFont(_f)
         offset_layout.addWidget(self.mode_offset)
         offset_desc = QLabel(
             "Δm_corr = Δm_raw - ZP₀\n"
@@ -655,11 +657,14 @@ class DetrendNightMergeWindow(StepWindowBase):
 
         # Color mode
         color_frame = QFrame()
-        color_frame.setStyleSheet("QFrame { border: 1px solid #E0E0E0; border-radius: 4px; padding: 4px; }")
+        color_frame.setStyleSheet(
+            f"QFrame {{ border: 1px solid {Tokens.BORDER}; "
+            "border-radius: 4px; padding: 4px; }"
+        )
         color_layout = QVBoxLayout(color_frame)
         color_layout.setSpacing(2)
         self.mode_color = QRadioButton("Color-dependent (ZP₀ + k''·ΔC·X)")
-        self.mode_color.setStyleSheet("QRadioButton { font-weight: bold; }")
+        _f = self.mode_color.font(); _f.setBold(True); self.mode_color.setFont(_f)
         color_layout.addWidget(self.mode_color)
         color_desc = QLabel(
             "Δm_corr = Δm_raw - ZP₀ - k''·ΔC·X\n"
@@ -670,18 +675,21 @@ class DetrendNightMergeWindow(StepWindowBase):
         color_layout.addWidget(color_desc)
 
         self.chk_global_k2 = QCheckBox("Global k'' (전체 데이터로 k'' 한 번 피팅)")
-        self.chk_global_k2.setStyleSheet("QCheckBox { margin-left: 16px; }")
+        self.chk_global_k2.setStyleSheet(f"QCheckBox {{ margin-left: {Tokens.MARGIN}px; }}")
         self.chk_global_k2.setChecked(True)
         color_layout.addWidget(self.chk_global_k2)
         mode_group_layout.addWidget(color_frame)
 
         # Global ensemble mode (method C)
         global_frame = QFrame()
-        global_frame.setStyleSheet("QFrame { border: 1px solid #E0E0E0; border-radius: 4px; padding: 4px; }")
+        global_frame.setStyleSheet(
+            f"QFrame {{ border: 1px solid {Tokens.BORDER}; "
+            "border-radius: 4px; padding: 4px; }"
+        )
         global_layout = QVBoxLayout(global_frame)
         global_layout.setSpacing(2)
         self.mode_global = QRadioButton("Global Ensemble (Method C)")
-        self.mode_global.setStyleSheet("QRadioButton { font-weight: bold; }")
+        _f = self.mode_global.font(); _f.setBold(True); self.mode_global.setFont(_f)
         global_layout.addWidget(self.mode_global)
         global_desc = QLabel(
             "Δm_corr = (m_target - Z_t) - <M_comp>\n"
@@ -694,11 +702,14 @@ class DetrendNightMergeWindow(StepWindowBase):
 
         # SYSREM mode
         sysrem_frame = QFrame()
-        sysrem_frame.setStyleSheet("QFrame { border: 1px solid #E0E0E0; border-radius: 4px; padding: 4px; }")
+        sysrem_frame.setStyleSheet(
+            f"QFrame {{ border: 1px solid {Tokens.BORDER}; "
+            "border-radius: 4px; padding: 4px; }"
+        )
         sysrem_layout = QVBoxLayout(sysrem_frame)
         sysrem_layout.setSpacing(2)
         self.mode_sysrem = QRadioButton("SYSREM (Tamuz+2005)")
-        self.mode_sysrem.setStyleSheet("QRadioButton { font-weight: bold; }")
+        _f = self.mode_sysrem.font(); _f.setBold(True); self.mode_sysrem.setFont(_f)
         sysrem_layout.addWidget(self.mode_sysrem)
         sysrem_desc = QLabel(
             "비교성 집합에서 공통 체계오차 벡터를 반복 추출하여 제거\n"
@@ -917,7 +928,7 @@ class DetrendNightMergeWindow(StepWindowBase):
         log_layout = QVBoxLayout(log_tab)
         self.log_text = QTextEdit()
         self.log_text.setReadOnly(True)
-        self.log_text.setStyleSheet("QTextEdit { font-family: monospace; font-size: 9pt; }")
+        self.log_text.setObjectName("Log")
         log_layout.addWidget(self.log_text)
         self.left_tabs.addTab(log_tab, "로그")
 
@@ -1307,8 +1318,8 @@ class DetrendNightMergeWindow(StepWindowBase):
         browser.setReadOnly(True)
         browser.setOpenExternalLinks(False)
         browser.setStyleSheet(
-            "QTextBrowser { background-color: #FAFAFA; border: 1px solid #D0D0D0; "
-            "padding: 8px; font-size: 9pt; }"
+            f"QTextBrowser {{ background-color: {Tokens.SURFACE_ALT}; "
+            f"border: 1px solid {Tokens.BORDER}; padding: 8px; font-size: 9pt; }}"
         )
         browser.setHtml(self._build_mode_help_html())
         layout.addWidget(browser, 1)
@@ -1550,19 +1561,20 @@ Step 11은 여러 밤의 관측을 합칠 때 기준선을 맞추는 단계입�
             reasons.append(f"{n_dates}일 데이터: 밤별 ZP₀ 보정 필수")
 
         # Build recommendation message
+        # The two "권장" cases used to differ only by orange vs amber, which the
+        # wording already carries; both map to the theme's warn banner.
         if use_color_mode:
             mode_text = "⚠️ <b>Color 모드 권장</b>"
-            style = "background-color: #FFF3E0; color: #E65100;"
+            banner = "warn"
         elif color_mode_warning:
             mode_text = "⚠️ <b>Offset 모드 권장</b> (색차 있으나 ΔX 부족)"
-            style = "background-color: #FFF8E1; color: #F57C00;"
+            banner = "warn"
         else:
             mode_text = "✓ <b>Offset 모드 적합</b>"
-            style = "background-color: #E8F5E9; color: #2E7D32;"
+            banner = "ok"
 
-        self.recommendation_label.setStyleSheet(
-            f"QLabel {{ {style} padding: 8px; border-radius: 4px; font-size: 9pt; }}"
-        )
+        self.recommendation_label.setProperty("banner", banner)
+        refresh(self.recommendation_label)
 
         return f"{mode_text}<br>{'<br>'.join('• ' + r for r in reasons)}"
 
@@ -4043,8 +4055,10 @@ Step 11은 여러 밤의 관측을 합칠 때 기준선을 맞추는 단계입�
         # Summary rows: per-filter σ(ZP) across nights
         summary_font = QFont()
         summary_font.setBold(True)
-        summary_bg = QColor("#2a2a4a")
-        summary_fg = QColor("#ffffff")
+        # Hand-painted navy read as a highlight on the light theme but sank
+        # into the surface on the dark ones; the accent stands out in both.
+        summary_bg = QColor(Tokens.ACCENT)
+        summary_fg = QColor(readable_on("#FFFFFF", Tokens.ACCENT))
         ncols = self.result_table.columnCount()
 
         filters_in_df = sorted(self.params_df["filter"].astype(str).unique()) if "filter" in self.params_df.columns else [""]
@@ -4265,7 +4279,7 @@ Step 11은 여러 밤의 관측을 합칠 때 기준선을 맞추는 단계입�
                     xfit = xline * float(delta_c_const)
                 yline = float(row.get("zp_offset", 0.0)) + float(row.get("ext_slope", 0.0)) * xfit
                 linestyle = "-" if filter_key else self._filter_linestyle(fkey)
-                line_color = date_colors.get(date_val, "#333333") if self.color_by == "Date" else self._filter_color(fkey)
+                line_color = date_colors.get(date_val, Tokens.TEXT) if self.color_by == "Date" else self._filter_color(fkey)
                 self.ax_diag.plot(xline, yline, color=line_color, linestyle=linestyle, linewidth=1.5, alpha=0.9)
 
         diag_xlabel = diag_x_col if diag_x_col else "Index"
@@ -4360,13 +4374,13 @@ Step 11은 여러 밤의 관측을 합칠 때 기준선을 맞추는 단계입�
                 ys = _col(sub, "Z")
                 m = np.isfinite(xs) & np.isfinite(ys)
                 if np.any(m):
-                    self.ax_diag.plot(xs[m], ys[m], marker="o", linestyle="None", color=date_colors.get(d, "#333333"), markersize=3, alpha=0.7, label=d)
+                    self.ax_diag.plot(xs[m], ys[m], marker="o", linestyle="None", color=date_colors.get(d, Tokens.TEXT), markersize=3, alpha=0.7, label=d)
         else:
             xs = _col(diag_df, x_col)
             ys = _col(diag_df, "Z")
             m = np.isfinite(xs) & np.isfinite(ys)
             if np.any(m):
-                self.ax_diag.plot(xs[m], ys[m], marker="o", linestyle="None", color="#333333", markersize=3, alpha=0.7)
+                self.ax_diag.plot(xs[m], ys[m], marker="o", linestyle="None", color=Tokens.TEXT, markersize=3, alpha=0.7)
 
         if not self.ax_diag.lines:
             self.ax_diag.text(0.5, 0.5, "No plottable global ZP rows", ha="center", va="center")
