@@ -20,6 +20,13 @@
 
 ## 지금 (2026-08-04 Codex WCS·기기·그림 패널 2차 검수 후)
 
+**2026-08-04 · figure readability and colour pass**
+
+- The shared figure palette was accidentally monochrome; it is now restored to an Okabe–Ito colour-blind-safe palette and all non-slow final figures were regenerated consistently.
+- `fig_calibration_step0.py` was reduced from 12 to 8 panels: each master bias/dark/flat is paired with a distribution or profile, and the science before/after comparison carries a compact sky-profile inset. The inset annotation no longer collides with its legend.
+- `render_preview.py` now uses 11.2 px captions, slightly larger table text, and a relaxed figure height budget (0.54 per slot / 0.92 paired room). The regenerated preview has 18 A4 pages; figure images are no longer forced to thumbnail height.
+- Static checks: figure generator and renderer compile; `run_all.py --only 1 2 3 4 5 6 7 8 9 10 12 13 14 15 16 17 render` completed successfully. The unrelated working-tree changes in the core standard-anchor work and `validation/fig_dataviz_demo.png` were left untouched.
+
 **2026-08-04 · 사용자 지적 반영 — WCS 기본 경로, ccdproc 구분, 보조표와 패널 캡션**
 
 - WCS 원고를 실제 코드 경로와 맞췄다. 내장 Python quad 솔버를 기본·오프라인

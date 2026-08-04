@@ -1,7 +1,7 @@
 """Shared publication-quality matplotlib style for APEX validation figures.
 
 Every APEX paper figure imports this module so the whole figure set is visually
-consistent: one serif font family, one print-safe monochrome palette, one
+consistent: one serif font family, one colour-blind-safe palette, one
 line/grid weight scale, and one save path that emits BOTH a
 vector PDF (for LaTeX) and a 300-dpi PNG (for quick viewing / the docs site).
 
@@ -17,8 +17,8 @@ Design notes
 ------------
 * Figure widths follow journal columns: SINGLE_COL = 3.4 in (~86 mm, one
   column of a two-column article); DOUBLE_COL = 7.0 in (full text width).
-* All semantic colors are neutral grays.  Categories must also differ by
-  marker, line style, or hatch so the figures remain legible in photocopies.
+* Semantic colours use the Okabe–Ito colour-blind-safe set.  Markers, line
+  styles, and hatches still distinguish categories in grayscale printouts.
 * 300 dpi PNG + true vector PDF is the standard "camera-ready" combination.
 """
 
@@ -35,14 +35,14 @@ import matplotlib.pyplot as plt
 # ── Journal monochrome palette ─────────────────────────────────────────────
 PALETTE: dict[str, str] = {
     "black": "#000000",
-    "orange": "#737373",
-    "skyblue": "#BDBDBD",
-    "green": "#525252",
-    "yellow": "#D9D9D9",
-    "blue": "#252525",
-    "vermillion": "#636363",
-    "purple": "#969696",
-    "grey": "#7F7F7F",
+    "orange": "#E69F00",
+    "skyblue": "#56B4E9",
+    "green": "#009E73",
+    "yellow": "#F0E442",
+    "blue": "#0072B2",
+    "vermillion": "#D55E00",
+    "purple": "#CC79A7",
+    "grey": "#777777",
 }
 
 # Semantic aliases (use these in figures so intent is explicit).

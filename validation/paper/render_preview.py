@@ -71,7 +71,7 @@ CAPTIONS = {
 # interpretation; each image itself contains its data provenance.
 CAPTIONS.update({
   1: r"APEX의 작업 흐름과 소프트웨어 계층. 0–7단계는 CMD와 LC 모드가 공유하며 측광 뒤에 분기한다. 그래픽 계층은 Qt와 분리된 계산 핵심부를 호출하므로, 3절의 화면 없는 시험은 GUI가 사용하는 것과 같은 계산 경로를 거친다. 상자 아래 번호는 해당 단계의 검증 또는 적용 절이다.",
-  2: r"0단계 보정 자료와 보정 효과. **(a)** master bias 영상, **(b)** bias 화소값 분포와 중앙값·산포, **(c)** master dark 영상, **(d)** dark 분포와 상위 백분위. **(e)** master flat 영상, **(f)** flat 가로 프로파일, **(g)** raw science, **(h)** bias·dark 제거 영상, **(i)** flat 보정 영상, **(j)** 보정 전후 하늘 프로파일, **(k)** 과학 영상에서의 flat 배율, **(l)** 단계별 중앙 DN을 차례로 보인다. master는 bias 8장, 60초 dark 8장, flat 5장으로 만들었고 NGC 6811 $B$ 60초 영상을 적용했다(Moravian C3-61000, $2\times2$, 2026-06-11). 하늘 배경 좌우 진폭은 12.9\%에서 1.6\%로 줄었다.",
+  2: r"0단계 보정 자료와 보정 효과. **(a)** master bias 영상과 **(b)** 그 화소값 분포·중앙값·산포, **(c)** master dark 영상과 **(d)** 그 분포·상위 백분위, **(e)** master flat 영상과 **(f)** flat 가로 프로파일을 짝지어 보인다. **(g)** raw NGC 6811 $B$ 과학 영상, **(h)** bias·dark 제거와 flat 나눗셈을 끝낸 영상이다. (h)의 작은 삽입도에서 보정 전후 하늘 프로파일을 각 중앙값으로 정규화해 비교한다. master는 bias 8장, 60초 dark 8장, flat 5장으로 만들었고, 전부 Moravian C3-61000의 2026-06-11 실측 프레임이다. 하늘 배경 좌우 진폭은 12.9\%에서 1.6\%로 줄었다.",
   3: r"광자전달곡선으로 측정한 검출기 상수. **(a)** flat 쌍의 신호-분산 관계에서 gain $0.681\pm0.014$ e$^-$/ADU를 얻었고, **(b)** dark 노출 사다리의 기울기에서 암전류 $0.0077$ e$^-$/s를 얻었다. (b) 아래 잔차는 선형 적합의 $R^2=0.998$을 보인다. 읽기잡음은 $2.35$ e$^-$이며 FITS 헤더 EGAIN은 측정값보다 약 16배 작다.",
   4: r"APEX와 독립적인 Python `ccdproc` 패키지의 단계별 보정 대조. **(a)** master bias·dark·flat 구성과 세 보정 적용의 최대 차이, robust 산포, 판정을 표로 제시한다. 여섯 단계는 모든 화소에서 비트 동일하고 전체 사슬만 float32 반올림 잔차 $8.6\times10^{-4}$ DN을 남긴다. **(b)** 이 최종 차이를 읽기잡음 3.5 DN과 하늘 산탄잡음 41 DN에 놓은 잡음 예산이다. IRAF의 동명 `ccdproc` 태스크와 Python 패키지는 별개다.",
   5: r"서로 다른 두 LCO 카메라에서 APEX 보정 영상과 BANZAI 산출물을 비교한 결과. **위 행**은 0.4 m의 QHY600 단일 증폭기 CMOS와 Proxima Cen 장이며, **아래 행**은 1 m의 Sinistro 네 증폭기 CCD와 NGC 5985 장이다. QHY600 차이는 거의 균일한 $+0.06$ e$^-$이고, Sinistro 화소값은 약 0.3\% 범위에서 일치하지만 증폭기 사분면 구조가 남는다.",
@@ -439,9 +439,9 @@ a{color:var(--link);text-decoration:none;}
 /* ── 그림·표 (전폭) ── */
 figure{margin:0 0 9px;text-align:center;}
 figure img{max-width:100%;height:auto;}
-figcaption{font-size:10.2px;line-height:1.36;text-align:justify;margin:4px 0 0;text-indent:0;}
+figcaption{font-size:11.2px;line-height:1.4;text-align:justify;margin:5px 0 0;text-indent:0;}
 .tw{margin:0 0 9px;}
-table{border-collapse:collapse;width:100%;font-size:10px;line-height:1.3;
+table{border-collapse:collapse;width:100%;font-size:10.4px;line-height:1.32;
   font-variant-numeric:tabular-nums;}
 thead th{border-top:1.1px solid #111;border-bottom:.7px solid #111;text-align:left;
   padding:2.6px 4px;font-weight:700;vertical-align:bottom;}
@@ -610,6 +610,13 @@ JS = r"""
      두 자리 합쳐 판면의 72% 까지 쓰고, 남는 가운데 띠에 본문이 흐른다. */
   var draining=false;
   function spanCap(P, sp){
+    // Readability first: the larger caption and figure budgets keep panel
+    // labels legible. This intentionally trades a few extra pages for size.
+    if (draining) return P.inner.clientHeight*0.66;
+    var other=(sp===P.span ? P.spanB : P.span).offsetHeight;
+    var room=P.inner.clientHeight*0.92 - other;
+    var base=P.inner.clientHeight*0.54;
+    return Math.min(base, room);
     if (draining) return P.inner.clientHeight*0.5;   // 마무리 지면은 위아래 반반
     // 자리당 46% + 두 자리 합 80%: 키 큰 그림(≤454px)이 위에 앉아도 아래에
     // 중간 그림(≥250px) 자리가 남아 짝이 된다. 합을 72% 로 두면 아래 자리가
