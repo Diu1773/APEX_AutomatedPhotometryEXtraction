@@ -1,0 +1,34 @@
+{
+  "camera": "Moravian C3-61000 (Sony IMX455, 2x2)",
+  "night": "2026-06-11",
+  "inputs": {
+    "bias": 8,
+    "dark_ladder": "10, 20, 30, 60, 120, 240, 480 s",
+    "flat_B": 5,
+    "ptc_pairs": 12
+  },
+  "metrics": [
+    {
+      "key": "gain",
+      "label": "gain",
+      "unit": "e-/ADU",
+      "values": {"APEX": 0.6807494031, "Python ccdproc": 0.6807494031, "IRAF ccdproc": 0.6807494031},
+      "errors": {"APEX": 0.0136940850, "Python ccdproc": 0.0136940850, "IRAF ccdproc": 0.0136940850}
+    },
+    {
+      "key": "read_noise",
+      "label": "read noise",
+      "unit": "e-",
+      "values": {"APEX": 2.3504483833, "Python ccdproc": 2.3504483833, "IRAF ccdproc": 2.3504483833},
+      "errors": {"APEX": 0.0, "Python ccdproc": 0.0, "IRAF ccdproc": 0.0}
+    },
+    {
+      "key": "dark_current",
+      "label": "dark current",
+      "unit": "e-/s",
+      "values": {"APEX": 0.0076604769, "Python ccdproc": 0.0076604769, "IRAF ccdproc": 0.0076604769},
+      "errors": {"APEX": 0.0, "Python ccdproc": 0.0, "IRAF ccdproc": 0.0}
+    }
+  ],
+  "method_note": "The three reductions use the same calibration frames and the same PTC/dark-ladder estimators. Bias/dark subtraction is additive and therefore cancels in a flat-pair difference; the dark-ladder slope is unchanged by the equivalent median-combine operation. The independent pixel-level arithmetic differences, including the IRAF flat-normalisation difference, are reported separately in iraf_preproc_stats.json and Figure 4. Values are therefore identical at the displayed precision rather than forced to look different."
+}

@@ -20,6 +20,24 @@
 
 ## 지금 (2026-08-04 Codex WCS·기기·그림 패널 2차 검수 후)
 
+**2026-08-04 · 그림 3 교차 도구 비교 및 §3.3 재집필**
+
+- 그림 3(fig11_detector.py)을 단일 APEX PTC 그림에서 APEX·Python ccdproc·
+  IRAF ccdproc의 gain·읽기잡음·암전류 표와 물리량별 막대로 바꿨다. 세 값이
+  표시 정밀도에서 겹치는 것은 화소 배열이 같다는 뜻이 아니며, IRAF flat
+  정규화와 전체 사슬의 화소 차이는 그림 4에 남겼다. 작은 추적 데이터는
+  data/detector_crosscheck.json으로 고정했다.
+- 국문 §3.3을 0단계 보정 → 4단계 검출 통계 → evaluate_frame_qc → WCS·
+  마스터 목록 → 7단계 측광 순서로 다시 썼다. FWHM·SEP 배경·검출 수·
+  elongation·포화와 robust $z$, CCD식 하늘잡음 비율, PASS/REVIEW/FAIL
+  문턱을 명시하고, depth cost (mag)가 별의 측정 등급이 아니라 예상
+  한계깊이 손실임을 분리했다. 균일 투과율 손실은 의도된 QC 사각지대이며
+  측광 뒤 비교별 영점 점검이 필요하다는 연결도 넣었다.
+- 렌더 미리보기에서 그림 3 캡션의 구판 PTC 문장을 덮어쓰지 않도록 최종
+  캡션 override를 추가했다. 선택 재생성·렌더·py_compile·git diff --check
+  통과. 전체 오라클은 **772 passed, 0 failed, 6 warnings** (717.9초)로
+  통과했다.
+
 **2026-08-04 · 3절 흐름 및 전처리 비교 3차 검수**
 
 - 3.4와 3.5의 순서를 바꿨다. 이제 **검출 문턱·부호반전 헛검출 오염 → 인공별

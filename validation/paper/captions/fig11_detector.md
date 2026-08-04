@@ -1,18 +1,17 @@
-# Figure 11 — Detector characterisation from the data
+# Figure 3 — detector constants from three reductions
 
-**Figure 11.** Gain, read noise and dark current of the Moravian C3-61000
-(Sony IMX455, 2×2 binned) measured directly from APEX's own calibration frames.
-**(a)** Photon-transfer relation: the variance of same-level flat-pair
-differences (which cancel fixed-pattern noise) versus signal, over
-12 clean pairs. The slope is 1/gain, giving
-gain = 0.681 ± 0.014 e⁻/ADU with read noise 2.35 e⁻. The
-measured value is consistent with the IMX455 laboratory value
-(Alarcón et al. 2023, 0.763 e⁻/ADU, native resolution) and the
-vendor full-well specification (>50 ke⁻ over the 16-bit range ⇒ ≈0.76
-e⁻/ADU); the small difference is the 2×2 binning. The gain is *measured*, not
-taken from the FITS header: for this camera the MaxIm/ASCOM `EGAIN` keyword is a
-factor of ≈16 too small (a documented 12-bit→16-bit ADC left-shift), so it is
-not used. **(b)** Dark current from the source-free background versus exposure
-across a 10–480 s ladder: linear (R² = 0.9978, residuals in the lower panel),
-slope 0.0077 e⁻/s at +5 °C. These measured values anchor APEX's photometric
-error model to the detector's real physics.
+**Figure 3.** Detector constants obtained from the same Moravian C3-61000
+(Sony IMX455, 2×2) calibration set by three reduction paths: APEX, the Python
+`ccdproc` package, and the IRAF `ccdproc` task. **(a)** The table reports the
+values used by the error model: flat-pair photon-transfer gain
+(0.681 ± 0.014 e⁻/ADU), bias-pair read noise (2.35 e⁻), and the
+linear dark-ladder slope (0.0077 e⁻/s). **(b)** The grouped bars show one
+physical scale per quantity, so the agreement is visible without putting
+incommensurate units on a single axis. The three values are identical at the
+shown precision because bias/dark subtraction is additive and cancels in the
+flat-pair variance, while all reductions use the same median dark ladder; this
+is an agreement result, not a claim that the pixel arrays are byte-identical.
+The pixel-level residuals, including the independent IRAF flat-normalisation
+and full-chain differences, are reported in Figure 4. No FITS-header, vendor,
+or laboratory gain is used in this comparison. Inputs: 8 bias frames, 5 B
+flats, and the 10–480 s dark ladder from 2026-06-11.
