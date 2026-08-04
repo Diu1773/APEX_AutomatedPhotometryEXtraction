@@ -15,6 +15,7 @@ from PyQt5.QtWidgets import (
 from PyQt5.QtCore import Qt, QThread, pyqtSignal, QTimer
 from PyQt5.QtGui import QColor
 from apex.gui.layout_rules import FittedDialog, scroll_wrap, tame_canvas
+from apex.gui.theme import Tokens, mono_note_style, style_button
 from apex.gui.widgets.fits_viewer import FITSViewerWidget, OverlayMarker
 from pathlib import Path
 from typing import Optional
@@ -263,7 +264,8 @@ class QCInspectionPanel(QWidget):
         self.auto_qc_label = QLabel("Auto QC not evaluated.")
         self.auto_qc_label.setWordWrap(True)
         self.auto_qc_label.setStyleSheet(
-            "QLabel { background-color: #F5F5F5; padding: 6px; border-radius: 4px; }"
+            f"QLabel {{ background-color: {Tokens.SURFACE_ALT}; "
+            f"padding: {Tokens.GAP}px; border-radius: {Tokens.RADIUS_SM}px; }}"
         )
         auto_layout.addWidget(self.auto_qc_label)
         auto_btn_row = QHBoxLayout()
@@ -338,12 +340,12 @@ class QCInspectionPanel(QWidget):
         control_layout.addLayout(btn_row2)
 
         self.warning_label = QLabel("")
-        self.warning_label.setStyleSheet("QLabel { color: #D32F2F; }")
+        self.warning_label.setProperty("status", "error")
         self.warning_label.setWordWrap(True)
         control_layout.addWidget(self.warning_label)
 
         self.hotkey_label = QLabel("Click a point to select. D = exclude, A = include (undo)")
-        self.hotkey_label.setStyleSheet("QLabel { color: #455A64; }")
+        self.hotkey_label.setProperty("role", "caption")
         self.hotkey_label.setWordWrap(True)
         control_layout.addWidget(self.hotkey_label)
 
@@ -2139,7 +2141,7 @@ class SourceDetectionWindow(StepWindowBase):
             "Detect sources in all images using segmentation algorithm.\n"
             "Results are cached for subsequent steps. Mouse: Wheel to zoom | Right-click drag to pan"
         )
-        info_label.setStyleSheet("QLabel { background-color: #E8F5E9; padding: 10px; border-radius: 5px; }")
+        info_label.setProperty("banner", "ok")
         self.detect_layout.addWidget(info_label)
 
         # === Control Bar ===
@@ -2217,7 +2219,7 @@ class SourceDetectionWindow(StepWindowBase):
 
         # 2D Plot button (top bar)
         btn_2d_plot = QPushButton("2D Plot")
-        btn_2d_plot.setStyleSheet("QPushButton { background-color: #FF9800; color: white; font-weight: bold; }")
+        style_button(btn_2d_plot)
         btn_2d_plot.clicked.connect(self.open_stretch_plot)
         file_layout.addWidget(btn_2d_plot)
 
@@ -2234,7 +2236,7 @@ class SourceDetectionWindow(StepWindowBase):
 
         # Summary stats
         self.summary_label = QLabel("No detection run yet")
-        self.summary_label.setStyleSheet("QLabel { font-family: monospace; padding: 10px; background-color: #f5f5f5; }")
+        self.summary_label.setStyleSheet(mono_note_style())
         self.summary_label.setWordWrap(True)
         results_layout.addWidget(self.summary_label)
 
@@ -2242,9 +2244,7 @@ class SourceDetectionWindow(StepWindowBase):
         auto_qc_layout = QVBoxLayout(auto_qc_group)
         self.detect_auto_qc_label = QLabel("Run detection to evaluate frame QC.")
         self.detect_auto_qc_label.setWordWrap(True)
-        self.detect_auto_qc_label.setStyleSheet(
-            "QLabel { font-family: monospace; padding: 8px; background-color: #F5F5F5; }"
-        )
+        self.detect_auto_qc_label.setStyleSheet(mono_note_style())
         auto_qc_layout.addWidget(self.detect_auto_qc_label)
         auto_qc_buttons = QHBoxLayout()
         self.btn_detect_apply_auto_qc = QPushButton("Apply Auto QC")
@@ -2283,23 +2283,25 @@ class SourceDetectionWindow(StepWindowBase):
         star_info_layout = QVBoxLayout(star_info_group)
 
         self.star_info_label = QLabel("Right-click on a star in the image to see details\n(Right-click near a detected source)")
-        self.star_info_label.setStyleSheet("""
-            QLabel {
-                font-family: monospace;
-                font-size: 11px;
-                padding: 8px;
-                background-color: #FFFDE7;
-                border: 1px solid #FBC02D;
-                border-radius: 4px;
-            }
-        """)
+        self.star_info_label.setStyleSheet(mono_note_style())
         self.star_info_label.setWordWrap(True)
         self.star_info_label.setMinimumHeight(180)
         star_info_layout.addWidget(self.star_info_label)
 
         results_layout.addWidget(star_info_group)
 
-        main_splitter.addWidget(results_group)
+        # The right column stacks the detection readout, Auto QC and Selected
+        # Star Info: 630x803, against 777x364 for the image pane — so this
+        # column, not the preview, was demanding a 1504x1199 window, taller
+        # than a 1080p screen. Wrapping it lets the column scroll while the
+        # viewer keeps resizing normally. Horizontal scrolling stays on so a
+        # squeezed column can still reach its own controls.
+        results_scroll = scroll_wrap(results_group, horizontal=True,
+                                     preferred_width=1)
+        results_scroll.set_preferred_width(
+            results_group.minimumSizeHint().width()
+            + results_scroll.verticalScrollBar().sizeHint().width() + 4)
+        main_splitter.addWidget(results_scroll)
         main_splitter.setStretchFactor(0, 2)
         main_splitter.setStretchFactor(1, 1)
         main_splitter.setChildrenCollapsible(False)
@@ -2625,9 +2627,7 @@ class SourceDetectionWindow(StepWindowBase):
         layout = QVBoxLayout(self.stretch_plot_dialog)
 
         self.stretch_plot_info_label = QLabel("Drag min/max markers to adjust stretch")
-        self.stretch_plot_info_label.setStyleSheet(
-            "QLabel { padding: 5px; background-color: #E3F2FD; border-radius: 3px; }"
-        )
+        self.stretch_plot_info_label.setProperty("role", "info")
         layout.addWidget(self.stretch_plot_info_label)
 
         self.stretch_plot_fig = Figure(figsize=(6, 2.5))
@@ -2642,7 +2642,7 @@ class SourceDetectionWindow(StepWindowBase):
         layout.addWidget(tame_canvas(self.stretch_plot_canvas, min_h=140), 1)
 
         hint_label = QLabel("Click and drag < > markers to adjust min/max | Changes apply in real-time")
-        hint_label.setStyleSheet("QLabel { color: #666; font-size: 10px; }")
+        hint_label.setProperty("role", "caption")
         layout.addWidget(hint_label)
 
         self.stretch_plot_dialog.show()
@@ -3249,7 +3249,7 @@ class SourceDetectionWindow(StepWindowBase):
 
         # Info
         info = QLabel("Adjust source detection parameters.\nChanges apply to next detection run.")
-        info.setStyleSheet("QLabel { background-color: #E3F2FD; padding: 10px; margin-bottom: 10px; }")
+        info.setProperty("role", "info")
         layout.addWidget(info)
 
         # Main form – always visible (mode, engine, base sigma)
