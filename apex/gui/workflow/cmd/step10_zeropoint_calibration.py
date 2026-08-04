@@ -1956,6 +1956,27 @@ class ZeropointCalibrationWorker(QThread):
         if not catalog:
             self._log("[ANCHOR] enabled but no catalog id set — skipped "
                       "(cmd.standard_anchor.catalog, e.g. \"J/AJ/106/181\")")
+            # Help the user: search VizieR for candidates and log them.
+            try:
+                from apex.analysis.cmd.standard_anchor import discover_standard_catalogs
+
+                name = str(getattr(P, "target_name", "") or "").strip()
+                ra = getattr(P, "target_ra_deg", None) or getattr(P, "ra_deg", None)
+                dec = getattr(P, "target_dec_deg", None) or getattr(P, "dec_deg", None)
+                if name and ra is not None and dec is not None:
+                    cands = discover_standard_catalogs(
+                        name, float(ra), float(dec),
+                        ["U", "B", "V", "R", "I", "g", "r", "i"], log=self._log)
+                    for c in cands[:3]:
+                        self._log(f"[ANCHOR] 후보: {c.catalog_id} "
+                                  f"({'/'.join(c.bands)}, "
+                                  f"{'시야 내' if c.in_field else '시야 밖?'}) — "
+                                  f"{c.description[:50]}")
+                    if not cands:
+                        self._log("[ANCHOR] VizieR에서 이 시야의 표준 측광 카탈로그를 "
+                                  "찾지 못함 — Gaia 참조 유지")
+            except Exception as exc:
+                self._log(f"[ANCHOR] 후보 탐색 실패(무시): {type(exc).__name__}: {exc}")
             return df_out
         try:
             from apex.analysis.cmd.standard_anchor import (
@@ -4990,6 +5011,29 @@ class ZPFitPlotWidget(QWidget):
             self._fig.savefig(path, dpi=150, bbox_inches="tight")
 
 
+class _AnchorDiscoveryWorker(QThread):
+    """Background VizieR catalog discovery for the standard-anchor dialog.
+
+    Network-bound (keyword search + per-candidate probe, ~10-60 s) so it must
+    never run on the GUI thread; results come back via signals."""
+
+    found = pyqtSignal(list)
+    failed = pyqtSignal(str)
+
+    def __init__(self, target_name, ra_deg, dec_deg, bands, parent=None):
+        super().__init__(parent)
+        self._args = (str(target_name), float(ra_deg), float(dec_deg), list(bands))
+
+    def run(self):
+        try:
+            from apex.analysis.cmd.standard_anchor import discover_standard_catalogs
+
+            name, ra, dec, bands = self._args
+            self.found.emit(discover_standard_catalogs(name, ra, dec, bands))
+        except Exception as exc:
+            self.failed.emit(f"{type(exc).__name__}: {exc}")
+
+
 class ZeropointCalibrationWindow(StepWindowBase):
     """Step 10: Zeropoint & Standardization"""
 
@@ -5207,6 +5251,20 @@ class ZeropointCalibrationWindow(StepWindowBase):
             "Gaia에서 유도된 카탈로그는 쓰면 안 됩니다(독립성 상실).")
         anchor_form.addRow("VizieR catalog:", self.param_anchor_catalog)
 
+        self.param_anchor_find = QPushButton("Find catalogs for this field (VizieR)")
+        self.param_anchor_find.setToolTip(
+            "대상 이름·좌표로 VizieR를 검색해 이 시야를 덮는 표준 측광 "
+            "카탈로그 후보를 찾습니다 (네트워크, 10~60초). 후보를 고르면 "
+            "위 칸이 채워집니다.")
+        self.param_anchor_find.clicked.connect(self._discover_anchor_catalogs)
+        anchor_form.addRow("", self.param_anchor_find)
+
+        self.param_anchor_candidates = QComboBox()
+        self.param_anchor_candidates.setVisible(False)
+        self.param_anchor_candidates.activated.connect(
+            self._pick_anchor_candidate)
+        anchor_form.addRow("", self.param_anchor_candidates)
+
         self.param_anchor_radius = QDoubleSpinBox()
         self.param_anchor_radius.setRange(0.1, 10.0)
         self.param_anchor_radius.setDecimals(1)
@@ -5245,6 +5303,64 @@ class ZeropointCalibrationWindow(StepWindowBase):
         buttons.accepted.connect(lambda: self.save_parameters(dialog))
         buttons.rejected.connect(dialog.reject)
         dialog.exec_()
+
+    def _discover_anchor_catalogs(self):
+        P = self.params.P
+        ra = getattr(P, "target_ra_deg", None) or getattr(P, "ra_deg", None)
+        dec = getattr(P, "target_dec_deg", None) or getattr(P, "dec_deg", None)
+        if ra is None or dec is None:
+            QMessageBox.warning(self, "Standard anchor",
+                                "대상 좌표(target.ra_deg/dec_deg)가 설정에 없어 "
+                                "탐색할 수 없습니다.")
+            return
+        name = str(getattr(P, "target_name", "") or "").strip()
+        if not name:
+            QMessageBox.warning(self, "Standard anchor",
+                                "대상 이름(target.name)이 설정에 없어 키워드 "
+                                "탐색을 할 수 없습니다.")
+            return
+        self.param_anchor_find.setEnabled(False)
+        self.param_anchor_find.setText("Searching VizieR…")
+        bands = ["U", "B", "V", "R", "I", "g", "r", "i"]
+        self._anchor_discovery = _AnchorDiscoveryWorker(name, ra, dec, bands, self)
+        self._anchor_discovery.found.connect(self._anchor_candidates_found)
+        self._anchor_discovery.failed.connect(self._anchor_discovery_failed)
+        self._anchor_discovery.start()
+
+    def _anchor_discovery_reset_button(self):
+        self.param_anchor_find.setEnabled(True)
+        self.param_anchor_find.setText("Find catalogs for this field (VizieR)")
+
+    def _anchor_candidates_found(self, candidates):
+        self._anchor_discovery_reset_button()
+        combo = self.param_anchor_candidates
+        combo.clear()
+        if not candidates:
+            combo.setVisible(False)
+            QMessageBox.information(
+                self, "Standard anchor",
+                "이 시야를 덮는 표준 측광 카탈로그를 VizieR에서 찾지 "
+                "못했습니다. Gaia 참조만으로 진행하거나, 표준장 전이 "
+                "(같은 밤 표준장 관측)나 분광 [M/H] prior를 고려하세요.")
+            return
+        self._anchor_candidate_ids = [c.catalog_id for c in candidates]
+        for c in candidates:
+            field = "시야 내" if c.in_field else "시야 밖?"
+            combo.addItem(f"{c.catalog_id} — {'/'.join(c.bands)} ({field}) "
+                          f"{c.description[:40]}")
+        combo.setVisible(True)
+        combo.showPopup()
+
+    def _pick_anchor_candidate(self, index):
+        ids = getattr(self, "_anchor_candidate_ids", [])
+        if 0 <= index < len(ids):
+            self.param_anchor_catalog.setText(ids[index])
+            self.param_anchor_enable.setChecked(True)
+
+    def _anchor_discovery_failed(self, message):
+        self._anchor_discovery_reset_button()
+        QMessageBox.warning(self, "Standard anchor",
+                            f"VizieR 탐색 실패: {message}")
 
     def save_parameters(self, dialog):
         self.params.P.match_tol_px = self.param_match.value()

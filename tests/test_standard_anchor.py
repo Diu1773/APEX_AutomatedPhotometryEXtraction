@@ -112,3 +112,29 @@ def test_no_position_rows_warns():
     res = compute_anchor(wide, std, "TEST/CAT")
     assert res.n_matched == 0
     assert res.warnings
+
+
+def test_probe_candidate_filters(monkeypatch):
+    from apex.analysis.cmd.standard_anchor import _probe_candidate
+
+    good = pd.DataFrame({
+        "RAJ2000": [10.00, 10.01], "DEJ2000": [20.00, 20.01],
+        "Vmag": [12.0, 13.0], "B-V": [0.5, 0.6], "U-B": [0.1, 0.2],
+    })
+    far = good.assign(RAJ2000=[50.0, 50.01])
+    one_band = good.drop(columns=["B-V", "U-B"])
+
+    c = _probe_candidate("CAT/GOOD", 10.0, 20.0, 0.5, ["U", "B", "V"],
+                         lambda cid: good)
+    assert c is not None and c.in_field and set(c.bands) == {"U", "B", "V"}
+
+    c = _probe_candidate("CAT/FAR", 10.0, 20.0, 0.5, ["U", "B", "V"],
+                         lambda cid: far)
+    assert c is not None and not c.in_field  # kept, ranked below in-field
+
+    assert _probe_candidate("CAT/1BAND", 10.0, 20.0, 0.5, ["U", "B", "V"],
+                            lambda cid: one_band) is None  # < 2 bands
+    assert _probe_candidate("CAT/ERR", 10.0, 20.0, 0.5, ["U", "B", "V"],
+                            lambda cid: (_ for _ in ()).throw(IOError())) is None
+    assert _probe_candidate("CAT/EMPTY", 10.0, 20.0, 0.5, ["U", "B", "V"],
+                            lambda cid: pd.DataFrame()) is None

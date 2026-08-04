@@ -261,6 +261,104 @@ def apply_anchor(wide: pd.DataFrame, result: AnchorResult) -> pd.DataFrame:
     return out
 
 
+@dataclass
+class CatalogCandidate:
+    catalog_id: str
+    description: str
+    bands: list[str]          # requested bands this catalog can supply
+    n_sample: int             # rows seen in the probe query
+    in_field: bool            # sample positions fall within the search radius
+
+
+def _probe_candidate(
+    catalog_id: str,
+    ra_deg: float,
+    dec_deg: float,
+    radius_deg: float,
+    bands: list[str],
+    fetch_sample,
+) -> Optional[CatalogCandidate]:
+    """Check one candidate: does it have usable positions + >=2 of the
+    requested bands, with rows inside the field?  ``fetch_sample`` returns a
+    small DataFrame for the catalog (injected so tests need no network)."""
+    try:
+        sample = fetch_sample(catalog_id)
+    except Exception:
+        return None
+    if sample is None or len(sample) == 0:
+        return None
+    try:
+        ra, de = standard_positions_deg(sample)
+    except Exception:
+        return None
+    d_ra = (ra - ra_deg) * np.cos(np.radians(dec_deg))
+    sep = np.hypot(d_ra, de - dec_deg)
+    in_field = bool(np.nanmin(sep) < radius_deg)
+    have = [b for b in bands if resolve_band_magnitude(sample, b) is not None
+            and resolve_band_magnitude(sample, b).notna().any()]
+    if len(have) < 2:
+        return None
+    return CatalogCandidate(catalog_id, "", have, len(sample), in_field)
+
+
+def discover_standard_catalogs(
+    target_name: str,
+    ra_deg: float,
+    dec_deg: float,
+    bands: Iterable[str],
+    radius_deg: float = 0.5,
+    max_candidates: int = 10,
+    log: Optional[Callable[[str], None]] = None,
+) -> list[CatalogCandidate]:
+    """Find VizieR photometric catalogs that could anchor this field.
+
+    Strategy (what a human does, automated): keyword-search VizieR for the
+    target ('<name> photometry' / '<name> CCD photometry' / '<name> UBV'),
+    then probe each hit — usable positions, >=2 requested bands, sample rows
+    inside ``radius_deg`` of the field centre.  Candidates that pass are
+    ranked by (in_field, #bands, sample size).  Network-bound; call it from
+    a worker, never the GUI thread.
+    """
+    from astroquery.vizier import Vizier
+
+    _log = log or (lambda _msg: None)
+    bands = list(bands)
+    name = str(target_name or "").strip()
+    # VizieR keyword search treats "NGC 6811" and "NGC6811" differently —
+    # try both spellings.
+    variants = {name, name.replace(" ", "")} - {""}
+    queries = [f"{v} {suffix}" for v in variants
+               for suffix in ("photometry", "CCD photometry", "UBV")]
+    seen: dict[str, str] = {}
+    for query in queries:
+        try:
+            cats = Vizier.find_catalogs(query) or {}
+        except Exception as exc:
+            _log(f"[ANCHOR][discover] query {query!r} failed: {exc}")
+            continue
+        for cid, meta in cats.items():
+            if cid not in seen:
+                seen[cid] = str(getattr(meta, "description", "") or "")
+    _log(f"[ANCHOR][discover] {len(seen)} keyword candidates for {name!r}")
+
+    def fetch_sample(cid: str) -> Optional[pd.DataFrame]:
+        v = Vizier(columns=["**"], row_limit=30)
+        tables = v.get_catalogs(cid)
+        return tables[0].to_pandas() if tables else None
+
+    out: list[CatalogCandidate] = []
+    for cid, desc in list(seen.items())[:max_candidates]:
+        cand = _probe_candidate(cid, ra_deg, dec_deg, radius_deg, bands, fetch_sample)
+        if cand is None:
+            continue
+        cand.description = desc
+        out.append(cand)
+        _log(f"[ANCHOR][discover] {cid}: bands={cand.bands} "
+             f"in_field={cand.in_field} | {desc[:60]}")
+    out.sort(key=lambda c: (c.in_field, len(c.bands), c.n_sample), reverse=True)
+    return out
+
+
 def anchor_qc_frame(result: AnchorResult) -> pd.DataFrame:
     """Per-band QC table for ``standard_anchor_offsets.csv``."""
     return pd.DataFrame([
