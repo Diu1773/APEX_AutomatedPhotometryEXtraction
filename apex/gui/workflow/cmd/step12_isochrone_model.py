@@ -932,8 +932,10 @@ class IsochroneModelWindow(StepWindowBase):
 
         manual_scroll.setWidget(manual_inner)
         manual_outer.addWidget(manual_scroll)
-        self.cmd_viewer_tab_index = self.tabs.insertTab(0, manual_tab, "CMD Viewer")
-        self.tabs.setCurrentIndex(self.cmd_viewer_tab_index)
+        # Workflow order: fit first (Auto-fit tab, index 0, default), then
+        # inspect the result on the CMD Viewer.
+        self.cmd_viewer_tab_index = self.tabs.addTab(manual_tab, "CMD Viewer")
+        self.tabs.setCurrentIndex(self.mcmc_tab_index)
         # Lazy load: defer the (slow) CMD Viewer first render until the
         # user actually opens that tab.  See _on_tab_changed below.
         self._cmd_viewer_pending = False
@@ -1234,6 +1236,21 @@ class IsochroneModelWindow(StepWindowBase):
         prior_group = QGroupBox("External priors (Gaussian: mean ± σ; small σ ≈ fixed)")
         prior_form = QFormLayout(prior_group)
 
+        # Shown only when the data has no blue/UV band: without u/U the
+        # likelihood cannot constrain [M/H] (documented ~0.2 dex metal-poor
+        # floor), so the spectroscopic prior is not optional garnish — it IS
+        # the [M/H] measurement. Populated in _mcmc_refresh_color_checks.
+        self.mcmc_blue_warning = QLabel(
+            "⚠ 데이터에 청색 밴드(u/U)가 없습니다 — 이 색만으로 [M/H]는 "
+            "~0.2 dex 금속결핍으로 치우칩니다. 아래 [M/H] prior에 분광 "
+            "문헌값을 넣는 것이 공식 경로입니다.")
+        self.mcmc_blue_warning.setWordWrap(True)
+        self.mcmc_blue_warning.setStyleSheet(
+            "QLabel { color: #8a5a00; background: #fff3e0; border: 1px solid "
+            "#e0a800; padding: 4px 6px; font-size: 9pt; }")
+        self.mcmc_blue_warning.setVisible(False)
+        prior_form.addRow(self.mcmc_blue_warning)
+
         self.mcmc_mh_prior_chk = QCheckBox("[M/H] prior (spectroscopy)")
         self.mcmc_mh_prior_chk.setToolTip(
             "분광 문헌값을 입력하세요 — 예: APOGEE/GALAH의 성단 [Fe/H].\n"
@@ -1382,6 +1399,16 @@ class IsochroneModelWindow(StepWindowBase):
             self.mcmc_color_checks[(b1, b2)] = chk
             self.mcmc_colors_layout.addWidget(chk)
         self.mcmc_colors_layout.addStretch()
+
+        # No blue band -> surface the spectroscopic-prior guidance up front
+        # (the run-time log warning is too late to change the plan).
+        has_blue = any(b in ("u", "U") for b in bands)
+        self.mcmc_blue_warning.setVisible(not has_blue)
+        if has_blue:
+            self.mcmc_mh_prior_chk.setStyleSheet("")
+        else:
+            self.mcmc_mh_prior_chk.setStyleSheet(
+                "QCheckBox { color: #8a5a00; font-weight: bold; }")
 
     def _mcmc_parse_colors(self, bc, df) -> list:
         """Return the (b1, b2) colours ticked in the checkboxes.
