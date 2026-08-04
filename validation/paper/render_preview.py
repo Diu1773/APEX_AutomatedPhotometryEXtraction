@@ -362,6 +362,15 @@ body{font-family:var(--serif);font-size:11.2px;line-height:1.32;color:var(--ink)
 /* ── 지면 ── */
 #src{display:none;}
 #stage{overflow:hidden;}
+/* PDF-like mode: show exactly one A4 sheet in the viewport. The continuous
+   stacked layout remains available in the source/reflow view. */
+body.paged{overflow:hidden;}
+body.paged #stage{display:flex;align-items:flex-start;justify-content:center;
+  overflow:hidden;min-height:100vh;}
+body.paged #sizer{flex:0 0 auto;}
+body.paged #book{flex:0 0 auto;}
+body.paged .page{display:none;}
+body.paged .page.active{display:block;}
 #sizer{position:relative;}
 #book{transform-origin:top left;width:var(--pw);}
 .page{position:relative;width:var(--pw);height:var(--ph);background:#fff;
@@ -471,7 +480,8 @@ body.reflow #src .jrnl{display:block;margin-bottom:1.4rem;}
 body.reflow #src .jr{display:inline-block;margin-top:.45rem;font-size:13px;}
 body.reflow #src .absblock p{font-size:.98rem;}
 body.reflow #zout,body.reflow #zin,body.reflow #zfit,
-body.reflow #zoomind,body.reflow #pgind,body.reflow #toctop{display:none;}
+body.reflow #zoomind,body.reflow #pgind,body.reflow #toctop,
+body.reflow #prev,body.reflow #next{display:none;}
 
 /* ── 메모 ── */
 mark.apexnote{background:#fff2a8;color:inherit;padding:0 .05em;border-bottom:1.5px solid #d9b100;}
@@ -537,6 +547,7 @@ mark.apexnote{cursor:pointer;}
 #hud button{font:inherit;background:#3a3e45;color:#eceef1;border:0;border-radius:3px;
   padding:4px 8px;cursor:pointer;}
 #hud button:hover{background:#4b505a;}
+#hud .nav{font-size:15px;line-height:1;padding:3px 8px;}
 #pgind{font-variant-numeric:tabular-nums;min-width:4.6em;text-align:center;}
 #zoomind{font-variant-numeric:tabular-nums;min-width:3.2em;text-align:center;font-size:11px;color:#c9ced6;}
 #loading{position:fixed;inset:0;display:flex;align-items:center;justify-content:center;
@@ -916,7 +927,6 @@ JS = r"""
       f.textContent='APEX, '+(i+1)+' / '+N+' 쪽';
     });
     linkToc();
-    fit();
     load.style.display='none';
     if (!reflowInit){ reflowInit=true; applyInitialReflow(); }  // 조판 뒤에 적용
     else if (wasReflow) setReflow(true);                        // 재조판이면 원래대로
@@ -945,9 +955,10 @@ JS = r"""
       document.body.appendChild(m);
       if (window.console) console.warn('[APEX] 조판 오류 '+m.textContent);
     }
+    setPaged(true);
     var hp=/[#&?]p=(\d+)/.exec(location.hash||'');     // #p=7 로 그 쪽을 바로 연다
-    if (hp){ var pg=pages[parseInt(hp[1],10)-1];
-      if (pg) window.scrollTo(0, Math.max(0, pg.el.offsetTop*scale-6)); }
+    if (hp){ var pi=parseInt(hp[1],10)-1;
+      if (pages[pi]) goto(pi); }
   }
 
   function linkToc(){
@@ -975,7 +986,24 @@ JS = r"""
      줄어 읽을 수 없다. PDF 뷰어처럼 사용자가 키울 수 있게 한다.
      transform 은 레이아웃에 영향을 주지 않으므로, 실제 크기를 갖는 #sizer 로
      스크롤 영역을 만들고 그 안에서 #book 을 시각적으로만 확대한다. */
-  var zoom=1;
+  var zoom=1, currentPage=0;
+  function applyPageVisibility(){
+    if (!pages.length) return;
+    pages.forEach(function(p,i){
+      p.el.classList.toggle('active', i===currentPage);
+    });
+    if (ind) ind.textContent=(currentPage+1)+' / '+pages.length;
+  }
+  function setPaged(on){
+    document.body.classList.toggle('paged', !!on);
+    if (on){
+      applyPageVisibility();
+      window.scrollTo(0,0);
+    } else {
+      pages.forEach(function(p){ p.el.classList.remove('active'); });
+    }
+    fit();
+  }
   function setZoom(z){
     zoom=Math.max(0.5, Math.min(3, z));
     fit();
@@ -984,6 +1012,23 @@ JS = r"""
   function fit(){
     if (document.body.classList.contains('reflow')) return;
     var w=stage.clientWidth||document.documentElement.clientWidth||PW;
+    if (document.body.classList.contains('paged')){
+      var h=window.innerHeight||GEO.PH;
+      var pageScale=Math.min(1,(w-40)/PW,(h-38)/GEO.PH);
+      scale=Math.max(0.5,pageScale*zoom);
+      var pcw=Math.ceil(PW*scale), pch=Math.ceil(GEO.PH*scale);
+      sizer.style.width=pcw+'px';
+      sizer.style.height=pch+'px';
+      sizer.style.margin='18px auto 0';
+      book.style.transform='scale('+scale+')';
+      book.style.width=PW+'px';
+      book.style.height=GEO.PH+'px';
+      stage.style.height=Math.max(420,h)+'px';
+      stage.style.overflow='hidden';
+      if (zind) zind.textContent=Math.round(scale*100)+'%';
+      applyPageVisibility();
+      return;
+    }
     var base=Math.min(1,(w-20)/PW);
     scale=base*zoom;
     var cw=Math.ceil(PW*scale), ch=Math.ceil(book.scrollHeight*scale);
@@ -998,10 +1043,20 @@ JS = r"""
   }
   function goto(i){
     var p=pages[i]; if(!p) return;
+    if (document.body.classList.contains('paged')){
+      currentPage=i;
+      applyPageVisibility();
+      fit();
+      return;
+    }
     window.scrollTo({top:Math.max(0,p.el.offsetTop*scale-6), behavior:'smooth'});
   }
   function onScroll(){
     if (!pages.length) return;
+    if (document.body.classList.contains('paged')){
+      if (ind) ind.textContent=(currentPage+1)+' / '+pages.length;
+      return;
+    }
     var y=(window.scrollY||window.pageYOffset||0)/scale + 40, cur=1;
     for (var i=0;i<pages.length;i++){ if (pages[i].el.offsetTop<=y) cur=i+1; else break; }
     ind.textContent=cur+' / '+pages.length;
@@ -1010,6 +1065,15 @@ JS = r"""
   var t=null;
   window.addEventListener('resize', function(){ clearTimeout(t); t=setTimeout(fit,150); });
   function on(id, fn){ var e=document.getElementById(id); if (e) e.addEventListener('click', fn); }
+  on('prev', function(){ goto(currentPage-1); });
+  on('next', function(){ goto(currentPage+1); });
+  document.addEventListener('keydown', function(ev){
+    if (document.body.classList.contains('reflow')) return;
+    var tag=(ev.target && ev.target.tagName)||'';
+    if (tag==='INPUT' || tag==='TEXTAREA' || tag==='BUTTON') return;
+    if (ev.key==='ArrowLeft' || ev.key==='PageUp') { ev.preventDefault(); goto(currentPage-1); }
+    if (ev.key==='ArrowRight' || ev.key==='PageDown' || ev.key===' ') { ev.preventDefault(); goto(currentPage+1); }
+  });
   on('zin',  function(){ setZoom(zoom*1.25); });
   on('zout', function(){ setZoom(zoom/1.25); });
   on('zfit', function(){ setZoom(1); });
@@ -1371,7 +1435,9 @@ HTML = f"""<meta charset="utf-8">
 <div id="hud">
   <button id="top" type="button">처음</button>
   <button id="toctop" type="button">차례</button>
+  <button id="prev" class="nav" type="button" title="이전 페이지">‹</button>
   <span id="pgind">– / –</span>
+  <button id="next" class="nav" type="button" title="다음 페이지">›</button>
   <button id="zout" type="button" title="축소">&minus;</button>
   <span id="zoomind">100%</span>
   <button id="zin" type="button" title="확대">+</button>
