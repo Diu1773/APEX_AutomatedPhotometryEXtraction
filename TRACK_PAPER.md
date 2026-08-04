@@ -28,9 +28,9 @@
   유지했으며 현재 미리보기는 그림을 읽을 크기로 분리한 27쪽이고 넘침 경고가 없다.
 - 그림 4는 APEX에서 뺀 차이값이나 막대가 아니라, 같은 입력의 **APEX·독립
   Python `ccdproc`·PyRAF IRAF `ccdproc` 절대 산출값**을 단계별 표로 나열한다.
-  `data/preproc_absolute_summary.json`에 전체 프레임 중앙값 ± robust σ를
-  기록하고, 픽셀 잔차 감사값은 기존 `data/iraf_preproc_stats.json`에 별도로
-  남겼다.
+  각 열에 같은 값도 생략하지 않고 실제 숫자를 모두 인쇄한다. `data/preproc_absolute_summary.json`에
+  전체 프레임 중앙값 ± robust σ를 기록하고, 픽셀 잔차 감사값은 기존
+  `data/iraf_preproc_stats.json`에 별도로 남겼다.
 - `MANUSCRIPT_ko.md`, 그림 생성기·캡션·README·전처리 교차검증 메모를 서로
   맞췄다. 브라우저의 `file://` 탭에 저장된 메모 패널은 보안 정책상 직접 읽을
   수 없어 저장소의 TRACK/FIGURE_REBUILD_PLAN 및 캡션 기록을 대조해 반영했다.
@@ -263,6 +263,9 @@
   *"3.2에 절은 수치로 주면서 왜 fig는 바로 밑에 없어 ... python ccdproc plot들 ...
   빼지말고 그냥 수치만 표로 나열해봐 apex랑 같이"*. 그림 2–5의 도입 문단 직후
   배치와 APEX·Python ccdproc·IRAF ccdproc 절대값 표로 반영했다.
+- **그림 4 숫자 생략 금지** — 사용자 원문(2026-08-04): *"동일이라고? 그래도 수치는
+  넣어놔야지 어떻게 동일하지"*. 세 열의 각 단계 값을 표와 본문·캡션에 모두 숫자로
+  명시했다.
 - **컷아웃 비교 그림을 논문 fig 로** — 원문(07-28): *"저것도 논문 fig감으로 ㄱㅊ은데?
   좀만더 연구해보자"*
   대상: `E:\APEX_validation_output\_ndet_m67g\answer_cutouts.png` (1프레임 검출 vs
