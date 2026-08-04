@@ -2171,7 +2171,13 @@ class IsochroneModelWindow(StepWindowBase):
             "band_mag_text": self.mag_combo.currentText(),
             # Auto-fit (MCMC) settings — priors survive a restart (a re-typed
             # prior is a re-typed literature lookup; persist it).
+            # "workspace" guards against the shared primary state file
+            # (apex/.state/<mode> is one file for ALL workspaces): restoring
+            # cluster A's [M/H]/E priors into cluster B would silently
+            # contaminate a science fit, so restore only for the same
+            # result_dir.
             "mcmc": {
+                "workspace": str(getattr(self.params.P, "result_dir", "")),
                 "membership": self.mcmc_membership_chk.isChecked(),
                 "parallax_prior": self.mcmc_parallax_chk.isChecked(),
                 "mh_prior_on": self.mcmc_mh_prior_chk.isChecked(),
@@ -2237,7 +2243,38 @@ class IsochroneModelWindow(StepWindowBase):
             # restore_state runs AFTER setup_step_ui() (see __init__), so the
             # MCMC widgets already exist here — apply directly. The stash +
             # build-site apply stays as a guard for any future order change.
-            self._mcmc_saved_state = state_data.get("mcmc") or {}
+            # Workspace guard: the primary state file is shared by every
+            # workspace of this mode, so drop saved priors that belong to a
+            # different result_dir (cross-cluster prior contamination).
+            cur_ws = str(getattr(self.params.P, "result_dir", "") or "")
+
+            def _ws_of(m: dict) -> str:
+                return str((m or {}).get("workspace", "") or "")
+
+            saved_mcmc = state_data.get("mcmc") or {}
+            if saved_mcmc and _ws_of(saved_mcmc) and _ws_of(saved_mcmc) != cur_ws:
+                self.log(f"[MCMC] primary saved settings belong to another "
+                         f"workspace ({_ws_of(saved_mcmc)}) — ignored")
+                saved_mcmc = {}
+            if not saved_mcmc and cur_ws:
+                # The shared primary holds only the LAST-closed workspace's
+                # settings; this workspace's own copy lives in its mirror
+                # (result_dir/project_state.json, written on every save).
+                # The mirror's location proves ownership, so a legacy entry
+                # without a workspace tag is accepted from here.
+                try:
+                    mirror = Path(cur_ws) / "project_state.json"
+                    if mirror.exists():
+                        md = json.loads(mirror.read_text(encoding="utf-8"))
+                        mm = ((md.get("step_data") or {})
+                              .get("isochrone_model") or {}).get("mcmc") or {}
+                        if mm and _ws_of(mm) in ("", cur_ws):
+                            saved_mcmc = mm
+                            self.log("[MCMC] settings restored from the "
+                                     "workspace mirror")
+                except Exception as exc:
+                    self.log(f"[MCMC] mirror restore skipped: {exc}")
+            self._mcmc_saved_state = saved_mcmc
             if self._mcmc_saved_state and hasattr(self, "mcmc_mh_prior_chk"):
                 self._restore_mcmc_state(self._mcmc_saved_state)
         if self.iso_path_edit is not None and not self.iso_path_edit.text().strip():
