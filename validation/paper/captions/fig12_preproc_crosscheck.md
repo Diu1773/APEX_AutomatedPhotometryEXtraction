@@ -3,8 +3,9 @@
 The table lists the absolute output level of each calibration product as the
 full-frame median ± robust σ (1.4826 × MAD), rather than subtracting APEX from
 either reference.  Columns are the production APEX reduction, an independent
-Python `ccdproc` reduction, and an independent IRAF `ccdproc` task run through
-PyRAF.  Rows are the master bias, the 60-s master dark, the unit-median
+Astropy Python `ccdproc` 2.5.1 reduction (Craig et al. 2015), and an independent
+IRAF `ccdred` `ccdproc` task run through PyRAF 2.2.3.dev9 (Tody 1986, 1993).
+These are different implementations with the same historical task name. Rows are the master bias, the 60-s master dark, the unit-median
 normalised master flat, and the science frame after the complete bias–dark–flat
 chain.  The displayed Python values are 512 ± 1.483 DN (bias), 1 ± 2.224 DN
 (60-s dark), 1 ± 0.04428 DN (flat), and 633.5 ± 31.39 DN (full chain), the

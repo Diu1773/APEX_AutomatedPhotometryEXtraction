@@ -138,6 +138,16 @@
 | **함정** | 경쟁 도구가 없던 시절의 글이라 **서론 모델로 쓰면 안 된다** |
 | 부수 사실 | IRAF 원문이 **Proc. SPIE** 다. 이 바닥 소프트웨어 논문의 원조가 SPIE 논문집 |
 
+### ccdproc · Python CCD 보정
+
+| | |
+|---|---|
+| 문헌 | Craig et al. 2015, *ccdproc: CCD data reduction software*, ASCL:1510.007; 공식 문서의 사용 버전은 2.5.1 |
+| 확인 상태 | **패키지·버전 확인** (`.venv-deploy`: ccdproc 2.5.1, Python 3.12.3) |
+| 무엇 | Astropy affiliated Python package. `CCDData`, `combine`, `subtract_bias`, `subtract_dark`, `flat_correct`를 사용한 검출기 보정 |
+| IRAF와의 관계 | IRAF `ccdred`의 `ccdproc` 태스크와는 이름만 같고 코드·실행환경이 다른 독립 구현 |
+| 검증 문헌 | 두 구현의 동등성을 입증한 외부 비교 논문은 확인하지 못했다. 본 논문의 근거는 동일 raw를 세 경로에 넣은 그림 4 교차검증이며, 재현 스크립트는 `validation/paper/calib_crosscheck_ngc6811.py`이다. |
+
 ---
 
 ## 방법·기준 문헌

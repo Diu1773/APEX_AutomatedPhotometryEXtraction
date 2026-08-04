@@ -159,9 +159,11 @@ astrometry.net은 별도 사용자 옵션이며, 외부 탭을 선택했을 때�
 
 알려진 bias·dark·flat으로 만든 합성 프레임을 같은 코드로 보정했을 때, 복원 영상과 참 과학 영상 사이의 계통 오프셋은 $-0.004$ DN, 잔차 MAD는 $3.13$ DN이었다. 잔차 크기는 주입한 읽기잡음 3.0 DN과 비슷하다. 마스터 bias의 복원 RMS는 0.97 DN이었고, flat 모서리의 비네팅 잔차는 10.6 DN에서 0.7 DN으로 감소하였다. 선택적 L.A.Cosmic 우주선 제거 \citep{vandokkum2001}와 핫픽셀 보정은 주입한 우주선 화소의 100%와 핫픽셀의 94%를 제거했으며, 별 중심 오검출률은 0.000%, 구경 플럭스 변화는 0.00 mmag이었다.
 
-gain, 읽기잡음, 암전류는 FITS 헤더값을 사용하지 않고 보정 노출에서 측정하였다(그림 3). 같은 flat 쌍의 광자전달관계 \citep{janesick2007}, bias 쌍의 차이, 노출시간별 dark 사다리를 APEX와 두 독립 경로로 각각 계산했다. APEX에서 gain은 $0.681\pm0.014$ e$^-$/ADU, 읽기잡음은 $2.35$ e$^-$, 암전류는 $0.0077$ e$^-$/s($R^2=0.998$)였고, Python `ccdproc`과 IRAF `ccdproc`도 각각 gain $0.681\pm0.014$ e$^-$/ADU, 읽기잡음 $2.35$ e$^-$, 암전류 $0.0077$ e$^-$/s를 냈다(두 패키지의 역할과 인용은 \citep{ccdproc, tody1993}). 이는 화소 배열이 같다는 뜻이 아니다. 세 경로가 실제 영상에서 내놓은 보정 산출물의 절대 수준은 다음 문단에서 표로 비교한다. 이 카메라의 MaxIm/ASCOM \texttt{EGAIN} 키워드는 측정값보다 약 16배 작아 사용하지 않았으며, 그림 3의 상수만 3.7절의 오차 계산에 넣었다.
+gain, 읽기잡음, 암전류는 FITS 헤더값을 사용하지 않고 보정 노출에서 측정하였다(그림 3). 같은 flat 쌍의 광자전달관계 \citep{janesick2007}, bias 쌍의 차이, 노출시간별 dark 사다리를 APEX와 두 독립 경로로 각각 계산했다. APEX에서 gain은 $0.681\pm0.014$ e$^-$/ADU, 읽기잡음은 $2.35$ e$^-$, 암전류는 $0.0077$ e$^-$/s($R^2=0.998$)였고, Python `ccdproc`과 IRAF `ccdproc`도 각각 gain $0.681\pm0.014$ e$^-$/ADU, 읽기잡음 $2.35$ e$^-$, 암전류 $0.0077$ e$^-$/s를 냈다. 여기서 Python 경로는 Astropy 계열 패키지인 `ccdproc` 2.5.1 (Craig et al. 2015 \citep{ccdproc})이고, IRAF 경로는 IRAF `ccdred`의 `ccdproc` 태스크 (Tody 1986, 1993 \citep{tody1986,tody1993})이다. 두 이름은 같지만 같은 코드나 같은 패키지가 아니다. 이는 화소 배열이 같다는 뜻도 아니다. 이 카메라의 MaxIm/ASCOM \texttt{EGAIN} 키워드는 측정값보다 약 16배 작아 사용하지 않았으며, 그림 3의 상수만 3.7절의 오차 계산에 넣었다.
 
-보정 산술은 같은 실제 프레임을 APEX, 독립적인 파이썬 `ccdproc` 패키지, IRAF `ccdproc` 태스크로 각각 처리하였다(그림 4; \citep{ccdproc, tody1993}). 그림 4에는 세 경로가 만든 master bias·dark·flat과 완전 보정 과학 영상의 **전체 프레임 중앙값 $\pm$ robust $\sigma$**를 단계별로 나란히 적었다. Python `ccdproc`의 실제 값은 bias $512\pm1.483$, 60초 dark $1\pm2.224$, flat $1\pm0.04428$, 완전 보정 영상 $633.5\pm31.39$ DN이고, APEX 열에도 같은 수치를 표시했다. IRAF `ccdproc`은 각각 $512\pm1.483$, $1\pm2.224$, $1.001\pm0.04431$, $633\pm31.37$ DN으로 기록된다. 따라서 ‘일치’는 숫자를 생략한다는 뜻이 아니라 표시 정밀도까지 같은 값이라는 뜻이다. 이 그림은 APEX에서 뺀 차이값이나 로그 막대를 보여 주는 그림이 아니다. 우주선과 핫픽셀 단계는 화소를 의도적으로 바꾸므로 이 표에서 제외하고 앞의 주입 시험으로 평가하였다.
+검출기 보정 산술의 비교는 저장소의 `calib_crosscheck_ngc6811.py`로 재현할 수 있다. Python 실행은 Python 3.12.3 환경의 `ccdproc` 2.5.1과 Astropy `CCDData`를 사용했다. FITS 화소 배열은 비교 조건을 맞추기 위해 APEX의 공통 `load_frame`으로 읽은 뒤 `CCDData(unit='adu')`로 감쌌으며, 이후의 결합·보정 연산만 Python `ccdproc`으로 수행했다. 마스터 bias는 `ccdproc.combine(method='median')`, dark는 bias를 뺀 뒤 같은 방식으로 결합했고, flat은 bias·dark를 차례로 보정하고 각 프레임을 중앙값 1로 정규화한 뒤 결합했다. 과학 영상에는 `subtract_bias`, `subtract_dark(scale=True)`, `flat_correct(norm_value=1.0)`를 순서대로 적용했다. APEX 쪽은 `apex.analysis.calibration`의 자체 float32 결합·보정 경로를 사용했다. IRAF 쪽은 WSL에서 PyRAF 2.2.3.dev9로 IRAF `ccdred` 태스크를 호출하여 `zerocombine`, `darkcombine`, `flatcombine`, `ccdproc`을 실행했다. 보존된 실행 로그에는 IRAF 배포판의 세부 버전이 남아 있지 않아 이를 임의로 특정하지 않았다. 세 경로 모두 이 비교에서는 오버스캔, trim, 우주선, 핫픽셀 보정을 껐다.
+
+따라서 이 문헌의 `ccdproc` 인용은 패키지의 서지·사용법을 가리키는 것이며, Python과 IRAF의 동등성을 외부 논문이 이미 입증했다는 뜻이 아니다. 두 구현의 동등성 주장은 동일 raw 프레임에 대한 이 연구의 교차검증 결과로 한정한다. 그림 4에는 세 경로가 만든 master bias·dark·flat과 완전 보정 과학 영상의 **전체 프레임 중앙값 $\pm$ robust $\sigma$**를 단계별로 나란히 적었다. Python `ccdproc`의 실제 값은 bias $512\pm1.483$, 60초 dark $1\pm2.224$, flat $1\pm0.04428$, 완전 보정 영상 $633.5\pm31.39$ DN이고, APEX 열에도 같은 수치를 표시했다. IRAF `ccdproc`은 각각 $512\pm1.483$, $1\pm2.224$, $1.001\pm0.04431$, $633\pm31.37$ DN으로 기록된다. 따라서 ‘일치’는 숫자를 생략한다는 뜻이 아니라 표시 정밀도까지 같은 값이라는 뜻이다. 이 그림은 APEX에서 뺀 차이값이나 로그 막대를 보여 주는 그림이 아니다. 우주선과 핫픽셀 단계는 화소를 의도적으로 바꾸므로 이 표에서 제외하고 앞의 주입 시험으로 평가하였다.
 
 마지막으로 LCO의 QHY600 CMOS와 4증폭기 Sinistro CCD raw 프레임을 APEX로 보정한 뒤 BANZAI 산출물 \citep{mccully2018}과 비교하였다(그림 5). QHY600의 차이는 프레임 전체에서 거의 균일한 $+0.06$ e$^-$였고, Sinistro는 하늘과 천체 구조가 약 0.3% 범위에서 일치했지만 차영상에 증폭기 사분면 구조가 남았다. 이 결과는 bias·dark·flat 연산이 두 검출기에서도 재현됨을 보이는 한편, 증폭기별 gain·오버스캔·크로스토크 조립은 기기별 처리가 필요함을 보여 준다. APEX의 현재 보정 범위는 단일 CCD 또는 조립이 끝난 영상이다.
 
@@ -349,9 +351,13 @@ APEX를 처음 쓰는 독자는 대개 IRAF/DAOPHOT이나 파이썬 측광 패�
 
 빈칸(—)은 그 환경에 대응하는 표준 태스크나 함수가 없다는 뜻이다. IRAF에도
 `ccdproc`이라는 태스크가 있고, Astropy 생태계에도 같은 이름의 독립적인 파이썬
-패키지가 있다. 이름은 같지만 구현과 실행 환경은 다르므로, 본문에서 ``IRAF ccdproc``과
-``Python ccdproc``을 구분한다. 이 논문의 그림 4는 두 독립 구현을 모두 사용한 단계별
-절대 산출값 표이며, IRAF 태스크명과 PyRAF 실행 환경은 확인한 것만 적었다.
+패키지(`ccdproc` 2.5.1)가 있다. 이름은 같지만 구현과 실행 환경은 다르므로, 본문에서
+``IRAF ccdproc``과 ``Python ccdproc``을 구분한다. Python 패키지는 Craig et al. (2015)의
+소프트웨어 기록 \citep{ccdproc}, IRAF는 Tody (1986, 1993)의 IRAF 시스템 문헌
+\citep{tody1986,tody1993}으로 인용한다. 이 문헌에는 두 구현을 비교한 외부 검증 논문이
+없으므로, 그림 4의 동등성은 이 연구가 동일 raw에 대해 수행한 교차검증 결과이다.
+그림 4는 두 독립 구현을 모두 사용한 단계별 절대 산출값 표이며, IRAF 태스크명과
+PyRAF 실행 환경은 확인한 것만 적었다.
 
 ## 부록 B. 사용 기기와 영상 설정
 
@@ -374,7 +380,7 @@ APEX는 오픈소스로 MIT 라이선스 아래 `https://github.com/Diu1773/APEX
 
 ## 소프트웨어 (Software)
 
-이 연구는 Astropy \citep{astropy2013, astropy2018, astropy2022}, photutils \citep{photutils}, SEP \citep{barbary2016} 를 쓴다. astrometric solution은 내장 quad 솔버를 기본으로 쓰고, ASTAP \citep{astap} 와 astrometry.net \citep{lang2010} 을 외부 엔진으로 지원한다(3.6절). 독립 교차 확인은 PyRAF를 통한 IRAF/DAOPHOT \citep{stetson1987} 를 쓴다. APEX의 검출기 보정 단계는 Python `ccdproc`과 절대 산출값이 표시 정밀도에서 일치하며, IRAF `ccdproc`과의 별도 수치 비교 및 카메라 두 대의 LCO BANZAI 비교로 검증하였다(3.2절). 우주선·핫픽셀 제거는 astroscrappy \citep{vandokkum2001} 를 쓴다.
+이 연구는 Astropy \citep{astropy2013, astropy2018, astropy2022}, photutils \citep{photutils}, SEP \citep{barbary2016} 를 쓴다. 검출기 보정 교차검증의 Python 경로는 `ccdproc` 2.5.1 (Craig et al. 2015, \citep{ccdproc})이며, IRAF 경로는 IRAF `ccdred`의 `ccdproc` 태스크 (Tody 1986, 1993, \citep{tody1986,tody1993})를 PyRAF 2.2.3.dev9로 호출했다. astrometric solution은 내장 quad 솔버를 기본으로 쓰고, ASTAP \citep{astap} 와 astrometry.net \citep{lang2010} 을 외부 엔진으로 지원한다(3.6절). 독립 측광 교차 확인은 PyRAF를 통한 IRAF/DAOPHOT \citep{stetson1987} 를 쓴다. APEX의 검출기 보정 단계는 이 두 독립 구현 및 카메라 두 대의 LCO BANZAI 비교로 검증하였다(3.2절). 우주선·핫픽셀 제거는 astroscrappy \citep{vandokkum2001} 를 쓴다.
 
 ## 저자 기여 (Author contributions)
 

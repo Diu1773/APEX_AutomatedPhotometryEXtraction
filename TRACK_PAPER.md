@@ -20,6 +20,20 @@
 
 ## 지금 (2026-08-04 Codex WCS·기기·그림 패널 2차 검수 후)
 
+**2026-08-04 · ccdproc 구현·서지 provenance 명시**
+
+- 전처리 교차검증의 Python 경로를 `ccdproc` 2.5.1 (Python 3.12.3,
+  Astropy `CCDData`, `combine`·`subtract_bias`·`subtract_dark`·`flat_correct`)로
+  명시했다. IRAF 경로는 IRAF `ccdred`의 `ccdproc` 태스크를 PyRAF 2.2.3.dev9로
+  WSL에서 실행한 별도 구현이다. IRAF 배포판의 세부 빌드 번호는 보존된 로그에
+  없어 임의로 적지 않았다.
+- `references.bib`의 `ccdproc` 항목에 사용 버전과 공식 문서 URL을 추가하고,
+  Craig et al. (2015) 소프트웨어 기록과 Tody (1986, 1993) IRAF 문헌을 본문·부록에
+  연결했다. 두 구현의 동등성을 입증하는 외부 비교 논문은 확인하지 못했으며,
+  그림 4의 동일성 주장은 동일 raw를 세 경로에 넣은 이 연구의 교차검증으로
+  한정했다. 재현 경로는 `calib_crosscheck_ngc6811.py`와
+  `IRAF_PREPROC_CROSSCHECK.md`이다.
+
 **2026-08-04 · §3.2 그림 순서 및 그림 4 절대 산출값 표 반영**
 
 - §3.2의 수치 설명 직후에 해당 그림이 오도록 렌더러의 그림 방출·배치를
