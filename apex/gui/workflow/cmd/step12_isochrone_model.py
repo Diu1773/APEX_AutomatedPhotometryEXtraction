@@ -32,6 +32,8 @@ from PyQt5.QtWidgets import (
 from PyQt5.QtCore import Qt, QThread, pyqtSignal, QTimer
 
 from apex.gui.workflow.step_window_base import StepWindowBase
+from apex.gui.layout_rules import scroll_wrap
+from apex.gui.theme import Tokens, refresh, style_button
 from apex.utils.step_paths_cmd import step9_selection_dir, step10_zp_dir, step12_iso_dir
 from apex.utils.common_helpers import format_cmd_title, target_display_name
 from apex.utils.cmd_gaia_enrichment import merge_gaia_columns_from_catalog
@@ -637,10 +639,7 @@ class IsochroneViewerWindow(QWidget):
         reset_row.addStretch()
         self.reset_button = QPushButton("Reset")
         self.reset_button.setFixedWidth(80)
-        self.reset_button.setStyleSheet(
-            "QPushButton { background-color: #455A64; color: white; padding: 4px 10px; }"
-            "QPushButton:hover { background-color: #607D8B; }"
-        )
+        style_button(self.reset_button)
         reset_row.addWidget(self.reset_button)
         sliders_layout.addLayout(reset_row)
         # _build_plot runs after __init__ set up `self.layout()` (QVBoxLayout
@@ -763,13 +762,13 @@ class IsochroneModelWindow(StepWindowBase):
 
     def setup_step_ui(self):
         info = QLabel("Load isochrone data, explore with sliders, or run automatic fitting.")
-        info.setStyleSheet("QLabel { background-color: #E3F2FD; padding: 10px; border-radius: 5px; }")
+        info.setProperty("role", "info")
         self.content_layout.addWidget(info)
 
         self.photometry_source_label = QLabel()
-        self.photometry_source_label.setStyleSheet(
-            "QLabel { color: #455A64; font-weight: bold; padding: 2px 4px; }"
-        )
+        self.photometry_source_label.setProperty("role", "caption")
+        _f = self.photometry_source_label.font(); _f.setBold(True)
+        self.photometry_source_label.setFont(_f)
         self.photometry_source_label.setToolTip(
             "Original measurement source used to build the calibrated CMD magnitudes."
         )
@@ -791,7 +790,7 @@ class IsochroneModelWindow(StepWindowBase):
         file_row.addWidget(btn_folder)
         file_layout.addLayout(file_row)
         self.iso_status_label = QLabel("Single file mode")
-        self.iso_status_label.setStyleSheet("QLabel { color: #607D8B; font-size: 9pt; }")
+        self.iso_status_label.setProperty("role", "caption")
         file_layout.addWidget(self.iso_status_label)
         self.content_layout.addWidget(file_group)
 
@@ -854,7 +853,8 @@ class IsochroneModelWindow(StepWindowBase):
         sf_layout.addWidget(self.roi_check)
 
         self.roi_label = QLabel("(no ROI)")
-        self.roi_label.setStyleSheet("QLabel { color: #888; font-style: italic; }")
+        self.roi_label.setProperty("status", "idle")
+        _f = self.roi_label.font(); _f.setItalic(True); self.roi_label.setFont(_f)
         sf_layout.addWidget(self.roi_label)
 
         sf_layout.addSpacing(20)
@@ -942,7 +942,7 @@ class IsochroneModelWindow(StepWindowBase):
         # --- Log Window ---
         log_row = QHBoxLayout()
         btn_log = QPushButton("Open Log")
-        btn_log.setStyleSheet("QPushButton { background-color: #607D8B; color: white; font-weight: bold; padding: 8px 15px; }")
+        style_button(btn_log, "ghost")
         btn_log.clicked.connect(self.show_log_window)
         log_row.addWidget(btn_log)
         log_row.addStretch()
@@ -954,7 +954,7 @@ class IsochroneModelWindow(StepWindowBase):
         log_layout = QVBoxLayout(self.log_window)
         self.log_text = QTextEdit()
         self.log_text.setReadOnly(True)
-        self.log_text.setStyleSheet("QTextEdit { font-family: monospace; font-size: 9pt; }")
+        self.log_text.setObjectName("Log")
         log_layout.addWidget(self.log_text)
 
         # Internal state
@@ -968,6 +968,14 @@ class IsochroneModelWindow(StepWindowBase):
     # Source Filters
     # =========================================================================
 
+    def _set_roi_state(self, status: str, *, italic: bool) -> None:
+        """Colour the ROI readout by state, italic while nothing is loaded."""
+        self.roi_label.setProperty("status", status)
+        font = self.roi_label.font()
+        font.setItalic(italic)
+        self.roi_label.setFont(font)
+        refresh(self.roi_label)
+
     def _load_roi_data(self):
         """Try to load ROI circle from step10's saved JSON."""
         try:
@@ -978,12 +986,12 @@ class IsochroneModelWindow(StepWindowBase):
                 dec = self._roi_data.get("dec_deg", 0.0)
                 r   = self._roi_data.get("radius_arcsec", 0.0)
                 self.roi_label.setText(f"RA={ra:.4f}° Dec={dec:.4f}° r={r:.1f}\"")
-                self.roi_label.setStyleSheet("QLabel { color: #2E7D32; font-style: normal; }")
+                self._set_roi_state("ok", italic=False)
                 self.roi_check.setEnabled(True)
             else:
                 self._roi_data = None
                 self.roi_label.setText("(no ROI saved)")
-                self.roi_label.setStyleSheet("QLabel { color: #888; font-style: italic; }")
+                self._set_roi_state("idle", italic=True)
                 self.roi_check.setEnabled(False)
         except Exception:
             self._roi_data = None
@@ -1170,7 +1178,7 @@ class IsochroneModelWindow(StepWindowBase):
         )
         intro.setWordWrap(True)
         intro.setTextFormat(Qt.RichText)
-        intro.setStyleSheet("QLabel { color: #37474F; font-size: 9pt; }")
+        intro.setProperty("role", "caption")
         outer.addWidget(intro)
 
         controls = QHBoxLayout()
@@ -1242,9 +1250,7 @@ class IsochroneModelWindow(StepWindowBase):
             "~0.2 dex 금속결핍으로 치우칩니다. 아래 [M/H] prior에 분광 "
             "문헌값을 넣는 것이 공식 경로입니다.")
         self.mcmc_blue_warning.setWordWrap(True)
-        self.mcmc_blue_warning.setStyleSheet(
-            "QLabel { color: #8a5a00; background: #fff3e0; border: 1px solid "
-            "#e0a800; padding: 4px 6px; font-size: 9pt; }")
+        self.mcmc_blue_warning.setProperty("banner", "warn")
         self.mcmc_blue_warning.setVisible(False)
         prior_form.addRow(self.mcmc_blue_warning)
 
@@ -1296,7 +1302,7 @@ class IsochroneModelWindow(StepWindowBase):
                         (self.mcmc_ebv_mean, self.mcmc_ebv_sigma))
 
         hint = QLabel("Gaia parallax → (m−M)₀ is set from the membership clump when available.")
-        hint.setStyleSheet("QLabel { color: #607D8B; font-size: 8pt; }")
+        hint.setProperty("role", "caption")
         hint.setWordWrap(True)
         prior_form.addRow(hint)
         controls.addWidget(prior_group)
@@ -1305,10 +1311,7 @@ class IsochroneModelWindow(StepWindowBase):
         # -- run row --
         run_row = QHBoxLayout()
         self.btn_run_mcmc = QPushButton("Run MCMC Auto-Fit")
-        self.btn_run_mcmc.setStyleSheet(
-            "QPushButton { background-color: #6A1B9A; color: white; font-weight: bold; padding: 8px 16px; border-radius: 4px; }"
-            "QPushButton:hover { background-color: #4A148C; }"
-        )
+        style_button(self.btn_run_mcmc, "primary")
         self.btn_run_mcmc.clicked.connect(self._run_mcmc_autofit)
         run_row.addWidget(self.btn_run_mcmc)
         self.btn_save_mcmc = QPushButton("Save Figures")
@@ -1320,7 +1323,7 @@ class IsochroneModelWindow(StepWindowBase):
         outer.addLayout(run_row)
 
         self.mcmc_status = QLabel("")
-        self.mcmc_status.setStyleSheet("QLabel { color: #333; font-weight: bold; }")
+        _f = self.mcmc_status.font(); _f.setBold(True); self.mcmc_status.setFont(_f)
         outer.addWidget(self.mcmc_status)
 
         # -- results: summary + figures in a scroll area --
@@ -1339,7 +1342,14 @@ class IsochroneModelWindow(StepWindowBase):
         saved = getattr(self, "_mcmc_saved_state", None)
         if saved:
             self._restore_mcmc_state(saved)
-        self.mcmc_tab_index = self.tabs.addTab(tab, "Auto-fit (MCMC)")
+        # This page stacks fit options, the priors form and the run/progress
+        # rows: 844 px against the CMD Viewer's 105. A QTabWidget takes the
+        # *maximum* minimum over its pages, so unwrapped it demanded a
+        # 1558 px-tall window — nearly twice a laptop screen — and Qt squeezed
+        # the page to a 191 px sliver with its headings and Run button
+        # overlapping. Wrapped, the page scrolls and the window fits.
+        self.mcmc_tab_index = self.tabs.addTab(
+            scroll_wrap(tab, horizontal=True), "Auto-fit (MCMC)")
         # Auto-detect available colours when the user opens this tab.
         self.tabs.currentChanged.connect(self._on_mcmc_tab_changed)
 
@@ -1401,11 +1411,9 @@ class IsochroneModelWindow(StepWindowBase):
         # (the run-time log warning is too late to change the plan).
         has_blue = any(b in ("u", "U") for b in bands)
         self.mcmc_blue_warning.setVisible(not has_blue)
-        if has_blue:
-            self.mcmc_mh_prior_chk.setStyleSheet("")
-        else:
-            self.mcmc_mh_prior_chk.setStyleSheet(
-                "QCheckBox { color: #8a5a00; font-weight: bold; }")
+        self.mcmc_mh_prior_chk.setStyleSheet(
+            "" if has_blue
+            else f"QCheckBox {{ color: {Tokens.WARN}; font-weight: bold; }}")
 
     def _mcmc_parse_colors(self, bc, df) -> list:
         """Return the (b1, b2) colours ticked in the checkboxes.
@@ -2002,8 +2010,9 @@ class IsochroneModelWindow(StepWindowBase):
         self._clear_viewer_widget()
         placeholder = QLabel(message)
         placeholder.setAlignment(Qt.AlignCenter)
+        placeholder.setProperty("role", "caption")
         placeholder.setStyleSheet(
-            "QLabel { color: #607D8B; font-size: 11pt; border: 1px dashed #B0BEC5; padding: 24px; }"
+            f"QLabel {{ border: 1px dashed {Tokens.BORDER}; padding: {Tokens.MARGIN}px; }}"
         )
         self.viewer_layout.addWidget(placeholder, stretch=1)
         self.viewer_placeholder = placeholder

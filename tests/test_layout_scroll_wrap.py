@@ -144,6 +144,10 @@ def test_wrapping_the_fat_tab_drops_the_tab_widget_minimum(qapp):
         # narrower than that clipped the column's buttons and let Phase Folding
         # overlap the light curve. Measured 1451 -> 1016 px.
         ("apex/gui/workflow/lc/step9_lightcurve_builder.py", "scroll_wrap(left_col"),
+        # CMD Step 12: the MCMC page needs 844px against the CMD Viewer's 105,
+        # and a QTabWidget takes the max — the window demanded 1558px tall and
+        # squeezed the page to a 191px sliver. Measured 1558 -> 819 px.
+        ("apex/gui/workflow/cmd/step12_isochrone_model.py", "scroll_wrap(tab"),
         # Step 8 (qc_tab) and the variable-star tool (mm_tab) get the same
         # treatment; add them here once their files land — both currently sit
         # inside a larger in-flight change.
