@@ -1,13 +1,21 @@
 # -*- coding: utf-8 -*-
-r"""Per-stage calibration cross-check against the Python ccdproc package.
+r"""Figure 4 — detector preprocessing cross-checks.
 
-Every calibration stage remains an explicit datum. The left panel is a compact
-numeric audit table (maximum absolute difference, robust scatter, and status),
-while the right panel compares the only non-zero end-to-end difference with
-detector and sky noise. This is a pixel-level arithmetic test, not only a chart
-comparison.
+The comparison is deliberately made at one level: pixel values after the
+detector-calibration stages.  APEX is the production reduction; the two
+independent reductions are Python ``ccdproc`` and the IRAF ``ccdproc`` task.
+The table reports measured differences, while the bar panel gives the same
+maximum absolute differences on a log scale.  Exact zeros are printed as
+zeros in the table and placed at a labelled display floor in the plot; they
+are not replaced by an arbitrary numerical value in the reported result.
 
-Run: .venv-deploy\Scripts\python -X utf8 validation\paper\fig12_preproc_crosscheck.py
+Run::
+
+    .venv-deploy\Scripts\python -X utf8 validation\paper\fig12_preproc_crosscheck.py
+
+The small IRAF summary is generated in WSL/PyRAF from the same raw frames and
+is stored in ``data/iraf_preproc_stats.json`` (the large FITS intermediates
+remain ignored by the repository).
 """
 from __future__ import annotations
 
@@ -16,6 +24,7 @@ import sys
 from pathlib import Path
 
 import matplotlib.pyplot as plt
+import numpy as np
 
 REPO = Path(__file__).absolute().parents[2]
 sys.path.insert(0, str(REPO / "validation" / "paper"))
@@ -28,99 +37,120 @@ DATA = REPO / "validation" / "paper" / "data"
 OUTDIR = REPO / "validation" / "paper" / "figures"
 CAPDIR = REPO / "validation" / "paper" / "captions"
 
-STEPS = [
+STAGES = [
     ("master_bias", "master bias"),
     ("master_dark", "master dark"),
     ("master_flat", "master flat"),
-    ("bias_subtract", "bias subtract"),
-    ("dark_subtract", "dark subtract"),
-    ("flat_correct", "flat field"),
     ("full_pipeline", "full pipeline"),
 ]
 
 
+def _fmt(value: float) -> str:
+    return "0" if value == 0 else f"{value:.1e}"
+
+
 def main() -> int:
-    res = json.loads((DATA / "calib_crosscheck_ngc6811.json").read_text(encoding="utf-8"))
-    ptc = json.loads((DATA / "detector_ptc.json").read_text(encoding="utf-8"))
-    gain = ptc["gain_e_per_adu"]
-    rn_dn = ptc["read_noise_adu"]
-    sky_shot_dn = float((max(res["light_median"], 1.0) / gain) ** 0.5)
-    steps = res["steps"]
-    worst = max(steps[key]["max_abs"] for key, _ in STEPS)
+    py = json.loads((DATA / "calib_crosscheck_ngc6811.json").read_text(encoding="utf-8"))
+    iraf = json.loads((DATA / "iraf_preproc_stats.json").read_text(encoding="utf-8"))
+    py_steps = py["steps"]
+    # The figure compares each independent implementation to the same APEX
+    # output, so the values are directly comparable even though the two
+    # references are not compared to one another.
+    py_vals = [float(py_steps[key]["max_abs"]) for key, _ in STAGES]
+    iraf_vals = [float(iraf[key]["max_abs"]) for key, _ in STAGES]
+    py_sig = [float(py_steps[key]["robust_sigma"]) for key, _ in STAGES]
+    iraf_sig = [float(iraf[key]["robust_sigma"]) for key, _ in STAGES]
 
     fig, (axa, axb) = plt.subplots(
-        1, 2, figsize=(DOUBLE_COL, 2.95),
-        gridspec_kw={"width_ratios": [1.55, 1.0]},
+        1, 2, figsize=(DOUBLE_COL, 3.05),
+        gridspec_kw={"width_ratios": [1.42, 1.08]},
     )
 
-    # A table is more honest than plotting six exact zeros at an arbitrary
-    # logarithmic display floor. It retains both measured metrics and makes
-    # the full-chain rounding residual explicit.
+    # ── (a) compact numeric table ────────────────────────────────────────
     axa.axis("off")
-    axa.set_title("(a) stage-wise pixel audit", loc="left", pad=4)
-    headers = ["stage", "max |Δ|\n(DN)", "robust σ\n(DN)", "result"]
+    axa.set_title("(a) pixel-level comparison", loc="left", fontsize=8.6, pad=3)
+    headers = ["stage", "Python\nmax |Δ| / σ", "IRAF\nmax |Δ| / σ", "interpretation"]
     rows = []
-    for key, label in STEPS:
-        mx = float(steps[key]["max_abs"])
-        rs = float(steps[key]["robust_sigma"])
-        if mx == 0.0:
-            mx_s, rs_s, status = "0", "0", "bit exact"
+    for (key, label), p, ps, i, is_ in zip(STAGES, py_vals, py_sig, iraf_vals, iraf_sig):
+        ptxt = f"{_fmt(p)}\n{_fmt(ps)}"
+        itxt = f"{_fmt(i)}\n{_fmt(is_)}"
+        if p == 0 and i == 0:
+            note = "bit exact"
+        elif key == "master_flat":
+            note = "flat norm."
         else:
-            mx_s, rs_s, status = f"{mx:.2e}", f"{rs:.2e}", "float32 round"
-        rows.append([label, mx_s, rs_s, status])
+            note = "chain arithmetic"
+        rows.append([label, ptxt, itxt, note])
     table = axa.table(
         cellText=rows, colLabels=headers, cellLoc="center", colLoc="center",
-        colWidths=[0.35, 0.22, 0.22, 0.21], bbox=[0.0, 0.08, 1.0, 0.78],
+        colWidths=[0.25, 0.23, 0.23, 0.29], bbox=[0.0, 0.18, 1.0, 0.70],
     )
     table.auto_set_font_size(False)
-    table.set_fontsize(6.6)
+    table.set_fontsize(6.35)
     for (row, col), cell in table.get_celld().items():
-        cell.set_edgecolor("#777777")
+        cell.set_edgecolor(PALETTE["grey"])
         cell.set_linewidth(0.35)
         if row == 0:
-            cell.set_text_props(weight="bold")
-            cell.set_facecolor("#eeeeee")
-        elif col == 0:
+            cell.set_facecolor("#EAF2F8") if col == 1 else None
+            cell.set_facecolor("#FFF2E5") if col == 2 else cell.get_facecolor()
+            cell.get_text().set_weight("bold")
+        elif col == 1:
+            cell.get_text().set_color(C["data"])
+        elif col == 2:
+            cell.get_text().set_color(PALETTE["orange"])
+        if col == 0:
             cell.get_text().set_ha("left")
     axa.text(
-        0.0, 0.01,
-        "master construction + bias/dark/flat application; zero means every pixel matched",
+        0.0, 0.08,
+        "entries are max |APEX − reference| / robust σ; 0 means every pixel matched",
+        transform=axa.transAxes, va="bottom", fontsize=5.8, color=PALETTE["grey"],
+    )
+    axa.text(
+        0.0, 0.02,
+        "IRAF flat was divided by its median before comparison (same convention as APEX)",
         transform=axa.transAxes, va="bottom", fontsize=5.8, color=PALETTE["grey"],
     )
 
-    names = ["APEX vs Python\nccdproc", "read\nnoise", "sky shot\nnoise"]
-    vals = [max(worst, 1e-5), rn_dn, sky_shot_dn]
-    xb = list(range(3))
-    bars = axb.bar(
-        xb, vals, color=["#252525", "#777777", "#c7c7c7"],
-        edgecolor="#252525", width=0.62, zorder=3,
-    )
-    for bar, hatch in zip(bars, ["", "///", "..."]):
-        bar.set_hatch(hatch)
+    # ── (b) grouped bars ─────────────────────────────────────────────────
+    axb.set_title("(b) maximum pixel difference", loc="left", fontsize=8.6, pad=3)
+    x = np.arange(len(STAGES), dtype=float)
+    width = 0.34
+    floor = 1e-6
+    py_plot = np.maximum(py_vals, floor)
+    iraf_plot = np.maximum(iraf_vals, floor)
+    bars_py = axb.bar(x - width / 2, py_plot, width, label="APEX − Python ccdproc",
+                      color=C["data"], edgecolor=C["data"], zorder=3)
+    bars_iraf = axb.bar(x + width / 2, iraf_plot, width, label="APEX − IRAF ccdproc",
+                        color=PALETTE["orange"], edgecolor=PALETTE["orange"],
+                        hatch="///", zorder=3)
     axb.set_yscale("log")
-    axb.set_ylim(1e-5, sky_shot_dn * 30)
-    axb.set_xticks(xb)
-    axb.set_xticklabels(names, fontsize=6.6)
-    for xi, value in zip(xb, vals):
-        axb.annotate(
-            f"{value:.0e}" if value < 1e-2 else f"{value:.1f}",
-            (xi, value), xytext=(0, 3), textcoords="offset points",
-            ha="center", va="bottom", fontsize=6.6,
-        )
-    axb.set_ylabel("scale (DN)")
-    axb.set_title("(b) below detector and sky noise", loc="left")
+    axb.set_ylim(floor, 100)
+    axb.set_ylabel("max |Δ| (DN)")
+    axb.set_xticks(x)
+    axb.set_xticklabels([label.replace(" ", "\n", 1) for _, label in STAGES], fontsize=6.5)
+    axb.legend(loc="upper left", fontsize=5.9, handlelength=1.3,
+               borderaxespad=0.2, ncol=1)
+    axb.axhline(3.5, color=PALETTE["grey"], ls=":", lw=0.8, zorder=2)
+    axb.axhline(41.0, color=PALETTE["grey"], ls="--", lw=0.8, zorder=2)
+    for bars, vals in ((bars_py, py_vals), (bars_iraf, iraf_vals)):
+        for bar, value in zip(bars, vals):
+            if value == 0:
+                continue
+            axb.annotate(f"{value:.1e}",
+                         (bar.get_x() + bar.get_width() / 2, value),
+                         xytext=(0, 3), textcoords="offset points", ha="center",
+                         va="bottom", fontsize=5.8)
 
     prov1 = (
-        f"NGC 6811 $B$ single 60 s · Moravian C3-61000 (2$\\times$2) · "
-        f"night {res['night']} · {res['n_bias']} bias / {res['n_dark']} dark "
-        f"(60 s) / {res['n_flat']} flat"
+        f"NGC 6811 B 60 s · Moravian C3-61000 (2×2) · {py['night']} · "
+        f"8 bias / 8 dark (60 s) / 5 flat"
     )
     prov2 = (
-        f"APEX vs {res['reference']} · cosmetic step off (validated by injection) "
-        "· generator: calib_crosscheck_ngc6811.py"
+        "same raw frames and median-combine convention · IRAF ccdred/PyRAF · "
+        "cosmetic repair disabled"
     )
-    fig.tight_layout(rect=(0, 0.17, 1, 1), w_pad=1.2)
-    fig.text(0.995, 0.078, prov1, ha="right", va="bottom", fontsize=5.7,
+    fig.tight_layout(rect=(0, 0.17, 1, 1), w_pad=1.25)
+    fig.text(0.995, 0.077, prov1, ha="right", va="bottom", fontsize=5.7,
              color=PALETTE["grey"])
     fig.text(0.995, 0.020, prov2, ha="right", va="bottom", fontsize=5.7,
              color=PALETTE["grey"])
@@ -130,28 +160,31 @@ def main() -> int:
 
     CAPDIR.mkdir(parents=True, exist_ok=True)
     (CAPDIR / "fig12_preproc_crosscheck.md").write_text(
-        f"""# Figure — per-step preprocessing cross-check vs Python ccdproc
+        f"""# Figure — detector preprocessing comparison
 
-**(a)** Numeric audit against the independent Python `ccdproc` package
-(`ccdproc` is not the IRAF task of the same name). The table reports the
-maximum absolute difference and robust scatter for each stage; six rows are
-bit-identical at every pixel, while the full chain leaves only
-{steps['full_pipeline']['max_abs']:.1e} DN (robust σ =
-{steps['full_pipeline']['robust_sigma']:.1e} DN) from float32 rounding.
-**(b)** The end-to-end difference beside the read-noise ({rn_dn:.2f} DN) and
-sky-shot-noise ({sky_shot_dn:.0f} DN) scales. Inputs: {res['n_bias']} bias,
-{res['n_dark']} darks (60 s), {res['n_flat']} flats, one 60 s NGC 6811 $B$
-light (Moravian C3-61000, 2×2, night {res['night']}); reference
-{res['reference']}. The cosmetic (L.A.Cosmic + hot-pixel) stage is disabled
-here because it repairs pixels by design and is validated separately by
-injection. Generator: `calib_crosscheck_ngc6811.py`.
+**(a)** Pixel-level comparison of the APEX reduction with two independent
+implementations applied to the same NGC 6811 raw set: the Python `ccdproc`
+package and the IRAF `ccdproc` task (run through PyRAF). Each entry is
+`max |APEX − reference| / robust σ` in DN. The bias and dark masters are bit
+identical for both references. The flat comparison uses the same unit-median
+normalisation; the remaining {iraf['master_flat']['max_abs']:.2e} DN maximum
+is below the displayed detector scales. **(b)** The maximum differences are
+shown as grouped bars; exact zeros are placed at a display floor of
+{floor:.0e} DN, while the table retains the measured zero. Dotted and dashed
+lines mark the 3.5 DN read noise and 41 DN sky-shot-noise scales. The full
+pipeline difference is {py_vals[-1]:.2e} DN for Python `ccdproc` and
+{iraf_vals[-1]:.2f} DN for IRAF `ccdproc`; the latter reflects the independent
+IRAF combination/flat-correction path, not a photometry comparison. Inputs:
+8 bias, 8 darks (60 s), 5 flats and one 60 s B-band light, Moravian C3-61000,
+night {py['night']}. Cosmetic repair was disabled because it intentionally
+changes pixels and is validated separately.
 """,
         encoding="utf-8",
     )
 
-    print("=== preprocessing cross-check ===")
-    for key, _ in STEPS:
-        print(f"  {key:14s} max|delta|={steps[key]['max_abs']:.2e}")
+    print("=== detector preprocessing comparison ===")
+    for (_, label), p, i in zip(STAGES, py_vals, iraf_vals):
+        print(f"  {label:14s} Python={p:.3e}  IRAF={i:.3e}")
     for ext, path in paths.items():
         print(f"wrote {ext}: {path}")
     return 0

@@ -45,6 +45,17 @@
 - 신규: `run_step12_headless --dm-prior`(구상성단용)·`--mh-bounds`,
   `recalibrate_u_mmj93.py`(--source-result/--suffix). 상세:
   `validation/psf_crossinstrument/REPORT_UB_DEGENERACY.md` 후속절.
+- **NGC 6811 U−B 경로 탐사 (2026-08-04 오후)** — ① VizieR: 시야 내 UBV 표준
+  카탈로그 **없음** (자동탐색이 올바르게 빈손 보고; 옛 광전측광은 WEBDA에만).
+  ② LCO 아카이브: `target_name="NGC 6811"` 공개 프레임 2,878장, **U raw 96장
+  (전체 146장)** — U 관측은 존재. 단 **오늘 API가 서비스 전반 장애**(count>0
+  인데 results 항상 빈 배열, 7월에 실제 받았던 M67 kb74 세트조차 count 0)라
+  밤·기기별 상세를 못 얻었다. 재개 스크립트:
+  `validation/psf_crossinstrument/lco_ngc6811_ubv_survey.py` (페이지네이션
+  완비 — **API limit 최대 100**, 200 넘기면 400. covers= 공간질의는 신뢰 불가).
+  U 영점 앵커 전략(시야 내 표준성 없음): 같은 기기·같은 밤에 M67 도 찍힌
+  밤을 찾으면 **MMJ93 앵커된 우리 M67 이 표준장 전이 기준점**이 된다.
+  차선: 분광 [M/H] prior (APOGEE +0.03).
 - **표준성 재앵커가 APEX 기능으로 승격됐다** (사용자 요청). Qt-free 코어
   `apex/analysis/cmd/standard_anchor.py`(VizieR fetch+캐시·교차매칭·오프셋·
   |offset|>1 mag 가드) + 단위테스트 7개(무네트워크) + Step 10 워커 통합

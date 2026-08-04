@@ -1,0 +1,32 @@
+{
+  "reference": "IRAF ccdred ccdproc via PyRAF 2.2.3.dev9",
+  "night": "2026-06-11",
+  "camera": "Moravian C3-61000 (2x2)",
+  "light": "NGC6811-0001-B.fit",
+  "inputs": {"bias": 8, "dark_60s": 8, "flat_B": 5},
+  "flat_convention": "unit median before comparison",
+  "master_bias": {
+    "max_abs": 0.0,
+    "robust_sigma": 0.0,
+    "median": 0.0,
+    "rms": 0.0
+  },
+  "master_dark": {
+    "max_abs": 0.0,
+    "robust_sigma": 0.0,
+    "median": 0.0,
+    "rms": 0.0
+  },
+  "master_flat": {
+    "max_abs": 0.0027781423450310427,
+    "robust_sigma": 0.0015188685984395358,
+    "median": -2.9470858076141582e-05,
+    "rms": 0.0011343679473617447
+  },
+  "full_pipeline": {
+    "max_abs": 34.38671875,
+    "robust_sigma": 0.90128759765625,
+    "median": -0.89874267578125,
+    "rms": 1.1627406498693533
+  }
+}

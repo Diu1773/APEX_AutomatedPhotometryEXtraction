@@ -20,12 +20,35 @@
 
 ## 지금 (2026-08-04 Codex WCS·기기·그림 패널 2차 검수 후)
 
+**2026-08-04 · 3절 흐름 및 전처리 비교 3차 검수**
+
+- 3.4와 3.5의 순서를 바꿨다. 이제 **검출 문턱·부호반전 헛검출 오염 → 인공별
+  검출 완전도** 순으로 읽히며, 3.6 WCS → 3.7 측광 오차는 위치를 먼저 확정한
+  뒤 그 위치에서 플럭스 오차를 전파하는 순서라고 본문에 연결 문장을 넣었다.
+- 그림 4를 APEX·Python `ccdproc`·IRAF `ccdproc`의 같은 raw 전처리 비교로 다시
+  만들었다. 표에는 단계별 최대차/robust 산포를, 막대에는 두 독립 구현의 최대
+  차이를 표시한다. 실제 PyRAF/IRAF 결과는 bias·dark 0, flat $2.78\times10^{-3}$
+  DN, full chain $34.4$ DN이며, 이를 Python 결과처럼 비트 동일하다고 쓰지 않았다.
+  실행 조건은 `validation/paper/IRAF_PREPROC_CROSSCHECK.md`에 기록했다.
+- 그림 7은 문턱·헛검출, 그림 8은 완전도로 번호를 재배치했고, 그림 11
+  `fig3_parameter_sweep`는 Okabe–Ito 색상으로 다시 생성했다. 미리보기는 기존
+  1쪽 표지·2쪽 차례·3쪽 초록+2단 본문 구조를 유지하면서 본문 11.2 px,
+  캡션 10.6 px로 약간 줄여 그림이 차지하는 면적을 늘렸다.
+- 기기·망원경·검출기·비닝·픽셀 스케일 표는 부록 B에 유지하고 3.1에서 직접
+  가리켰다. WCS는 내장 quad 솔버가 기본이며 ASTAP/astrometry.net은 별도 옵션이라는
+  설명을 2.6과 3.6에서 일치시켰다.
+- 검증: `py_compile`, 그림 4·11 재생성, HTML 렌더(인용 53·그림 17), 전체 오라클
+  **772 passed, 0 failed, 6 warnings**(349.56초).
+
 **2026-08-04 · figure readability and colour pass**
 
 - The shared figure palette was accidentally monochrome; it is now restored to an Okabe–Ito colour-blind-safe palette and all non-slow final figures were regenerated consistently.
 - `fig_calibration_step0.py` was reduced from 12 to 8 panels: each master bias/dark/flat is paired with a distribution or profile, and the science before/after comparison carries a compact sky-profile inset. The inset annotation no longer collides with its legend.
-- `render_preview.py` now uses 11.2 px captions, slightly larger table text, and a relaxed figure height budget (0.54 per slot / 0.92 paired room). The regenerated preview has 18 A4 pages; figure images are no longer forced to thumbnail height.
-- Static checks: figure generator and renderer compile; `run_all.py --only 1 2 3 4 5 6 7 8 9 10 12 13 14 15 16 17 render` completed successfully. Full oracle: **771 passed, 0 failed, 6 warnings** (455.66 s). The unrelated `validation/fig_dataviz_demo.png` was left untouched.
+- `render_preview.py` now uses 11.2 px body text, 10.6 px captions, slightly smaller
+  table text, and a relaxed figure height budget (0.54 per slot / 0.92 paired room).
+  The regenerated preview keeps the 18-page A4 structure; figure images are no
+  longer forced to thumbnail height.
+- Static checks: figure generator and renderer compile; `run_all.py --only 1 2 3 4 5 6 7 8 9 10 12 13 14 15 16 17 render` completed successfully. Full oracle: **772 passed, 0 failed, 6 warnings** (349.56 s). The unrelated `validation/fig_dataviz_demo.png` was left untouched.
 
 **2026-08-04 · 사용자 지적 반영 — WCS 기본 경로, ccdproc 구분, 보조표와 패널 캡션**
 
