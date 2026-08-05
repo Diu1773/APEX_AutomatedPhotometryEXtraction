@@ -1205,7 +1205,7 @@ class IsochroneModelWindow(StepWindowBase):
         self.mcmc_colors_layout.setContentsMargins(0, 0, 0, 0)
         self.mcmc_colors_layout.addWidget(QLabel("(open tab to detect)"))
         btn_detect_colors = QPushButton("detect")
-        btn_detect_colors.setMaximumWidth(60)
+        btn_detect_colors.setMaximumWidth(80)
         btn_detect_colors.setToolTip("Re-scan the data for available colours and rebuild the checkboxes.")
         btn_detect_colors.clicked.connect(self._mcmc_refresh_color_checks)
         colors_row.addWidget(self._mcmc_colors_holder, 1)
@@ -1354,7 +1354,9 @@ class IsochroneModelWindow(StepWindowBase):
         fw_layout = QVBoxLayout(self.fit_window)
         fw_layout.setContentsMargins(0, 0, 0, 0)
         fw_layout.addWidget(scroll_wrap(tab, horizontal=True))
-        self.fit_window.resize(*clamp_to_screen(640, 860, self))
+        # Wide enough for the two-column body (Fit options | External priors)
+        # without a horizontal scrollbar; clamp handles short/narrow screens.
+        self.fit_window.resize(*clamp_to_screen(1000, 860, self))
 
     def toggle_fit_window(self):
         """Header "Fit" action: show/hide the Auto-fit (MCMC) window."""
