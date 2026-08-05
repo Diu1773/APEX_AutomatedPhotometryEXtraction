@@ -564,6 +564,20 @@ mark.apexnote.flash{animation:apexflash 1.2s ease-out;}
 #notepop .when{font-size:10.5px;color:#7b828c;margin-bottom:.35rem;}
 #notepop .del{color:#7a1010;}
 mark.apexnote{cursor:pointer;}
+#shortcuts{position:fixed;inset:0;z-index:45;display:none;align-items:center;justify-content:center;
+  background:rgba(20,22,26,.55);padding:1rem;font-family:var(--sans);}
+#shortcuts.on{display:flex;}
+#shortcuts .box{width:min(32rem,94vw);background:#fff;border-radius:6px;box-shadow:0 8px 28px rgba(0,0,0,.28);
+  padding:1rem 1.1rem;}
+#shortcuts header{display:flex;align-items:center;gap:.6rem;margin-bottom:.65rem;}
+#shortcuts h2{font-family:var(--sans);font-size:15px;margin:0;}
+#shortcuts header .sp{flex:1;}
+#shortcuts header button{font:inherit;font-size:11.5px;padding:.3rem .55rem;border:1px solid #c4c8ce;
+  background:#fff;border-radius:3px;cursor:pointer;}
+#shortcuts dl{display:grid;grid-template-columns:10rem 1fr;gap:.35rem .8rem;margin:0;font-size:12px;line-height:1.45;}
+#shortcuts dt{font-weight:700;}
+#shortcuts kbd{display:inline-block;min-width:1.4em;padding:.08rem .3rem;border:1px solid #c4c8ce;
+  border-bottom-width:2px;border-radius:3px;background:#f6f7f8;font:11px/1.25 var(--sans);text-align:center;}
 @media print{ #notebtn,#notepanel,#noteexport,#notecompose,#notepop{display:none!important;} mark.apexnote{background:none;} }
 
 /* ── 뷰어 크롬 ── */
@@ -582,7 +596,7 @@ mark.apexnote{cursor:pointer;}
 @media print{
   @page{size:A4;margin:0;}
   html,body{background:#fff;}
-  #hud,#loading{display:none!important;}
+  #hud,#loading,#shortcuts{display:none!important;}
   #stage{overflow:visible;height:auto!important;}
   #sizer{width:auto!important;height:auto!important;margin:0!important;}
   #book{transform:none!important;margin:0!important;}
@@ -1166,15 +1180,51 @@ JS = r"""
     window.setTimeout(function(){ wheelLock=false; },320);
   }, {passive:false});
   document.addEventListener('keydown', function(ev){
-    if (document.body.classList.contains('reflow')) return;
     var tag=(ev.target && ev.target.tagName)||'';
-    if (tag==='INPUT' || tag==='TEXTAREA' || tag==='BUTTON') return;
-    if (ev.key==='ArrowLeft' || ev.key==='PageUp') { ev.preventDefault(); goto(currentPage-1); }
-    if (ev.key==='ArrowRight' || ev.key==='PageDown' || ev.key===' ') { ev.preventDefault(); goto(currentPage+1); }
+    if (tag==='INPUT' || tag==='TEXTAREA' || tag==='SELECT' || tag==='BUTTON' ||
+        (ev.target && ev.target.isContentEditable)) return;
+    var k=ev.key, mod=ev.ctrlKey||ev.metaKey;
+    if (k==='?' || (mod && k==='/')) { ev.preventDefault(); toggleShortcuts(); return; }
+    if (k==='Escape'){
+      toggleShortcuts(false);
+      if (typeof closeCompose==='function') closeCompose();
+      if (typeof npop!=='undefined' && npop) npop.classList.remove('on');
+      if (typeof togglePanel==='function') togglePanel(false);
+      return;
+    }
+    if (mod && (k==='+' || k==='=' || k==='Add')) { ev.preventDefault(); setZoom(zoom*1.25); return; }
+    if (mod && (k==='-' || k==='_' || k==='Subtract')) { ev.preventDefault(); setZoom(zoom/1.25); return; }
+    if (mod && k==='0') { ev.preventDefault(); setZoom(1); return; }
+    if (k==='+' || k==='=' || k==='Add') { ev.preventDefault(); setZoom(zoom*1.25); return; }
+    if (k==='-' || k==='_' || k==='Subtract') { ev.preventDefault(); setZoom(zoom/1.25); return; }
+    if (k==='0') { ev.preventDefault(); setZoom(1); return; }
+    if (k==='m' || k==='M') { ev.preventDefault(); togglePanel(); return; }
+    if (k==='r' || k==='R'){
+      ev.preventDefault();
+      setReflow(!document.body.classList.contains('reflow'));
+      return;
+    }
+    if (document.body.classList.contains('reflow')) return;
+    if (k==='Home') { ev.preventDefault(); goto(0); return; }
+    if (k==='End') { ev.preventDefault(); goto(pages.length-1); return; }
+    if (k==='ArrowLeft' || k==='PageUp' || k==='[') { ev.preventDefault(); goto(currentPage-1); return; }
+    if (k==='ArrowRight' || k==='PageDown' || k===' ' || k===']') { ev.preventDefault(); goto(currentPage+1); return; }
   });
   on('zin',  function(){ setZoom(zoom*1.25); });
   on('zout', function(){ setZoom(zoom/1.25); });
   on('zfit', function(){ setZoom(1); });
+  var shortcutPanel=document.getElementById('shortcuts');
+  function toggleShortcuts(on){
+    if (!shortcutPanel) return;
+    var show=on===undefined ? !shortcutPanel.classList.contains('on') : !!on;
+    shortcutPanel.classList.toggle('on', show);
+    shortcutPanel.setAttribute('aria-hidden', show ? 'false' : 'true');
+  }
+  on('helpbtn', function(){ toggleShortcuts(); });
+  on('shortcut-close', function(){ toggleShortcuts(false); });
+  if (shortcutPanel) shortcutPanel.addEventListener('click', function(e){
+    if (e.target===shortcutPanel) toggleShortcuts(false);
+  });
   var rb=document.getElementById('rflow');
   function setReflow(on){
     document.body.classList.toggle('reflow', on);
@@ -1291,8 +1341,9 @@ JS = r"""
       notes.push({ id:Date.now()+'-'+Math.random().toString(36).slice(2,7),
                    quote:ncq.textContent, body:body, at:Date.now() });
     }
+    /* 저장 직후에는 본문과 작성창만 갱신한다. 메모 목록은 사용자가
+       메모 버튼이나 M 단축키로 열었을 때만 표시한다. */
     nSave(notes); closeCompose(); renderNotes(); markAll();
-    togglePanel(true);
   }
 
   /* 형광펜을 누르면 말풍선 */
@@ -1529,6 +1580,23 @@ HTML = f"""<meta charset="utf-8">
     <button id="nclose" type="button">닫기</button>
   </div>
 </div></div>
+<div id="shortcuts" aria-hidden="true">
+  <div class="box" role="dialog" aria-modal="true" aria-labelledby="shortcut-title">
+    <header><h2 id="shortcut-title">단축키</h2><span class="sp"></span>
+      <button id="shortcut-close" type="button">닫기</button></header>
+    <dl>
+      <dt><kbd>+</kbd> / <kbd>=</kbd></dt><dd>확대</dd>
+      <dt><kbd>-</kbd></dt><dd>축소</dd>
+      <dt><kbd>0</kbd> 또는 <kbd>Ctrl</kbd>+<kbd>0</kbd></dt><dd>맞춤 배율</dd>
+      <dt><kbd>←</kbd> <kbd>→</kbd></dt><dd>이전/다음 페이지</dd>
+      <dt><kbd>Home</kbd> / <kbd>End</kbd></dt><dd>첫 페이지/마지막 페이지</dd>
+      <dt><kbd>M</kbd></dt><dd>메모 목록 열기/닫기</dd>
+      <dt><kbd>R</kbd></dt><dd>읽기 모드 전환</dd>
+      <dt><kbd>Esc</kbd></dt><dd>현재 팝업 닫기</dd>
+      <dt><kbd>?</kbd></dt><dd>이 단축키 안내</dd>
+    </dl>
+  </div>
+</div>
 <div id="loading">판면을 조판하는 중…</div>
 <div id="hud">
   <button id="top" type="button">처음</button>
@@ -1542,6 +1610,7 @@ HTML = f"""<meta charset="utf-8">
   <button id="zfit" type="button" title="폭 맞춤">맞춤</button>
   <button id="rflow" type="button" title="좁은 화면에서 읽기">읽기</button>
   <button id="nopen" type="button" title="메모">메모</button>
+  <button id="helpbtn" type="button" title="단축키 (?)">?</button>
 </div>
 <script>{JS}</script>"""
 
