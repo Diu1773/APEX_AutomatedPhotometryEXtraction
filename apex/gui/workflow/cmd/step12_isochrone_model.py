@@ -27,12 +27,12 @@ from PyQt5.QtWidgets import (
     QTextEdit, QFormLayout, QDoubleSpinBox, QComboBox,
     QCheckBox, QLineEdit, QWidget, QFileDialog, QProgressBar,
     QApplication, QSlider, QSpinBox,
-    QTabWidget, QSizePolicy, QScrollArea, QFrame
+    QSizePolicy, QScrollArea, QFrame
 )
 from PyQt5.QtCore import Qt, QThread, pyqtSignal, QTimer
 
 from apex.gui.workflow.step_window_base import StepWindowBase
-from apex.gui.layout_rules import scroll_wrap
+from apex.gui.layout_rules import clamp_to_screen, scroll_wrap
 from apex.gui.theme import Tokens, refresh, style_button
 from apex.utils.step_paths_cmd import step9_selection_dir, step10_zp_dir, step12_iso_dir
 from apex.utils.common_helpers import format_cmd_title, target_display_name
@@ -423,6 +423,16 @@ class IsochroneViewerWindow(QWidget):
 
         self._build_plot()
 
+    def apply_values(self, log_age=None, mh=None, e_color=None, dm=None):
+        """Programmatically set the sliders (e.g. MCMC best fit) and redraw."""
+        for slider, val in ((self.s_age, log_age), (self.s_mh, mh),
+                            (self.s_hshift, e_color), (self.s_vshift, dm)):
+            if val is not None:
+                slider.setValue(float(val))
+        upd = getattr(self, "_sliders_update", None)
+        if upd is not None:
+            upd()
+
     def current_slider_values(self):
         """Return current manual slider state as a fit-initial guess dict."""
         if not all(hasattr(self, attr) for attr in ("s_age", "s_mh", "s_vshift", "s_hshift")):
@@ -724,6 +734,7 @@ class IsochroneViewerWindow(QWidget):
         s_hshift.valueChanged.connect(update)
         s_vshift.valueChanged.connect(update)
         self.reset_button.clicked.connect(reset)
+        self._sliders_update = update
 
         update()
 
@@ -890,19 +901,15 @@ class IsochroneModelWindow(StepWindowBase):
         self.snr_display_check.stateChanged.connect(self._on_source_filter_changed)
         self.snr_display_spin.valueChanged.connect(self._on_source_filter_changed)
 
-        # === Tabs ===
-        self.tabs = QTabWidget()
-        self.content_layout.addWidget(self.tabs, stretch=1)
-
-        # --- Tab: Auto-fit (MCMC) — Bayesian, paper-quality figures ---
+        # === Main content: the CMD Viewer owns the whole step window.
+        # The Auto-fit (MCMC) UI lives in a separate toggleable window
+        # (header "Fit" button) — user decision 2026-08-05: plot-first,
+        # fitting as an on/off widget instead of tab round-trips.
         self._build_mcmc_autofit_tab()
 
-        # --- Tab 2: CMD Viewer (default tab) ---
         # Wrap in QScrollArea — the embedded viewer needs ~560px of
-        # vertical room for toolbar + canvas + slider row; on a 900px
-        # Step 12 window the tab area is only ~500px, so a scrollbar
-        # keeps the slider row reachable without forcing the user to
-        # enlarge the window.
+        # vertical room for toolbar + canvas + slider row, so a short
+        # screen scrolls instead of clipping the slider row.
         manual_tab = QWidget()
         manual_outer = QVBoxLayout(manual_tab)
         manual_outer.setContentsMargins(0, 0, 0, 0)
@@ -930,14 +937,12 @@ class IsochroneModelWindow(StepWindowBase):
 
         manual_scroll.setWidget(manual_inner)
         manual_outer.addWidget(manual_scroll)
-        # Workflow order: fit first (Auto-fit tab, index 0, default), then
-        # inspect the result on the CMD Viewer.
-        self.cmd_viewer_tab_index = self.tabs.addTab(manual_tab, "CMD Viewer")
-        self.tabs.setCurrentIndex(self.mcmc_tab_index)
-        # Lazy load: defer the (slow) CMD Viewer first render until the
-        # user actually opens that tab.  See _on_tab_changed below.
+        self.content_layout.addWidget(manual_tab, stretch=1)
         self._cmd_viewer_pending = False
-        self.tabs.currentChanged.connect(self._on_tab_changed)
+
+        self.add_header_action(
+            "Fit", self.toggle_fit_window,
+            tooltip="Auto-fit (MCMC) 창 열기/닫기 — 피팅 컨트롤·prior·결과 그림")
 
         # --- Log Window ---
         log_row = QHBoxLayout()
@@ -1342,19 +1347,24 @@ class IsochroneModelWindow(StepWindowBase):
         saved = getattr(self, "_mcmc_saved_state", None)
         if saved:
             self._restore_mcmc_state(saved)
-        # This page stacks fit options, the priors form and the run/progress
-        # rows: 844 px against the CMD Viewer's 105. A QTabWidget takes the
-        # *maximum* minimum over its pages, so unwrapped it demanded a
-        # 1558 px-tall window — nearly twice a laptop screen — and Qt squeezed
-        # the page to a 191 px sliver with its headings and Run button
-        # overlapping. Wrapped, the page scrolls and the window fits.
-        self.mcmc_tab_index = self.tabs.addTab(
-            scroll_wrap(tab, horizontal=True), "Auto-fit (MCMC)")
-        # Auto-detect available colours when the user opens this tab.
-        self.tabs.currentChanged.connect(self._on_mcmc_tab_changed)
+        # The page stacks fit options, the priors form and the run/progress
+        # rows (~844 px) — scroll_wrap keeps it usable on short screens.
+        self.fit_window = QWidget(self, Qt.Window)
+        self.fit_window.setWindowTitle("Step 12 — Auto-fit (MCMC)")
+        fw_layout = QVBoxLayout(self.fit_window)
+        fw_layout.setContentsMargins(0, 0, 0, 0)
+        fw_layout.addWidget(scroll_wrap(tab, horizontal=True))
+        self.fit_window.resize(*clamp_to_screen(640, 860, self))
 
-    def _on_mcmc_tab_changed(self, index):
-        if index == getattr(self, "mcmc_tab_index", -1) and not self.mcmc_color_checks:
+    def toggle_fit_window(self):
+        """Header "Fit" action: show/hide the Auto-fit (MCMC) window."""
+        if self.fit_window.isVisible():
+            self.fit_window.hide()
+            return
+        self.fit_window.show()
+        self.fit_window.raise_()
+        self.fit_window.activateWindow()
+        if not self.mcmc_color_checks:
             try:
                 self._mcmc_refresh_color_checks()
             except Exception as exc:  # pragma: no cover - best-effort UI refresh
@@ -1527,6 +1537,19 @@ class IsochroneModelWindow(StepWindowBase):
         self._mcmc_last_output = out
         self.mcmc_progress.setValue(100)
         s = out.summary
+        # Push the median solution onto the CMD viewer sliders so the best
+        # fit is inspectable (and hand-tunable) on the main plot at once.
+        try:
+            if self.viewer is not None:
+                def _med(key):
+                    v = s.get(key)
+                    return float(v[1]) if v and len(v) >= 2 else None
+                self.viewer.apply_values(
+                    log_age=_med("log_age"), mh=_med("metallicity"),
+                    e_color=_med("e_color"), dm=_med("distance_mod"))
+                self.log("[MCMC] best-fit medians applied to the CMD viewer sliders")
+        except Exception as exc:  # pragma: no cover - viewer sync is best-effort
+            self.log(f"[MCMC] viewer sync skipped: {exc}")
 
         def fmt(key, scale=1.0, name=None):
             p = s.get(key)
@@ -2140,8 +2163,7 @@ class IsochroneModelWindow(StepWindowBase):
             self.update_navigation_buttons()
 
     def open_viewer(self):
-        if self.refresh_cmd_viewer(show_error=True):
-            self.tabs.setCurrentIndex(self.cmd_viewer_tab_index)
+        self.refresh_cmd_viewer(show_error=True)
 
     def validate_step(self) -> bool:
         iso_path = ""
@@ -2285,16 +2307,11 @@ class IsochroneModelWindow(StepWindowBase):
         if current_iso:
             self._set_iso_status("Folder mode" if Path(current_iso).is_dir() else "Single file mode")
         if self._get_iso_path():
-            # The Color-Color plot is light enough to render up front.
             # The full CMD viewer (isochrone load + matplotlib scatter) can
-            # take a few seconds on cold cache, so we mark it pending and
-            # let _on_tab_changed render it the first time the user clicks
-            # the CMD Viewer tab.  Without this the Step 12 window
-            # appears frozen during open.
-            if self.tabs.currentIndex() == getattr(self, "cmd_viewer_tab_index", -1):
-                self._cmd_viewer_pending = False
-            else:
-                self._cmd_viewer_pending = True
+            # take a few seconds on cold cache — defer the first render one
+            # event-loop turn so the window paints before the heavy refresh.
+            self._cmd_viewer_pending = False
+            QTimer.singleShot(0, self._render_pending_plots)
             self._maybe_start_iso_cache_build()
         self.update_navigation_buttons()
 
@@ -2396,11 +2413,3 @@ class IsochroneModelWindow(StepWindowBase):
                 return
         super().closeEvent(event)
 
-    def _on_tab_changed(self, index: int) -> None:
-        if (
-            index == getattr(self, "cmd_viewer_tab_index", -1)
-            and getattr(self, "_cmd_viewer_pending", False)
-        ):
-            self._cmd_viewer_pending = False
-            # singleShot so the tab UI paints before the heavy refresh.
-            QTimer.singleShot(0, lambda: self.refresh_cmd_viewer(show_error=False))

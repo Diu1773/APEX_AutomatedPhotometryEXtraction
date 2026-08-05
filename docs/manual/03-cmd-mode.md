@@ -176,8 +176,8 @@
 
 ### 화면 구성
 - **Isochrone Source**(아이소크론 파일/폴더) · **Band Selection**(색·등급) · **Source Filters**(시차·ROI·SNR)
-- 탭: **`Auto-fit (MCMC)`**(기본 탭, 유일한 자동 피팅) / **`CMD Viewer`**(수동 슬라이더 — 시각 확인용)
-- (구판의 `Color-Color`·`Quick Fit (grid)` 탭은 제거됨 — 색-색 정보는 다중색 MCMC 우도에 포함)
+- 본문 = **CMD Viewer**(plot + 수동 슬라이더). 자동 피팅은 헤더의 **`Fit`** 버튼으로 여닫는 **별도 창(Auto-fit MCMC)** 에 있음
+- (구판의 탭 구조·`Color-Color`·`Quick Fit (grid)` 은 제거됨 — 색-색 정보는 다중색 MCMC 우도에 포함)
 
 위 그림에서 아래쪽 슬라이더가 **log Age=9.50, [Fe/H]=−0.25, E(g-r)=0.0901** 로,
 표준화 CMD에 주계열·거성가지를 따라 등시선(붉은 곡선)이 겹쳐져 있습니다.
@@ -185,10 +185,10 @@
 ### 따라하기 (권장 워크플로)
 1. **`Browse`** 로 아이소크론 파일을 엽니다(관측 밴드와 **같은 측광 시스템**이어야 함 — 예: Johnson B-V는 Johnson/Bessell 파일).
 2. **`Band Selection`** 에서 `Color(X)`·`Mag(Y)` 를 CMD와 같게 맞춥니다.
-3. **`Auto-fit (MCMC)`** 탭(기본)에서 색 체크박스를 확인하고, Gaia 멤버십·시차 거리 prior(기본 ON)를 켠 채 **`Run MCMC Auto-Fit`**.
+3. 헤더의 **`Fit`** 버튼으로 Auto-fit(MCMC) 창을 열고, 색 체크박스를 확인한 뒤 Gaia 멤버십·시차 거리 prior(기본 ON)를 켠 채 **`Run MCMC Auto-Fit`**.
    - 데이터에 **u/U 밴드가 없으면 [M/H]는 분광 prior 가 공식 경로**입니다 — 경고 배너가 뜨면 문헌 [Fe/H](APOGEE 등)를 `[M/H] prior` 에 입력하세요.
    - E(B−V) prior 는 먼지지도(SFD/Bayestar)·성단 카탈로그(Cantat-Gaudin+2020, Dias+2021) 값을 권장.
-4. **`CMD Viewer`** 탭에서 적합 결과를 눈으로 확인하고, 필요하면 슬라이더로 주변 파라미터를 탐색합니다.
+4. 적합이 끝나면 **최적해가 본문 plot 의 슬라이더에 자동 반영**됩니다 — 그 자리에서 눈으로 확인하고 슬라이더로 주변 파라미터를 탐색하세요.
 
 ![Step 12 Auto Fit 탭](img/cmd_step12_auto_fit.png)
 

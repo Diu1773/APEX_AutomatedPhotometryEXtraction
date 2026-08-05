@@ -92,6 +92,15 @@
   검증: 컴파일+임포트+이소크론 테스트 20 passed. **실 GUI 구동 확인은
   미완**(offscreen 전체 창 생성이 침묵 크래시 — 기존 백로그 「GUI 실구동
   사용감」과 함께 다음 GUI 세션에서).
+- **Step 12 재구조 — 탭 제거, Fit 별도 창 (2026-08-05, 사용자 결정 A/B/C
+  중 '별도 창')** — 본문 = CMD Viewer 단독, Auto-fit(MCMC) UI 전체는
+  헤더 `Fit` 버튼으로 여닫는 독립 창(`self.fit_window`, scroll_wrap +
+  clamp_to_screen). **적합 완료 시 최적해 중앙값이 뷰어 슬라이더에 자동
+  반영**(`IsochroneViewerWindow.apply_values` 신설 — setValue 는 시그널을
+  막으므로 update 훅을 저장해 직접 재그림). prior 영속화·오염 가드·배너는
+  위젯 이름 유지로 그대로. 오프스크린 하네스 전 항목 PASS(토글·배너·
+  영속화·가드·교대복원) + 타깃 테스트 21. 매뉴얼 03-cmd Step12 절 갱신.
+  잔여: 매뉴얼 스크린샷 실화면 재촬영, 실화면 사용감 확인.
 - **GUI 실구동 검증 — 오프스크린 하네스로 완료 (2026-08-05 새벽)** —
   화면 제어 대신 capture_ui 레시피(offscreen+FONTDIR+QMessageBox 패치)로
   실검증. 통과: Step12 탭순서[MCMC, Viewer]·기본탭 MCMC·색 자동감지·
