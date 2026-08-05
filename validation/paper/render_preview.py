@@ -1101,7 +1101,8 @@ JS = r"""
     fit();
   }
   function setZoom(z){
-    zoom=Math.max(0.5, Math.min(3, z));
+    /* 고배율에서도 판면 좌우를 충분히 탐색할 수 있게 상한을 600%로 둔다. */
+    zoom=Math.max(0.5, Math.min(6, z));
     fit();
     try { localStorage.setItem('apexPaperZoom', String(zoom)); } catch(e){}
   }
@@ -1192,6 +1193,14 @@ JS = r"""
       window.setTimeout(function(){ zoomWheelLock=false; },70);
       return;
     }
+    /* Shift+휠은 세로 페이지 이동 대신 가로 패닝으로 쓴다. deltaX가
+       없는 마우스 휠도 같은 동작을 하도록 deltaY를 가로값으로 대체한다. */
+    if (ev.shiftKey){
+      ev.preventDefault();
+      var dx=ev.deltaX || ev.deltaY;
+      if (Math.abs(dx)>0) stage.scrollLeft+=Math.max(-160,Math.min(160,dx*.65));
+      return;
+    }
     /* 일반 휠은 stage의 자연스러운 연속 스크롤에 맡긴다. */
   }, {passive:false});
   document.addEventListener('keydown', function(ev){
@@ -1220,6 +1229,18 @@ JS = r"""
       return;
     }
     if (document.body.classList.contains('reflow')) return;
+    if (ev.shiftKey && (k==='ArrowLeft' || k==='ArrowRight')){
+      ev.preventDefault();
+      stage.scrollLeft=Math.max(0, Math.min(stage.scrollWidth-stage.clientWidth,
+        stage.scrollLeft+(k==='ArrowRight' ? 80 : -80)));
+      return;
+    }
+    if (k==='a' || k==='A' || k==='d' || k==='D'){
+      ev.preventDefault();
+      stage.scrollLeft=Math.max(0, Math.min(stage.scrollWidth-stage.clientWidth,
+        stage.scrollLeft+((k==='d'||k==='D') ? 80 : -80)));
+      return;
+    }
     if (k==='Home') { ev.preventDefault(); goto(0); return; }
     if (k==='End') { ev.preventDefault(); goto(pages.length-1); return; }
     if (k==='ArrowLeft' || k==='PageUp' || k==='[') { ev.preventDefault(); goto(currentPage-1); return; }
@@ -1261,7 +1282,7 @@ JS = r"""
   }
   try {
     var z=parseFloat(localStorage.getItem('apexPaperZoom'));
-    if (z && z>0.4 && z<3.2) zoom=z;
+    if (z && z>0.4 && z<6.2) zoom=z;
   } catch(e){}
   document.getElementById('top').addEventListener('click', function(){ goto(0); });
   document.getElementById('toctop').addEventListener('click', function(){ goto(1); });
@@ -1603,6 +1624,8 @@ HTML = f"""<meta charset="utf-8">
       <dt><kbd>+</kbd> / <kbd>=</kbd></dt><dd>확대</dd>
       <dt><kbd>-</kbd></dt><dd>축소</dd>
       <dt><kbd>Ctrl</kbd> + 휠</dt><dd>휠 위/아래로 확대·축소</dd>
+      <dt><kbd>Shift</kbd> + 휠</dt><dd>좌우 패닝</dd>
+      <dt><kbd>Shift</kbd>+<kbd>←</kbd>/<kbd>→</kbd> 또는 <kbd>A</kbd>/<kbd>D</kbd></dt><dd>좌우 80px 이동</dd>
       <dt><kbd>0</kbd> 또는 <kbd>Ctrl</kbd>+<kbd>0</kbd></dt><dd>맞춤 배율</dd>
       <dt><kbd>←</kbd> <kbd>→</kbd></dt><dd>이전/다음 페이지</dd>
       <dt><kbd>Home</kbd> / <kbd>End</kbd></dt><dd>첫 페이지/마지막 페이지</dd>
