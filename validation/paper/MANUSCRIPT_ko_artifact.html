@@ -737,7 +737,15 @@ mark.apexnote{cursor:pointer;}
     if (isSpanBlock(node)){
       if (P._floatKind){ pending.push(node); return P; }
       var bothColsUsed=P.ci===1 || P.cols[1].children.length>0;
-      if (node.classList.contains('tw') && !pending.length && !P._bottomUsed && bothColsUsed){
+      // 짧은 절 뒤에 빈 공간이 남아도 두 단이 모두 찰 때까지 기다리면,
+      // 다음 그림·표가 새 쪽으로 밀려 지면 하단이 크게 비게 된다. 제목만
+      // 있는 단은 제외하고, 실제 본문이 한 단이라도 있으면 하단 float를
+      // 시도한다. 두 단이 찬 경우의 기존 동작도 그대로 유지한다.
+      var hasBody=P.cols.some(function(c){
+        return [].some.call(c.children,function(ch){ return !isHead(ch); });
+      });
+      var canBottom=bothColsUsed || hasBody;
+      if (node.classList.contains('tw') && !pending.length && !P._bottomUsed && canBottom){
         var tsp=P.spanB;
         tsp.appendChild(node);
         if (tsp.offsetHeight<=spanCap(P,tsp) && P.cols.every(fits)){
@@ -746,7 +754,7 @@ mark.apexnote{cursor:pointer;}
         }
         tsp.removeChild(node);
       }
-      if (node.tagName==='FIGURE' && !pending.length && !P._bottomUsed && bothColsUsed){
+      if (node.tagName==='FIGURE' && !pending.length && !P._bottomUsed && canBottom){
         var fsp=P.spanB;
         fsp.appendChild(node);
         var fcap=spanCap(P,fsp);
@@ -943,10 +951,12 @@ mark.apexnote{cursor:pointer;}
       f.className='folio '+((i+1)%2 ? 'r' : 'l');
       f.textContent='APEX, '+(i+1)+' / '+N+' 쪽';
     });
-    /* 그림·표 때문에 둘째 단이 비어 버린 쪽은 그 페이지에 한해 본문을
-       전폭으로 흘린다. 양쪽 단에 실제 내용이 있으면 2단을 유지한다. */
+    /* 그림·표만 놓인 전용 쪽은 전폭으로 보여 주되, 본문이 한 단이라도
+       있으면 3쪽 이후의 2단 구조를 유지한다. 그림이 있다는 이유만으로
+       둘째 단을 숨기면 짧은 절이 전폭 한 단으로 늘어나 지면 흐름이 깨진다. */
     pages.forEach(function(p){
-      if (p.el.querySelector('figure,.tw') && p.cols[1] && !p.cols[1].children.length){
+      if (p.el.querySelector('figure,.tw') && p.cols[0] && !p.cols[0].children.length &&
+          p.cols[1] && !p.cols[1].children.length){
         p.el.classList.add('singlecol');
       }
     });
