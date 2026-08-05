@@ -114,6 +114,11 @@ def main() -> int:
     # different (unthemed) UI than users actually see.
     from apex.gui.theme import apply_theme
     apply_theme(app)
+    # Real entry points also call configure_fonts() — without it the offscreen
+    # font DB picks an arbitrary default and captures render in a wrong
+    # (stencil-looking) face instead of Segoe UI / Malgun Gothic.
+    from apex.utils.app_setup import configure_fonts
+    configure_fonts(app)
     mode_params = {
         "cmd": "parameters_capture_cmd.toml" if (REPO / "parameters_capture_cmd.toml").exists() else None,
         "lc": None,
