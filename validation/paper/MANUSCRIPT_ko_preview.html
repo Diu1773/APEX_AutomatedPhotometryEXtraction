@@ -23,10 +23,9 @@ body{font-family:var(--serif);font-size:11.2px;line-height:1.32;color:var(--ink)
 /* 판면 모드: PDF 뷰어처럼 한 화면에 A4 한 쪽만 표시한다. 휠·PageUp/Down·
    ‹› 버튼으로 쪽을 넘기며, 읽기 모드에서는 원고 전체를 연속으로 흘린다. */
 body.paged{overflow:hidden;}
-body.paged #stage{display:flex;align-items:flex-start;justify-content:center;
-  overflow:hidden;min-height:100vh;}
-body.paged #sizer{flex:0 0 auto;}
-body.paged #book{flex:0 0 auto;}
+body.paged #stage{display:block;overflow:hidden;min-height:100vh;}
+body.paged #sizer{display:block;}
+body.paged #book{display:block;}
 body.paged .page{display:none;}
 body.paged .page.active{display:block;}
 #sizer{position:relative;}
@@ -974,7 +973,9 @@ mark.apexnote{cursor:pointer;}
       book.style.width=PW+'px';
       book.style.height=GEO.PH+'px';
       stage.style.height=Math.max(420,h)+'px';
-      stage.style.overflow='hidden';
+      /* 맞춤 배율에서는 휠을 페이지 이동으로 쓰고, 확대하면 PDF처럼
+         현재 페이지 내부를 스크롤한다. */
+      stage.style.overflow=(zoom>1.001 ? 'auto' : 'hidden');
       if (zind) zind.textContent=Math.round(scale*100)+'%';
       applyPageVisibility();
       return;
@@ -1022,6 +1023,9 @@ mark.apexnote{cursor:pointer;}
   document.addEventListener('wheel', function(ev){
     if (!document.body.classList.contains('paged') ||
         document.body.classList.contains('reflow')) return;
+    /* 확대 상태에서는 브라우저의 기본 스크롤을 보존한다. 이전 구현은
+       확대 여부와 무관하게 preventDefault()를 호출해 페이지가 넘어갔다. */
+    if (zoom>1.001) return;
     if (Math.abs(ev.deltaY)<8 || wheelLock) return;
     ev.preventDefault();
     wheelLock=true;
