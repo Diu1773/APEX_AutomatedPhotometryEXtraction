@@ -325,7 +325,7 @@ _fig_html = "".join(
     f'</span><span class="pn"></span></li>'
     for n in sorted(FIGMAP) if n in CAPTIONS)
 
-# ── 표제면: A&A 667, A62 (AutoPhOT 논문) 판면을 그대로 따른다 ──
+# ── 표제면: A&A 667, A62 (AutoPhOT 논문) 판면을 참고하되, 투고 후보는 A&C로 표시 ──
 #    저널 머리 → 제목 → 저자 → 소속 → 접수일 → 초록(전폭) → Key words → 2단 본문
 _abs = re.search(r'<h2[^>]*\bid=["\']?abstract["\']?[^>]*>.*?</h2>(.*?)(?=<h2)', BODY, re.S)
 ABS_HTML, KW_HTML = "", ""
@@ -340,8 +340,8 @@ if _abs:
 
 TITLEBLOCK = f'''<div class="titleblock">
   <div class="jrnl">
-    <div class="jl">RAS Techniques and Instruments<br><span>투고 준비 원고 · 국문 검토용</span></div>
-    <div class="jr">RASTI</div>
+    <div class="jl">Astronomy and Computing<br><span>투고 준비 원고 · 국문 검토용</span></div>
+    <div class="jr">A&amp;C</div>
   </div>
   <h1 class="ptitle">{html.escape(DOC_TITLE)}</h1>
   <p class="pauth">저자 미기재 (투고 전 확정)</p>
@@ -389,15 +389,14 @@ body{font-family:var(--serif);font-size:11.2px;line-height:1.32;color:var(--ink)
 /* ── 지면 ── */
 #src{display:none;}
 #stage{overflow:hidden;}
-/* PDF-like mode: show exactly one A4 sheet in the viewport. The continuous
-   stacked layout remains available in the source/reflow view. */
-body.paged{overflow:hidden;}
-body.paged #stage{display:flex;align-items:flex-start;justify-content:center;
-  overflow:hidden;min-height:100vh;}
-body.paged #sizer{flex:0 0 auto;}
-body.paged #book{flex:0 0 auto;}
-body.paged .page{display:none;}
-body.paged .page.active{display:block;}
+/* 판면 모드: A4 한 장씩 나누되, 모든 쪽을 세로로 쌓아 브라우저 스크롤로
+   읽는다. 예전에는 한 쪽만 표시하고 overflow:hidden 을 걸어 두어 마우스 휠과
+   스크롤바가 아무 반응도 하지 않았다. */
+body.paged{overflow-x:hidden;overflow-y:auto;}
+body.paged #stage{display:block;overflow:visible;min-height:100vh;}
+body.paged #sizer{display:block;}
+body.paged #book{display:block;}
+body.paged .page{display:block;}
 #sizer{position:relative;}
 #book{transform-origin:top left;width:var(--pw);}
 .page{position:relative;width:var(--pw);height:var(--ph);background:#fff;
@@ -1066,8 +1065,8 @@ JS = r"""
       var m=/그림\s*(\d+)/.exec(li.textContent); mark(li, m?where['f'+m[1]]:undefined); });
   }
 
-  /* 확대율. 1 = 폭 맞춤. A4 를 좁은 화면에 맞추면 본문 12.2px 가 실효 6px 까지
-     줄어 읽을 수 없다. PDF 뷰어처럼 사용자가 키울 수 있게 한다.
+  /* 확대율. 1 = 폭 맞춤. 세로 스크롤 판면에서는 높이에 맞춰 축소하지 않아
+     본문과 그림을 읽을 수 있는 크기를 유지한다. 사용자가 확대·축소할 수 있다.
      transform 은 레이아웃에 영향을 주지 않으므로, 실제 크기를 갖는 #sizer 로
      스크롤 영역을 만들고 그 안에서 #book 을 시각적으로만 확대한다. */
   var zoom=1, currentPage=0;
@@ -1097,18 +1096,19 @@ JS = r"""
     if (document.body.classList.contains('reflow')) return;
     var w=stage.clientWidth||document.documentElement.clientWidth||PW;
     if (document.body.classList.contains('paged')){
-      var h=window.innerHeight||GEO.PH;
-      var pageScale=Math.min(1,(w-40)/PW,(h-38)/GEO.PH);
+      var pageScale=Math.min(1,(w-40)/PW);
       scale=Math.max(0.5,pageScale*zoom);
-      var pcw=Math.ceil(PW*scale), pch=Math.ceil(GEO.PH*scale);
+      var pcw=Math.ceil(PW*scale);
+      var bookH=Math.max(GEO.PH,book.scrollHeight);
+      var ch=Math.ceil(bookH*scale);
       sizer.style.width=pcw+'px';
-      sizer.style.height=pch+'px';
-      sizer.style.margin='18px auto 0';
+      sizer.style.height=ch+'px';
+      sizer.style.margin='18px auto 28px';
       book.style.transform='scale('+scale+')';
       book.style.width=PW+'px';
-      book.style.height=GEO.PH+'px';
-      stage.style.height=Math.max(420,h)+'px';
-      stage.style.overflow='hidden';
+      book.style.height=bookH+'px';
+      stage.style.height='auto';
+      stage.style.overflow='visible';
       if (zind) zind.textContent=Math.round(scale*100)+'%';
       applyPageVisibility();
       return;
@@ -1131,6 +1131,8 @@ JS = r"""
       currentPage=i;
       applyPageVisibility();
       fit();
+      var top=(sizer.offsetTop||18)+(p.el.offsetTop*scale)-8;
+      window.scrollTo({top:Math.max(0,top), behavior:'smooth'});
       return;
     }
     window.scrollTo({top:Math.max(0,p.el.offsetTop*scale-6), behavior:'smooth'});
@@ -1138,7 +1140,13 @@ JS = r"""
   function onScroll(){
     if (!pages.length) return;
     if (document.body.classList.contains('paged')){
-      if (ind) ind.textContent=(currentPage+1)+' / '+pages.length;
+      var target=(window.scrollY||window.pageYOffset||0)+(window.innerHeight||720)*0.32;
+      var cur=0, base=sizer.offsetTop||0;
+      for (var i=0;i<pages.length;i++){
+        if (base+(pages[i].el.offsetTop*scale)<=target) cur=i; else break;
+      }
+      currentPage=cur;
+      applyPageVisibility();
       return;
     }
     var y=(window.scrollY||window.pageYOffset||0)/scale + 40, cur=1;
