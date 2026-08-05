@@ -389,14 +389,15 @@ body{font-family:var(--serif);font-size:11.2px;line-height:1.32;color:var(--ink)
 /* ── 지면 ── */
 #src{display:none;}
 #stage{overflow:hidden;}
-/* 판면 모드: A4 한 장씩 나누되, 모든 쪽을 세로로 쌓아 브라우저 스크롤로
-   읽는다. 예전에는 한 쪽만 표시하고 overflow:hidden 을 걸어 두어 마우스 휠과
-   스크롤바가 아무 반응도 하지 않았다. */
-body.paged{overflow-x:hidden;overflow-y:auto;}
-body.paged #stage{display:block;overflow:visible;min-height:100vh;}
-body.paged #sizer{display:block;}
-body.paged #book{display:block;}
-body.paged .page{display:block;}
+/* 판면 모드: PDF 뷰어처럼 한 화면에 A4 한 쪽만 표시한다. 휠·PageUp/Down·
+   ‹› 버튼으로 쪽을 넘기며, 읽기 모드에서는 원고 전체를 연속으로 흘린다. */
+body.paged{overflow:hidden;}
+body.paged #stage{display:flex;align-items:flex-start;justify-content:center;
+  overflow:hidden;min-height:100vh;}
+body.paged #sizer{flex:0 0 auto;}
+body.paged #book{flex:0 0 auto;}
+body.paged .page{display:none;}
+body.paged .page.active{display:block;}
 #sizer{position:relative;}
 #book{transform-origin:top left;width:var(--pw);}
 .page{position:relative;width:var(--pw);height:var(--ph);background:#fff;
@@ -1065,8 +1066,7 @@ JS = r"""
       var m=/그림\s*(\d+)/.exec(li.textContent); mark(li, m?where['f'+m[1]]:undefined); });
   }
 
-  /* 확대율. 1 = 폭 맞춤. 세로 스크롤 판면에서는 높이에 맞춰 축소하지 않아
-     본문과 그림을 읽을 수 있는 크기를 유지한다. 사용자가 확대·축소할 수 있다.
+  /* 확대율. 1 = 창 높이와 폭에 맞는 한 쪽. 사용자가 확대·축소할 수 있다.
      transform 은 레이아웃에 영향을 주지 않으므로, 실제 크기를 갖는 #sizer 로
      스크롤 영역을 만들고 그 안에서 #book 을 시각적으로만 확대한다. */
   var zoom=1, currentPage=0;
@@ -1096,19 +1096,18 @@ JS = r"""
     if (document.body.classList.contains('reflow')) return;
     var w=stage.clientWidth||document.documentElement.clientWidth||PW;
     if (document.body.classList.contains('paged')){
-      var pageScale=Math.min(1,(w-40)/PW);
+      var h=window.innerHeight||GEO.PH;
+      var pageScale=Math.min(1,(w-40)/PW,(h-38)/GEO.PH);
       scale=Math.max(0.5,pageScale*zoom);
-      var pcw=Math.ceil(PW*scale);
-      var bookH=Math.max(GEO.PH,book.scrollHeight);
-      var ch=Math.ceil(bookH*scale);
+      var pcw=Math.ceil(PW*scale), pch=Math.ceil(GEO.PH*scale);
       sizer.style.width=pcw+'px';
-      sizer.style.height=ch+'px';
-      sizer.style.margin='18px auto 28px';
+      sizer.style.height=pch+'px';
+      sizer.style.margin='18px auto 0';
       book.style.transform='scale('+scale+')';
       book.style.width=PW+'px';
-      book.style.height=bookH+'px';
-      stage.style.height='auto';
-      stage.style.overflow='visible';
+      book.style.height=GEO.PH+'px';
+      stage.style.height=Math.max(420,h)+'px';
+      stage.style.overflow='hidden';
       if (zind) zind.textContent=Math.round(scale*100)+'%';
       applyPageVisibility();
       return;
@@ -1131,8 +1130,7 @@ JS = r"""
       currentPage=i;
       applyPageVisibility();
       fit();
-      var top=(sizer.offsetTop||18)+(p.el.offsetTop*scale)-8;
-      window.scrollTo({top:Math.max(0,top), behavior:'smooth'});
+      window.scrollTo(0,0);
       return;
     }
     window.scrollTo({top:Math.max(0,p.el.offsetTop*scale-6), behavior:'smooth'});
@@ -1140,13 +1138,7 @@ JS = r"""
   function onScroll(){
     if (!pages.length) return;
     if (document.body.classList.contains('paged')){
-      var target=(window.scrollY||window.pageYOffset||0)+(window.innerHeight||720)*0.32;
-      var cur=0, base=sizer.offsetTop||0;
-      for (var i=0;i<pages.length;i++){
-        if (base+(pages[i].el.offsetTop*scale)<=target) cur=i; else break;
-      }
-      currentPage=cur;
-      applyPageVisibility();
+      if (ind) ind.textContent=(currentPage+1)+' / '+pages.length;
       return;
     }
     var y=(window.scrollY||window.pageYOffset||0)/scale + 40, cur=1;
@@ -1159,6 +1151,16 @@ JS = r"""
   function on(id, fn){ var e=document.getElementById(id); if (e) e.addEventListener('click', fn); }
   on('prev', function(){ goto(currentPage-1); });
   on('next', function(){ goto(currentPage+1); });
+  var wheelLock=false;
+  document.addEventListener('wheel', function(ev){
+    if (!document.body.classList.contains('paged') ||
+        document.body.classList.contains('reflow')) return;
+    if (Math.abs(ev.deltaY)<8 || wheelLock) return;
+    ev.preventDefault();
+    wheelLock=true;
+    goto(currentPage+(ev.deltaY>0 ? 1 : -1));
+    window.setTimeout(function(){ wheelLock=false; },320);
+  }, {passive:false});
   document.addEventListener('keydown', function(ev){
     if (document.body.classList.contains('reflow')) return;
     var tag=(ev.target && ev.target.tagName)||'';
