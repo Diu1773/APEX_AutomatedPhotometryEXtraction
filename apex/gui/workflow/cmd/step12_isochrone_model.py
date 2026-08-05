@@ -510,16 +510,17 @@ class IsochroneViewerWindow(QWidget):
         # the residual subplot has breathing room below the CMD title.
         gs = self.figure.add_gridspec(
             2, 2, width_ratios=[2.5, 1], height_ratios=[3, 1],
-            hspace=0.45, wspace=0.40,
+            hspace=0.55, wspace=0.40,
         )
         ax_cmd = self.figure.add_subplot(gs[0, 0])
         ax_hist = self.figure.add_subplot(gs[0, 1])
         ax_res = self.figure.add_subplot(gs[1, 0])
 
-        # Two-line CMD title needs more headroom (top=0.84); left=0.07
-        # accommodates a long "M67 - Standardized CMD g vs g-r (N=…)"
-        # without clipping the first character.
-        self.figure.subplots_adjust(left=0.08, right=0.82, bottom=0.13, top=0.84)
+        # Margins are fractions, so a short embedded canvas (≈900x520 at the
+        # default window) turned left=0.08 into 72 px — not enough for the
+        # residual y-label, which then overlapped the CMD axis. Widened left
+        # and bottom so both axes keep their labels at the default size.
+        self.figure.subplots_adjust(left=0.115, right=0.82, bottom=0.155, top=0.84)
 
         self.figure.patch.set_facecolor("black")
         for ax in (ax_cmd, ax_hist, ax_res):
@@ -554,7 +555,7 @@ class IsochroneViewerWindow(QWidget):
         res_scat = ax_res.scatter([], [], s=3, alpha=0.75, linewidths=0, color="cyan")
         ax_res.axhline(0, color="white", lw=1, ls="--", alpha=0.6)
         ax_res.set_xlabel(f"{obs_system} {bm}")
-        ax_res.set_ylabel("Residual (NN dist in CMD)")
+        ax_res.set_ylabel("Residual", fontsize=9)
 
         sm = mpl.cm.ScalarMappable(norm=ob_norm, cmap=ob_cmap)
         sm.set_array([])
@@ -786,10 +787,17 @@ class IsochroneModelWindow(StepWindowBase):
         self.content_layout.addWidget(self.photometry_source_label)
         self._refresh_photometry_source_label()
 
-        # === File Selection ===
-        file_group = QGroupBox("Isochrone Source")
-        file_layout = QVBoxLayout(file_group)
+        # === Setup rows =====================================================
+        # One compact row per concern instead of three QGroupBoxes: the boxes
+        # cost ~330 px of height (title + frame + margins each), which left the
+        # CMD plot squeezed into 468 px on a 950 px window — the user had to
+        # resize the window before the plot was usable. Rows cost ~80 px.
+        setup_col = QVBoxLayout()
+        setup_col.setContentsMargins(0, 0, 0, 0)
+        setup_col.setSpacing(Tokens.GAP)
+
         file_row = QHBoxLayout()
+        file_row.addWidget(QLabel("Isochrone:"))
         self.iso_path_edit = QLineEdit()
         self.iso_path_edit.setPlaceholderText("Select isochrone file or folder")
         file_row.addWidget(self.iso_path_edit)
@@ -799,15 +807,13 @@ class IsochroneModelWindow(StepWindowBase):
         btn_folder = QPushButton("Folder")
         btn_folder.clicked.connect(self.browse_iso_folder)
         file_row.addWidget(btn_folder)
-        file_layout.addLayout(file_row)
         self.iso_status_label = QLabel("Single file mode")
         self.iso_status_label.setProperty("role", "caption")
-        file_layout.addWidget(self.iso_status_label)
-        self.content_layout.addWidget(file_group)
+        file_row.addWidget(self.iso_status_label)
+        setup_col.addLayout(file_row)
 
-        # === Filter Selection ===
-        filter_group = QGroupBox("Band Selection")
-        filter_layout = QHBoxLayout(filter_group)
+        # === Bands + source filters (one row) ===
+        filter_layout = QHBoxLayout()
         filter_layout.addWidget(QLabel("Color (X):"))
         self.color_combo = QComboBox()
         self.color_combo.addItems([f"{a}-{b}" for a, b in _DEFAULT_COLOR_PAIRS[:3]])
@@ -821,11 +827,11 @@ class IsochroneModelWindow(StepWindowBase):
         self.mag_combo.currentIndexChanged.connect(self._on_band_changed)
         filter_layout.addWidget(self.mag_combo)
         filter_layout.addStretch()
-        self.content_layout.addWidget(filter_group)
+        setup_col.addLayout(filter_layout)
 
-        # === Source Filters ===
-        sf_group = QGroupBox("Source Filters")
-        sf_layout = QHBoxLayout(sf_group)
+        # === Source Filters (own row — keeping it on the band row pushed the
+        # window's minimum width to 1250 px, wider than the default 1200) ===
+        sf_layout = QHBoxLayout()
 
         # Parallax filter
         self.plx_check = QCheckBox("Parallax filter")
@@ -839,6 +845,7 @@ class IsochroneModelWindow(StepWindowBase):
         self.plx_min_spin.setSingleStep(0.05)
         self.plx_min_spin.setValue(-0.5)
         self.plx_min_spin.setSuffix(" mas")
+        self.plx_min_spin.setMaximumWidth(110)
         sf_layout.addWidget(self.plx_min_spin)
 
         sf_layout.addWidget(QLabel("–"))
@@ -849,6 +856,7 @@ class IsochroneModelWindow(StepWindowBase):
         self.plx_max_spin.setSingleStep(0.05)
         self.plx_max_spin.setValue(0.5)
         self.plx_max_spin.setSuffix(" mas")
+        self.plx_max_spin.setMaximumWidth(110)
         sf_layout.addWidget(self.plx_max_spin)
 
         sf_layout.addSpacing(20)
@@ -881,10 +889,12 @@ class IsochroneModelWindow(StepWindowBase):
         self.snr_display_spin.setDecimals(1)
         self.snr_display_spin.setSingleStep(1.0)
         self.snr_display_spin.setValue(20.0)
+        self.snr_display_spin.setMaximumWidth(90)
         sf_layout.addWidget(self.snr_display_spin)
 
         sf_layout.addStretch()
-        self.content_layout.addWidget(sf_group)
+        setup_col.addLayout(sf_layout)
+        self.content_layout.addLayout(setup_col)
 
         # Internal ROI state
         self._roi_data: dict | None = None
@@ -940,19 +950,15 @@ class IsochroneModelWindow(StepWindowBase):
         self.content_layout.addWidget(manual_tab, stretch=1)
         self._cmd_viewer_pending = False
 
+        # Header cluster convention (CLAUDE.md): subclass actions, then
+        # Parameters, then Log, then 가이드. "Fit" is this step's main action.
         self.add_header_action(
             "Fit", self.toggle_fit_window,
             tooltip="Auto-fit (MCMC) 창 열기/닫기 — 피팅 컨트롤·prior·결과 그림")
+        self.add_header_action(
+            "Log", self.show_log_window, tooltip="Isochrone 로그 창")
 
-        # --- Log Window ---
-        log_row = QHBoxLayout()
-        btn_log = QPushButton("Open Log")
-        style_button(btn_log, "ghost")
-        btn_log.clicked.connect(self.show_log_window)
-        log_row.addWidget(btn_log)
-        log_row.addStretch()
-        self.content_layout.addLayout(log_row)
-
+        # --- Log Window (opened from the header "Log" action) ---
         self.log_window = QWidget(self, Qt.Window)
         self.log_window.setWindowTitle("Isochrone Log")
         self.log_window.resize(700, 350)
@@ -2075,7 +2081,40 @@ class IsochroneModelWindow(StepWindowBase):
         self._pending_band_color_text = None
         self._pending_band_mag_text = None
 
-    def refresh_cmd_viewer(self, show_error=True) -> bool:
+    def _autoselect_iso_for_bands(self, bc) -> bool:
+        """Swap in the bundled grid that matches the observed filter system.
+
+        A parameters.toml copied from another target keeps its isochrone path
+        (the reprocess batch does exactly that), so a gri workspace can carry a
+        Johnson grid and Step 12 renders nothing but "Isochrone/filter
+        mismatch". The headless runner already ignores the config path for this
+        reason; the GUI now does the same, but only after a real mismatch and
+        only towards a *bundled* grid, and it says so in the log.
+        """
+        if getattr(self, "_iso_autoselect_done", False):
+            return False
+        try:
+            from apex.analysis.cmd.isochrone_data import default_iso_file
+
+            wanted = default_iso_file(tuple(bc["band_color"]))
+            current = Path(self._get_iso_path() or "")
+            if not wanted.exists() or wanted == current:
+                return False
+            self._iso_autoselect_done = True
+            self.iso_path_edit.setText(str(wanted))
+            self.params.P.iso_file_path = str(wanted)
+            self._invalidate_cache()
+            self._set_iso_status(f"auto-selected for {bc['band_color'][0]}-"
+                                 f"{bc['band_color'][1]}")
+            self.log(f"[iso] filter system mismatch — switched to the bundled "
+                     f"grid for {bc['band_color'][0]}-{bc['band_color'][1]}: "
+                     f"{wanted.name}")
+            return True
+        except Exception as exc:
+            self.log(f"[iso] auto-select skipped: {exc}")
+            return False
+
+    def refresh_cmd_viewer(self, show_error=True, _retry=True) -> bool:
         df, iso_raw, iso_file = self._load_cmd_and_iso_data(show_error=show_error)
         if df is None or iso_raw is None:
             self._show_viewer_placeholder(
@@ -2095,6 +2134,10 @@ class IsochroneModelWindow(StepWindowBase):
             )
             if bc[k] is None
         ]
+        if missing_iso and _retry and self._autoselect_iso_for_bands(bc):
+            # The grid was swapped for one that covers these bands — reload
+            # once with it instead of showing the mismatch placeholder.
+            return self.refresh_cmd_viewer(show_error=show_error, _retry=False)
         if missing_iso:
             available = ", ".join(self._iso_band_columns) or "none"
             message = (
@@ -2189,6 +2232,7 @@ class IsochroneModelWindow(StepWindowBase):
             "iso_mh_init": getattr(self.params.P, "iso_mh_init", -0.1),
             "iso_eg_r_init": getattr(self.params.P, "iso_eg_r_init", 0.0033),
             "iso_dm_init": getattr(self.params.P, "iso_dm_init", 9.46),
+            "workspace": str(getattr(self.params.P, "result_dir", "")),
             "band_color_idx": self.color_combo.currentIndex(),
             "band_mag_idx": self.mag_combo.currentIndex(),
             "band_color_text": self.color_combo.currentText(),
@@ -2245,8 +2289,42 @@ class IsochroneModelWindow(StepWindowBase):
         except Exception as exc:
             self.log(f"[MCMC] saved settings restore skipped: {exc}")
 
+    def _workspace_state_data(self) -> dict:
+        """Return this workspace's saved step data.
+
+        The primary state file (``apex/.state/<mode>``) is shared by every
+        workspace of the mode, so it holds whichever cluster was closed last.
+        Restoring it blindly pulled another cluster's isochrone path and band
+        selection into this window (observed on M67 gri: a Johnson grid was
+        auto-loaded, raising "Isochrone/filter mismatch"). Ownership is decided
+        by the ``workspace`` tag; the per-workspace mirror
+        (``result_dir/project_state.json``) is the fallback because its
+        location itself proves ownership.
+        """
+        primary = self.project_state.get_step_data("isochrone_model") or {}
+        cur_ws = str(getattr(self.params.P, "result_dir", "") or "")
+        if not cur_ws:
+            return primary
+        if str(primary.get("workspace", "") or "") == cur_ws:
+            return primary
+        try:
+            mirror = Path(cur_ws) / "project_state.json"
+            if mirror.exists():
+                md = json.loads(mirror.read_text(encoding="utf-8"))
+                own = (md.get("step_data") or {}).get("isochrone_model") or {}
+                if own:
+                    saved_ws = str(own.get("workspace", "") or "")
+                    if saved_ws in ("", cur_ws):   # legacy entries have no tag
+                        return own
+        except Exception as exc:
+            self.log(f"[state] workspace mirror read skipped: {exc}")
+        if primary:
+            self.log("[state] saved settings belong to another workspace "
+                     "— starting from the parameter file instead")
+        return {}
+
     def restore_state(self):
-        state_data = self.project_state.get_step_data("isochrone_model")
+        state_data = self._workspace_state_data()
         if state_data:
             for key, val in state_data.items():
                 if hasattr(self.params.P, key):
@@ -2267,38 +2345,7 @@ class IsochroneModelWindow(StepWindowBase):
             # restore_state runs AFTER setup_step_ui() (see __init__), so the
             # MCMC widgets already exist here — apply directly. The stash +
             # build-site apply stays as a guard for any future order change.
-            # Workspace guard: the primary state file is shared by every
-            # workspace of this mode, so drop saved priors that belong to a
-            # different result_dir (cross-cluster prior contamination).
-            cur_ws = str(getattr(self.params.P, "result_dir", "") or "")
-
-            def _ws_of(m: dict) -> str:
-                return str((m or {}).get("workspace", "") or "")
-
-            saved_mcmc = state_data.get("mcmc") or {}
-            if saved_mcmc and _ws_of(saved_mcmc) and _ws_of(saved_mcmc) != cur_ws:
-                self.log(f"[MCMC] primary saved settings belong to another "
-                         f"workspace ({_ws_of(saved_mcmc)}) — ignored")
-                saved_mcmc = {}
-            if not saved_mcmc and cur_ws:
-                # The shared primary holds only the LAST-closed workspace's
-                # settings; this workspace's own copy lives in its mirror
-                # (result_dir/project_state.json, written on every save).
-                # The mirror's location proves ownership, so a legacy entry
-                # without a workspace tag is accepted from here.
-                try:
-                    mirror = Path(cur_ws) / "project_state.json"
-                    if mirror.exists():
-                        md = json.loads(mirror.read_text(encoding="utf-8"))
-                        mm = ((md.get("step_data") or {})
-                              .get("isochrone_model") or {}).get("mcmc") or {}
-                        if mm and _ws_of(mm) in ("", cur_ws):
-                            saved_mcmc = mm
-                            self.log("[MCMC] settings restored from the "
-                                     "workspace mirror")
-                except Exception as exc:
-                    self.log(f"[MCMC] mirror restore skipped: {exc}")
-            self._mcmc_saved_state = saved_mcmc
+            self._mcmc_saved_state = state_data.get("mcmc") or {}
             if self._mcmc_saved_state and hasattr(self, "mcmc_mh_prior_chk"):
                 self._restore_mcmc_state(self._mcmc_saved_state)
         if self.iso_path_edit is not None and not self.iso_path_edit.text().strip():
