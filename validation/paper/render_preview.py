@@ -476,6 +476,32 @@ a{color:var(--link);text-decoration:none;}
 .go{cursor:pointer;}
 .go:hover .tx{color:var(--link);}
 
+/* ── A&A식 투고 판면 ──
+   참고 논문처럼 첫 면에 제목·초록·서론을 함께 두고, 이후에는 촘촘한
+   2단 본문으로 흘린다. 검토용 차례 판면은 기본 모드로 남겨 두고
+   ?layout=aanda 로 이 판면을 켠다. */
+body.aanda{font-size:11.8px;line-height:1.18;}
+body.aanda .pinner{left:48px;right:48px;top:56px;bottom:48px;}
+body.aanda .page{margin-bottom:8px;}
+body.aanda .run{top:28px;font-size:10px;}
+body.aanda .folio{bottom:25px;font-size:9.8px;}
+body.aanda .ptitle{font-size:25px;line-height:1.17;margin-bottom:14px;}
+body.aanda .jrnl{margin-bottom:20px;}
+body.aanda .absblock{margin:0 0 9px;}
+body.aanda .absblock p{font-size:11.8px;line-height:1.2;}
+body.aanda .absblock .kw{font-size:11.3px;margin-top:6px;}
+body.aanda h2{font-size:14px;line-height:1.16;margin:9px 0 3px;}
+body.aanda h3{font-family:var(--serif);font-size:12.6px;font-style:italic;
+  font-weight:400;line-height:1.15;margin:9px 0 3px;}
+body.aanda h4{font-size:11.8px;line-height:1.15;margin:7px 0 3px;}
+body.aanda p{line-height:1.18;text-indent:1em;}
+body.aanda figure{margin-bottom:7px;}
+body.aanda figcaption{font-size:9.7px;line-height:1.23;margin-top:3px;}
+body.aanda table{font-size:9.3px;line-height:1.18;}
+body.aanda thead th{padding:2px 3px;}
+body.aanda tbody td{padding:1.8px 3px;}
+body.aanda #toctop{display:none;}
+
 /* ── 그림·표 (전폭) ── */
 figure{margin:0 0 9px;text-align:center;}
 figure img{max-width:100%;height:auto;}
@@ -640,7 +666,10 @@ JS = r"""
      규칙이 밀리면 지면 높이가 안 먹고 단이 무한정 늘어난다(2026-07-28 실제로 발생:
      로컬 23쪽 / 아티팩트 4쪽, 오른쪽 단이 빈 채 왼쪽 단만 넘침). 인라인 선언은
      호스트 스타일시트보다 우선하므로 조판이 환경에 상관없이 같아진다. */
-  var GEO={PW:794, PH:1123, MX:64, MT:76, MB:60, GUT:24};
+  var aaLayout=/(?:^|[?&])layout=aanda(?:&|$)/i.test(location.search||'');
+  var GEO=aaLayout ?
+    {PW:794, PH:1123, MX:48, MT:56, MB:48, GUT:18} :
+    {PW:794, PH:1123, MX:64, MT:76, MB:60, GUT:24};
   function newPage(){
     var pg=el('div','page');
     pg.innerHTML='<div class="run"></div><div class="pinner">'+
@@ -652,7 +681,8 @@ JS = r"""
         cs=pg.querySelectorAll('.col'),
         colW=(GEO.PW-2*GEO.MX-GEO.GUT)/2, innerH=GEO.PH-GEO.MT-GEO.MB;
     pg.style.cssText='position:relative;width:'+GEO.PW+'px;height:'+GEO.PH+'px;'+
-      'box-sizing:border-box;overflow:hidden;background:#fff;margin:0 0 14px;'+
+      'box-sizing:border-box;overflow:hidden;background:#fff;margin:0 0 '+
+      (aaLayout ? 8 : 14)+'px;'+
       'box-shadow:0 2px 10px rgba(0,0,0,.35);flex:none;';
     inner.style.cssText='position:absolute;left:'+GEO.MX+'px;top:'+GEO.MT+'px;'+
       'width:'+(GEO.PW-2*GEO.MX)+'px;height:'+innerH+'px;box-sizing:border-box;'+
@@ -857,7 +887,17 @@ JS = r"""
       var hasBody=P.cols.some(function(c){
         return [].some.call(c.children,function(ch){ return !isHead(ch); });
       });
-      var canBottom=bothColsUsed || hasBody;
+      var bodyFill=0;
+      P.cols.forEach(function(c){
+        if (c.children.length) bodyFill=Math.max(bodyFill,
+          contentBottom(c)/Math.max(1,c.clientHeight));
+      });
+      /* A&A keeps a short one-column tail from pushing a wide float into a
+         conspicuous blank lower half.  Use the bottom float only once both
+         columns are active, or when the single column is already substantially
+         filled; the review layout keeps its earlier adjacency preference. */
+      var canBottom=bothColsUsed || (!aaLayout && hasBody) ||
+        (aaLayout && hasBody && bodyFill>=0.58);
       if (node.classList.contains('tw') && !pending.length && !P._bottomUsed && canBottom){
         var tsp=P.spanB;
         tsp.appendChild(node);
@@ -1025,6 +1065,7 @@ JS = r"""
     // 조판하는 동안만 판면을 보이게 한다.
     // (2026-07-30: 그림이 늦게 실려 재조판될 때 이 상태로 돌아 24쪽이 4쪽이 됐다)
     var wasReflow=document.body.classList.contains('reflow');
+    document.body.classList.toggle('aanda', aaLayout);
     if (wasReflow) document.body.classList.remove('reflow');
     // 진단 배너는 #book 밖에 붙으므로 여기서 직접 지운다. 안 지우면 그림이 실리기
     // 전 첫 조판에서 뜬 배너가 정상 재조판 뒤에도 남는다.
@@ -1034,20 +1075,24 @@ JS = r"""
     stage.style.cssText='overflow:hidden;';
     book.style.cssText='transform-origin:top left;width:'+GEO.PW+'px;'+
       'display:block;margin:0;padding:0;';
-    // 체재(2026-08-03 사용자 지시): 1쪽 제목+안내 · 2쪽 차례 한 지면 ·
-    // 3쪽부터 초록을 지면 머리에 얹고 바로 2단 본문 (A&A/AutoPhOT 식).
-    // 1) 표제면 — 제목과 안내만.
-    var T0=newPage(); T0.el.classList.add('p-title');
     var tb=src.querySelector('.titleblock');
-    if (tb) T0.span.appendChild(tb.cloneNode(true));
-    // 2) 차례 — 한 지면에 2단으로
-    var toc=src.querySelector('.tocblock');
-    if (toc) layoutToc(toc);
-    // 3) 본문 — 초록을 첫 지면 머리(전폭)에 얹고 그 아래에서 2단이 시작된다
-    var P=newPage();
     var abs=src.querySelector('.absblock');
-    if (abs) P.span.appendChild(abs.cloneNode(true));
     var flow=src.querySelector('.flow');
+    var P;
+    if (aaLayout){
+      /* 참고 논문처럼 제목·초록 뒤에 곧바로 서론의 2단 본문을 시작한다. */
+      P=newPage(); P.el.classList.add('p-title','p-aanda');
+      if (tb) P.span.appendChild(tb.cloneNode(true));
+      if (abs) P.span.appendChild(abs.cloneNode(true));
+    } else {
+      // 검토용 판면: 1쪽 표지 · 2쪽 차례 · 3쪽 초록+2단 본문.
+      var T0=newPage(); T0.el.classList.add('p-title');
+      if (tb) T0.span.appendChild(tb.cloneNode(true));
+      var toc=src.querySelector('.tocblock');
+      if (toc) layoutToc(toc);
+      P=newPage();
+      if (abs) P.span.appendChild(abs.cloneNode(true));
+    }
     [].slice.call(flow.children).forEach(function(k){ P=place(k.cloneNode(true), P); });
     draining=true;                                              // 남은 그림 마무리
     while (pending.length){
