@@ -500,7 +500,7 @@ body.aanda figcaption{font-size:9.7px;line-height:1.23;margin-top:3px;}
 body.aanda table{font-size:9.3px;line-height:1.18;}
 body.aanda thead th{padding:2px 3px;}
 body.aanda tbody td{padding:1.8px 3px;}
-body.aanda #toctop{display:none;}
+/* 목차 지면을 유지하므로 뷰어의 '차례' 이동 버튼도 숨기지 않는다. */
 
 /* ── 그림·표 (전폭) ── */
 figure{margin:0 0 9px;text-align:center;}
@@ -887,17 +887,11 @@ JS = r"""
       var hasBody=P.cols.some(function(c){
         return [].some.call(c.children,function(ch){ return !isHead(ch); });
       });
-      var bodyFill=0;
-      P.cols.forEach(function(c){
-        if (c.children.length) bodyFill=Math.max(bodyFill,
-          contentBottom(c)/Math.max(1,c.clientHeight));
-      });
-      /* A&A keeps a short one-column tail from pushing a wide float into a
-         conspicuous blank lower half.  Use the bottom float only once both
-         columns are active, or when the single column is already substantially
-         filled; the review layout keeps its earlier adjacency preference. */
-      var canBottom=bothColsUsed || (!aaLayout && hasBody) ||
-        (aaLayout && hasBody && bodyFill>=0.58);
+      /* A wide float may sit below a short first-column tail.  The next source
+         block is then carried into the empty second column by the _bottomUsed
+         branch below; waiting for a new page here is what used to leave a
+         whole column blank in the first place. */
+      var canBottom=bothColsUsed || hasBody;
       if (node.classList.contains('tw') && !pending.length && !P._bottomUsed && canBottom){
         var tsp=P.spanB;
         tsp.appendChild(node);
@@ -920,13 +914,24 @@ JS = r"""
       }
       pending.push(node); return P;
     }
-    // A bottom float occupies the visual end of this A4 sheet.  The next
-    // source block must therefore begin on the following sheet, otherwise it
-    // would be painted above the float by the two-column flex layout.
-    if (P._bottomUsed) P=fresh();
-    // Do not defer a wide table across a section heading: that reverses the
-    // table and heading in the rendered reading order.
-    if (pending.length && isHead(node)) P=fresh();
+    // A bottom float is a real float, not a hard page break.  If the first
+    // column is already in use, continue the following source blocks in the
+    // still-empty second column before opening a new sheet.  The old code
+    // always called fresh() here, which visibly skipped an entire column
+    // whenever a table/figure followed a short tail of prose.
+    if (P._bottomUsed){
+      if (P.ci===0 && !P.cols[1].children.length) P.ci=1;
+      else P=fresh();
+    }
+    // A pending wide float may be moved past a heading when the current page
+    // still has an unused second column.  Flushing it immediately used to
+    // leave the first column half full and the entire second column blank;
+    // treating the figure/table as a true float gives the heading somewhere
+    // to flow while preserving a readable two-column page.
+    if (pending.length && isHead(node)){
+      if (P.ci===0 && P.cols[0].children.length && !P.cols[1].children.length) P.ci=1;
+      else P=fresh();
+    }
     if (isInlineFigure(node)){
       // Finish any wide table that is waiting.  Prefer the bottom of the
       // current sheet so a numeric paragraph and its evidence are adjacent;
@@ -1080,9 +1085,12 @@ JS = r"""
     var flow=src.querySelector('.flow');
     var P;
     if (aaLayout){
-      /* 참고 논문처럼 제목·초록 뒤에 곧바로 서론의 2단 본문을 시작한다. */
-      P=newPage(); P.el.classList.add('p-title','p-aanda');
-      if (tb) P.span.appendChild(tb.cloneNode(true));
+      /* 참고 논문의 촘촘한 위계를 쓰되, 사용자 검토용 표지·목차는 유지한다. */
+      var T0=newPage(); T0.el.classList.add('p-title');
+      if (tb) T0.span.appendChild(tb.cloneNode(true));
+      var toc=src.querySelector('.tocblock');
+      if (toc) layoutToc(toc);
+      P=newPage(); P.el.classList.add('p-aanda');
       if (abs) P.span.appendChild(abs.cloneNode(true));
     } else {
       // 검토용 판면: 1쪽 표지 · 2쪽 차례 · 3쪽 초록+2단 본문.
