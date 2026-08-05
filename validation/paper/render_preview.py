@@ -1233,6 +1233,13 @@ JS = r"""
   document.addEventListener('wheel', function(ev){
     if (!document.body.classList.contains('paged') ||
         document.body.classList.contains('reflow')) return;
+    /* 페이지·그림 위에서는 브라우저가 wheel 대상의 조상 중 어느 요소를
+       스크롤할지 브라우저별로 다르게 고른다. 특히 file:// 로 직접 연 탭에서는
+       body가 overflow:hidden이라 휠이 아무 일도 하지 않는 경우가 있다. 판면
+       안의 이벤트는 여기서 명시적으로 #stage에 전달해 PDF 뷰어처럼 항상
+       이어서 이동하게 한다. */
+    var inStage=stage && (ev.target===stage || stage.contains(ev.target));
+    if (!inStage) return;
     /* PDF 뷰어 관례: Ctrl/Cmd+휠은 현재 쪽의 확대율을 바꾼다. 브라우저의
        기본 페이지 확대가 실행되지 않도록 먼저 이벤트를 소비한다. */
     if (ev.ctrlKey || ev.metaKey){
@@ -1251,7 +1258,12 @@ JS = r"""
       if (Math.abs(dx)>0) stage.scrollLeft+=Math.max(-160,Math.min(160,dx*.65));
       return;
     }
-    /* 일반 휠은 stage의 자연스러운 연속 스크롤에 맡긴다. */
+    /* 일반 휠도 stage를 직접 움직인다. preventDefault를 함께 써서 native
+       scroll과 이 보정이 겹쳐 두 배로 움직이지 않게 한다. */
+    if (Math.abs(ev.deltaY)>0 && stage.scrollHeight>stage.clientHeight){
+      stage.scrollTop += ev.deltaY;
+      ev.preventDefault();
+    }
   }, {passive:false});
   document.addEventListener('keydown', function(ev){
     var tag=(ev.target && ev.target.tagName)||'';
