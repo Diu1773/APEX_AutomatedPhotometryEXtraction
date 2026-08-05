@@ -1166,10 +1166,20 @@ JS = r"""
   function on(id, fn){ var e=document.getElementById(id); if (e) e.addEventListener('click', fn); }
   on('prev', function(){ goto(currentPage-1); });
   on('next', function(){ goto(currentPage+1); });
-  var wheelLock=false;
+  var wheelLock=false, zoomWheelLock=false;
   document.addEventListener('wheel', function(ev){
     if (!document.body.classList.contains('paged') ||
         document.body.classList.contains('reflow')) return;
+    /* PDF 뷰어 관례: Ctrl/Cmd+휠은 현재 쪽의 확대율을 바꾼다. 브라우저의
+       기본 페이지 확대가 실행되지 않도록 먼저 이벤트를 소비한다. */
+    if (ev.ctrlKey || ev.metaKey){
+      ev.preventDefault();
+      if (zoomWheelLock || Math.abs(ev.deltaY)<1) return;
+      zoomWheelLock=true;
+      setZoom(zoom*(ev.deltaY<0 ? 1.1 : 1/1.1));
+      window.setTimeout(function(){ zoomWheelLock=false; },70);
+      return;
+    }
     /* 확대 상태에서는 브라우저의 기본 스크롤을 보존한다. 이전 구현은
        확대 여부와 무관하게 preventDefault()를 호출해 페이지가 넘어갔다. */
     if (zoom>1.001) return;
@@ -1587,6 +1597,7 @@ HTML = f"""<meta charset="utf-8">
     <dl>
       <dt><kbd>+</kbd> / <kbd>=</kbd></dt><dd>확대</dd>
       <dt><kbd>-</kbd></dt><dd>축소</dd>
+      <dt><kbd>Ctrl</kbd> + 휠</dt><dd>휠 위/아래로 확대·축소</dd>
       <dt><kbd>0</kbd> 또는 <kbd>Ctrl</kbd>+<kbd>0</kbd></dt><dd>맞춤 배율</dd>
       <dt><kbd>←</kbd> <kbd>→</kbd></dt><dd>이전/다음 페이지</dd>
       <dt><kbd>Home</kbd> / <kbd>End</kbd></dt><dd>첫 페이지/마지막 페이지</dd>
