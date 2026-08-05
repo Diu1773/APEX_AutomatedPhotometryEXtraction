@@ -980,6 +980,13 @@ JS = r"""
       else { P=newTocPage(); ci=0; col=P.cols[0]; }
     }
     [].slice.call(toc.children).forEach(function(node){
+      // 그림 목록은 제목과 항목이 서로 다른 단으로 갈라지면 목차의
+      // 시각적 계층이 사라진다. 새 단(또는 새 목차 페이지)에서 함께
+      // 시작하게 해 오른쪽 위에 마지막 항목만 고립되는 것을 막는다.
+      var isFigureHeading=node.tagName==='DIV' &&
+        node.classList.contains('toc-h') && node.nextElementSibling &&
+        node.nextElementSibling.classList.contains('toc-figs');
+      if (isFigureHeading && col.children.length) nextCol();
       var c=node.cloneNode(true);
       col.appendChild(c);
       if (ok()) return;
