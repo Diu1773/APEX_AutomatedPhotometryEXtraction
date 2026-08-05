@@ -19,13 +19,13 @@ body{font-family:var(--serif);font-size:11.2px;line-height:1.32;color:var(--ink)
 /* ── 지면 ── */
 #src{display:none;}
 #stage{overflow:hidden;}
-/* 판면 모드: PDF 뷰어처럼 한 화면에 A4 한 쪽만 표시한다. 휠·PageUp/Down·
-   ‹› 버튼으로 쪽을 넘기며, 읽기 모드에서는 원고 전체를 연속으로 흘린다. */
+/* 판면 모드: PDF 뷰어처럼 A4 쪽을 세로로 이어 붙인다. 휠은 자연스럽게
+   현재 쪽의 끝에서 다음 쪽으로 이어지고, ‹›·PageUp/Down은 해당 쪽으로 이동한다. */
 body.paged{overflow:hidden;}
-body.paged #stage{display:block;overflow:hidden;min-height:100vh;}
+body.paged #stage{display:block;overflow:auto;min-height:100vh;}
 body.paged #sizer{display:block;}
 body.paged #book{display:block;}
-body.paged .page{display:none;}
+body.paged .page{display:block;}
 body.paged .page.active{display:block;}
 #sizer{position:relative;}
 #book{transform-origin:top left;width:var(--pw);}
@@ -964,7 +964,7 @@ mark.apexnote{cursor:pointer;}
       var m=/그림\s*(\d+)/.exec(li.textContent); mark(li, m?where['f'+m[1]]:undefined); });
   }
 
-  /* 확대율. 1 = 창 높이와 폭에 맞는 한 쪽. 사용자가 확대·축소할 수 있다.
+  /* 확대율. 1 = 창 높이와 폭에 맞는 판면. 사용자가 확대·축소할 수 있다.
      transform 은 레이아웃에 영향을 주지 않으므로, 실제 크기를 갖는 #sizer 로
      스크롤 영역을 만들고 그 안에서 #book 을 시각적으로만 확대한다. */
   var zoom=1, currentPage=0;
@@ -979,7 +979,7 @@ mark.apexnote{cursor:pointer;}
     document.body.classList.toggle('paged', !!on);
     if (on){
       applyPageVisibility();
-      window.scrollTo(0,0);
+      if (stage) stage.scrollTo(0,0);
     } else {
       pages.forEach(function(p){ p.el.classList.remove('active'); });
     }
@@ -997,19 +997,23 @@ mark.apexnote{cursor:pointer;}
       var h=window.innerHeight||GEO.PH;
       var pageScale=Math.min(1,(w-40)/PW,(h-38)/GEO.PH);
       scale=Math.max(0.5,pageScale*zoom);
-      var pcw=Math.ceil(PW*scale), pch=Math.ceil(GEO.PH*scale);
+      /* 판면 모드도 모든 쪽을 같은 스크롤 영역에 둔다. 페이지를 숨겼다
+         다시 보이는 방식은 확대 페이지 끝에서 다음 쪽으로 이어지지 않는다. */
+      book.style.height='auto';
+      var bookH=Math.max(GEO.PH, book.scrollHeight);
+      var pcw=Math.ceil(PW*scale), pch=Math.ceil(bookH*scale);
       sizer.style.width=pcw+'px';
       sizer.style.height=pch+'px';
-      sizer.style.margin='18px auto 0';
+      sizer.style.margin='18px auto 28px';
       book.style.transform='scale('+scale+')';
       book.style.width=PW+'px';
-      book.style.height=GEO.PH+'px';
+      book.style.height='auto';
       stage.style.height=Math.max(420,h)+'px';
-      /* 맞춤 배율에서는 휠을 페이지 이동으로 쓰고, 확대하면 PDF처럼
-         현재 페이지 내부를 스크롤한다. */
-      stage.style.overflow=(zoom>1.001 ? 'auto' : 'hidden');
+      stage.style.overflowX=(pcw>w ? 'auto' : 'hidden');
+      stage.style.overflowY='auto';
       if (zind) zind.textContent=Math.round(scale*100)+'%';
       applyPageVisibility();
+      onScroll();
       return;
     }
     var base=Math.min(1,(w-20)/PW);
@@ -1028,9 +1032,10 @@ mark.apexnote{cursor:pointer;}
     var p=pages[i]; if(!p) return;
     if (document.body.classList.contains('paged')){
       currentPage=i;
-      applyPageVisibility();
       fit();
-      window.scrollTo(0,0);
+      var top=(sizer.offsetTop||18)+(p.el.offsetTop*scale)-8;
+      if (stage) stage.scrollTo({top:Math.max(0,top), behavior:'smooth'});
+      if (ind) ind.textContent=(currentPage+1)+' / '+pages.length;
       return;
     }
     window.scrollTo({top:Math.max(0,p.el.offsetTop*scale-6), behavior:'smooth'});
@@ -1038,6 +1043,12 @@ mark.apexnote{cursor:pointer;}
   function onScroll(){
     if (!pages.length) return;
     if (document.body.classList.contains('paged')){
+      var base=sizer.offsetTop||0;
+      var y=((stage.scrollTop||0)-base)/scale + 40, cur=0;
+      for (var j=0;j<pages.length;j++){
+        if (pages[j].el.offsetTop<=y) cur=j; else break;
+      }
+      currentPage=cur;
       if (ind) ind.textContent=(currentPage+1)+' / '+pages.length;
       return;
     }
@@ -1046,12 +1057,13 @@ mark.apexnote{cursor:pointer;}
     ind.textContent=cur+' / '+pages.length;
   }
   window.addEventListener('scroll', onScroll, {passive:true});
+  stage.addEventListener('scroll', onScroll, {passive:true});
   var t=null;
   window.addEventListener('resize', function(){ clearTimeout(t); t=setTimeout(fit,150); });
   function on(id, fn){ var e=document.getElementById(id); if (e) e.addEventListener('click', fn); }
   on('prev', function(){ goto(currentPage-1); });
   on('next', function(){ goto(currentPage+1); });
-  var wheelLock=false, zoomWheelLock=false;
+  var zoomWheelLock=false;
   document.addEventListener('wheel', function(ev){
     if (!document.body.classList.contains('paged') ||
         document.body.classList.contains('reflow')) return;
@@ -1065,14 +1077,7 @@ mark.apexnote{cursor:pointer;}
       window.setTimeout(function(){ zoomWheelLock=false; },70);
       return;
     }
-    /* 확대 상태에서는 브라우저의 기본 스크롤을 보존한다. 이전 구현은
-       확대 여부와 무관하게 preventDefault()를 호출해 페이지가 넘어갔다. */
-    if (zoom>1.001) return;
-    if (Math.abs(ev.deltaY)<8 || wheelLock) return;
-    ev.preventDefault();
-    wheelLock=true;
-    goto(currentPage+(ev.deltaY>0 ? 1 : -1));
-    window.setTimeout(function(){ wheelLock=false; },320);
+    /* 일반 휠은 stage의 자연스러운 연속 스크롤에 맡긴다. */
   }, {passive:false});
   document.addEventListener('keydown', function(ev){
     var tag=(ev.target && ev.target.tagName)||'';
