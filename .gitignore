@@ -17,6 +17,7 @@ site/
 # User/runtime state
 parameters.toml
 apex_config*.json
+parameters.example.json   # example.toml 을 읽으면 생기는 변환 산출물
 parameters_*.toml
 apex/.state/
 
