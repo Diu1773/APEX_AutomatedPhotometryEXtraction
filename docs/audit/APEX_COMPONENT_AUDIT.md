@@ -46,5 +46,5 @@ Audit date: 2026-08-07. This is a code-trace audit, not a claim that every branc
 
 1. State `ccdproc` as the Astropy-affiliated Python package and IRAF `ccdred/ccdproc` as a separate PyRAF/IRAF execution; they are not the same package.
 2. State the internal WCS solver as the default. ASTAP and astrometry.net are optional, explicit engines; ASTAP→astrometry fallback is conditional.
-3. Split “Qt-free headless” into shared Steps 0–7 core, genuine Step 12 service, and off-screen Qt wrappers for Steps 8/10 (and the legacy Step 7 script). 
+3. Split “Qt-free headless” into shared Steps 0–7 core, genuine Step 12 service, and off-screen Qt wrappers for Steps 8/10 (and the legacy Step 7 script).
 4. Treat photutils comparison as same-backend consistency, not an independent validation; SEP and IRAF/DAOPHOT are the stronger independent comparisons.
