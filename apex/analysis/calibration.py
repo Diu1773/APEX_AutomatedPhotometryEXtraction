@@ -250,6 +250,25 @@ def _sigma_clip_mask(stack: np.ndarray, sigma_low: float, sigma_high: float,
     return mask
 
 
+# Peak working set allowed for one combine chunk.  sigmaclip_mean holds the
+# stack, a boolean mask and a clipped copy at once, so the true peak is a few
+# times this; 384 MB keeps a 30-frame full-frame combine near 1 GB instead of
+# the ~6 GB that stacking everything at once needed.
+_COMBINE_CHUNK_BYTES = 384 * 1024 * 1024
+
+
+def _combine_stack(stack: np.ndarray, method: str, sigma_low: float,
+                   sigma_high: float, maxiters: int) -> np.ndarray:
+    """Collapse an already-stacked (N, …) block along axis 0."""
+    if method == "mean":
+        return np.asarray(fast_stats.nanmean(stack, axis=0), dtype=np.float64)
+    if method == "sigmaclip_mean":
+        mask = _sigma_clip_mask(stack, sigma_low, sigma_high, maxiters)
+        work = np.where(mask, np.nan, stack)
+        return np.asarray(fast_stats.nanmean(work, axis=0), dtype=np.float64)
+    return np.asarray(fast_stats.nanmedian(stack, axis=0), dtype=np.float64)
+
+
 def combine_frames(arrays: Sequence[np.ndarray], method: str = "median",
                    sigma_low: float = 3.0, sigma_high: float = 3.0,
                    maxiters: int = 5) -> np.ndarray:
@@ -258,22 +277,34 @@ def combine_frames(arrays: Sequence[np.ndarray], method: str = "median",
     ``method``: "median" (robust default), "mean", or "sigmaclip_mean"
     (per-pixel sigma clip, then NaN-mean of the survivors).  NaNs in the inputs
     (e.g. dead pixels) are treated as missing.
+
+    Combining is done in row bands rather than on one big stack.  Every method
+    here is per-pixel, so banding is exact — it only bounds the working set,
+    which otherwise scales with frame count and overflowed on a full-frame
+    30-flat combine.
     """
     if not arrays:
         raise ValueError("combine_frames: empty array list")
-    stack = np.stack([np.asarray(a, dtype=_STACK_DTYPE) for a in arrays], axis=0)
-    if stack.shape[0] == 1:
-        return stack[0].astype(np.float64)
-
     method = str(method).lower()
-    if method == "mean":
-        return np.asarray(fast_stats.nanmean(stack, axis=0), dtype=np.float64)
-    if method == "sigmaclip_mean":
-        mask = _sigma_clip_mask(stack, sigma_low, sigma_high, maxiters)
-        work = np.where(mask, np.nan, stack)
-        return np.asarray(fast_stats.nanmean(work, axis=0), dtype=np.float64)
-    # default: median
-    return np.asarray(fast_stats.nanmedian(stack, axis=0), dtype=np.float64)
+
+    first = np.asarray(arrays[0], dtype=_STACK_DTYPE)
+    if len(arrays) == 1:
+        return first.astype(np.float64)
+    if first.ndim != 2:
+        stack = np.stack([np.asarray(a, dtype=_STACK_DTYPE) for a in arrays], axis=0)
+        return _combine_stack(stack, method, sigma_low, sigma_high, maxiters)
+
+    height, width = first.shape
+    row_bytes = len(arrays) * width * np.dtype(_STACK_DTYPE).itemsize
+    rows_per_chunk = max(1, int(_COMBINE_CHUNK_BYTES // max(row_bytes, 1)))
+
+    out = np.empty((height, width), dtype=np.float64)
+    for y0 in range(0, height, rows_per_chunk):
+        y1 = min(y0 + rows_per_chunk, height)
+        band = np.stack(
+            [np.asarray(a[y0:y1], dtype=_STACK_DTYPE) for a in arrays], axis=0)
+        out[y0:y1] = _combine_stack(band, method, sigma_low, sigma_high, maxiters)
+    return out
 
 
 # ---------------------------------------------------------------------------

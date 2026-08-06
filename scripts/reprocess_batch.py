@@ -145,7 +145,8 @@ def run_step0(target: str, raw_dir: str) -> Path:
                        f"floor, {OUT_DRIVE} has {have:.0f} GB")
     log(f"[{target}] Step 0: ~{need:.0f} GB estimated, {OUT_DRIVE} free {have:.0f} GB")
     r = subprocess.run([str(VENV_PY), "-X", "utf8",
-                        str(REPO / "scripts" / "_reprocess_step0.py"), raw_dir, target],
+                        str(REPO / "scripts" / "_reprocess_step0.py"), raw_dir, target,
+                        str(REPROCESS)],
                        cwd=str(REPO))
     if r.returncode != 0:
         raise RuntimeError(f"Step 0 failed for {target}")

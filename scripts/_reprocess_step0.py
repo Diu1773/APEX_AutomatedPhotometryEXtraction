@@ -27,7 +27,12 @@ TZ_OFFSET_HOURS = 9.0
 def main() -> int:
     raw_dir = sys.argv[1]
     name = sys.argv[2]
-    out = Path(r"E:\APEX_validation\reprocess") / name
+    # The orchestrator runs this as a subprocess, so its --out cannot reach us
+    # through a module global — it has to come in as an argument. Without this
+    # the calibrated frames land in the default tree while the caller looks for
+    # them under --out, and the target is skipped with "no calibrated frames".
+    root = Path(sys.argv[3]) if len(sys.argv) > 3 else Path(r"E:\APEX_validation\reprocess")
+    out = root / name
     t0 = time.time()
     fr = []
     for root in (raw_dir, BIAS, DARKS):
