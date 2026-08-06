@@ -1060,6 +1060,17 @@ class MainWindowWorkflow(AutoFitMixin, QMainWindow):
         self.extinction_window.activateWindow()
         self.append_log("Opened Extinction (Airmass Fit) Tool")
 
+    def open_detector_ptc_tool(self):
+        from apex.gui.tools.detector_ptc import DetectorPTCWindow
+        self.detector_ptc_window = DetectorPTCWindow(
+            self.params, self.project_state, parent=None
+        )
+        self.detector_ptc_window.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose, False)
+        self.detector_ptc_window.show()
+        self.detector_ptc_window.raise_()
+        self.detector_ptc_window.activateWindow()
+        self.append_log("Opened Detector Characterisation (PTC) Tool")
+
     # ── LC tools ─────────────────────────────────────────────────────────────
 
     def open_airmass_debug_tool(self):

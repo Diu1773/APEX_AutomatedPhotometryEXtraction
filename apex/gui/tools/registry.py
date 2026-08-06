@@ -48,6 +48,12 @@ TOOL_SPECS: tuple[ToolSpec, ...] = (
         shortcut="Ctrl+E",
     ),
     ToolSpec(
+        id="detector_ptc",
+        label="Detector Characterisation (Gain / Read Noise)",
+        launcher="open_detector_ptc_tool",
+        module="apex.gui.tools.detector_ptc",
+    ),
+    ToolSpec(
         id="airmass_debug",
         label="Airmass Header Debug",
         launcher="open_airmass_debug_tool",
