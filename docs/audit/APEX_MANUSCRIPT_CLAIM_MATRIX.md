@@ -1,0 +1,31 @@
+# APEX manuscript claim matrix
+
+Source checked: `validation/paper/논문작업/MANUSCRIPT_ko.md` and nearby paper/README documents. The matrix is intentionally conservative: a number can be correct for one retained run while the surrounding generalisation is still unsafe.
+
+| Manuscript claim (location) | Code/evidence checked | Status | Safer wording |
+|---|---|---|---|
+| APEX integrates raw frames to CMD or multi-night light curves without scripting (§1/abstract) | GUI workflows, shared Steps 1–7, CMD/LC modules | **Partial** | “Provides a GUI workflow for CMD and LC analysis; shared Steps 0–7 have a Qt-free runner, while some mode-specific orchestration remains worker-based.” |
+| GUI and headless run the same computation (§1–2) | `analysis/detection.py`, `forced_photometry.py`, `wcs_solve.py`, GUI wrappers | **Mostly supported for Steps 0–7** | Limit parity statement to named shared steps and equal config/input; separate Step 8/10 off-screen Qt scripts. |
+| APEX does not propose new algorithms (§1/§2) | Native quad solver, PDM, SYSREM, aperture-correction policy, PSF iteration | **Defensible with qualification** | “Uses established primitives and contributes an integrated workflow plus project-specific policies/implementations; algorithmic novelty is not claimed.” |
+| Four native components are quad solver, aperture correction, PDM, SYSREM (§2) | `astrometry/*`, `forced_photometry.py`, `period_analysis_service.py`, `sysrem.py` | **Incomplete** | Also describe native acceptance/QC, ID propagation, PSF iteration and calibration workflow as policies, not silently as primitives. |
+| Built-in WCS is the default; ASTAP/astrometry.net are optional (§2/§3.6) | `wcs_solve.py:resolve_wcs_engine` and `run_wcs_solve` | **Supported in current path** | Explicitly state internal is default; ASTAP/astrometry.net are user-selected, and ASTAP→astrometry fallback is conditional. |
+| WCS accepted with “20 matches, RMS <2.5 px, P99 <5 px” (§3.6) | Internal worker QC and configuration; paper text | **Needs exact code reconciliation** | Quote the thresholds actually used by the selected engine/config and report per-frame distributions; do not present hard thresholds as universal accuracy. |
+| Detector has SEP, segmentation and DAO engines (§3.1/§3.2) | `detection.py` branches; CMD default `segm`, LC default `dao` | **Supported but mode-dependent** | Report engine, preset and sigma per experiment. Avoid “the detector” when results came from only one engine. |
+| Completeness m50 ±0.08 mag (§abstract/§3.5) | `apex/benchmark/artificial_stars.py`, completeness fit and paper figure scripts | **Potentially supported for the named synthetic setup** | Give seed, PSF/crowding/sky, placement exclusions, number injected, fit model and confidence interval; do not generalise to all cameras/fields. |
+| Error pull standard deviation 1.014 (§abstract/§3.7) | Benchmark metrics and forced-photometry error model | **Single-run evidence** | “For the reported benchmark configuration, pull scatter was …”; add residual-vs-SNR and coverage before calling the error model calibrated. |
+| SEP agrees at 0.006 mag; IRAF/DAOPHOT at 0.0097 mag (§abstract) | `photometry_crosscheck.py`, `iraf_crosscheck.py` | **Conditional** | State robust scatter after frame zeropoint alignment, matched coordinates, selection cuts, frame/camera, and whether IRAF suite ran or skipped. |
+| Python `ccdproc` and IRAF `ccdproc` are both comparison packages (§3.2/figure 4) | `calibration_crosscheck.py` imports Astropy `ccdproc`; IRAF path is PyRAF/IRAF `ccdred` | **Terminology correction required** | “Astropy-affiliated Python `ccdproc`” versus “IRAF/PyRAF `ccdproc` task”; they are separate implementations. |
+| PSF and aperture agree across three cameras (§abstract/§3.10–3.11) | `fig_psf_validation.py`, PSF tests, `psf_policy.py` | **Evidence exists, scope limited** | Report cameras, frames, source-selection/crowding cuts, and that aperture agreement is a consistency check, not truth. |
+| No density-dependent bias in globular clusters (§abstract) | Paper figures and retained cluster products | **Needs boundary language** | “No bias was detected within the tested density/FWHM/magnitude range”; quantify limits and exclusions. |
+| APEX performs detector calibration from raw to science (§abstract) | Optional Step 0 and `calibration_run.py` | **Supported as a feature** | State Step 0 is optional/off-chain and list accepted frame types/overscan limitations. |
+| APEX restores isochrone physical parameters (§§3.12–3.13) | `isochrone_mcmc.py`, synthetic validator, real-cluster scripts | **Overstated without priors** | “Fits a generative isochrone mixture under stated priors; synthetic recovery and real-data consistency were tested.” |
+| “Automatic”/“reproducible” GUI processing | GUI state, run manifest, caches | **Partial** | Use “parameterised and resumable”; reproducibility requires captured config, package versions, external solver/catalog state and seed. |
+| All science code is GUI-independent (§2) | Step 8/10 headless scripts import PyQt5/GUI workers | **Overstated** | Restrict to the explicitly shared Qt-free modules; call Step 8/10 “off-screen worker execution” until extracted. |
+
+## Required manuscript edits before submission
+
+* Add a one-row-per-experiment table with camera, filter, engine, config, frame/star count, seed, reference and metric.
+* Replace “identical” with “same named function path under the same resolved configuration” where parity was actually checked.
+* Separate software-library validation from APEX workflow validation. A package citation is not a result-level validation.
+* State skipped optional suites and environmental requirements (PyRAF/WSL, ASTAP databases, astrometry.net indices, Gaia network/cache).
+* Remove any “first”, “novel”, “universal”, “automatic recovery”, or “optimized” wording unless backed by a scoped comparison or benchmark.
