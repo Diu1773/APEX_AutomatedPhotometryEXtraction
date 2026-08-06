@@ -40,7 +40,7 @@ APEX의 모든 수치 설정은 작업 폴더의 **`parameters.toml`** 한 파�
 | `telescope_focal_mm` | 망원경 초점거리(mm) | 3947.0 |
 | `camera_pixel_um` | 픽셀 크기(µm) | 3.76 |
 | `binning` | 비닝 | 2 |
-| `gain_e_per_adu` | 게인(e⁻/ADU) — 노이즈 모델 | 0.689 |
+| `gain_e_per_adu` | 게인(e⁻/ADU) — 노이즈 모델 | 0.68 |
 | `rdnoise_e` | 리드노이즈(e⁻) | 2.5 |
 | `saturation_adu` | 포화값(ADU) | 65000 |
 | `datamin_adu` / `datamax_adu` | 측광 유효 하한/상한 | 0.1 / 55000 |
@@ -208,7 +208,7 @@ APEX의 모든 수치 설정은 작업 폴더의 **`parameters.toml`** 한 파�
 
 **`[extinction_fit]`**(소광 피팅 도구): `order`=1, `min_points`=5, `clip_sigma`=3.0, `fit_iters`=5, `use_color_terms`=false.
 
-**`[tools.iraf.params]`** / **`[tools.iraf.filters.*]`** — IRAF/DAOPHOT 도구 파라미터(DATAPARS/FINDPARS/CENTERPARS/FITSKYPARS/PHOTPARS). 픽셀스케일 `pix_scale`=0.392, 게인 `epadu`=0.689 등.
+**`[tools.iraf.params]`** / **`[tools.iraf.filters.*]`** — IRAF/DAOPHOT 도구 파라미터(DATAPARS/FINDPARS/CENTERPARS/FITSKYPARS/PHOTPARS). 픽셀스케일 `pix_scale`=0.392, 게인 `epadu`=0.68 등.
 
 **`[tools.qa_report]`** — QA 리포트: `min_n_frames`=5, `min_snr`=20.0, `max_chi2_nu`=5.0, `exclude_saturated`=true.
 

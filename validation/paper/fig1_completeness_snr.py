@@ -11,7 +11,7 @@ placements. The erf detection-probability form (Masci 2011; Kashyap+2010;
 the AutoPhOT appendix) lives in S/N space and is cited in the text.
 
 Bottom row (AutoPhOT Fig-12 style): cutouts of sources injected with the SAME
-production injection code (empirical PSF, Poisson photons, gain 0.689) at
+production injection code (empirical PSF, Poisson photons, gain 0.68) at
 representative magnitudes, so the reader sees what a star at the measured
 50 per cent depth actually looks like against the noise.
 
@@ -43,7 +43,7 @@ RUN = REPO / "validation" / "paper" / "data" / "artificial_star" / "benchmark_ru
 SUITE = RUN.parent
 OUTDIR = REPO / "validation" / "paper" / "figures"
 
-GAIN = 0.689          # e-/ADU, from run manifest (instrument.gain_e_per_adu)
+GAIN = 0.68          # e-/ADU, from run manifest (instrument.gain_e_per_adu)
 ZP = 25.0             # injection zeropoint, from run summary
 CUTOUT_MAGS = [16.0, 17.0, 17.5, 18.3]
 CUT = 21              # cutout half-size in px

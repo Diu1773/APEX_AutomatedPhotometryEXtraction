@@ -32,6 +32,36 @@ DARKS = r"E:\darks"
 PROGRESS = REPROCESS / "PROGRESS.md"
 TEMPLATE = REPO / "parameters.toml"
 
+# The template seeds every target's config, but it is a workspace file and is
+# therefore not tracked — a stale local copy would silently reprocess everything
+# with the wrong detector constants and nothing downstream would notice. The
+# measured values live in validation/DETECTOR_CONSTANTS.md; assert against them
+# before any frame is written.
+EXPECTED_INSTRUMENT = {
+    "gain_e_per_adu": 0.68,
+    "rdnoise_e": 2.35,
+    "noise_use_fits_header": False,
+}
+
+
+def check_template_constants() -> None:
+    """Fail before the run if the seed config drifted from the measured values."""
+    from apex.config.config_io import load_config_data
+
+    data, _ = load_config_data(TEMPLATE)
+    instrument = data.get("instrument", {})
+    wrong = {
+        key: instrument.get(key)
+        for key, want in EXPECTED_INSTRUMENT.items()
+        if instrument.get(key) != want
+    }
+    if wrong:
+        raise SystemExit(
+            f"{TEMPLATE} disagrees with validation/DETECTOR_CONSTANTS.md: "
+            f"{wrong} (expected {EXPECTED_INSTRUMENT}). Fix the template — every "
+            "target's config is generated from it."
+        )
+
 # Disk floors. E: takes the calibrated output; C: holds the repo, the venv and
 # the pipeline's temporaries and is routinely the tighter of the two, so it is
 # guarded too — it used not to be, and nothing noticed.
@@ -297,14 +327,29 @@ def run_one(target: str) -> bool:
 def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--only", default=None, help="run a single target")
+    ap.add_argument("--out", type=Path, default=None,
+                    help="output root (default the reprocess tree on E:). Point "
+                         "it somewhere new to keep the previous run for comparison.")
     ap.add_argument("--lc", action="store_true",
                     help="also run LC targets (Step 0 preprocess). Deferred by "
                          "default: LC calibrated output is ~180 GB and needs "
                          "E:\\observed_Analysis deleted first.")
     a = ap.parse_args()
+    if a.out is not None:
+        # Rebind the output root before anything resolves a path off it, so
+        # a new run can sit beside the previous one instead of overwriting
+        # the products it will be compared against.
+        global REPROCESS, PROGRESS, OUT_DRIVE
+        REPROCESS = a.out
+        PROGRESS = REPROCESS / "PROGRESS.md"
+        OUT_DRIVE = str(REPROCESS.anchor) or OUT_DRIVE
+        REPROCESS.mkdir(parents=True, exist_ok=True)
+    check_template_constants()
     log(f"# reprocess {time.strftime('%Y-%m-%d %H:%M')} — "
         f"{OUT_DRIVE} free {free_gb(OUT_DRIVE):.0f} GB, "
-        f"{REPO_DRIVE} free {free_gb(REPO_DRIVE):.0f} GB")
+        f"{REPO_DRIVE} free {free_gb(REPO_DRIVE):.0f} GB, "
+        f"gain {EXPECTED_INSTRUMENT['gain_e_per_adu']} e-/ADU, "
+        f"RN {EXPECTED_INSTRUMENT['rdnoise_e']} e-")
     names = [a.only] if a.only else list(TARGETS)
     for t in names:
         if is_done(t):

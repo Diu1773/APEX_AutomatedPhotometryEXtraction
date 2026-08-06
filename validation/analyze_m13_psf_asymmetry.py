@@ -229,7 +229,7 @@ def _stack_residuals(
             mode="nearest",
             prefilter=True,
         )
-        flux_adu = float(row.flux_psf_e) / 0.689
+        flux_adu = float(row.flux_psf_e) / 0.68
         if np.isfinite(flux_adu) and flux_adu > 0:
             stamps.append(stamp / flux_adu)
     if not stamps:

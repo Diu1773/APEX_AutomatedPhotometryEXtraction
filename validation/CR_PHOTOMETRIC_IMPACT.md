@@ -9,6 +9,8 @@ APEX step0 의 cosmetic 보정(우주선·핫픽셀 수리)을 켠 산출물과 
 - CR 끔: `E:/APEX_validation/reprocess/NGC6811/result_nocr/`
 - 비교 열: `mag_inst` (프레임별 기기등급, 노출 정규화됨)
 - 두 산출물 모두 gain 0.689 e-/ADU · 읽기잡음 2.5 e- 설정에서 생성됨
+  (2026-08-06 에 0.68 / 2.35 로 교체되었다 — [DETECTOR_CONSTANTS.md](DETECTOR_CONSTANTS.md).
+  gain 은 오차 계산에만 들어가고 등급은 바꾸지 않으므로 위 Δmag 비교는 유효하다.)
 
 ## 결과
 
@@ -89,5 +91,5 @@ astroscrappy 의 `objlim` 대비 판정이 의도대로 동작하고 있다.
 ## 남은 확인
 
 - `psf_crossinstrument/m67_lco` · `m45_wide` 의 cosmetic 설정 (아직 레거시 TOML)
-- gain·읽기잡음 정본 미확정 — config 0.689/2.5 · 논문 본문 0.681/2.35 ·
-  PTC 실측 JSON 0.7028/2.418 이 서로 다르다. 재처리 전에 하나로 정해야 한다.
+- ~~gain·읽기잡음 정본 미확정~~ → **2026-08-06 확정: 0.68 / 2.35**
+  ([DETECTOR_CONSTANTS.md](DETECTOR_CONSTANTS.md), 커밋 `4edf2e0`)

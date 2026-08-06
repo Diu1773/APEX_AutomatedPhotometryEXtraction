@@ -13,7 +13,7 @@ from apex.benchmark.psf_artificial_stars import inject_flux_catalog
 FRAME = r"E:\APEX_validation\reprocess\M13\calibrated\20260515\pp_messier13-0001-V.fit"
 PSF = REPO / "validation/paper/data_realframe_M13V/artificial_star/benchmark_run/empirical_psf.fits"
 OUT = REPO / "validation/paper/data_realframe_M13V/injection_cutouts.npz"
-GAIN = 0.689
+GAIN = 0.68
 ZP = 25.0
 MAGS = [13.0, 14.0, 14.5, 15.0, 15.5, 16.0]
 HALF = 20  # stamp half-size → 41x41

@@ -183,17 +183,35 @@ sys.exit(1 if failed else 0)
 # ============================================================================
 # IRAF Parameter Dataclass-like storage
 # ============================================================================
+def _instrument_value(instrument, field: str, fallback: float) -> float:
+    """Read one instrument constant, falling back when it is unset."""
+    value = getattr(instrument, field, None) if instrument is not None else None
+    try:
+        value = float(value)
+    except (TypeError, ValueError):
+        return float(fallback)
+    return value if value > 0 else float(fallback)
+
+
 class IRAFParameters:
     """Storage for all IRAF DAOPHOT parameters."""
 
-    def __init__(self):
+    def __init__(self, instrument=None):
+        """Seed the DAOPHOT parameters, taking gain and read noise from the
+        workspace instrument settings when they are available.
+
+        A cross-check against IRAF is only meaningful when both sides are told
+        the same detector constants, so these two must not drift from
+        ``[instrument]``.  The literals below are the last-resort fallback for
+        a tool opened without a workspace.
+        """
         # === DATAPARS ===
         self.scale = 1.0           # Image scale in units/pixel
         self.emission = True       # Emission features (True) or absorption (False)
         self.datamax = 60000.0     # Maximum good data value
         self.noise = "poisson"     # Noise model: poisson, constant, file
-        self.readnoise = 2.5       # CCD readout noise in electrons
-        self.epadu = 0.689         # Gain in electrons per ADU
+        self.readnoise = _instrument_value(instrument, "rdnoise_e", 2.35)
+        self.epadu = _instrument_value(instrument, "gain_e_per_adu", 0.68)
         self.exposure = "EXPTIME"  # Exposure time header keyword
         self.itime = 1.0           # Integration time (if not in header)
 
@@ -1489,7 +1507,7 @@ class IRAFPhotometryWindow(AutoFitMixin, QMainWindow):
         self.data_dir = Path(data_dir)
         self.result_dir = Path(result_dir)
         self.project_state = project_state
-        self.iraf_params = IRAFParameters()
+        self.iraf_params = IRAFParameters(self._instrument())
         self.worker = None
         self.env_worker = None
         self.run_log_window = None
@@ -2899,8 +2917,13 @@ class IRAFPhotometryWindow(AutoFitMixin, QMainWindow):
         p.zmag = self.pp_zmag.value()
         p.mkapert = self.pp_mkapert.isChecked()
 
+    def _instrument(self):
+        """The workspace instrument block, so DAOPHOT is told the same
+        gain and read noise the APEX error model uses."""
+        return getattr(getattr(self, 'app_params', None), 'P', None)
+
     def _load_defaults(self):
-        self.iraf_params = IRAFParameters()
+        self.iraf_params = IRAFParameters(self._instrument())
         self._update_ui_from_params()
         QMessageBox.information(self, "Defaults Loaded", "Default IRAF parameters restored.")
 

@@ -44,7 +44,7 @@ SYN = DATA / "data" / "artificial_star" / "benchmark_run"
 CUTOUTS = DATA / "data_realframe_M13V" / "injection_cutouts.npz"
 OUTDIR = DATA / "figures"
 REPRO = Path(r"E:\APEX_validation\reprocess")
-GAIN = 0.689  # e-/ADU (PTC-measured, C3-61000)
+GAIN = 0.68  # e-/ADU (PTC-measured, C3-61000)
 
 # All real-frame injections — every entry is ONE single exposure (no stacks).
 # hero=True → completeness curve in panel (a); all frames enter panel (b).

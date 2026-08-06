@@ -95,7 +95,7 @@ LC 모드(11단계)는 부제가 **"Light Curve Analysis"** 입니다. 위 그�
 | 망원경 초점거리(mm) | `telescope_focal_mm` | 픽셀 스케일 계산에 사용 | 3947.0 |
 | 카메라 픽셀 크기(µm) | `camera_pixel_um` | 픽셀 스케일 계산에 사용 | 3.76 |
 | 비닝 | `binning` | 2×2면 2 | 2 |
-| 게인(e⁻/ADU) | `gain_e_per_adu` | 광자 노이즈 모델 | 0.689 |
+| 게인(e⁻/ADU) | `gain_e_per_adu` | 광자 노이즈 모델 | 0.68 |
 | 리드노이즈(e⁻) | `rdnoise_e` | 측광 오차 모델 | 2.5 |
 | 포화값(ADU) | `saturation_adu` | 포화 별 제외 기준 | 65000 |
 | 측광 유효 하한/상한(ADU) | `datamin_adu` / `datamax_adu` | 비정상 픽셀 컷 | 0.1 / 55000 |
@@ -171,7 +171,7 @@ ra_deg  = 250.423475                   # 대상 적경(도)
 dec_deg = 36.461319                    # 대상 적위(도)
 
 [instrument]
-gain_e_per_adu = 0.689                 # 게인
+gain_e_per_adu = 0.68                 # 게인
 rdnoise_e      = 2.5                   # 리드노이즈
 saturation_adu = 65000.0               # 포화값
 ```
