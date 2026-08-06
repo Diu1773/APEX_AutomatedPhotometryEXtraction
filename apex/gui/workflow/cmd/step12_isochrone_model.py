@@ -19,7 +19,7 @@ import matplotlib as mpl
 from matplotlib.backends.backend_qt5agg import FigureCanvasQTAgg as FigureCanvas
 from matplotlib.backends.backend_qt5agg import NavigationToolbar2QT as NavigationToolbar
 from matplotlib.figure import Figure
-from matplotlib.colors import LinearSegmentedColormap, Normalize
+from matplotlib.colors import LinearSegmentedColormap, LogNorm, Normalize
 from scipy.spatial import cKDTree
 
 from PyQt5.QtWidgets import (
@@ -33,7 +33,7 @@ from PyQt5.QtCore import Qt, QThread, pyqtSignal, QTimer
 
 from apex.gui.workflow.step_window_base import StepWindowBase
 from apex.gui.layout_rules import clamp_to_screen, scroll_wrap
-from apex.gui.theme import Tokens, refresh, style_button
+from apex.gui.theme import ICON, Tokens, refresh, style_button
 from apex.utils.step_paths_cmd import step9_selection_dir, step10_zp_dir, step12_iso_dir
 from apex.utils.common_helpers import format_cmd_title, target_display_name
 from apex.utils.cmd_gaia_enrichment import merge_gaia_columns_from_catalog
@@ -448,9 +448,14 @@ class IsochroneViewerWindow(QWidget):
         mpl.rcParams['axes.unicode_minus'] = False
         self.figure.clear()
 
+        # Teff spans 2.4 kK–40 kK, but cluster stars sit in the bottom decade,
+        # so a linear ramp painted almost everything in the blue/violet end of
+        # the map. Log scaling puts equal *ratios* of temperature on equal
+        # colour distance — the same reason spectral sequences are drawn in
+        # log Teff — which spreads the real population across the whole ramp.
         teff_vmin = 2400.0
         teff_vmax = 40000.0
-        ob_norm = Normalize(vmin=teff_vmin, vmax=teff_vmax, clip=True)
+        ob_norm = LogNorm(vmin=teff_vmin, vmax=teff_vmax, clip=True)
 
         anchors = [
             (2400, "#E53935"),
@@ -464,7 +469,10 @@ class IsochroneViewerWindow(QWidget):
             (40000, "#7A3CFF"),
         ]
         anchors = sorted(anchors, key=lambda x: x[0])
-        pos = [(t - teff_vmin) / (teff_vmax - teff_vmin) for t, _ in anchors]
+        # Anchor positions must live in the same (log) space as the norm,
+        # otherwise the colours no longer land on their nominal temperatures.
+        _lo, _hi = np.log10(teff_vmin), np.log10(teff_vmax)
+        pos = [(np.log10(t) - _lo) / (_hi - _lo) for t, _ in anchors]
         pos[0] = 0.0
         pos[-1] = 1.0
 
@@ -564,7 +572,12 @@ class IsochroneViewerWindow(QWidget):
         # the right edge by the long Teff (e.g. "35000 K (O)") tick labels.
         cax = self.figure.add_axes([0.86, 0.13, 0.018, 0.75])
         cbar = self.figure.colorbar(sm, cax=cax)
-        cbar.set_label("Teff (K) + OBAFGKM-like color", color="white", labelpad=14)
+        cbar.set_label("Teff (K, log) + OBAFGKM-like color", color="white", labelpad=14)
+        # Log ticks default to decades (10^4 only in this range); pin the
+        # spectral-type landmarks instead so the bar stays readable.
+        _ticks = [2500, 3500, 5000, 7000, 10000, 20000, 40000]
+        cbar.set_ticks(_ticks)
+        cbar.set_ticklabels([f"{t // 1000}k" if t >= 1000 else str(t) for t in _ticks])
         cbar.ax.tick_params(colors="white")
         for sp in cbar.ax.spines.values():
             sp.set_color("white")
@@ -896,6 +909,25 @@ class IsochroneModelWindow(StepWindowBase):
         setup_col.addLayout(sf_layout)
         self.content_layout.addLayout(setup_col)
 
+        # Action bar directly above the plot. The header cluster is the house
+        # convention, but at the top of a tall window the main action was hard
+        # to find ("맨위에 있으면 어떻게 찾냐") — so this step keeps its Run
+        # button where the eye already is: next to the CMD.
+        action_row = QHBoxLayout()
+        self.btn_open_fit = QPushButton(f"{ICON['params']} Auto-fit (MCMC)")
+        style_button(self.btn_open_fit, "primary", height=Tokens.H_ACTION)
+        self.btn_open_fit.setToolTip(
+            "피팅 창 열기/닫기 — 색 선택·prior·MCMC 실행·결과 그림")
+        self.btn_open_fit.clicked.connect(self.toggle_fit_window)
+        action_row.addWidget(self.btn_open_fit)
+
+        btn_log = QPushButton(f"{ICON['log']} Log")
+        style_button(btn_log, "ghost", height=Tokens.H_ACTION)
+        btn_log.clicked.connect(self.show_log_window)
+        action_row.addWidget(btn_log)
+        action_row.addStretch()
+        self.content_layout.addLayout(action_row)
+
         # Internal ROI state
         self._roi_data: dict | None = None
         self._parallax_auto_range_pending = False
@@ -950,13 +982,6 @@ class IsochroneModelWindow(StepWindowBase):
         self.content_layout.addWidget(manual_tab, stretch=1)
         self._cmd_viewer_pending = False
 
-        # Header cluster convention (CLAUDE.md): subclass actions, then
-        # Parameters, then Log, then 가이드. "Fit" is this step's main action.
-        self.add_header_action(
-            "Fit", self.toggle_fit_window,
-            tooltip="Auto-fit (MCMC) 창 열기/닫기 — 피팅 컨트롤·prior·결과 그림")
-        self.add_header_action(
-            "Log", self.show_log_window, tooltip="Isochrone 로그 창")
 
         # --- Log Window (opened from the header "Log" action) ---
         self.log_window = QWidget(self, Qt.Window)

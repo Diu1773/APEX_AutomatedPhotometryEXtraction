@@ -29,7 +29,15 @@ def main() -> int:
     # under Windows display scaling.
     QApplication.setAttribute(Qt.AA_EnableHighDpiScaling, True)
     QApplication.setAttribute(Qt.AA_UseHighDpiPixmaps, True)
-    app = QApplication(sys.argv)
+    # A workspace is chosen by its parameters.toml — without this the app can
+    # only ever open the repo-root file, so switching clusters meant editing
+    # that file (and mixing io paths with another target's [target] block).
+    import argparse
+    ap = argparse.ArgumentParser(add_help=False)
+    ap.add_argument("--params", "-p", default=None,
+                    help="parameters.toml for the workspace to open")
+    cli_args, qt_argv = ap.parse_known_args()
+    app = QApplication([sys.argv[0]] + qt_argv)
     app.setApplicationName("APEX CMD")
     app.setOrganizationName("APEX Project")
     configure_fonts(app)
@@ -42,7 +50,7 @@ def main() -> int:
         pass
     try:
         from apex.gui.main_window import MainWindowWorkflow
-        window = MainWindowWorkflow(mode="cmd")
+        window = MainWindowWorkflow(mode="cmd", param_file=cli_args.params)
         window.show()
     except Exception as e:
         import traceback

@@ -358,6 +358,12 @@ ICON = {
 }
 
 
+# Qt stylesheets need a forward-slash path; keep it absolute so the
+# rule works whatever the process CWD is.
+_CHECK_ICON = (Path(__file__).resolve().parent.parent
+               / "resources" / "check.svg").as_posix()
+
+
 def global_qss(t: type[Tokens] = Tokens) -> str:
     """Return the application-wide stylesheet built from the tokens."""
     return f"""
@@ -388,19 +394,27 @@ def global_qss(t: type[Tokens] = Tokens) -> str:
     QCheckBox::indicator:hover, QRadioButton::indicator:hover {{
         border-color: {t.ACCENT};
     }}
-    /* A filled box is the checked state — APEX ships no tick glyph resource,
-       and pointing at a missing one would blank the indicator entirely. */
+    /* Checked = accent fill + a white tick. A bare filled square reads as
+       "some state", not "on" — users could not tell checked from unchecked. */
     QCheckBox::indicator:checked {{
         background: {t.ACCENT}; border-color: {t.ACCENT};
+        image: url({_CHECK_ICON});
     }}
+    /* Radios get a ring: a thick accent border with the surface showing
+       through the middle, so the dot is visible without an extra asset. */
     QRadioButton::indicator:checked {{
-        background: {t.ACCENT}; border-color: {t.ACCENT};
+        background: {t.SURFACE};
+        border: 4px solid {t.ACCENT};
     }}
     QCheckBox::indicator:disabled, QRadioButton::indicator:disabled {{
         background: {t.SURFACE_ALT}; border-color: {t.BORDER};
     }}
-    QCheckBox::indicator:checked:disabled, QRadioButton::indicator:checked:disabled {{
+    QCheckBox::indicator:checked:disabled {{
         background: {t.ACCENT_MUTED}; border-color: {t.ACCENT_MUTED};
+        image: url({_CHECK_ICON});
+    }}
+    QRadioButton::indicator:checked:disabled {{
+        background: {t.SURFACE_ALT}; border: 4px solid {t.ACCENT_MUTED};
     }}
 
     QSlider::groove:horizontal {{
