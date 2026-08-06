@@ -325,7 +325,7 @@ _fig_html = "".join(
     f'</span><span class="pn"></span></li>'
     for n in sorted(FIGMAP) if n in CAPTIONS)
 
-# ── 표제면: A&A 667, A62 (AutoPhOT 논문) 판면을 참고하되, 투고 후보는 A&C로 표시 ──
+# ── 표제면: A&A 667, A62 (AutoPhOT 논문) 판면과 A&A §15 투고 목표 ──
 #    저널 머리 → 제목 → 저자 → 소속 → 접수일 → 초록(전폭) → Key words → 2단 본문
 _abs = re.search(r'<h2[^>]*\bid=["\']?abstract["\']?[^>]*>.*?</h2>(.*?)(?=<h2)', BODY, re.S)
 ABS_HTML, KW_HTML = "", ""
@@ -340,8 +340,8 @@ if _abs:
 
 TITLEBLOCK = f'''<div class="titleblock">
   <div class="jrnl">
-    <div class="jl">Astronomy and Computing<br><span>투고 준비 원고 · 국문 검토용</span></div>
-    <div class="jr">A&amp;C</div>
+    <div class="jl">Astronomy &amp; Astrophysics<br><span>Section 15 · Numerical methods and codes</span></div>
+    <div class="jr">A&amp;A</div>
   </div>
   <h1 class="ptitle">{html.escape(DOC_TITLE)}</h1>
   <p class="pauth">저자 미기재 (투고 전 확정)</p>

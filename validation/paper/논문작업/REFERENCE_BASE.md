@@ -39,7 +39,17 @@
 파이프라인 넷은 **전부 스크립트 기반**이다. APEX 의 자리는 *GUI 쪽에 수치가 있는 검증이
 없다*는 공백이며, 차별점은 **대상 독자가 아니라 범위와 검증의 형태**다.
 
-## 투고처 한눈에 (2026-08-05 재검토)
+## 투고처 한눈에
+
+**현재 결정 (2026-08-06).** 1차 투고처는 **Astronomy & Astrophysics, Section 15
+"Numerical methods and codes"** 이다. APEX는 단순 GUI 소개가 아니라, 사용자 판단과
+파라미터를 기록하고 같은 계산 코어를 헤드리스로 재실행하는 측광 코드다. 내장 WCS quad
+solver·PDM·SYSREM·구경 보정의 설계와, SEP·IRAF/DAOPHOT·ccdproc·BANZAI·ASTAP·
+astrometry.net과의 독립 대조를 원고의 주된 증거로 제시한다. AutoPhOT은 같은 A&A
+Section 15의 가장 가까운 선례다. AJ는 상향 대안, Astronomy and Computing은 후순위
+대안으로 둔다.
+
+### 과거 비교 기록 (2026-08-05, 현재 결정으로 대체)
 
 | 저널 | IF | 색인 | 상시 여부 | APEX 적합도 |
 |---|---:|---|---|---|
