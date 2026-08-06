@@ -35,9 +35,26 @@ python scripts/smoke_steps.py
 
 ## Configuration
 
-Runtime parameters are read from `parameters.toml` in the working directory (not committed). Copy from `parameters.example.toml` to create it. The TOML is parsed by `apex/config/parameters_cmd.py` and `apex/config/parameters_lc.py`. It covers I/O paths, target coordinates, telescope/camera specs, detection thresholds, WCS solving, and airmass settings.
+**JSON is the single authority** (2026-08-06, "TOML 완전 제거"): each workspace
+owns an `apex_config.json` (uncommitted) covering I/O paths, target
+coordinates, instrument specs, detection thresholds, WCS solving, and airmass
+settings. All read/write goes through `apex/config/config_io.py` —
+`load_config_data()` / `save_config_data()` — and is parsed into runtime
+params by `apex/config/parameters_cmd.py` / `parameters_lc.py`.
 
-The app caches the last-used parameter file path in `~/.apex/last_param.txt`.
+- **Legacy TOML**: a `parameters*.toml` is migrated to its JSON sibling on
+  first load (`parameters.toml` → `apex_config.json`,
+  `parameters_X.toml` → `apex_config_X.json`) and never re-read afterwards —
+  a newer TOML mtime only produces an "IGNORED" warning. Never write TOML.
+- **Choosing a workspace**: GUI entry points accept
+  `--params <apex_config.json|legacy.toml|dir>`; without it the repo-root
+  config is used. (`~/.apex/last_param.txt` was documented before but never
+  implemented — do not rely on it.)
+- **Identity guard**: `check_workspace_identity()` warns when `target.name`
+  does not match the io paths (the "M13 paths + NGC 6811 target" mixing
+  accident). Warn-only by design.
+- `parameters.example.toml` remains only as the commented template; first-run
+  bootstrap converts it to `apex_config.json`.
 
 ## Architecture
 

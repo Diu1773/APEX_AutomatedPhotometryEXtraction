@@ -220,21 +220,25 @@ def reorg_per_object(target: str) -> Path:
 
 
 def gen_config(target: str, sci: Path, ra: float, dec: float) -> Path:
-    """Write reprocess/<target>/parameters.toml from the template with new io/target."""
-    # utf-8-sig strips a UTF-8 BOM if one crept into the template (e.g. a
-    # PowerShell `Set-Content -Encoding utf8` edit adds one); a leading BOM makes
-    # the TOML parser fail with "Invalid statement (at line 1, column 1)".
-    txt = TEMPLATE.read_text(encoding="utf-8-sig")
+    """Write reprocess/<target>/apex_config.json from the template.
+
+    Structured edits on the parsed dict — the old regex surgery on TOML text
+    broke twice on escaped Windows backslashes and is exactly the class of
+    accident the JSON authority removes.
+    """
+    from apex.config.config_io import load_config_data, save_config_data
+
+    data, _ = load_config_data(TEMPLATE)
     result = REPROCESS / target / "result"
-    esc = lambda p: str(p).replace("\\", "\\\\")   # TOML needs doubled backslashes
-    # lambda replacements avoid re.sub interpreting backslashes in the replacement
-    txt = re.sub(r'(?m)^data_dir\s*=.*$', lambda m: f'data_dir = "{esc(sci)}"', txt)
-    txt = re.sub(r'(?m)^result_dir\s*=.*$', lambda m: f'result_dir = "{esc(result)}"', txt)
+    data.setdefault("io", {})["data_dir"] = str(sci)
+    data["io"]["result_dir"] = str(result)
+    tgt = data.setdefault("target", {})
+    tgt["name"] = target
     if ra is not None:
-        txt = re.sub(r'(?m)^ra_deg\s*=.*$', lambda m: f'ra_deg = {ra}', txt)
-        txt = re.sub(r'(?m)^dec_deg\s*=.*$', lambda m: f'dec_deg = {dec}', txt)
-    cfg = REPROCESS / target / "parameters.toml"
-    cfg.write_text(txt, encoding="utf-8")
+        tgt["ra_deg"] = float(ra)
+        tgt["dec_deg"] = float(dec)
+    cfg = REPROCESS / target / "apex_config.json"
+    save_config_data(cfg, data)
     return cfg
 
 

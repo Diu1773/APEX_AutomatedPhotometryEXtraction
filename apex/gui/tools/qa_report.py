@@ -1186,8 +1186,8 @@ class QAReportWindow(ToolWindowBase):
         if not path.exists():
             return
         try:
-            from apex.utils.io_utils import load_toml
-            data = load_toml(path)  # BOM-tolerant
+            from apex.config.config_io import load_config_data
+            data, path = load_config_data(path)  # JSON authority
             tools = data.get("tools", {}) if isinstance(data, dict) else {}
             cfg = tools.get("qa_report", {}) if isinstance(tools, dict) else {}
             if not cfg:
@@ -1227,8 +1227,8 @@ class QAReportWindow(ToolWindowBase):
         data = {}
         if path.exists():
             try:
-                from apex.utils.io_utils import load_toml
-                data = load_toml(path)  # BOM-tolerant
+                from apex.config.config_io import load_config_data
+                data, path = load_config_data(path)  # JSON authority
             except Exception:
                 data = {}
         cfg = {
@@ -1257,8 +1257,8 @@ class QAReportWindow(ToolWindowBase):
             tools = {}
         tools["qa_report"] = cfg
         data["tools"] = tools
-        with path.open("wb") as f:
-            tomli_w.dump(data, f)
+        from apex.config.config_io import save_config_data
+        save_config_data(path, data)
 
     def _make_status_card(self, key: str, title: str) -> QFrame:
         frame = QFrame()

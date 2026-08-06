@@ -63,8 +63,8 @@ class CmdBatchConfig:
 
 def load_cmd_batch_config(path: str | Path) -> CmdBatchConfig:
     config_path = Path(path)
-    from apex.utils.io_utils import load_toml
-    raw = load_toml(config_path)  # BOM-tolerant
+    from apex.config.config_io import load_config_data
+    raw, config_path = load_config_data(config_path)  # JSON authority
     section = dict(raw.get("cmd_batch", raw))
     known = set(CmdBatchConfig.__dataclass_fields__)
     unknown = sorted(set(section) - known)

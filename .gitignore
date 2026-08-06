@@ -16,6 +16,7 @@ site/
 
 # User/runtime state
 parameters.toml
+apex_config*.json
 parameters_*.toml
 apex/.state/
 

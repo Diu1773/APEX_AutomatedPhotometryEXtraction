@@ -15,7 +15,6 @@ try:
 except ImportError:
     import tomli as tomllib  # Python 3.10 and earlier
 
-import tomli_w
 from pydantic import BaseModel, Field, field_validator, model_validator, ConfigDict
 
 
@@ -1601,9 +1600,8 @@ class Parameters(BaseModel):
     @classmethod
     def from_toml(cls, path: Path | str) -> "Parameters":
         """Load parameters from TOML file"""
-        path = Path(path)
-        from apex.utils.io_utils import load_toml
-        data = load_toml(path)  # BOM-tolerant (PowerShell-written files)
+        from apex.config.config_io import load_config_data
+        data, path = load_config_data(path)  # JSON authority
 
         # Handle nested configs
         params = cls._parse_toml_data(data)
@@ -1664,8 +1662,8 @@ class Parameters(BaseModel):
         path = Path(path)
         data = self._to_toml_dict()
 
-        with open(path, "wb") as f:
-            tomli_w.dump(data, f)
+        from apex.config.config_io import resolve_config_path, save_config_data
+        save_config_data(resolve_config_path(path), data)
 
     def _to_toml_dict(self) -> Dict[str, Any]:
         """Convert to TOML-compatible dictionary"""

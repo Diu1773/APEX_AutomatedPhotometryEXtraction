@@ -867,8 +867,8 @@ class FileSelectionWindow(StepWindowBase):
         if not param_path.exists():
             return
         try:
-            from apex.utils.io_utils import load_toml
-            data = load_toml(param_path)  # BOM-tolerant
+            from apex.config.config_io import load_config_data
+            data, param_path = load_config_data(param_path)  # JSON authority
         except Exception:
             return
 
@@ -889,10 +889,8 @@ class FileSelectionWindow(StepWindowBase):
                     tgt_block[key] = value
             data["target"] = tgt_block
 
-        try:
-            with param_path.open("wb") as f:
-                tomli_w.dump(data, f)
-        except Exception:
+        from apex.config.config_io import save_config_data
+        if not save_config_data(param_path, data):
             return
 
     # -------------------------------------------------------------------------

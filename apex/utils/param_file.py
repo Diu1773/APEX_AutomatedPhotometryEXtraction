@@ -1,4 +1,4 @@
-"""Write settings back into the user's ``parameters.toml``.
+"""Write settings back into the user's workspace config (JSON).
 
 Extracted from the Step 1 window so any window can persist what the user
 changed — a setting that resets when the window closes is a setting the user
@@ -12,10 +12,6 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any, Dict, Mapping, Optional, Sequence
 
-try:                                          # optional writer dependency
-    import tomli_w
-except ImportError:                           # pragma: no cover - env-dependent
-    tomli_w = None
 
 
 def _section(data: Dict[str, Any], path: Sequence[str]) -> Dict[str, Any]:
@@ -36,25 +32,16 @@ def update_param_file(param_file, sections: Mapping[Sequence[str], Mapping[str, 
 
     ``sections`` maps a TOML path (``("calibration",)``, ``("calibration",
     "overscan")``) to the keys to set there; a ``None`` value removes the key.
-    Returns True when the file was rewritten.  Falls back to
-    ``params.save_toml()`` when the TOML writer is unavailable.
+    Returns True when the file was rewritten.
     """
-    if tomli_w is None:
-        if params is not None and hasattr(params, "save_toml"):
-            try:
-                params.save_toml()
-            except Exception:
-                return False
-        return False
-
-    path = Path(param_file or "parameters.toml")
-    if not path.exists():
-        return False
+    from apex.config.config_io import load_config_data, save_config_data
 
     try:
-        from apex.utils.io_utils import load_toml
-        data = load_toml(path)                # BOM-tolerant
+        data, path = load_config_data(param_file or "parameters.toml")
     except Exception:
+        return False
+    if not data and not path.exists():
+        # Nothing to merge into — the workspace has no config yet.
         return False
 
     for keys, updates in sections.items():
@@ -67,9 +54,4 @@ def update_param_file(param_file, sections: Mapping[Sequence[str], Mapping[str, 
             else:
                 block[key] = value
 
-    try:
-        with path.open("wb") as fh:
-            tomli_w.dump(data, fh)
-    except Exception:
-        return False
-    return True
+    return save_config_data(path, data)

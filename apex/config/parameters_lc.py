@@ -12,10 +12,6 @@ try:  # Python 3.11+
     import tomllib  # type: ignore
 except Exception:  # Python 3.10 and earlier
     import tomli as tomllib  # type: ignore
-try:
-    import tomli_w  # type: ignore
-except Exception:
-    tomli_w = None
 
 from apex.config.calibration_section import read_calibration_section
 from apex.config.parameter_map import (
@@ -349,8 +345,11 @@ def _read_toml(path: Path) -> Dict[str, Any]:
     if not path.exists():
         return {}
 
-    from apex.utils.io_utils import load_toml
-    data = load_toml(path)  # BOM-tolerant (PowerShell-written files)
+    from apex.config.config_io import check_workspace_identity, load_config_data
+    data, _cfg_path = load_config_data(path)  # JSON authority; legacy TOML auto-migrated
+    for _issue in check_workspace_identity(data, _cfg_path):
+        import warnings as _warnings
+        _warnings.warn(f"[workspace] {_issue}")
 
     raw: Dict[str, Any] = {}
     raw["schema_version"] = read_schema_version(data)
@@ -455,6 +454,8 @@ class Parameters:
     """
 
     def __init__(self, param_file: str | Path = "parameters.toml"):
+        from apex.config.config_io import migrate_config_path
+        param_file = migrate_config_path(param_file)
         """Initialize parameters from file"""
         self.param_file = Path(param_file)
         self.P = self._load_from_file(self.param_file)
@@ -949,10 +950,10 @@ class Parameters:
                 value = str(value)
             data["parameters"][key] = value
 
-        if tomli_w is None:
-            raise RuntimeError("tomli_w is required to write parameters.toml")
-        with path.open("wb") as f:
-            tomli_w.dump(data, f)
+        from apex.config.config_io import resolve_config_path, save_config_data
+        out = resolve_config_path(path)
+        if not save_config_data(out, data):
+            raise RuntimeError(f"could not write workspace config: {out}")
 
     def get(self, name: str, default=None):
         """Get parameter value with fallback to raw dict"""
@@ -983,15 +984,18 @@ class Parameters:
         return Path(self.P.data_dir) / filename
 
     def save_toml(self, path: Path | str | None = None) -> bool:
-        """Persist current parameters to TOML file."""
-        if tomli_w is None:
-            return False
-        param_path = Path(path or getattr(self, "param_file", "parameters.toml"))
+        """Persist current parameters to the workspace JSON (name historical)."""
+        from apex.config.config_io import load_config_data, save_config_data
         try:
-            from apex.utils.io_utils import load_toml
-            data = load_toml(param_path)
+            data, param_path = load_config_data(
+                path or getattr(self, "param_file", "parameters.toml"))
         except Exception:
+            param_path = None
             data = {}
+        if param_path is None:
+            from apex.config.config_io import resolve_config_path
+            param_path = resolve_config_path(
+                path or getattr(self, "param_file", "parameters.toml"))
         ensure_schema_version(data)
 
         for path_keys, attr in TOML_KEY_MAP:
@@ -1013,11 +1017,9 @@ class Parameters:
         if hasattr(self.P, "wcs_refine_enable"):
             _set_path(data, ("wcs_refine", "enable"), bool(getattr(self.P, "wcs_refine_enable")))
 
-        try:
-            with param_path.open("wb") as f:
-                tomli_w.dump(data, f)
-        except Exception:
+        if not save_config_data(param_path, data):
             return False
+        self.param_file = Path(param_path)
         self.param_hash = self._compute_hash(param_path)
         return True
 

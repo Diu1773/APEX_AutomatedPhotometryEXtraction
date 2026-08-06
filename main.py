@@ -87,9 +87,10 @@ def _make_app_icon() -> QIcon:
 
 
 def _ensure_parameters() -> str | None:
-    """Copy parameters.example.toml → parameters.toml on first run."""
-    params = _APP_DIR / "parameters.toml"
-    if params.exists():
+    """Create the workspace JSON from the bundled example on first run."""
+    params = _APP_DIR / "apex_config.json"
+    if params.exists() or (_APP_DIR / "parameters.toml").exists():
+        # An existing legacy TOML is migrated lazily by config_io on load.
         return None
     if _FROZEN:
         example = Path(sys._MEIPASS) / "parameters.example.toml"
@@ -98,9 +99,11 @@ def _ensure_parameters() -> str | None:
     if not example.exists():
         return f"Default parameter file is missing:\n{example}"
     if example.exists():
-        import shutil
         try:
-            shutil.copy(example, params)
+            from apex.config.config_io import load_config_data, save_config_data
+            data, _ = load_config_data(example)
+            if not save_config_data(params, data):
+                raise OSError("write failed")
         except Exception as exc:
             return (
                 "Could not create runtime parameters.toml.\n\n"

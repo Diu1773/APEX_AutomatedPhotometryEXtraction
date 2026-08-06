@@ -82,8 +82,8 @@ class BenchmarkConfig:
 
 def load_benchmark_config(path: str | Path) -> BenchmarkConfig:
     config_path = Path(path)
-    from apex.utils.io_utils import load_toml
-    raw = load_toml(config_path)  # BOM-tolerant
+    from apex.config.config_io import load_config_data
+    raw, config_path = load_config_data(config_path)  # JSON authority
     section = dict(raw.get("benchmark", raw))
     detection_overrides = dict(raw.get("detection_overrides", {}))
     known = set(BenchmarkConfig.__dataclass_fields__)

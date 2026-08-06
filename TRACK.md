@@ -92,6 +92,29 @@
   검증: 컴파일+임포트+이소크론 테스트 20 passed. **실 GUI 구동 확인은
   미완**(offscreen 전체 창 생성이 침묵 크래시 — 기존 백로그 「GUI 실구동
   사용감」과 함께 다음 GUI 세션에서).
+- **설정 체계 대수술 — TOML 완전 제거, JSON 정본 (2026-08-06, 사용자 결정)**
+  — 배경: 루트 parameters.toml 하나를 대상마다 덮어쓰다 io=M13 +
+  target=NGC6811 혼합 사고(제목/plot 불일치), gri 워크스페이스에 johnson
+  격자, last_param.txt 는 서술만 있고 미구현. 구조 수리:
+  ① `apex/config/config_io.py` 신설 — JSON 정본, 레거시 TOML 은 첫 로드에
+  1회 자동 마이그레이션(`parameters_X.toml→apex_config_X.json` 충돌 없는
+  매핑), 이후 TOML 이 더 새로워도 **무시+경고**(이중 진실 차단), 원자적
+  쓰기, `_meta.migrated_from` 기록. ② 초크포인트 전환: parameters_cmd/lc
+  (reader+save_toml+flat save), param_file.update_param_file, Step1 공통/LC
+  target 저장, qa_report, benchmark runner/cmd_batch, schema.from_toml/
+  to_toml — **tomli_w 의존 전부 제거**(pyproject.toml 검사·IRAF 도구 내부
+  설정만 정당한 TOML 로 잔존). ③ reprocess_batch.gen_config 를 정규식
+  TOML 수술 → 구조적 JSON 생성으로 바꾸고 **target.name 을 io 와 함께
+  기록**(혼합 사고 원천 차단). ④ `check_workspace_identity()` — target.name
+  이 io 경로에 안 보이면 경고(오늘 사고 재현 케이스로 검증, 공백/대소문자
+  내성). ⑤ 진입점 --params 는 json/toml/dir 모두 수용, main.py 첫 실행은
+  example→apex_config.json 생성. .gitignore 에 apex_config*.json.
+  검증: config_io 단위테스트 7 + 갱신된 파라미터 스위트 42 passed, 실 E:
+  워크스페이스 마이그레이션 스모크(표준/변형 이름·왕복·JSON 우선) 전부
+  PASS, 헤드리스 step10 이 TOML 경로 입력으로 동일 결과(dU -0.1312).
+  **잔여(2단계)**: GUI File>Open/New/Recent 워크스페이스 + 신원 경고
+  다이얼로그 표면화, 매뉴얼 갱신, E: 레거시 TOML 은 lazy 마이그레이션에
+  맡김(일괄 변환 불필요).
 - **Step 12 재구조 — 탭 제거, Fit 별도 창 (2026-08-05, 사용자 결정 A/B/C
   중 '별도 창')** — 본문 = CMD Viewer 단독, Auto-fit(MCMC) UI 전체는
   헤더 `Fit` 버튼으로 여닫는 독립 창(`self.fit_window`, scroll_wrap +

@@ -242,7 +242,6 @@ def test_missing_manual_noise_values_load_as_header_fallback_candidates(tmp_path
 
 
 def test_save_toml_writes_canonical_schema_version(tmp_path):
-    pytest.importorskip("tomli_w")
     param_path = _write_minimal_toml(tmp_path)
     params = CmdParameters(param_path)
 
@@ -254,8 +253,15 @@ def test_save_toml_writes_canonical_schema_version(tmp_path):
     assert data["detection"]["engine"] == "sep"
 
 
+def _read_authority(param_path):
+    """Saved settings land in the workspace JSON authority, not the TOML."""
+    import json
+    from apex.config.config_io import resolve_config_path
+    auth = resolve_config_path(param_path)
+    return json.loads(auth.read_text(encoding="utf-8"))
+
+
 def test_save_toml_removes_blank_manual_noise_values(tmp_path):
-    pytest.importorskip("tomli_w")
     param_path = _write_minimal_toml(tmp_path)
     params = CmdParameters(param_path)
 
@@ -263,15 +269,13 @@ def test_save_toml_removes_blank_manual_noise_values(tmp_path):
     params.P.rdnoise_e = None
     assert params.save_toml()
 
-    with param_path.open("rb") as fh:
-        data = tomllib.load(fh)
+    data = _read_authority(param_path)
     assert "gain_e_per_adu" not in data["instrument"]
     assert "rdnoise_e" not in data["instrument"]
 
 
 @pytest.mark.parametrize("ParamsCls", [CmdParameters, LcParameters])
 def test_save_toml_removes_blank_target_coordinates(tmp_path, ParamsCls):
-    pytest.importorskip("tomli_w")
     param_path = _write_minimal_toml(tmp_path)
     param_path.write_text(
         param_path.read_text(encoding="utf-8")
@@ -286,15 +290,13 @@ def test_save_toml_removes_blank_target_coordinates(tmp_path, ParamsCls):
     params.P.target_dec_deg = None
     assert params.save_toml()
 
-    with param_path.open("rb") as fh:
-        data = tomllib.load(fh)
+    data = _read_authority(param_path)
     assert data["target"]["name"] == "M37"
     assert "ra_deg" not in data["target"]
     assert "dec_deg" not in data["target"]
 
 
 def test_save_toml_preserves_forced_phot_quality_knobs(tmp_path):
-    pytest.importorskip("tomli_w")
     param_path = _write_minimal_toml(tmp_path)
     params = CmdParameters(param_path)
 

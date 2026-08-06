@@ -42,8 +42,16 @@ def _write(tmp_path, text=TOML):
 
 
 def _parse(path):
-    from apex.utils.io_utils import load_toml
-    return load_toml(path)
+    """Read back what update_param_file wrote — the JSON authority when it
+    exists (post-TOML-removal), else the original file."""
+    import json
+    from apex.config.config_io import resolve_config_path
+    auth = resolve_config_path(path)
+    if auth.exists():
+        return json.loads(auth.read_text(encoding="utf-8"))
+    import tomllib
+    with open(path, "rb") as fh:
+        return tomllib.load(fh)
 
 
 def test_read_calibration_section_flattens_overscan(tmp_path):
