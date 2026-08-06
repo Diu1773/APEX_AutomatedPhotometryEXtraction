@@ -329,11 +329,12 @@ v0.1.0 태그는 있음).
 - 증류 데이터 `validation/paper/data_parameter_sweep/` 커밋, 재조판은
   `fig3_parameter_sweep.py --figure-only`(벤치 캐시 `Temp\apx_sweep`).
   fig 스크립트 6개 REPO 하드코딩 제거(`__file__` 기준, 워크트리 안전).
-- **정리 남음**: 브랜치 `claude2/festive-merkle-659e92` 와 그 워크트리
-  (`.claude/worktrees/festive-merkle-659e92`)는 완전 머지됐지만, 머지한 세션이
-  그 안에서 돌고 있어 지우지 않았다. 다음 세션이 지운다 —
-  `git worktree remove .claude/worktrees/festive-merkle-659e92` 후
-  `git branch -d claude2/festive-merkle-659e92`.
+- ~~정리 남음: 브랜치 `claude2/festive-merkle-659e92` 와 그 워크트리~~ →
+  **2026-08-06 정리 완료.** 지우기 전 세 가지를 확인했다: 브랜치가 main 에
+  머지됨 · 워크트리의 detached HEAD `39a812f` 가 main 에 포함됨 ·
+  미커밋 변경 없음. 삭제 후 `39a812f` 가 여전히 조회되는 것으로 손실 0 을
+  확인했다. **부수 효과: 레포 전역 grep 이 빨라진다** — 사본까지 훑느라
+  2 분 넘게 걸리던 검색이 있었다.
 
 **2026-08-02 · §3 완성 — 절 stub 0** (`f756bce` 까지)
 
