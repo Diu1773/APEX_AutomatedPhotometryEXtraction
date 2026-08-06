@@ -1236,7 +1236,6 @@ class IsochroneModelWindow(StepWindowBase):
         self.mcmc_colors_layout.setContentsMargins(0, 0, 0, 0)
         self.mcmc_colors_layout.addWidget(QLabel("(open tab to detect)"))
         btn_detect_colors = QPushButton("detect")
-        btn_detect_colors.setMaximumWidth(80)
         btn_detect_colors.setToolTip("Re-scan the data for available colours and rebuild the checkboxes.")
         btn_detect_colors.clicked.connect(self._mcmc_refresh_color_checks)
         colors_row.addWidget(self._mcmc_colors_holder, 1)
@@ -1449,6 +1448,13 @@ class IsochroneModelWindow(StepWindowBase):
             self.mcmc_color_checks[(b1, b2)] = chk
             self.mcmc_colors_layout.addWidget(chk)
         self.mcmc_colors_layout.addStretch()
+        # The colour row sits in a QFormLayout field, which happily squeezes
+        # its widget below the hint and clips the labels ("g-r" -> "g-"). Pin
+        # the holder to what the boxes actually need so a narrower window
+        # scrolls instead of cutting the text.
+        need = sum(c.sizeHint().width() + self.mcmc_colors_layout.spacing()
+                   for c in self.mcmc_color_checks.values())
+        self._mcmc_colors_holder.setMinimumWidth(max(need, 120))
 
         # No blue band -> surface the spectroscopic-prior guidance up front
         # (the run-time log warning is too late to change the plan).
