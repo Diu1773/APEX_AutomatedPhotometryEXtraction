@@ -435,6 +435,15 @@
 
 **2026-08-07 성능 감사 인수인계**
 
+> **인수 완료 (2026-08-07 저녁, 사용자 지시)** — 이 작업은 Codex 에서 Claude
+> 세션으로 넘어왔다. 실행 계획은 `docs/audit/APEX_PERF_DEV_PLAN.md`
+> (Phase 0 계측 → 1 before 수치 → 2 최적화 O1 streaming/O2 workers/O3 LC cache
+> → 3 clean run, 처리 순서 공용체인→CMD→LC, 합계 약 1주).
+> baseline 메타데이터는 `validation/BASELINE_2026-08-07.md` 에 있고
+> (수치 포함, peak RSS 만 미측정 — Phase 1 B1 이 채운다), native 구현의
+> 탄생 이력·근거 등급은 `docs/audit/APEX_NATIVE_PROVENANCE.md` 에 있다.
+> 그 근거 정렬 중 `bn.nanstd` float32 결함을 적발·수정했다(`718427f`).
+
 - 다른 세션에서 진행 중인 Step 0 재처리는 **최적화 전 baseline**으로 끝까지 보존한다.
   raw FITS 입력·새 출력 폴더·git commit·파라미터/패키지 버전·worker 수·실행 시간·peak
   RSS를 남긴다. 기존 보정 산출물이나 기존 run을 입력/출력으로 재사용하지 않는다.
