@@ -54,6 +54,32 @@
 각 게이트에 **전체 pytest 통과**가 포함된다. 게이트 실패 = 그 최적화 폐기
 (baseline 이 남아 있으므로 되돌림은 git revert 하나).
 
+### O2 설계 확정 (2026-08-07)
+
+일반 도구의 "auto"는 거의 전부 CPU 수만 본다 — `multiprocessing.Pool`
+기본값·pytest `-n auto`·`make -j` 전부. RAM 까지 보는 자동화는
+dask(워커당 `memory_limit` + 80 % 일시정지·스필)나 배치 시스템(작업당
+메모리 신청)처럼 큰 시스템에만 있고, **실행 중 동적 조절은 진동·복잡성
+때문에 이 규모에서 과하다.** 일반 도구가 RAM auto 를 못 하는 이유는
+작업당 메모리를 미리 모르기 때문인데, APEX 는 워크로드가 균질(같은 크기
+프레임의 반복)해서 작업당 peak 를 실측할 수 있다 — 그래서 시작 시
+승인 제어가 신뢰 가능하다.
+
+```
+workers = clamp(1, cpu상한(기존 75 %), 가용RAM × 0.6 ÷ 작업당 peak)
+```
+
+- 작업당 peak 는 추측이 아니라 **Phase 1 (B1/B2) 실측 계수**다
+- I/O 무거운 단계는 별도 상한 — E: 외장 디스크에서 동시 읽기는 역효과이며,
+  B2 스윕이 꺾이는 지점이 그 상한이다
+- **auto 가 고른 값과 근거(가용 RAM·계수)를 `pipeline_run.json` 에 기록**한다
+  (Codex P2 "worker counts" 항목). "auto 였다"로 끝나면 재현이 안 된다
+- 결과는 worker 수와 무관해야 하고(비트동일 게이트), 따라서 auto 는 순수
+  성능 손잡이다. 사용자 override(`max_workers`)는 유지한다
+- 1차 방어선은 worker 수가 아니라 **작업 내부 메모리 바운드**
+  (row-band combine — ccdproc `mem_limit` 와 같은 패턴)이고, worker 상한은
+  2차다
+
 CMD 는 별도 최적화 항목이 없다 — MCMC 는 계산 자체가 지배적이고
 (LC 리뷰 P2 판정과 동일 논리) 재현성 seed 는 이미 있다. CMD 차례에는
 Phase 3 clean run 의 CMD 산출물 검증으로 갈음한다.
