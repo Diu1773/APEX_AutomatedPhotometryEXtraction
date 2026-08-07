@@ -77,31 +77,44 @@ class _RssPoller(threading.Thread):
         self.peak_self = 0
         self.peak_total = 0
         self.peak_uss = 0
+        self.peak_uss_total = 0
 
     def run(self) -> None:  # pragma: no cover - timing-dependent
         while not self._halt.is_set():
             try:
                 rss = self._proc.memory_info().rss
                 total = rss
-                for child in self._proc.children(recursive=True):
-                    try:
-                        total += child.memory_info().rss
-                    except (psutil.NoSuchProcess, psutil.AccessDenied):
-                        continue
-                self.peak_self = max(self.peak_self, rss)
-                self.peak_total = max(self.peak_total, total)
+                try:
+                    children = self._proc.children(recursive=True)
+                except psutil.Error:
+                    # A transient failure enumerating children must not end the
+                    # watch: an earlier version broke out of the loop here and
+                    # reported a process's start-up size (5 MB) as its peak.
+                    children = []
                 # RSS counts resident pages of memory-mapped files, which the OS
                 # can evict on demand — a streaming reader that mmaps its inputs
                 # looks like it uses more memory than one that allocates real
                 # arrays. USS excludes those shared/file-backed pages, so it is
                 # the number that reflects actual OOM pressure.
                 try:
-                    self.peak_uss = max(self.peak_uss,
-                                        self._proc.memory_full_info().uss)
-                except Exception:
-                    pass
-            except (psutil.NoSuchProcess, psutil.AccessDenied):
-                break
+                    uss = self._proc.memory_full_info().uss
+                except psutil.Error:
+                    uss = 0
+                uss_total = uss
+                for child in children:
+                    try:
+                        total += child.memory_info().rss
+                        uss_total += child.memory_full_info().uss
+                    except psutil.Error:
+                        continue
+                self.peak_self = max(self.peak_self, rss)
+                self.peak_total = max(self.peak_total, total)
+                self.peak_uss = max(self.peak_uss, uss)
+                self.peak_uss_total = max(self.peak_uss_total, uss_total)
+            except psutil.NoSuchProcess:
+                break                     # the process really is gone
+            except psutil.Error:
+                pass                      # transient; keep watching
             self._halt.wait(self._poll_s)
 
     def stop(self) -> None:
@@ -174,10 +187,13 @@ def measure_command(cmd: list, *, label: str, env: dict | None = None,
     metrics["returncode"] = returncode
     if poller is not None:
         poller.stop()
-        # For a subprocess the child tree IS the workload; self==the child.
-        metrics["peak_rss_mb"] = round(poller.peak_self / 1e6, 1)
+        # Report the whole tree: a venv's python.exe on Windows is a ~5 MB
+        # launcher stub that execs the real interpreter as a child, so the
+        # parent's own numbers describe the stub, not the workload.
+        metrics["peak_rss_mb"] = round(poller.peak_total / 1e6, 1)
         metrics["peak_rss_total_mb"] = round(poller.peak_total / 1e6, 1)
-        metrics["peak_uss_mb"] = round(poller.peak_uss / 1e6, 1) or None
+        metrics["peak_rss_launcher_mb"] = round(poller.peak_self / 1e6, 1)
+        metrics["peak_uss_mb"] = round(poller.peak_uss_total / 1e6, 1) or None
     else:
         metrics["peak_rss_mb"] = None
         metrics["peak_rss_total_mb"] = None
