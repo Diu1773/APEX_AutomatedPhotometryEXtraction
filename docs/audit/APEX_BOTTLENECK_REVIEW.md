@@ -78,6 +78,33 @@ wrapper in calibration-like reductions, but not replacing every direct NumPy cal
    rerun a hardware-normalised benchmark with cold/warm cache, RSS, worker count,
    package versions and repeated runs.
 
+## Why and when to rerun the pipeline
+
+The Step 0 run currently in progress in another session is the pre-optimisation
+baseline. It should finish and be preserved rather than being overwritten. Its role is
+to provide the numerical reference needed to distinguish a genuine performance change
+from a silent change in calibration, masking or row selection.
+
+Bottleneck is not being introduced as a package-wide speed switch. The first changes
+target memory and data movement: streaming calibration avoids image-count-scaled OOM,
+LC caches avoid repeated CSV/pandas work, and bounded workers avoid CPU/RAM/I/O
+oversubscription. Only after those changes are measured should large reductions in a
+calibration or compact ensemble matrix be routed through `fast_stats`.
+
+The acceptance sequence is:
+
+1. Record the baseline manifest (raw input, output directory, commit, parameters,
+   versions, worker count, wall time, peak RSS and Bottleneck active/fallback state).
+2. Apply one optimisation class at a time and compare a fixed subset against the
+   baseline, including values and NaN masks—not merely elapsed time.
+3. Freeze the accepted code and perform a clean Step 0-to-downstream run from raw
+   input. This is the only run eligible for final manuscript numbers.
+
+The reason for the full rerun is scientific provenance: all downstream tables and
+figures must come from one coherent code/configuration state, with no stale cache or
+mixed pre/post-optimisation products. Git history cleanup is useful documentation but
+is not a prerequisite for this numerical acceptance gate.
+
 ## Manuscript-safe sentence
 
 > Bottleneck is a declared core dependency used through `apex.utils.fast_stats` for

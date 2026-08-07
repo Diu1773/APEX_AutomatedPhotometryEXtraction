@@ -23,6 +23,29 @@ calibration/ensemble/detrend 통계에만 Bottleneck을 적용**하는 것이다
 이 문서는 코드 검토 결과이지 속도 개선을 이미 입증한 결과가 아니다. 숫자 성능 주장은
 고정 입력, cache warm/cold, worker 수, peak RSS를 기록한 별도 실험 뒤에만 허용한다.
 
+## 재처리 인수인계 기준
+
+현재 다른 세션에서 수행 중인 Step 0 재처리는 baseline으로 보존한다. 이 실행의
+목적은 최적화 전 결과를 확보하여 이후의 I/O·자료구조 변경이 과학 결과를 바꾸지
+않았는지 비교할 기준을 만드는 것이다. 최종 논문 결과로 확정하기 전에 다음 순서를
+지킨다.
+
+1. 원본 raw FITS, 새 출력 디렉터리, git commit, 파라미터·패키지 버전, worker 수,
+   실행 시간과 peak RSS를 기록한다.
+2. source-map 공유, 필요한 열만 읽는 frame cache, compact frame×star matrix와
+   bounded preload를 먼저 적용한다. 이 변경의 목적은 CSV를 더 빨리 읽는 것 자체가
+   아니라, 프레임 수와 비교별 반복에 따라 커지는 중복 I/O·pandas 작업과 peak RSS를
+   줄여 같은 결과를 안정적으로 재현하는 것이다.
+3. 고정된 소수 프레임에서 old/new의 행 수, finite mask, filter/night 할당,
+   source-id 매핑, 광도값, ensemble/check-star 결과를 비교한다. 결과 parity가
+   확인되지 않은 상태에서는 Bottleneck이나 추가 병렬화를 적용하지 않는다.
+4. 모든 변경을 freeze한 뒤 raw 입력에서 Step 0부터 LC downstream까지 한 번의
+   clean run을 수행한다. 이전 cache와 새 코드를 섞은 산출물은 논문 결과로 사용하지
+   않는다.
+
+Git history 재정렬은 이 검토의 release gate가 아니다. baseline commit과 최종
+clean-run commit, 그리고 각 실행의 manifest가 남아 있으면 재현성 검토에 충분하다.
+
 ## 관찰된 경로와 병목 후보
 
 | 우선순위 | 위치 | 현재 동작 | 예상 영향 | Bottleneck 적합성 |

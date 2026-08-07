@@ -4,6 +4,35 @@
 
 The repository contains timing hooks and benchmark runners, but this audit did not find a committed, hardware-normalised baseline that supports a universal speed-up percentage. Therefore “parallel”, “vectorized”, or “optimized” below describes code structure only; it is not a measured performance claim.
 
+## Reprocessing and session handoff (release protocol)
+
+The Step 0 reprocessing currently running in another session is treated as a
+**baseline run**, not as the final post-optimisation result. Step 0 is an optional
+calibration stage outside the numbered `completed_steps` state; it must consume the
+original raw FITS and write to a new run directory. It must not read a previously
+calibrated output or overwrite an older run.
+
+The order is deliberate:
+
+1. Finish and preserve the baseline, including the input/output paths, git commit,
+   parameter snapshot, package versions, worker count, wall time and peak RSS.
+2. Apply only the high-confidence performance changes: streaming/two-pass Step 0
+   calibration, shared LC frame/source caches and bounded resource-aware workers.
+3. Compare a fixed subset of frames before and after each change (source count,
+   calibration statistics, WCS acceptance, finite masks, photometry values and
+   downstream CMD/LC products). A speed gain without these parity checks is not an
+   acceptable optimisation.
+4. Freeze the accepted code and run one clean end-to-end pass from raw Step 0 input.
+   That pass, rather than a mixture of old caches and new code, is the manuscript
+   result.
+
+The purpose is not speed for its own sake. Streaming prevents an image-count-scaled
+out-of-memory failure; shared LC materialisation removes repeated file parsing and
+DataFrame filtering; and resource-aware workers avoid CPU/RAM/I/O oversubscription.
+Together they make the same scientific calculation reproducible on a wider range of
+machines and make the performance statement auditable. Git history cleanup is not a
+release gate: preserving a baseline commit and a final clean-run commit is sufficient.
+
 ## Why some code is native and some is not
 
 The performance rationale is local, not a blanket claim that NumPy or an existing

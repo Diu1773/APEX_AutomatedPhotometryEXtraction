@@ -433,6 +433,23 @@
 - PSF `flux_scale_correction`(구경 앵커) 기본 off — 프레임별 정규화 오프셋(+0.05~+0.16)을
   흡수할지 검토 후보 (CMD 는 프레임 ZP 가 흡수하므로 필수는 아님)
 
+**2026-08-07 성능 감사 인수인계**
+
+- 다른 세션에서 진행 중인 Step 0 재처리는 **최적화 전 baseline**으로 끝까지 보존한다.
+  raw FITS 입력·새 출력 폴더·git commit·파라미터/패키지 버전·worker 수·실행 시간·peak
+  RSS를 남긴다. 기존 보정 산출물이나 기존 run을 입력/출력으로 재사용하지 않는다.
+- 최적화의 목적은 단순한 속도 경쟁이 아니다. Step 0의 image-count-scaled OOM을 막고,
+  LC의 반복 CSV/pandas 경로와 worker의 CPU/RAM/I/O oversubscription을 줄여 동일한
+  과학 결과를 더 안정적이고 재현 가능하게 만드는 것이다.
+- 감사 문서: `docs/audit/APEX_PERFORMANCE_AUDIT.md`,
+  `docs/audit/APEX_LC_PERFORMANCE_REVIEW.md`,
+  `docs/audit/APEX_BOTTLENECK_REVIEW.md`. 세 문서에 baseline → parity 검증 → 최종
+  clean run 절차와 Bottleneck/native 구현의 사용 경계를 기록했다.
+- baseline 완료 후 P0 후보(Streaming calibration, 공용 LC cache/compact matrix,
+  bounded resource-aware workers)를 한 종류씩 적용하고, 고정 subset에서 검출원 수,
+  calibration 통계, WCS, finite mask, 광도, CMD/LC를 비교한다. parity가 확인된 뒤에만
+  raw Step 0부터 전체 clean run을 수행하며, 그 결과만 논문 최종 수치로 쓴다.
+
 ## 사용자 의견
 
 - **validation/ 20 GB 를 최종적으로 어디에 둘지** — E로 옮겨  
@@ -445,6 +462,10 @@
   (이 항목은 8731 인스턴스가 낡은 코드라 자동으로 안 내려와서 손으로 넣었다 — F-018)
 
 ## 다음 3개
+
+0-0. **성능 baseline 완료 후 최적화 parity 검증** — 진행 중인 Step 0 run을 보존하고,
+   위 세 감사 문서의 P0 순서대로 한 종류씩 검증한다. Git history 재정렬은 release gate가
+   아니다. 최종 clean-run commit과 manifest가 남으면 된다.
 
 0-a. **(2026-08-06 잔여, 최우선) GUI 워크스페이스 선택** — File 메뉴에
    `Open Workspace…` / `New Workspace…` / `Recent`(목록은 `~/.apex/recent.json`
