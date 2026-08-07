@@ -2339,7 +2339,7 @@ class WcsWorkerBase:
                 return filename, meta
 
             completed = 0
-            _default_workers = get_parallel_workers(self.params)
+            _default_workers = get_parallel_workers(self.params, stage="wcs")
             max_workers = int(getattr(self.params.P, "wcs_max_workers", _default_workers))
             from queue import Queue as _Queue
             _slot_q: _Queue = _Queue()
@@ -2768,7 +2768,7 @@ class InternalWcsWorkerBase:
         n_qc_not_evaluated = 0
         results = {}
 
-        max_workers = get_parallel_workers(self.params)
+        max_workers = get_parallel_workers(self.params, stage="wcs")
         max_workers = max(1, int(max_workers))
         self._log(f"[Internal WCS] Solving {total} frames with {max_workers} worker(s)")
 
@@ -4125,7 +4125,7 @@ class AstrometryNetWorkerBase:
         cpulimit_s = float(getattr(self.params.P, "astnet_local_cpulimit_s", 30.0))
         blind_retry = bool(getattr(self.params.P, "astnet_blind_retry_on_fail", True))
         blind_cpulimit_s = float(getattr(self.params.P, "astnet_blind_cpulimit_s", 120.0))
-        max_workers = get_parallel_workers(self.params)
+        max_workers = get_parallel_workers(self.params, stage="wcs")
 
         if scale_low <= 0 or scale_high <= 0:
             scale_low = float(pix_arc) * 0.85

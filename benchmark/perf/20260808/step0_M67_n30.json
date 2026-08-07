@@ -1,8 +1,8 @@
 {
  "label": "step0_M67_n30",
- "started": "2026-08-07T23:54:49",
+ "started": "2026-08-08T00:45:24",
  "env": {
-  "git_commit": "2fc77ea",
+  "git_commit": "d15dd62",
   "python": "3.12.3",
   "platform": "Windows-11-10.0.26200-SP0",
   "cpu_logical": 16,
@@ -21,8 +21,9 @@
  },
  "n_lights": 30,
  "scratch": "E:\\APEX_validation\\bench\\step0_M67_n30",
- "wall_s": 785.469,
- "peak_rss_mb": 2198.1,
- "peak_rss_total_mb": 2198.1,
+ "wall_s": 809.227,
+ "peak_rss_mb": 2208.2,
+ "peak_rss_total_mb": 2208.2,
+ "peak_uss_mb": 2245.1,
  "n_calibrated": 30
 }

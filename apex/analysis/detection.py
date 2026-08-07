@@ -251,7 +251,7 @@ def run_detection(file_list, params, data_dir, cache_dir, use_cropped=False,
         if isinstance(peak_scales, str):
             peak_scales = [float(s) for s in peak_scales.split(",") if s.strip()]
 
-        max_workers = get_parallel_workers(params)
+        max_workers = get_parallel_workers(params, stage="detect")
 
         print(f"[DetectionWorker] max_workers={max_workers}, sigma_base={detect_sigma_base}")
 

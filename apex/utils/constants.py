@@ -327,7 +327,31 @@ class ParallelConstants:
 PARALLEL = ParallelConstants()
 
 
-def get_parallel_workers(params=None) -> int:
+# Per-stage worker ceilings, measured rather than assumed
+# (benchmark/perf/20260807/RESULTS.md, NGC 6811 21 frames, 16 logical cores).
+#
+#   stage        1 worker   best parallel      verdict
+#   detect        91.8 s     41.9 s @ 2        gains, saturates at 2
+#   wcs          106.5 s     39.0 s @ 2        gains, saturates at 2
+#   forcedphot   222.6 s    935.7 s @ 16       4x SLOWER at every count
+#
+# Forced photometry is already vectorised across sources within a frame, so the
+# per-frame threads add contention (GIL hand-offs, memory bandwidth, concurrent
+# reads of the same volume) without work to hide it. Running it serially is the
+# measured optimum here; the mechanism is tracked separately.
+#
+# ``max_workers`` names a maximum, so taking the smaller of it and the stage
+# ceiling is consistent with the setting's meaning. ``APEX_MAX_WORKERS`` stays
+# exempt because the sweep must be able to probe above these values.
+STAGE_WORKER_CAPS = {
+    "detect": 4,
+    "wcs": 4,
+    "forcedphot": 1,
+    "crop": 4,
+}
+
+
+def get_parallel_workers(params=None, stage=None) -> int:
     """
     Get parallel worker count from params or auto-detect.
 
@@ -335,6 +359,9 @@ def get_parallel_workers(params=None) -> int:
 
     Args:
         params: Parameter object with P attribute, or None for auto-detect
+        stage: Optional pipeline stage key ("detect", "wcs", "forcedphot",
+            "crop"). Applies the measured per-stage ceiling from
+            STAGE_WORKER_CAPS on top of the configured/auto count.
 
     Returns:
         Number of workers to use
@@ -359,7 +386,10 @@ def get_parallel_workers(params=None) -> int:
         if forced > 0:
             return max(1, min(forced, 4 * (os.cpu_count() or 4)))
 
+    stage_cap = STAGE_WORKER_CAPS.get(str(stage)) if stage else None
+
     # Try to get from params
+    configured = None
     if params is not None:
         try:
             val = int(
@@ -370,11 +400,15 @@ def get_parallel_workers(params=None) -> int:
                 )
             )
             if val > 0:
-                return min(val, PARALLEL.MAX_WORKERS_CAP)
+                configured = min(val, PARALLEL.MAX_WORKERS_CAP)
         except (AttributeError, TypeError, ValueError):
-            pass
+            configured = None
 
-    # Auto-detect: 75% of CPU cores, min 2, max cap
-    cpu_count = os.cpu_count() or 4
-    optimal = max(2, min(int(cpu_count * 0.75), PARALLEL.MAX_WORKERS_CAP))
-    return optimal
+    if configured is None:
+        # Auto-detect: 75% of CPU cores, min 2, max cap
+        cpu_count = os.cpu_count() or 4
+        configured = max(2, min(int(cpu_count * 0.75), PARALLEL.MAX_WORKERS_CAP))
+
+    if stage_cap is not None:
+        return max(1, min(configured, stage_cap))
+    return configured

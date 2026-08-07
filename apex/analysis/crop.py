@@ -121,7 +121,7 @@ def run_crop(file_list, params, crop_x0, crop_y0, crop_x1, crop_y1, *,
         )
         return filename
 
-    max_workers = get_parallel_workers(params)
+    max_workers = get_parallel_workers(params, stage="crop")
     max_workers = min(max_workers, len(files)) if files else 1
 
     errors = []

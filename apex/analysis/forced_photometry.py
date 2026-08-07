@@ -460,7 +460,7 @@ def run_forced_photometry(
     _wcs_header_cache: Dict[str, fits.Header] = {}
     _wcs_cache_lock = Lock()
     _results_lock = Lock()
-    max_workers = get_parallel_workers(params)
+    max_workers = get_parallel_workers(params, stage="forcedphot")
 
     def _stop_requested() -> bool:
         return should_stop() if should_stop else False
