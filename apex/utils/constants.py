@@ -345,6 +345,20 @@ def get_parallel_workers(params=None) -> int:
     """
     import os
 
+    # Benchmark/override knob: an explicit APEX_MAX_WORKERS wins over params
+    # and auto-detection so a worker sweep can pin the count exactly
+    # (docs/audit/APEX_PERF_DEV_PLAN.md B2). Deliberately not clamped to
+    # MAX_WORKERS_CAP — the sweep must be able to probe above the production
+    # cap — but bounded to 4x the core count so a typo cannot spawn thousands.
+    env_val = os.environ.get("APEX_MAX_WORKERS")
+    if env_val:
+        try:
+            forced = int(env_val)
+        except ValueError:
+            forced = 0
+        if forced > 0:
+            return max(1, min(forced, 4 * (os.cpu_count() or 4)))
+
     # Try to get from params
     if params is not None:
         try:

@@ -89,6 +89,27 @@ def _resolve_idmatch_path(result_dir: Path, fname: str) -> Path | None:
     return matches[0] if matches else None
 
 
+# Load-path counters for the LC benchmark (docs/audit/APEX_PERF_DEV_PLAN.md
+# T0.4). Cheap module-level ints under the GIL; an experiment resets them, runs
+# a build, and reads how many files/rows were actually parsed — the number the
+# shared-cache optimisation must reduce.
+LOAD_COUNTERS = {
+    "frames_loaded": 0,     # Step 7 tables actually read from disk
+    "rows_loaded": 0,       # rows parsed across those tables
+    "sidmap_built": 0,      # source_id→ID map built by re-reading catalogs
+    "sidmap_reused": 0,     # map supplied by the caller (the cheap path)
+}
+
+
+def reset_load_counters() -> None:
+    for key in LOAD_COUNTERS:
+        LOAD_COUNTERS[key] = 0
+
+
+def get_load_counters() -> dict[str, int]:
+    return dict(LOAD_COUNTERS)
+
+
 def _load_source_to_id_map(result_dir: Path, filt_hint: str | None = None) -> dict[int, int]:
     selection_dirs = selection_input_dirs(result_dir)
     if not any(path.exists() for path in selection_dirs):
@@ -155,6 +176,9 @@ def load_frame_photometry(
         return None
 
     df = _read_table(phot_path)
+    if df is not None:
+        LOAD_COUNTERS["frames_loaded"] += 1
+        LOAD_COUNTERS["rows_loaded"] += len(df)
     if df is None or df.empty:
         return df
 
@@ -232,6 +256,9 @@ def load_frame_photometry(
             else:
                 filt_key = normalize_filter_key(filt_key)
             sid_map = _load_source_to_id_map(result_dir, filt_key)
+            LOAD_COUNTERS["sidmap_built"] += 1
+        else:
+            LOAD_COUNTERS["sidmap_reused"] += 1
         if sid_map:
             mapped_ids = df["source_id"].map(sid_map).astype("Int64")
             if "ID" in df.columns:

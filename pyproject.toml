@@ -60,6 +60,8 @@ gui = [
     "emcee>=3.1",
 ]
 build = ["pyinstaller>=6.5,<7"]
+# Benchmark instrumentation: peak RSS incl. child processes (apex bench).
+bench = ["psutil>=5.9"]
 test = ["pytest>=8,<9", "emcee>=3.1"]
 docs = ["mkdocs-material>=9.5", "mkdocstrings[python]>=0.24"]
 # Cross-check benchmarks against independent reductions (validation figures only).

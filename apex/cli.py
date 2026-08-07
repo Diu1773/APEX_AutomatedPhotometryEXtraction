@@ -591,10 +591,28 @@ def build_parser() -> argparse.ArgumentParser:
         help="Optional TOML config (parameter_file, [iraf], [known_targets], [crosscheck]).",
     )
 
+    p_bench = sub.add_parser(
+        "bench",
+        help="Performance benchmarks over fixed fixtures "
+             "(step0 RSS, worker sweep, reproducibility, parity gate).",
+    )
+    p_bench.add_argument(
+        "bench_args", nargs=argparse.REMAINDER,
+        help="Arguments for apex.benchmark.bench — e.g. "
+             "'step0 --frames 10', 'sweep --workers 1,2,4', 'parity --new <root>'.")
+
     p_gui = sub.add_parser("gui", help="Launch the desktop GUI.")
     p_gui.add_argument("--mode", choices=["cmd", "lc"], default=None,
                        help="Skip the launcher and open a mode directly.")
     return parser
+
+
+def _cmd_bench(args) -> int:
+    # Deferred import: the benchmark module pulls pandas/psutil, which the
+    # lightweight commands (version/doctor) should not pay for.
+    from apex.benchmark.bench import main as bench_main
+
+    return bench_main(args.bench_args)
 
 
 def main(argv: Optional[list] = None) -> int:
@@ -615,6 +633,7 @@ def main(argv: Optional[list] = None) -> int:
         "run": _cmd_run,
         "export": _cmd_export,
         "validate": _cmd_validate,
+        "bench": _cmd_bench,
         "gui": _cmd_gui,
     }
     handler = handlers.get(command)
