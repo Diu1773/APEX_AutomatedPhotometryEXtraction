@@ -157,10 +157,48 @@ cosmetic 이 켜져 있어 보정 프레임이 거의 같아야 하고, 따라�
 - M67 만 다른 이유가 무엇인가 — 필터계(SDSS vs Johnson)로는 설명되지 않는다.
   M5 도 SDSS 인데 산포가 크다
 
+## 더 큰 발견 — 논문이 두 트리의 수치를 섞어 쓰고 있다
+
+그림 스크립트의 자료 출처를 전수 조사하니 **두 갈래**였다.
+
+| 자료 트리 | 그림 |
+|---|---|
+| **`E:/observed_Analysis`** | fig7(B/V PS1) · **fig8(능선 19 mmag)** · fig9(밀집장) · fig16 · fig_lc_yzboo |
+| `E:/APEX_validation/reprocess` | fig_apex_cmd · fig_astrometry · fig_completeness_realvssynth · fig_precision_floor · fig_psf_validation · fig_qc_depth |
+
+**논문이 가장 많이 인용하는 수치는 `observed_Analysis` 에서 나온다.** 그 트리의
+상태는 이렇다.
+
+| | `observed_Analysis/NGC6811/pp` | `APEX_validation/reprocess/NGC6811` |
+|---|---|---|
+| 생성 | **2026-06-13** | 2026-08-07 |
+| gain / 읽기잡음 | **0.689 / 2.5** (옛 상수) | 0.68 / 2.35 |
+| 입력 FITS | **0 개** — `result/` 만 남음 | `sci/` 21 장 |
+
+입력 프레임은 재처리의 per-target reorg 가 `sci/` 로 **옮겨서**(복사가 아니라
+이동) 사라졌다. 따라서 **이 네 그림은 현재 재현할 수 없다.**
+
+### 다행히 수치는 거의 움직이지 않는다
+
+6월 산출물과 8월 재처리의 NGC 6811 최종 보정등급을 `source_id` 로 대조했다.
+
+| 필터 | 공통별 | Δ중앙 | MAD |
+|---|---:|---:|---:|
+| B | 1,876 | **+0.34 mmag** | 8.74 |
+| R | 1,874 | **+1.57 mmag** | 10.24 |
+| V | 1,876 | **+0.29 mmag** | 4.87 |
+
+우주선 보정을 켜고 gain 을 바꿨는데도 중앙값이 0.3–1.6 mmag 다. 논문이 인용하는
+값(주계열 능선 19 mmag, PS1 대조 +0.010/+0.022/+0.024/+0.007)은 이 규모로는
+흔들리지 않는다. MAD 5–10 mmag 는 독립 처리 두 번 사이의 측정 산포다.
+
+**즉 수치가 틀린 것이 아니라 재현 경로가 끊긴 것이다.** 그림의 입력을 재처리
+트리로 바꾸면 해소되고, 그때 수치는 1 mmag 안쪽으로 움직인다.
+
 ## 다음
 
-1. 옛 트리의 `cmd_zeropoint` 를 읽는 그림 목록을 확정하고 새 트리로 옮긴다
-2. 그림 재생성 → 논문 수치 갱신
-3. 그다음에야 옛 트리 정리. **`sci_nocr/`·`result_nocr/` 는 남긴다** —
+1. `observed_Analysis` 를 읽는 그림 넷의 입력을 재처리 트리로 바꾼다
+2. 그림 재생성 → 바뀐 수치를 원고에 반영(1 mmag 규모 예상)
+3. 그다음에야 옛 산출물 정리. **`sci_nocr/`·`result_nocr/` 는 남긴다** —
    [CR_PHOTOMETRIC_IMPACT.md](CR_PHOTOMETRIC_IMPACT.md) 와
    `fig_completeness_realvssynth.py` 의 입력이다
