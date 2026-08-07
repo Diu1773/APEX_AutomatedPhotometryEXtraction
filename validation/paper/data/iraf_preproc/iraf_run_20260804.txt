@@ -1,0 +1,104 @@
+
+Aug  4 15:42: IMCOMBINE
+  combine = median, scale = none, zero = none, weight = none
+  blank = 0.
+                Images 
+  /mnt/e/bias/bias-0001.fit
+  /mnt/e/bias/bias-0002.fit
+  /mnt/e/bias/bias-0003.fit
+  /mnt/e/bias/bias-0004.fit
+  /mnt/e/bias/bias-0005.fit
+  /mnt/e/bias/bias-0006.fit
+  /mnt/e/bias/bias-0007.fit
+  /mnt/e/bias/bias-0008.fit
+
+  Output image = /tmp/iraf_apex_check/Zero.fits, ncombine = 8
+
+Aug  4 15:42: IMCOMBINE
+  combine = median, scale = none, zero = none, weight = none
+  blank = 0.
+                Images 
+  /mnt/e/observe_raw_Analysis/20260611/dark/dark-000160s.fit
+  /mnt/e/observe_raw_Analysis/20260611/dark/dark-000260s.fit
+  /mnt/e/observe_raw_Analysis/20260611/dark/dark-000360s.fit
+  /mnt/e/observe_raw_Analysis/20260611/dark/dark-000460s.fit
+  /mnt/e/observe_raw_Analysis/20260611/dark/dark-000560s.fit
+  /mnt/e/observe_raw_Analysis/20260611/dark/dark-000660s.fit
+  /mnt/e/observe_raw_Analysis/20260611/dark/dark-000760s.fit
+  /mnt/e/observe_raw_Analysis/20260611/dark/dark-000860s.fit
+
+  Output image = /tmp/iraf_apex_check/Dark.fits, ncombine = 8
+/mnt/e/observe_raw_Analysis/20260611/flats/flat_B_0001.fit: Aug  4 15:43 Zero level correction image is /tmp/iraf_apex_check/Zero.fits
+/tmp/iraf_apex_check/Dark.fits: Aug  4 15:43 Zero level correction image is /tmp/iraf_apex_check/Zero.fits
+/mnt/e/observe_raw_Analysis/20260611/flats/flat_B_0001.fit: Aug  4 15:43 Dark count correction image is /tmp/iraf_apex_check/Dark.fits with scale=0.05
+/mnt/e/observe_raw_Analysis/20260611/flats/flat_B_0002.fit: Aug  4 15:43 Zero level correction image is /tmp/iraf_apex_check/Zero.fits
+/mnt/e/observe_raw_Analysis/20260611/flats/flat_B_0002.fit: Aug  4 15:43 Dark count correction image is /tmp/iraf_apex_check/Dark.fits with scale=0.05
+/mnt/e/observe_raw_Analysis/20260611/flats/flat_B_0003.fit: Aug  4 15:43 Zero level correction image is /tmp/iraf_apex_check/Zero.fits
+/mnt/e/observe_raw_Analysis/20260611/flats/flat_B_0003.fit: Aug  4 15:43 Dark count correction image is /tmp/iraf_apex_check/Dark.fits with scale=0.05
+/mnt/e/observe_raw_Analysis/20260611/flats/flat_B_0004.fit: Aug  4 15:43 Zero level correction image is /tmp/iraf_apex_check/Zero.fits
+/mnt/e/observe_raw_Analysis/20260611/flats/flat_B_0004.fit: Aug  4 15:43 Dark count correction image is /tmp/iraf_apex_check/Dark.fits with scale=0.05
+/mnt/e/observe_raw_Analysis/20260611/flats/flat_B_0005.fit: Aug  4 15:43 Zero level correction image is /tmp/iraf_apex_check/Zero.fits
+/mnt/e/observe_raw_Analysis/20260611/flats/flat_B_0005.fit: Aug  4 15:43 Dark count correction image is /tmp/iraf_apex_check/Dark.fits with scale=0.05833333
+
+Aug  4 15:43: IMCOMBINE
+  combine = median, scale = mode, zero = none, weight = none
+  blank = 1.
+                Images     Exp    Mode  Scale
+  /tmp/iraf_apex_check/flatproc_0001.fits    3.0  18738.  0.918
+  /tmp/iraf_apex_check/flatproc_0002.fits    3.0  17420.  0.987
+  /tmp/iraf_apex_check/flatproc_0003.fits    3.0  16683.  1.031
+  /tmp/iraf_apex_check/flatproc_0004.fits    3.0  16020.  1.073
+  /tmp/iraf_apex_check/flatproc_0005.fits    3.5  17101.  1.005
+
+  Output image = /tmp/iraf_apex_check/Flat.fits, ncombine = 5
+/mnt/e/observe_raw_Analysis/20260611/NGc6811/NGC6811-0001-B.fit: Aug  4 15:44 Zero level correction image is /tmp/iraf_apex_check/Zero.fits
+/mnt/e/observe_raw_Analysis/20260611/NGc6811/NGC6811-0001-B.fit: Aug  4 15:44 Dark count correction image is /tmp/iraf_apex_check/Dark.fits with scale=1.
+/mnt/e/observe_raw_Analysis/20260611/NGc6811/NGC6811-0001-B.fit: Aug  4 15:44 Flat field image is /tmp/iraf_apex_check/Flat.fits with scale=17509.71
+/mnt/e/observe_raw_Analysis/20260611/dark/dark-000160s.fit: Aug  4 15:45 Zero level correction image is /tmp/iraf_apex_check/Zero.fits
+/mnt/e/observe_raw_Analysis/20260611/dark/dark-000260s.fit: Aug  4 15:45 Zero level correction image is /tmp/iraf_apex_check/Zero.fits
+/mnt/e/observe_raw_Analysis/20260611/dark/dark-000360s.fit: Aug  4 15:45 Zero level correction image is /tmp/iraf_apex_check/Zero.fits
+/mnt/e/observe_raw_Analysis/20260611/dark/dark-000460s.fit: Aug  4 15:45 Zero level correction image is /tmp/iraf_apex_check/Zero.fits
+/mnt/e/observe_raw_Analysis/20260611/dark/dark-000560s.fit: Aug  4 15:45 Zero level correction image is /tmp/iraf_apex_check/Zero.fits
+/mnt/e/observe_raw_Analysis/20260611/dark/dark-000660s.fit: Aug  4 15:45 Zero level correction image is /tmp/iraf_apex_check/Zero.fits
+/mnt/e/observe_raw_Analysis/20260611/dark/dark-000760s.fit: Aug  4 15:45 Zero level correction image is /tmp/iraf_apex_check/Zero.fits
+/mnt/e/observe_raw_Analysis/20260611/dark/dark-000860s.fit: Aug  4 15:45 Zero level correction image is /tmp/iraf_apex_check/Zero.fits
+
+Aug  4 15:45: IMCOMBINE
+  combine = median, scale = none, zero = none, weight = none
+  blank = 0.
+                Images 
+  /tmp/iraf_apex_check/darkproc_0001.fits
+  /tmp/iraf_apex_check/darkproc_0002.fits
+  /tmp/iraf_apex_check/darkproc_0003.fits
+  /tmp/iraf_apex_check/darkproc_0004.fits
+  /tmp/iraf_apex_check/darkproc_0005.fits
+  /tmp/iraf_apex_check/darkproc_0006.fits
+  /tmp/iraf_apex_check/darkproc_0007.fits
+  /tmp/iraf_apex_check/darkproc_0008.fits
+
+  Output image = /tmp/iraf_apex_check/Dark_bias_sub.fits, ncombine = 8
+/mnt/e/observe_raw_Analysis/20260611/flats/flat_B_0001.fit: Aug  4 15:45 Zero level correction image is /tmp/iraf_apex_check/Zero.fits
+/mnt/e/observe_raw_Analysis/20260611/flats/flat_B_0001.fit: Aug  4 15:45 Dark count correction image is /tmp/iraf_apex_check/Dark_bias_sub.fits with scale=0.05
+/mnt/e/observe_raw_Analysis/20260611/flats/flat_B_0002.fit: Aug  4 15:45 Zero level correction image is /tmp/iraf_apex_check/Zero.fits
+/mnt/e/observe_raw_Analysis/20260611/flats/flat_B_0002.fit: Aug  4 15:45 Dark count correction image is /tmp/iraf_apex_check/Dark_bias_sub.fits with scale=0.05
+/mnt/e/observe_raw_Analysis/20260611/flats/flat_B_0003.fit: Aug  4 15:45 Zero level correction image is /tmp/iraf_apex_check/Zero.fits
+/mnt/e/observe_raw_Analysis/20260611/flats/flat_B_0003.fit: Aug  4 15:45 Dark count correction image is /tmp/iraf_apex_check/Dark_bias_sub.fits with scale=0.05
+/mnt/e/observe_raw_Analysis/20260611/flats/flat_B_0004.fit: Aug  4 15:45 Zero level correction image is /tmp/iraf_apex_check/Zero.fits
+/mnt/e/observe_raw_Analysis/20260611/flats/flat_B_0004.fit: Aug  4 15:45 Dark count correction image is /tmp/iraf_apex_check/Dark_bias_sub.fits with scale=0.05
+/mnt/e/observe_raw_Analysis/20260611/flats/flat_B_0005.fit: Aug  4 15:45 Zero level correction image is /tmp/iraf_apex_check/Zero.fits
+/mnt/e/observe_raw_Analysis/20260611/flats/flat_B_0005.fit: Aug  4 15:45 Dark count correction image is /tmp/iraf_apex_check/Dark_bias_sub.fits with scale=0.05833333
+
+Aug  4 15:45: IMCOMBINE
+  combine = median, scale = mode, zero = none, weight = none
+  blank = 1.
+                Images     Exp    Mode  Scale
+  /tmp/iraf_apex_check/flatproc2_0001.fits    3.0  18738.  0.918
+  /tmp/iraf_apex_check/flatproc2_0002.fits    3.0  17420.  0.987
+  /tmp/iraf_apex_check/flatproc2_0003.fits    3.0  16683.  1.031
+  /tmp/iraf_apex_check/flatproc2_0004.fits    3.0  16020.  1.073
+  /tmp/iraf_apex_check/flatproc2_0005.fits    3.5  17101.  1.005
+
+  Output image = /tmp/iraf_apex_check/Flat_bias_dark.fits, ncombine = 5
+/mnt/e/observe_raw_Analysis/20260611/NGc6811/NGC6811-0001-B.fit: Aug  4 15:45 Zero level correction image is /tmp/iraf_apex_check/Zero.fits
+/mnt/e/observe_raw_Analysis/20260611/NGc6811/NGC6811-0001-B.fit: Aug  4 15:45 Dark count correction image is /tmp/iraf_apex_check/Dark_bias_sub.fits with scale=1.
+/mnt/e/observe_raw_Analysis/20260611/NGc6811/NGC6811-0001-B.fit: Aug  4 15:45 Flat field image is /tmp/iraf_apex_check/Flat_bias_dark.fits with scale=17509.71

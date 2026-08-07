@@ -1,0 +1,4 @@
+U: count=96 fetched=0
+B: count=66 fetched=2
+V: count=94 fetched=2
+2016-12-13 fs02 {'B': 2, 'V': 2} [('B', 6.0), ('B', 10.0), ('V', 6.0), ('V', 10.0)]
