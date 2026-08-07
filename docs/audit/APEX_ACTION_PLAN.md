@@ -22,6 +22,7 @@ This plan is deliberately ordered before manuscript layout work. It separates ev
 | Separate independent and same-backend checks | paper figures/table and `docs/validation_crosscheck.md` | SEP/IRAF are labelled independent; photutils is labelled same-backend consistency; truth injections remain the absolute reference. |
 | Reconcile config defaults | `parameters_cmd.py`, `parameters_lc.py`, `schema.py`, `parameters.example.toml`, tests | One source of truth per mode; tests assert the documented default detector/WCS/worker settings. |
 | Review Bottleneck boundary | `docs/audit/APEX_BOTTLENECK_REVIEW.md`, `apex/utils/fast_stats.py`, `tests/` | Add NumPy/Bottleneck parity tests; record `HAS_BOTTLENECK` and versions; benchmark only large-array candidates before routing more reductions through the wrapper. |
+| Profile LC loading before adding more Bottleneck calls | `docs/audit/APEX_LC_PERFORMANCE_REVIEW.md`, Step 8--11 and LC tools | Measure cold/warm load, source-map reads, PSF reads, cache hit, build/QC/plot time and RSS; then fix shared map/cache/index paths before changing reductions. |
 
 ## P2 — strengthen reproducibility and architecture
 

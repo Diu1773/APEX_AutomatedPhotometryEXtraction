@@ -129,6 +129,21 @@ v0.1.0 태그는 있음).
   첫 단이 사용 중이고 둘째 단이 비어 있으면 다음 본문을 둘째 단으로 이어가므로,
   float 때문에 한 단 전체가 비는 회귀를 막는다.
 
+**2026-08-07 · LC·도구 성능 병목 감사**
+
+- 사용자가 보고한 LC 후반부 로딩 지연을 코드 경로별로 독립 검토했다. 가장 유력한
+  원인은 Bottleneck이 아니라 (1) 프레임마다 반복되는 source-id→ID 카탈로그 재읽기,
+  (2) PSF aperture/PSF 표의 이중 읽기, (3) target·comparison별 반복 DataFrame 행 검색,
+  (4) Step 10의 세 축 전체 Matplotlib 재작성이다.
+- `docs/audit/APEX_LC_PERFORMANCE_REVIEW.md`에 Step 8--11, `photometry_source_service`,
+  extinction/QA/variable-star 도구의 위치·영향·최적화 순서를 기록했다. 결론은 공통
+  source map/cache·indexed compact matrix·artist 재사용을 먼저 계측하고, 그 뒤 큰
+  calibration/ensemble 배열에만 Bottleneck을 시험하는 것이다. 기간분석 kernel,
+  `read_csv`, pandas groupby, Matplotlib redraw는 Bottleneck 후보에서 제외했다.
+- 현재는 성능 주장이나 과학 코드 변경을 하지 않았다. 다음 구현 전 acceptance
+  조건은 cold/warm cache, source/PSF read count, build/QC/plot 시간, peak RSS,
+  source-ID·중복·missing/error semantics parity를 함께 기록하는 것이다.
+
 **2026-08-06 · AutoPhOT/A&A식 조판 시안**
 
 - 제공된 *Automatic transit photometry python* (AutoPhOT, A&A 667 A62) PDF를
