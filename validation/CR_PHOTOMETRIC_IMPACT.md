@@ -9,8 +9,17 @@ APEX step0 의 cosmetic 보정(우주선·핫픽셀 수리)을 켠 산출물과 
 - CR 끔: `E:/APEX_validation/reprocess/NGC6811/result_nocr/`
 - 비교 열: `mag_inst` (프레임별 기기등급, 노출 정규화됨)
 - 두 산출물 모두 gain 0.689 e-/ADU · 읽기잡음 2.5 e- 설정에서 생성됨
-  (2026-08-06 에 0.68 / 2.35 로 교체되었다 — [DETECTOR_CONSTANTS.md](DETECTOR_CONSTANTS.md).
-  gain 은 오차 계산에만 들어가고 등급은 바꾸지 않으므로 위 Δmag 비교는 유효하다.)
+  (2026-08-06 에 0.68 / 2.35 로 교체 — [DETECTOR_CONSTANTS.md](DETECTOR_CONSTANTS.md))
+
+> **gain 에 대한 정정 (2026-08-07).** 이 문서는 처음에 "gain 은 오차 계산에만
+> 들어가고 등급은 바꾸지 않는다" 고 적었으나 **틀렸다.** 기기등급이 전자 단위
+> 플럭스로 정의되므로 `mag_inst = 25 − 2.5 log10(ADU × gain / t)` 이고, gain 을
+> 바꾸면 전 별이 상수만큼 이동한다(0.689 → 0.68 이면 +14.27 mmag, 실측 확인:
+> [REPROCESS_2026-08-07.md](REPROCESS_2026-08-07.md)).
+>
+> **아래 비교는 그래도 유효하다** — 두 산출물이 *같은* gain 0.689 에서 나왔으므로
+> 상수 이동이 차분에서 상쇄되기 때문이다. 다만 서로 다른 gain 으로 만든 산출물을
+> 비교할 때는 이 이동을 먼저 빼야 한다.
 
 ## 결과
 
