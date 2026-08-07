@@ -50,6 +50,40 @@ the package version and benchmark condition if a speed number is added. Do not w
 that “APEX uses Bottleneck throughout” or that it makes the pipeline faster without
 a controlled comparison.
 
+## Whole-code review result (2026-08-07)
+
+The repository-wide search found `bottleneck` itself in the dependency/doctor
+surfaces and `fast_stats.py`; only four consumers import the wrapper:
+`analysis/calibration.py`, `analysis/detection.py`, `analysis/cosmetic.py`, and the
+Step 4 source-detection helper. A separate search found 555 direct
+`numpy.nan*` calls in 62 Python files (170 in `analysis`, 302 in `gui`, 49 in
+`benchmark`, 32 in `utils`, and 2 in `io`; the wrapper's fallback calls are included
+in these counts). This is not automatically a defect: benchmark/reference code
+should remain independent, and many GUI or per-source calls operate on small arrays.
+The defect is documentation/test coverage: the source does not state a module-level
+policy for when a direct NumPy reduction is intentional.
+
+### Findings and release actions
+
+| Priority | Finding | Action before a performance claim |
+|---|---|---|
+| R1 | No test currently targets `fast_stats` parity with NumPy/Bottleneck, including all-NaN, empty, float32/float64, axis and `ddof` cases. | Add a small parity test; keep the NumPy fallback and compare values/NaN masks, not warning text. |
+| R1 | `pyproject.toml`, `requirements.txt`, `deploy/apex_windows.spec`, and `apex/cli.py` treat Bottleneck as a core/required dependency, while `fast_stats.py` silently falls back when it cannot import it. | Keep this as an intentional compatibility fallback and state “declared core dependency; NumPy fallback” in the software/reproducibility section, or change the packaging policy consistently. Do not call it an optional install extra while the doctor marks it required. |
+| R1 | A run manifest does not record whether the Bottleneck path was active. | Record `HAS_BOTTLENECK`, package version, NumPy version and worker/BLAS settings in the benchmark manifest. |
+| R2 | High-volume direct NumPy reductions remain in `overscan.py`, light-curve matrix/ensemble paths, WCS summaries and other core modules. | Benchmark only candidate large arrays (calibration stack, overscan region, ensemble matrix, WCS catalogue); route a function through `fast_stats` only when the measured wall/RSS gain outweighs conversion and review cost. |
+| R2 | Direct reductions in benchmark scripts are mixed with production reductions. | Keep independent baselines on NumPy; label them “reference calculation”, never “APEX Bottleneck result”. |
+
+### Local spot-check (not a manuscript result)
+
+On the audit workstation (Python 3.12.3, NumPy 2.4.4, Bottleneck 1.6.0), a single
+microbenchmark with float32 arrays and `axis=0` gave Bottleneck/NumPy time ratios
+of roughly 3.5–4.2 for `nanmedian`, `nanmean` and `nanstd` on a 20×2048×2048
+calibration-like stack; `nansum` was about 2.2×. For a 14×500 growth-curve-like
+array the absolute times were below a millisecond despite ratios up to about 5×,
+so the result is unlikely to dominate a frame's photometry runtime. These numbers
+are machine- and shape-specific and are retained only to motivate the candidate
+benchmark above, not as a paper speed claim.
+
 ## Cost map
 
 | Stage | Dominant work and current implementation | Parallel unit / default | Main risk | Required measurement |

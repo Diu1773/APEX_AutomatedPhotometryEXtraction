@@ -21,6 +21,7 @@ This plan is deliberately ordered before manuscript layout work. It separates ev
 | Add negative controls | tests/validation for detection, WCS, apcorr, PSF iteration, SYSREM, PDM/FAP | Known bad frames/coordinates/sky or shuffled labels are rejected at a documented rate. |
 | Separate independent and same-backend checks | paper figures/table and `docs/validation_crosscheck.md` | SEP/IRAF are labelled independent; photutils is labelled same-backend consistency; truth injections remain the absolute reference. |
 | Reconcile config defaults | `parameters_cmd.py`, `parameters_lc.py`, `schema.py`, `parameters.example.toml`, tests | One source of truth per mode; tests assert the documented default detector/WCS/worker settings. |
+| Review Bottleneck boundary | `docs/audit/APEX_BOTTLENECK_REVIEW.md`, `apex/utils/fast_stats.py`, `tests/` | Add NumPy/Bottleneck parity tests; record `HAS_BOTTLENECK` and versions; benchmark only large-array candidates before routing more reductions through the wrapper. |
 
 ## P2 — strengthen reproducibility and architecture
 

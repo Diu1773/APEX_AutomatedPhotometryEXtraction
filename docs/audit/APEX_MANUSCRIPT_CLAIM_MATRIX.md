@@ -46,6 +46,13 @@ many other modules call NumPy reductions directly. Thus the manuscript should sa
 “Bottleneck accelerates selected wrapper-routed reductions” rather than “Bottleneck
 accelerates the pipeline” or “NumPy was too slow”.
 
+The whole-code review found 555 direct `numpy.nan*` calls in 62 Python files. This
+does not make every call a performance problem: independent benchmark calculations
+should not share the acceleration path, and many calls are on small per-source or
+per-frame-summary arrays. It does mean that the paper should identify Bottleneck as
+a selected reduction backend and that a release benchmark must record
+`HAS_BOTTLENECK`, package versions, array shape and worker/BLAS settings.
+
 | Avoid | Use instead |
 |---|---|
 | “The native solver is faster than ASTAP/astrometry.net.” | “The internal solver removes executable/index/WSL dependencies and uses batched matching with bounded RANSAC; speed was not ranked without a benchmark.” |

@@ -25,7 +25,9 @@ Target: **Astronomy & Astrophysics, Section 15 — Numerical methods and codes**
 4. **Reproducibility manifest:** git commit, Python/package versions, camera/filter/frame counts, parameter snapshot, seed, solver engine/fallback, Gaia/cache status, worker count and output hashes.
 5. **Scope limits:** detector type, crowding/FWHM, magnitude/SNR, sky structure, calibration assumptions, Gaia availability and external-runtime requirements.
 6. **Terminology repair:** Python `ccdproc` versus IRAF/PyRAF task; internal WCS default versus optional ASTAP/astrometry.net; same-backend photutils consistency versus independent references.
-7. **Public release:** remove private paths and internal tracking/working material from the public release surface; add a clean example config, citation metadata, license, version tag and archival DOI plan.
+7. **Native rationale:** describe only APEX-specific algorithms and special policies in the dedicated methods subsection; state the alternative package, unmet contract, validation and performance boundary for each.
+8. **Bottleneck contract:** add wrapper parity tests and record `HAS_BOTTLENECK` plus package versions in benchmark manifests; do not present selected reduction acceleration as a pipeline-wide speed claim.
+9. **Public release:** remove private paths and internal tracking/working material from the public release surface; add a clean example config, citation metadata, license, version tag and archival DOI plan.
 
 ### Do not claim yet
 
