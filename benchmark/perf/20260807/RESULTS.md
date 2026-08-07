@@ -3,6 +3,16 @@
 계측: `apex bench` (`8bf6d51`), psutil 폴링 0.1 s, 자식 프로세스 합산.
 환경: Python 3.12.3 · 논리코어 16 · numpy 2.4.4 (각 JSON 의 `env` 블록이 정본).
 
+> **계측 버그 영향 범위 (2026-08-08, `4771192`)** — Windows venv 의
+> `python.exe` 는 약 5 MB 짜리 런처이고 진짜 인터프리터를 자식으로 띄운다.
+> 그래서 `measure_command` 의 `peak_rss_mb`(자기 자신)는 어느 실행이든 5.0 MB
+> 를 보고했다. **아래 B2/B4 표는 `peak_rss_total_mb`(자식 합산)를 쓰므로
+> 유효하다** — sweep JSON 여섯 값이 self 5.0 MB / total 3,792–6,982 MB 로
+> 갈리는 것이 그 증거다. 영향을 받은 것은 `peak_rss_mb` 를 직접 읽은 일회성
+> 스크립트뿐이다. 다만 이 표들은 **USS 도입 이전**이라 숫자가 RSS 이고,
+> RSS 는 mmap 된 입력의 페이지 캐시를 포함한다(아래 O1 절 참고) — worker 에
+> 따른 증가 경향은 실재하지만 절대값은 실제 메모리 압박의 상한이다.
+
 ## B1 — Step 0 peak RSS vs 프레임 수 (M67 raw 부분집합, in-process)
 
 | lights | wall (s) | peak RSS (MB) |
