@@ -38,8 +38,42 @@ _PACKAGES = ("numpy", "scipy", "astropy", "photutils", "sep", "pandas",
              "astroscrappy", "bottleneck", "psutil")
 
 
+def machine_state() -> dict:
+    """How busy the machine was — the half of reproducibility that git can't fix.
+
+    A step-7 run measured 1.74x slower than the same code a day earlier, with
+    identical inputs and an identical step-4 time.  The cause was a game plus
+    its anti-cheat holding ~1.5 GB and burning ~4.7 CPU-hours in the
+    background: free RAM had fallen from ~12 GB to 3.5 GB, so the frames that
+    step 4 leaves in the OS page cache were evicted before step 7 re-read them.
+    Nothing in the recorded envelope could have shown that after the fact.
+
+    Deliberately aggregate — free RAM and load are what invalidate a
+    measurement; *what* the user was running is not the benchmark's business.
+    """
+    if not HAS_PSUTIL:  # pragma: no cover - optional extra
+        return {}
+    try:
+        vm = psutil.virtual_memory()
+        # A non-blocking first call returns 0.0; a short interval is the price
+        # of a number that means anything.
+        cpu_pct = psutil.cpu_percent(interval=0.3)
+        heavy = sum(1 for p in psutil.process_iter(["memory_info"])
+                    if (p.info["memory_info"] or None)
+                    and p.info["memory_info"].rss > 200e6)
+        return {
+            "ram_total_mb": round(vm.total / 1e6),
+            "ram_available_mb": round(vm.available / 1e6),
+            "ram_available_pct": round(100.0 * vm.available / vm.total, 1),
+            "cpu_percent": cpu_pct,
+            "processes_over_200mb": heavy,
+        }
+    except Exception:  # pragma: no cover - psutil quirks must not break a run
+        return {}
+
+
 def environment_snapshot() -> dict:
-    """Git commit, interpreter, CPU and package versions — once per record."""
+    """Git commit, interpreter, CPU, package versions and machine load."""
     try:
         commit = subprocess.run(
             ["git", "rev-parse", "--short", "HEAD"],
@@ -63,7 +97,26 @@ def environment_snapshot() -> dict:
         "cpu_logical": os.cpu_count(),
         "apex_max_workers_env": os.environ.get("APEX_MAX_WORKERS"),
         "packages": versions,
+        "machine": machine_state(),
     }
+
+
+# Below this, a measurement is competing for RAM with something else and its
+# absolute numbers should not be quoted (see machine_state).
+IDLE_RAM_PCT = 40.0
+
+
+def warn_if_busy(printer=print) -> dict:
+    """Print a warning when the machine is too loaded to trust wall times."""
+    state = machine_state()
+    pct = state.get("ram_available_pct")
+    if pct is not None and pct < IDLE_RAM_PCT:
+        printer(f"WARNING: only {pct:.0f}% RAM free "
+                f"({state['ram_available_mb']:,} MB of {state['ram_total_mb']:,} MB), "
+                f"{state['processes_over_200mb']} processes over 200 MB. "
+                f"Absolute wall times from this run are not comparable across "
+                f"days — re-measure on an idle machine before quoting them.")
+    return state
 
 
 class _RssPoller(threading.Thread):

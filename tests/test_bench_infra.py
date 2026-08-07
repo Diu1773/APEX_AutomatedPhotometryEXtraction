@@ -82,6 +82,37 @@ def test_measure_command_reports_the_tree_not_the_launcher():
     assert metrics["peak_uss_mb"] > 100          # and it is private memory
 
 
+def test_environment_snapshot_records_machine_load():
+    """Git commit and package versions do not explain a slow run; free RAM does."""
+    env = resources.environment_snapshot()
+    assert "machine" in env
+    if not resources.HAS_PSUTIL:  # pragma: no cover - optional extra
+        assert env["machine"] == {}
+        return
+    machine = env["machine"]
+    assert 0 < machine["ram_available_pct"] <= 100
+    assert machine["ram_available_mb"] <= machine["ram_total_mb"]
+    assert machine["processes_over_200mb"] >= 0
+
+
+def test_warn_if_busy_speaks_up_only_under_pressure(monkeypatch):
+    said = []
+    monkeypatch.setattr(resources, "machine_state", lambda: {
+        "ram_total_mb": 16_000, "ram_available_mb": 3_500,
+        "ram_available_pct": 22.0, "cpu_percent": 40.0,
+        "processes_over_200mb": 7})
+    resources.warn_if_busy(said.append)
+    assert said and "22% RAM free" in said[0]
+
+    said.clear()
+    monkeypatch.setattr(resources, "machine_state", lambda: {
+        "ram_total_mb": 16_000, "ram_available_mb": 12_000,
+        "ram_available_pct": 75.0, "cpu_percent": 2.0,
+        "processes_over_200mb": 1})
+    resources.warn_if_busy(said.append)
+    assert not said
+
+
 # ── CLI argument placement ─────────────────────────────────────────────────
 
 def _out_root_of(argv):

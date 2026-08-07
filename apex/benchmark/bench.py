@@ -291,6 +291,7 @@ def main(argv=None) -> int:
         # than being silently handed to the parity parser.
         build_parser().parse_args([*head, "parity"])
         return parity.main(tail)
+    resources.warn_if_busy()
     args = build_parser().parse_args(argv)
     return args.func(args)
 

@@ -171,6 +171,7 @@ def main() -> int:
     s = sub.add_parser("sweep")
     s.add_argument("--workers", default="1,2,4,8,12,16")
     s.set_defaults(func=cmd_sweep)
+    resources.warn_if_busy()
     args = ap.parse_args()
     return args.func(args)
 
