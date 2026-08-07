@@ -1,0 +1,28 @@
+{
+ "label": "step0_M67_n10",
+ "started": "2026-08-07T19:28:52",
+ "env": {
+  "git_commit": "8bf6d51",
+  "python": "3.12.3",
+  "platform": "Windows-11-10.0.26200-SP0",
+  "cpu_logical": 16,
+  "apex_max_workers_env": null,
+  "packages": {
+   "numpy": "2.4.4",
+   "scipy": "1.17.1",
+   "astropy": "7.2.0",
+   "photutils": "2.3.0",
+   "sep": "1.4.1",
+   "pandas": "2.3.3",
+   "astroscrappy": "1.3.0",
+   "bottleneck": "1.6.0",
+   "psutil": "7.2.2"
+  }
+ },
+ "n_lights": 10,
+ "scratch": "E:\\APEX_validation\\bench\\step0_M67_n10",
+ "wall_s": 337.646,
+ "peak_rss_mb": 5160.6,
+ "peak_rss_total_mb": 5160.6,
+ "n_calibrated": 10
+}

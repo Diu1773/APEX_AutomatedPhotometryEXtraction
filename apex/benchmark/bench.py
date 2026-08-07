@@ -12,7 +12,7 @@ Implements the measurement half of docs/audit/APEX_PERF_DEV_PLAN.md:
 * ``parity`` — delegates to :mod:`apex.benchmark.parity` (T0.5).
 
 Fixtures are the plan's fixed set; scratch output lands on the validation
-drive, metrics JSON lands in ``benchmark/runs/perf_<date>/`` for committing.
+drive, metrics JSON lands in ``benchmark/perf/<date>/`` for committing.
 """
 
 from __future__ import annotations
@@ -36,7 +36,11 @@ RAW_M67 = Path(r"E:\observe_raw_Analysis\M67_20260208")
 BIAS_POOL = Path(r"E:\bias")
 DARK_POOL = Path(r"E:\darks")
 SCI_NGC6811 = Path(r"E:\APEX_validation\reprocess\NGC6811\sci")
-CFG_NGC6811 = Path(r"E:\APEX_validation\reprocess\NGC6811\parameters_20260807.toml")
+# The clean-run config is JSON (the config authority since 2026-08-06); the
+# dated suffix keeps it from becoming the directory's implicit authority while
+# still being explicitly passable to --config. The first overnight batch failed
+# here by pointing at a TOML that a silenced `cp 2>/dev/null` never created.
+CFG_NGC6811 = Path(r"E:\APEX_validation\reprocess\NGC6811\apex_config_20260807.json")
 SCRATCH_ROOT = Path(r"E:\APEX_validation\bench")
 TZ_OFFSET_HOURS = 9.0
 
@@ -44,7 +48,10 @@ TZ_OFFSET_HOURS = 9.0
 def _out_root(args) -> Path:
     if args.out_root:
         return Path(args.out_root)
-    return REPO / "benchmark" / "runs" / f"perf_{time.strftime('%Y%m%d')}"
+    # benchmark/runs is gitignored (bulky science-run artifacts); the perf
+    # envelopes are small machine-readable records the plan requires to be
+    # committed, so they live in a tracked sibling instead.
+    return REPO / "benchmark" / "perf" / time.strftime("%Y%m%d")
 
 
 def _fresh_dir(path: Path) -> Path:
