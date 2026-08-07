@@ -76,6 +76,7 @@ class _RssPoller(threading.Thread):
         self._halt = threading.Event()
         self.peak_self = 0
         self.peak_total = 0
+        self.peak_uss = 0
 
     def run(self) -> None:  # pragma: no cover - timing-dependent
         while not self._halt.is_set():
@@ -89,6 +90,16 @@ class _RssPoller(threading.Thread):
                         continue
                 self.peak_self = max(self.peak_self, rss)
                 self.peak_total = max(self.peak_total, total)
+                # RSS counts resident pages of memory-mapped files, which the OS
+                # can evict on demand — a streaming reader that mmaps its inputs
+                # looks like it uses more memory than one that allocates real
+                # arrays. USS excludes those shared/file-backed pages, so it is
+                # the number that reflects actual OOM pressure.
+                try:
+                    self.peak_uss = max(self.peak_uss,
+                                        self._proc.memory_full_info().uss)
+                except Exception:
+                    pass
             except (psutil.NoSuchProcess, psutil.AccessDenied):
                 break
             self._halt.wait(self._poll_s)
@@ -127,9 +138,11 @@ def measure(label: str, extra: dict | None = None, poll_s: float = _POLL_S):
             poller.stop()
             metrics["peak_rss_mb"] = round(poller.peak_self / 1e6, 1)
             metrics["peak_rss_total_mb"] = round(poller.peak_total / 1e6, 1)
+            metrics["peak_uss_mb"] = round(poller.peak_uss / 1e6, 1) or None
         else:  # pragma: no cover - psutil absent
             metrics["peak_rss_mb"] = None
             metrics["peak_rss_total_mb"] = None
+            metrics["peak_uss_mb"] = None
 
 
 def measure_command(cmd: list, *, label: str, env: dict | None = None,
@@ -164,9 +177,11 @@ def measure_command(cmd: list, *, label: str, env: dict | None = None,
         # For a subprocess the child tree IS the workload; self==the child.
         metrics["peak_rss_mb"] = round(poller.peak_self / 1e6, 1)
         metrics["peak_rss_total_mb"] = round(poller.peak_total / 1e6, 1)
+        metrics["peak_uss_mb"] = round(poller.peak_uss / 1e6, 1) or None
     else:
         metrics["peak_rss_mb"] = None
         metrics["peak_rss_total_mb"] = None
+        metrics["peak_uss_mb"] = None
     return returncode, metrics
 
 

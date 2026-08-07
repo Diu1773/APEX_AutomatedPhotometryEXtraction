@@ -344,6 +344,110 @@ def _find_master(paths: Sequence[PathLike], kind: str, opts: CalibrationOptions)
 
 
 # ---------------------------------------------------------------------------
+# Streaming combine (bounded memory)
+# ---------------------------------------------------------------------------
+# Materialising every input frame before combining costs ``n_frames`` full
+# images: a 102-frame bias pool at 3194x4788 is 6.2 GB, which is what a
+# measured Step 0 peak of ~5.2 GB was made of (benchmark/perf/20260807).
+# Reading one row band from every file instead bounds the working set to that
+# band, and because median/mean/sigma-clip are per-pixel the result is
+# unchanged — the same property that makes ``combine_frames`` band internally.
+
+
+def _fits_image_hdu_index(path: PathLike) -> int:
+    """Index of the first HDU carrying image data (matches ``_load_fits``)."""
+    with fits.open(path, memmap=False) as hdul:
+        for i, hdu in enumerate(hdul):
+            if getattr(hdu, "data", None) is not None:
+                return i
+    raise ValueError(f"Unsupported or unreadable image: {path}")
+
+
+def _read_band(path: PathLike, hdu_index: int, y0: int, y1: int) -> np.ndarray:
+    """Read rows ``[y0:y1)`` as float64, matching ``_load_fits`` semantics.
+
+    ``HDU.section`` pulls only the requested rows off disk, but astropy refuses
+    to memory-map data carrying BZERO/BSCALE (unsigned camera frames), so the
+    scaling is disabled on read and applied here — the same trick the PTC
+    reader uses.
+    """
+    with fits.open(path, memmap=True, do_not_scale_image_data=True) as hdul:
+        hdu = hdul[hdu_index]
+        bzero = float(hdu.header.get("BZERO", 0.0) or 0.0)
+        bscale = float(hdu.header.get("BSCALE", 1.0) or 1.0)
+        raw = np.asarray(hdu.section[y0:y1, :], dtype=np.float64)
+    return raw * bscale + bzero
+
+
+def can_stream_combine(opts: "CalibrationOptions") -> bool:
+    """Whether row-band streaming reproduces the in-memory path exactly.
+
+    Overscan correction works along columns and may trim the grid, so a row
+    band is not self-contained under it; those runs keep the original path.
+    """
+    return not bool(getattr(opts, "overscan_enable", False))
+
+
+def combine_frames_streaming(
+    paths: Sequence[PathLike],
+    method: str = "median",
+    sigma_low: float = 3.0,
+    sigma_high: float = 3.0,
+    maxiters: int = 5,
+    *,
+    prepare=None,
+    chunk_bytes: int = _COMBINE_CHUNK_BYTES,
+) -> np.ndarray:
+    """Combine frames from disk a row band at a time.
+
+    ``prepare(band, index, y0, y1)`` applies the per-frame correction (bias or
+    dark subtraction, per-frame normalisation) to one band; ``y0``/``y1`` let
+    it slice the matching rows of a master. It must be elementwise or use
+    values precomputed per frame, so that operating on a band gives the same
+    result as operating on the whole frame.
+    """
+    paths = list(paths)
+    if not paths:
+        raise ValueError("combine_frames_streaming: empty path list")
+
+    hdu_indices = [_fits_image_hdu_index(p) for p in paths]
+
+    # Hold every file open for the whole sweep. Re-opening per band cost 17x
+    # the opens (102 frames x 17 bands) and made streaming 23 % slower than
+    # loading everything; with the handles kept, only the requested rows are
+    # ever faulted in.
+    handles = [fits.open(p, memmap=True, do_not_scale_image_data=True)
+               for p in paths]
+    try:
+        hdus = [h[i] for h, i in zip(handles, hdu_indices)]
+        scales = [(float(hdu.header.get("BSCALE", 1.0) or 1.0),
+                   float(hdu.header.get("BZERO", 0.0) or 0.0)) for hdu in hdus]
+        height, width = hdus[0].shape[:2]
+
+        row_bytes = len(paths) * width * np.dtype(_STACK_DTYPE).itemsize
+        rows_per_chunk = max(1, int(chunk_bytes // max(row_bytes, 1)))
+
+        out = np.empty((height, width), dtype=np.float64)
+        for y0 in range(0, height, rows_per_chunk):
+            y1 = min(y0 + rows_per_chunk, height)
+            band = np.empty((len(paths), y1 - y0, width), dtype=_STACK_DTYPE)
+            for i, hdu in enumerate(hdus):
+                bscale, bzero = scales[i]
+                values = np.asarray(hdu.section[y0:y1, :], dtype=np.float64)
+                values *= bscale
+                values += bzero
+                if prepare is not None:
+                    values = prepare(values, i, y0, y1)
+                band[i] = values
+            out[y0:y1] = _combine_stack(band, str(method).lower(),
+                                        sigma_low, sigma_high, maxiters)
+    finally:
+        for handle in handles:
+            handle.close()
+    return out
+
+
+# ---------------------------------------------------------------------------
 # Master builders
 # ---------------------------------------------------------------------------
 
@@ -356,9 +460,14 @@ def build_master_bias(paths: Sequence[PathLike],
         return data, {"type": "bias", "n_frames": 1, "master_input": True,
                       "source": Path(src).name,
                       "median": float(fast_stats.finite_nanmedian(data, 0.0))}
-    arrays = [load_frame(p, opts)[0] for p in paths]
-    master = combine_frames(arrays, opts.combine_method,
-                            opts.sigma_low, opts.sigma_high, opts.maxiters)
+    if can_stream_combine(opts):
+        master = combine_frames_streaming(
+            paths, opts.combine_method,
+            opts.sigma_low, opts.sigma_high, opts.maxiters)
+    else:
+        arrays = [load_frame(p, opts)[0] for p in paths]
+        master = combine_frames(arrays, opts.combine_method,
+                                opts.sigma_low, opts.sigma_high, opts.maxiters)
     prov = {
         "type": "bias",
         "n_frames": len(paths),
@@ -385,16 +494,28 @@ def build_master_dark(paths: Sequence[PathLike], opts: CalibrationOptions,
             "source": Path(src).name, "exptime": dark_exp,
             "bias_subtracted": True,
             "median": float(fast_stats.finite_nanmedian(data, 0.0))}
-    arrays: List[np.ndarray] = []
-    exps: List[float] = []
-    for p in paths:
-        data, header = load_frame(p, opts)
-        if master_bias is not None:
-            data = data - master_bias
-        arrays.append(data)
-        exps.append(_header_exptime(header))
-    master = combine_frames(arrays, opts.combine_method,
-                            opts.sigma_low, opts.sigma_high, opts.maxiters)
+    exps: List[float] = [_header_exptime(fits.getheader(p)) for p in paths]
+    if can_stream_combine(opts):
+        def _prepare_dark(values, _index, y0, y1):
+            # Bias subtraction is elementwise, so the band of the difference
+            # equals the difference of the bands.
+            if master_bias is not None:
+                values = values - master_bias[y0:y1]
+            return values
+
+        master = combine_frames_streaming(
+            paths, opts.combine_method,
+            opts.sigma_low, opts.sigma_high, opts.maxiters,
+            prepare=_prepare_dark)
+    else:
+        arrays: List[np.ndarray] = []
+        for p in paths:
+            data, _header = load_frame(p, opts)
+            if master_bias is not None:
+                data = data - master_bias
+            arrays.append(data)
+        master = combine_frames(arrays, opts.combine_method,
+                                opts.sigma_low, opts.sigma_high, opts.maxiters)
     dark_exp = float(np.median(exps)) if exps else 1.0
     prov = {
         "type": "dark",
@@ -427,21 +548,54 @@ def build_master_flat(paths: Sequence[PathLike], opts: CalibrationOptions,
                       "source": Path(src).name, "bias_subtracted": True,
                       "dark_subtracted": True,
                       "median": float(fast_stats.finite_nanmedian(data, 0.0))}
-    arrays: List[np.ndarray] = []
-    for p in paths:
-        data, header = load_frame(p, opts)
-        if master_bias is not None:
-            data = data - master_bias
-        if master_dark is not None:
-            exp = _header_exptime(header)
-            ratio = (exp / dark_exp) if (opts.dark_scale and dark_exp > 0) else 1.0
-            data = data - master_dark * ratio
-        med = float(fast_stats.finite_nanmedian(data, 0.0))
-        if med and np.isfinite(med):
-            data = data / med
-        arrays.append(data)
-    master = combine_frames(arrays, opts.combine_method,
-                            opts.sigma_low, opts.sigma_high, opts.maxiters)
+    ratios = [
+        (_header_exptime(fits.getheader(p)) / dark_exp)
+        if (opts.dark_scale and dark_exp > 0) else 1.0
+        for p in paths
+    ]
+    if can_stream_combine(opts):
+        # Two-pass: a frame's normalising median is a whole-frame statistic, so
+        # pass 1 computes it holding one frame at a time; pass 2 then combines
+        # band-wise with those constants. Costs a second read of the flats
+        # (tens of frames) and bounds the working set to one band.
+        medians: List[float] = []
+        for path, ratio in zip(paths, ratios):
+            data, _header = load_frame(path, opts)
+            if master_bias is not None:
+                data = data - master_bias
+            if master_dark is not None:
+                data = data - master_dark * ratio
+            medians.append(float(fast_stats.finite_nanmedian(data, 0.0)))
+            del data
+
+        def _prepare_flat(values, index, y0, y1):
+            if master_bias is not None:
+                values = values - master_bias[y0:y1]
+            if master_dark is not None:
+                values = values - master_dark[y0:y1] * ratios[index]
+            med = medians[index]
+            if med and np.isfinite(med):
+                values = values / med
+            return values
+
+        master = combine_frames_streaming(
+            paths, opts.combine_method,
+            opts.sigma_low, opts.sigma_high, opts.maxiters,
+            prepare=_prepare_flat)
+    else:
+        arrays: List[np.ndarray] = []
+        for path, ratio in zip(paths, ratios):
+            data, _header = load_frame(path, opts)
+            if master_bias is not None:
+                data = data - master_bias
+            if master_dark is not None:
+                data = data - master_dark * ratio
+            med = float(fast_stats.finite_nanmedian(data, 0.0))
+            if med and np.isfinite(med):
+                data = data / med
+            arrays.append(data)
+        master = combine_frames(arrays, opts.combine_method,
+                                opts.sigma_low, opts.sigma_high, opts.maxiters)
     mm = float(fast_stats.finite_nanmedian(master, 1.0))
     if mm and np.isfinite(mm):
         master = master / mm
