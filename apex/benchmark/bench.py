@@ -46,8 +46,11 @@ TZ_OFFSET_HOURS = 9.0
 
 
 def _out_root(args) -> Path:
-    if args.out_root:
-        return Path(args.out_root)
+    # getattr, not args.out_root: the option is declared with SUPPRESS so it
+    # can appear on either side of the subcommand (see _global_options).
+    out_root = getattr(args, "out_root", None)
+    if out_root:
+        return Path(out_root)
     # benchmark/runs is gitignored (bulky science-run artifacts); the perf
     # envelopes are small machine-readable records the plan requires to be
     # committed, so they live in a tracked sibling instead.
@@ -204,43 +207,90 @@ def cmd_parity(args) -> int:
 
 # ── CLI ─────────────────────────────────────────────────────────────────────
 
+SUBCOMMANDS = ("step0", "sweep", "repro", "parity")
+
+
+def _global_options() -> argparse.ArgumentParser:
+    """Options usable on either side of the subcommand.
+
+    ``default=SUPPRESS`` is what makes that work: the same option lives on the
+    top-level parser and on every subparser, and without SUPPRESS the
+    subparser's ``None`` default would overwrite a value the top-level parser
+    had already stored.  Read the result with ``getattr(args, …, None)``.
+    """
+    shared = argparse.ArgumentParser(add_help=False)
+    shared.add_argument("--out-root", default=argparse.SUPPRESS,
+                        help="metrics output dir (default benchmark/perf/<date>)")
+    return shared
+
+
 def build_parser() -> argparse.ArgumentParser:
+    shared = _global_options()
     parser = argparse.ArgumentParser(
-        prog="apex bench",
+        prog="apex bench", parents=[shared],
         description="Performance benchmarks over fixed fixtures.")
-    parser.add_argument("--out-root", default=None,
-                        help="metrics output dir (default benchmark/runs/perf_<date>)")
     sub = parser.add_subparsers(dest="bench_cmd", required=True)
 
-    p0 = sub.add_parser("step0", help="B1: Step 0 peak RSS on an N-frame M67 subset.")
+    p0 = sub.add_parser("step0", parents=[shared],
+                        help="B1: Step 0 peak RSS on an N-frame M67 subset.")
     p0.add_argument("--frames", required=True, type=int)
     p0.set_defaults(func=cmd_step0)
 
-    ps = sub.add_parser("sweep", help="B2: worker sweep over Steps 1-7 (NGC 6811).")
+    ps = sub.add_parser("sweep", parents=[shared],
+                        help="B2: worker sweep over Steps 1-7 (NGC 6811).")
     ps.add_argument("--workers", default="1,2,4,8,12,16")
     ps.add_argument("--steps", default="1-7")
     ps.set_defaults(func=cmd_sweep)
 
-    pr = sub.add_parser("repro", help="B4: repeat the same run; drift = noise floor.")
+    pr = sub.add_parser("repro", parents=[shared],
+                        help="B4: repeat the same run; drift = noise floor.")
     pr.add_argument("--repeat", default=3, type=int)
     pr.add_argument("--workers", default=12, type=int)
     pr.add_argument("--steps", default="1-7")
     pr.set_defaults(func=cmd_repro)
 
-    pp = sub.add_parser("parity", help="T0.5: parity gate (see apex.benchmark.parity).")
+    pp = sub.add_parser("parity", parents=[shared],
+                        help="T0.5: parity gate (see apex.benchmark.parity).")
     pp.add_argument("parity_args", nargs=argparse.REMAINDER)
     pp.set_defaults(func=cmd_parity)
     return parser
 
 
+def split_parity(argv: list) -> tuple:
+    """Split ``argv`` at a ``parity`` subcommand: ``(head, tail)``.
+
+    ``parity`` forwards a free-form argument list on to
+    :mod:`apex.benchmark.parity`, and argparse's REMAINDER cannot absorb a
+    leading option token (bpo-17050) — so the split has to happen before the
+    parser sees it.  Anything that is a value of a global option (``--out-root
+    parity``) must not be mistaken for the subcommand, hence the skip.
+
+    Returns ``(None, None)`` when this is not a parity invocation.
+    """
+    takes_value = {"--out-root", "-o"}
+    i = 0
+    while i < len(argv):
+        token = argv[i]
+        if token in takes_value:
+            i += 2
+            continue
+        if token.startswith("-"):
+            i += 1
+            continue
+        return (argv[:i], argv[i + 1:]) if token == "parity" else (None, None)
+    return (None, None)
+
+
 def main(argv=None) -> int:
-    argv = list(argv) if argv is not None else None
-    # argparse's REMAINDER cannot absorb a leading option token (bpo-17050),
-    # so `bench parity --new …` must be routed before the parser sees it.
-    if argv and argv[0] == "parity":
+    argv = list(argv) if argv is not None else sys.argv[1:]
+    head, tail = split_parity(argv)
+    if tail is not None:
         from apex.benchmark import parity
 
-        return parity.main(argv[1:])
+        # Still parse the head so a misspelled global flag is an error rather
+        # than being silently handed to the parity parser.
+        build_parser().parse_args([*head, "parity"])
+        return parity.main(tail)
     args = build_parser().parse_args(argv)
     return args.func(args)
 
