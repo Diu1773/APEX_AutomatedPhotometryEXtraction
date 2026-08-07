@@ -22,8 +22,40 @@ Source checked: `validation/paper/논문작업/MANUSCRIPT_ko.md` and nearby pape
 | “Automatic”/“reproducible” GUI processing | GUI state, run manifest, caches | **Partial** | Use “parameterised and resumable”; reproducibility requires captured config, package versions, external solver/catalog state and seed. |
 | All science code is GUI-independent (§2) | Step 8/10 headless scripts import PyQt5/GUI workers | **Overstated** | Restrict to the explicitly shared Qt-free modules; call Step 8/10 “off-screen worker execution” until extracted. |
 
+## Native implementation and performance wording
+
+The methods section should answer two separate questions: (1) why an established
+package was not used as the complete solution, and (2) which local optimisations are
+actually present. The defensible summary is:
+
+> APEX reuses established primitives whenever they match the operation: SEP or
+> photutils for detection, photutils for aperture/ePSF fitting, Astropy for WCS
+> transforms and Lomb--Scargle/BLS, and SciPy for spatial searches. Native code is
+> limited to missing operations (the Stellingwerf PDM statistic, the Tamuz SYSREM
+> iteration, and an in-process blind WCS path) or to workflow contracts that the
+> primitives do not define (automatic aperture-correction selection, QC, iteration,
+> provenance and fallbacks). The implementation uses batched NumPy/cKDTree work,
+> bounded trial grids, chunked calibration stacks and fixed-sky reuse. These are
+> engineering choices; no package-wide speed superiority is claimed without a
+> controlled benchmark.
+
+The Bottleneck statement must be equally narrow: `apex.utils.fast_stats` routes
+selected NaN reductions to Bottleneck when importable and otherwise to NumPy. It is
+used by calibration, detection, cosmetic robust-stat helpers and the Step 4 helper;
+many other modules call NumPy reductions directly. Thus the manuscript should say
+“Bottleneck accelerates selected wrapper-routed reductions” rather than “Bottleneck
+accelerates the pipeline” or “NumPy was too slow”.
+
+| Avoid | Use instead |
+|---|---|
+| “The native solver is faster than ASTAP/astrometry.net.” | “The internal solver removes executable/index/WSL dependencies and uses batched matching with bounded RANSAC; speed was not ranked without a benchmark.” |
+| “NumPy was too slow, so PDM/SYSREM was rewritten.” | “PDM was absent from the selected Astropy API; SYSREM required the stated weighting, missing-data and target-exclusion contract. Their inner operations are vectorised.” |
+| “APEX uses Bottleneck for its statistics.” | “Selected reductions are routed through an optional Bottleneck/NumPy compatibility wrapper; direct NumPy reductions remain elsewhere.” |
+| “APEX replaces photutils.” | “APEX retains photutils primitives and adds selection, QC, iteration, correction and output policy.” |
+
 ## Required manuscript edits before submission
 
+* Add version-pinned software references for Bottleneck/NumPy/SciPy (and the exact photutils/ccdproc releases) rather than citing an unnamed “Python calculation”.
 * Add a one-row-per-experiment table with camera, filter, engine, config, frame/star count, seed, reference and metric.
 * Replace “identical” with “same named function path under the same resolved configuration” where parity was actually checked.
 * Separate software-library validation from APEX workflow validation. A package citation is not a result-level validation.

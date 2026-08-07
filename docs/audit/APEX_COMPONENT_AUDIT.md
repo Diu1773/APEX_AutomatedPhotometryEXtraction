@@ -2,6 +2,25 @@
 
 Audit date: 2026-08-07. This is a code-trace audit, not a claim that every branch has been run. Paths and function names refer to the current repository; the function name is the stable locator when line numbers move.
 
+## Audited environment snapshot
+
+The following versions were queried from `.venv-deploy` on the audit date. They are
+the versions for which the current verification run (905 passed tests) is meaningful;
+they are not a substitute for pinning the release environment in the paper.
+
+| Package | Version | Role in this audit |
+|---|---:|---|
+| Python | 3.12.3 (repository supports 3.10+) | execution |
+| NumPy | 2.4.4 | arrays, vectorised native operations, fallback reductions |
+| SciPy | 1.17.1 | `cKDTree`, optimisation, signal/linear algebra |
+| Astropy | 7.2.0 | FITS, coordinates/WCS, time-series LS/BLS |
+| photutils | 2.3.0 | detection/segmentation, aperture and PSF primitives |
+| SEP | 1.4.1 | independent source-extraction engine |
+| Bottleneck | 1.6.0 | selected `fast_stats` reductions |
+| astroscrappy | 1.3.0 | L.A.Cosmic cosmic-ray primitive |
+| pandas | 2.3.3 | tables, SYSREM pivot and workflow data |
+| ccdproc | 2.5.1 | validation-only Python CCD reduction cross-check |
+
 ## Execution spine
 
 | Boundary | Actual path | Audit result |
@@ -41,6 +60,42 @@ Audit date: 2026-08-07. This is a code-trace audit, not a claim that every branc
 ## Classification rule used
 
 `R` means an external library/service is called for the scientific primitive; `N-A` is a project algorithm, `N-W` a project workflow/acceptance policy, `N-O` a computational optimization, `N-S` standard arithmetic, and `M` combines these. Imports alone were never treated as native work. A component is not “novel” merely because it is assembled in APEX.
+
+## Native-vs-reused rationale (engineering evidence)
+
+The word "native" is used narrowly here. It does not mean that APEX reimplemented a
+library primitive for speed. In most stages APEX calls the established primitive and
+implements only the surrounding contract: parameter presets, reference selection,
+fallbacks, QC, provenance, or output schema. A native algorithm is retained only
+when the required operation is absent from the selected in-process stack or when an
+external executable would break the intended offline, per-frame workflow. The table
+below records the reason that can be supported by source inspection. It does **not**
+claim a universal speed advantage; no hardware-normalised APEX-vs-package benchmark
+has been committed.
+
+| Native or mixed component | Why a package primitive was not used as the whole solution | Where the performance decision is real | What is still reused | Safe manuscript wording |
+|---|---|---|---|---|
+| Internal WCS/quad solver (`astrometry/quad_matcher.py`, `solver.py`) | `astropy.wcs` transforms coordinates but is not a blind plate solver. ASTAP and astrometry.net are external executables with separate databases/indexes (and, for solve-field, WSL/network/environment requirements). The internal path supplies the same per-frame Gaia refinement, acceptance gates, callbacks and sidecar/header handling without those runtime requirements. | Quad construction and catalogue matching are vectorised; `cKDTree.query` batches all source quads instead of a Python per-quad query, and RANSAC is bounded by `max_trials`. These are implementation choices, not a measured claim that the solver is faster than ASTAP or astrometry.net. | Astropy coordinates/WCS, SciPy `cKDTree`/linear algebra, and Gaia service/cache. | “The internal solver is an offline in-process default; ASTAP and astrometry.net remain selectable external engines. The implementation uses batched vector operations and bounded RANSAC, but solver speed was not claimed without a benchmark.” |
+| PDM (`period_analysis_service.py:_pdm_theta_vectorized`) | Astropy supplies Lomb–Scargle and BLS, but not the Stellingwerf PDM statistic used here. A subprocess/tool replacement would require a different input/output and diagnostic contract. | Trial periods are processed in NumPy batches with a memory bound (about 50 MB per batch); the requested grid is capped at 50,000 trials. The source comment reports a scalar-loop speedup estimate, but it is not a release benchmark. | NumPy, SciPy peak finding, Astropy Lomb–Scargle for the complementary method. | “PDM is a project implementation of the Stellingwerf statistic because the selected Astropy time-series API does not provide PDM; it is vectorised and memory-bounded, not asserted to be universally faster.” |
+| SYSREM (`analysis/light_curve/sysrem.py`) | The core dependency set has no SYSREM primitive with this missing-data/error model and explicit exclusion of the target from component estimation. The implementation is based on Tamuz et al. (2005), not presented as a new algorithm. | The alternating coefficient updates are matrix/vector operations; the DataFrame adapter uses a pivot rather than `iterrows`. This reduces Python overhead but is not an accuracy or universal throughput claim. | NumPy/pandas for the numerical and table operations; the literature algorithm and citation define the method. | “SYSREM follows Tamuz et al. with an APEX-specific missing-data, weighting and target-preservation contract; the implementation is vectorised.” |
+| Aperture-correction workflow (`_growth_curve_fixed_sky`, `_simple_apcorr`) | photutils provides aperture primitives and growth-curve ingredients, but not APEX's automatic reference-star selection, S/N and count cuts, correction cap, fallback median ratio, and application to every frame. Replacing the workflow with DAOPHOT/IRAF would add an external format/process boundary. | The fixed-sky growth curve computes annulus statistics once and reuses them for the radius grid; this is an I/O/arithmetic reduction, not a new aperture algorithm. | photutils aperture masks/statistics and Astropy units/FITS. | “APEX adds an automatic, QC-controlled aperture-correction workflow around photutils; it does not replace photutils aperture photometry.” |
+| Calibration combination (`calibration.py`) | `ccdproc` is retained as an independent cross-check, while APEX controls frame grouping, exposure/temperature matching, pedestal and output metadata. Using a package call alone would not express the full APEX policy or manifest. | Stack dtype/chunking and bounded intermediate arrays address peak memory; the code does not establish that its median/sigma-clipped combine is faster than `ccdproc`. | Astropy FITS I/O; `ccdproc` only in the validation cross-check, not the production implementation. | “APEX implements the declared calibration policy and verifies it against Python ccdproc; no speed superiority is implied.” |
+| Detection/QC and PSF iteration | SEP, photutils segmentation/deblending, DAOStarFinder, and photutils PSF fitting remain the scientific primitives. Native code chooses engines/presets, merges/refines detections, selects PSF stars, iterates residuals, and assigns QC flags. | `cKDTree` proximity filtering, vectorised image operations, label caps and configurable worker pools bound cost; there is no evidence that APEX's policy layer is a faster detector than the underlying engines. | SEP, photutils, SciPy and Astropy. | “APEX contributes orchestration and acceptance policy around established detection/PSF primitives.” |
+| `fast_stats` / Bottleneck | This is not a native statistics algorithm. `apex.utils.fast_stats` is a compatibility wrapper: it calls Bottleneck for standard reductions when importable and falls back to NumPy with the same operation. `bottleneck` is declared in the core dependency set, but the fallback keeps module-level imports and reduced environments usable. | Bottleneck can accelerate large NaN-aware reductions; the repository contains no benchmark proving a fixed percentage. It is used by calibration, detection, cosmetic robust-stat helpers, and the Step 4 GUI helper. | NumPy is the scientific fallback and remains the direct implementation for many small or algorithm-specific reductions. | “Bottleneck is an optional acceleration path for selected reductions, not a replacement for NumPy and not used throughout the pipeline.” |
+
+### Bottleneck boundary (important for reproducibility)
+
+The audited call graph imports `fast_stats` in `calibration.py`, `detection.py`,
+`cosmetic.py`, and `gui/workflow/step4_source_detection.py`. The wrapper exposes
+`nanmedian`, `nanmean`, `nanstd`, `nansum`, and `nanmax`, but only calls routed through
+that wrapper can use Bottleneck. Many other modules still call `numpy.nanmedian`,
+`numpy.nanmean`, `numpy.nanstd`, or `numpy.nansum` directly (for example forced
+photometry, WCS residual summaries, light-curve services, overscan, photometry
+helpers, and benchmark scripts). The source does not document a deliberate
+“Bottleneck-off” scientific policy for each of those calls. Therefore the paper must
+not say that Bottleneck accelerates APEX globally; if this distinction matters to a
+performance result, record the exact module path, package versions, array shape and
+benchmark condition.
 
 ## Immediate documentation corrections
 

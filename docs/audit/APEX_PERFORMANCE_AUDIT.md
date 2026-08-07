@@ -4,6 +4,52 @@
 
 The repository contains timing hooks and benchmark runners, but this audit did not find a committed, hardware-normalised baseline that supports a universal speed-up percentage. Therefore “parallel”, “vectorized”, or “optimized” below describes code structure only; it is not a measured performance claim.
 
+## Why some code is native and some is not
+
+The performance rationale is local, not a blanket claim that NumPy or an existing
+package is too slow. The production path deliberately keeps established compiled
+primitives where they match the scientific operation (SEP extraction, photutils
+segmentation/apertures/PSF fitting, Astropy WCS transforms, Lomb--Scargle/BLS,
+SciPy spatial searches). Native code surrounds those calls with workflow policy, or
+implements a missing operation (PDM, SYSREM, internal blind WCS). The following
+optimisations are visible in source and should be described as bounded engineering
+choices rather than as benchmark results:
+
+* WCS quad matching uses a batched `scipy.spatial.cKDTree.query` and bounded RANSAC
+  trials instead of a Python query for every quad.
+* PDM evaluates trial periods in NumPy batches and caps the grid at 50,000 trials;
+  the batch size is reduced to bound temporary memory.
+* SYSREM uses matrix/vector updates and a pandas pivot rather than row-wise table
+  iteration, while preserving the explicit target-exclusion contract.
+* Calibration controls stack dtype/chunking to limit peak memory; forced-photometry
+  growth curves reuse one fixed-sky annulus calculation across radii.
+* Frame-level concurrency is implemented with thread pools because the underlying
+  Astropy/photutils/SciPy kernels may release the GIL, but scaling is not assumed.
+
+These choices answer different bottlenecks: Python-loop overhead, temporary-array
+memory, repeated I/O/statistics, or external-process latency. They should not be
+collapsed into the sentence “NumPy was too slow”.
+
+## Bottleneck is selective, not global
+
+`apex/utils/fast_stats.py` is a small compatibility layer, not a second statistical
+engine. For `nanmedian`, `nanmean`, `nanstd`, `nansum`, and `nanmax`, it calls
+Bottleneck when available and otherwise calls the corresponding NumPy function.
+The audited imports are `analysis/calibration.py`, `analysis/detection.py`,
+`analysis/cosmetic.py`, and the Step 4 source-detection GUI helper. The package is
+declared in the core dependency set, but the defensive fallback allows tests and
+partial installations to retain NumPy semantics.
+
+Many other paths call NumPy reductions directly: forced photometry, WCS residual
+summaries, overscan, photometry helpers, light-curve services, and benchmark
+scripts. The source does not give a module-by-module reason for bypassing the
+wrapper. Some calls operate on small per-source arrays or are embedded in a
+specialised formula, but that is an inference, not an audited performance result.
+Consequently, report Bottleneck only for the wrapper-routed operations and include
+the package version and benchmark condition if a speed number is added. Do not write
+that “APEX uses Bottleneck throughout” or that it makes the pipeline faster without
+a controlled comparison.
+
 ## Cost map
 
 | Stage | Dominant work and current implementation | Parallel unit / default | Main risk | Required measurement |

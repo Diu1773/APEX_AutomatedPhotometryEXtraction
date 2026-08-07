@@ -792,3 +792,9 @@ Claude 의 오류 경위: 레포 전체 grep 이 타임아웃되자 `apex/` 로 
 - 미리보기의 각 페이지를 A4 210×297 mm(794×1123 px) 한 장으로 고정하고, 화면·인쇄 양쪽에 `break-after: page`와 `break-inside: avoid`를 적용했다.
 - 표지·목차·본문 페이지가 물리적 A4 경계에서 분리되며, 현재 미리보기는 17쪽으로 렌더된다.
 - 미리보기 기본 모드를 PDF식 단일 페이지 보기로 바꾸고, 이전·다음 버튼과 좌우/PageUp·PageDown 키로 페이지를 넘기게 했다. `읽기` 모드에서는 연속 문서로 전환된다.
+
+## 2026-08-07 · native 구현·Bottleneck 근거 감사
+
+- `docs/audit/APEX_COMPONENT_AUDIT.md`에 native/reused rationale 표와 현재 `.venv-deploy` 패키지 버전을 추가했다. 내장 WCS·PDM·SYSREM은 “기존 패키지가 느려서 재작성”한 것으로 쓰지 않고, blind solving/PDM/API 부재 또는 APEX 고유의 결측·대상 보존·QC 계약 때문에 둔 것으로 정리했다.
+- `fast_stats`는 Bottleneck 전체 사용이 아니라 `calibration`, `detection`, `cosmetic`, Step 4 보조 코드의 선택된 NaN reduction만 Bottleneck으로 보내며 NumPy fallback을 유지한다. forced photometry·WCS·시계열·overscan 등은 NumPy 직접 호출이 남아 있으므로 전역 가속 주장을 금지한다.
+- 국문 원고 §2.3에도 위 구분과 “속도 우위는 통제된 벤치마크 없이는 주장하지 않음”을 반영했다. 전체 오라클: **905 passed, 0 failed, 24 warnings** (2026-08-07).
