@@ -798,3 +798,4 @@ Claude 의 오류 경위: 레포 전체 grep 이 타임아웃되자 `apex/` 로 
 - `docs/audit/APEX_COMPONENT_AUDIT.md`에 native/reused rationale 표와 현재 `.venv-deploy` 패키지 버전을 추가했다. 내장 WCS·PDM·SYSREM은 “기존 패키지가 느려서 재작성”한 것으로 쓰지 않고, blind solving/PDM/API 부재 또는 APEX 고유의 결측·대상 보존·QC 계약 때문에 둔 것으로 정리했다.
 - `fast_stats`는 Bottleneck 전체 사용이 아니라 `calibration`, `detection`, `cosmetic`, Step 4 보조 코드의 선택된 NaN reduction만 Bottleneck으로 보내며 NumPy fallback을 유지한다. forced photometry·WCS·시계열·overscan 등은 NumPy 직접 호출이 남아 있으므로 전역 가속 주장을 금지한다.
 - 국문 원고 §2.3에도 위 구분과 “속도 우위는 통제된 벤치마크 없이는 주장하지 않음”을 반영했다. 전체 오라클: **905 passed, 0 failed, 24 warnings** (2026-08-07).
+- 원고 §2.3에 native 설계 기준을 추가했다: API 부재, 외부 의존성 제거, APEX 고유 정책(QC·결측·대상 보존·fallback), 메모리/반복 제어를 대체안과 비교하고 각 검증 절(3.6·3.9·3.13)에 연결한다.
