@@ -58,11 +58,29 @@ class RunContext:
         # Make the resolved paths authoritative for the whole run: components
         # such as FileManager read params.P.result_dir / params.P.data_dir
         # directly, so CLI overrides must be reflected there too.
+        configured_result = Path(getattr(params.P, "result_dir", "") or "")
+        configured_cache = Path(getattr(params.P, "cache_dir", "") or "")
         try:
             params.P.result_dir = resolved_result
             params.P.data_dir = resolved_data
         except Exception:  # noqa: BLE001 - never let path sync break a run
             pass
+
+        # `read_params` has already resolved cache_dir against the *config's*
+        # result_dir, so overriding result_dir alone leaves the detection and
+        # WCS caches behind in the config's tree — two runs with different
+        # --result-dir then share one cache and can reuse each other's
+        # results.  Re-root it whenever it lived under the old result dir; an
+        # absolute cache_dir configured outside it is a deliberate choice and
+        # is left alone.
+        if configured_cache and configured_result:
+            try:
+                relative = configured_cache.relative_to(configured_result)
+            except ValueError:
+                relative = None
+            if relative is not None:
+                params.P.cache_dir = resolved_result / relative
+                params.P.cache_dir.mkdir(parents=True, exist_ok=True)
 
         return cls(
             mode=mode,
