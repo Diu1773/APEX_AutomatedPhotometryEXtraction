@@ -48,11 +48,19 @@
 | ID | 변경 | parity 게이트 (전부 통과해야 채택) | 예상 |
 |---|---|---|---|
 | O1 | **Streaming/two-pass Step 0** — 프레임 전량 float64 보유를 스트리밍 누적으로 | calibrated 프레임 **비트동일** · 마스터 비트동일 · peak RSS 가 프레임 수와 무관함을 B1 대비 수치로 | 1일 |
-| O2 | **Resource-aware workers** — `min(코어 75 %, 가용 RAM / 작업당 추정 RSS)` 상한, I/O 종류별 분리 | 산출물 비트동일 · B2 대비 시간 악화 없음 · RAM 압박 시나리오(인위 제한)에서 완주 | 반나절 |
+| O2 | **단계별 worker** — B2 실측: detect/wcs 는 2–4 에서 포화, **forcedphot 은 병렬이 4× 느림**(222.6→950 s @w=12) → 단계별 기본값 {detect/wcs: 2–4, forcedphot: 1} + RAM 승인 제어 | 통계 게이트(아래) 통과 · B2 대비 시간 개선을 수치로 · RAM 압박 시나리오 완주 | 반나절 + step7 병렬 경로 규명 별건 |
 | O3 | **LC 공용 cache** — sid_map 공유 + frame×star compact matrix + bounded preload (LC 리뷰 P0 세 건, **마지막에**) | 광도값 자릿수 동일 · T0.4 카운터로 읽기 횟수 감소 수치 · cold build 시간 before/after | 1–2일 |
 
 각 게이트에 **전체 pytest 통과**가 포함된다. 게이트 실패 = 그 최적화 폐기
 (baseline 이 남아 있으므로 되돌림은 git revert 하나).
+
+> **게이트 정정 (2026-08-07, B4 실측)**: step 4 이후 산출물은 비트동일이
+> 성립하지 않는다 — 같은 입력·같은 worker 로도 소수 별 좌표가 1.5 px 까지
+> 튀고 마스터 목록이 ±1 흔들린다(시드 없는 RANSAC·경계선 재중심화 의심,
+> 별도 추적). 게이트는 실측 잡음 바닥 기반 통계형으로 바꾼다: 매칭 mag
+> 중앙 MAD < 0.1 mmag · 바뀐 측정 < 5 % · 최대 |Δ| < 30 mmag · n_detect ±5 ·
+> 목록 ±2. **step 0 마스터·calibrated 프레임은 비트동일 게이트 유지.**
+> 수치 근거: benchmark/perf/20260807/RESULTS.md
 
 ### O2 설계 확정 (2026-08-07)
 
