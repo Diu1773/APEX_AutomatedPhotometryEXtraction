@@ -1,0 +1,47 @@
+{
+ "old": "E:\\APEX_validation\\reprocess",
+ "new": "E:\\APEX_validation\\reprocess_cr",
+ "expected_err_ratio": 1.006595894149011,
+ "targets": [
+  {
+   "target": "NGC6811",
+   "frames": 21,
+   "matched": 39816,
+   "dmag_median_mmag": 14.274999999997817,
+   "dmag_mad_mmag": 1.4330000000004617,
+   "dmag_p99_mmag": 165.72130000000072,
+   "calibration_changed": false,
+   "err_ratio_median": 1.0008582608573922
+  },
+  {
+   "target": "M67",
+   "frames": 30,
+   "matched": 28659,
+   "dmag_median_mmag": 15.080999999998568,
+   "dmag_mad_mmag": 1.4459999999996143,
+   "dmag_p99_mmag": 2836.328879999997,
+   "calibration_changed": true,
+   "err_ratio_median": 1.0022769318343532
+  },
+  {
+   "target": "M13",
+   "frames": 15,
+   "matched": 22020,
+   "dmag_median_mmag": 14.275999999998845,
+   "dmag_mad_mmag": 0.9579999999971278,
+   "dmag_p99_mmag": 102.6068599999986,
+   "calibration_changed": false,
+   "err_ratio_median": 1.000752687651235
+  },
+  {
+   "target": "M5",
+   "frames": 41,
+   "matched": 71719,
+   "dmag_median_mmag": 15.457999999998862,
+   "dmag_mad_mmag": 4.3959999999998445,
+   "dmag_p99_mmag": 238.6389399999952,
+   "calibration_changed": true,
+   "err_ratio_median": 0.9983320796677242
+  }
+ ]
+}

@@ -67,18 +67,18 @@ FAIL) at the shipped default thresholds.
 
 | Truth class | $N_{\rm src}$ | FWHM (px) | sky (ADU) | $\sigma_{\rm sky}$ (ADU) | FWHM ratio | noise ratio | depth cost (mag) |
 |---|---|---|---|---|---|---|---|
-| clean | 120 | 3.57 | 150 | 10.46 | 1.00 | 0.99 | +0.00 |
-| cloud (ZP $-0.7$ mag) | 100 | 3.61 | 150 | 10.44 | 1.01 | 0.99 | +0.01 |
-| bad seeing (FWHM $\times 1.8$) | 88 | 6.36 | 150 | 10.56 | 1.78 | 1.00 | +0.64 |
-| bright sky ($\times 5$) | 91 | 3.54 | 750 | 22.40 | 0.99 | 0.99 | +0.82 |
-| noisy readout (RN 25, hdr 5 e$^-$) | 96 | 3.58 | 150 | 19.25 | 1.00 | 1.83 | +0.67 |
+| clean | 120 | 3.54 | 150 | 10.46 | 1.00 | 0.99 | -0.01 |
+| cloud (ZP $-0.7$ mag) | 100 | 3.52 | 150 | 10.44 | 0.99 | 0.99 | -0.01 |
+| bad seeing (FWHM $\times 1.8$) | 88 | 6.36 | 150 | 10.56 | 1.79 | 1.00 | +0.64 |
+| bright sky ($\times 5$) | 91 | 3.52 | 750 | 22.40 | 0.99 | 0.99 | +0.82 |
+| noisy readout (RN 25, hdr 5 e$^-$) | 96 | 3.58 | 150 | 19.25 | 1.01 | 1.83 | +0.67 |
 
 ## Which check caught what
 
 * **bad seeing** — the only class driven to **FAIL**, by the FWHM checks:
   night-relative robust $z$ (`fwhm_z`, median
-  32.9 $\gg$ 4.5) and the
-  seeing-model ratio (median 1.78
+  29.8 $\gg$ 4.5) and the
+  seeing-model ratio (median 1.79
   $>$ 1.6 FAIL cut); the depth-cost check
   (median +0.64 mag) fired in
   support. Reasons: `high_fwhm` (5), `depth_warning` (5).
@@ -94,6 +94,6 @@ FAIL) at the shipped default thresholds.
 * **noisy readout (header lie)** — the measured-vs-expected sky-noise ratio rose to a median of 1.83$\times$ (clean frames: 0.99) but stayed below the conservative 2.5 review threshold at this sky level; the frames were flagged anyway, by the *night-relative* sky-noise outlier check (`sky_sigma_z` $>$ 4.0 on 5/5 frames — the same measured-noise-anomaly family, referenced to the night's own frames rather than to the CCD equation) and by the depth-cost check (median 0.67 mag of estimated depth loss).
 * **cloud** — All five cloud frames **PASS** — the expected, and measured, blind spot. A grey 0.7 mag transparency loss leaves FWHM, sky level, sky noise, and star shapes untouched (median metrics are indistinguishable from clean, see table), so the shape, sky, noise-consistency, and depth checks are *structurally* blind to it: even the depth-cost proxy is unchanged because extinction costs *source* flux, not sky noise. The only metric that responds at all is the detected source count (median $N_{\rm src}$ 100 vs 120 clean — an LF-dependent deficit from the ~0.7 mag slice of stars pushed below the detection limit), and its night-relative robust $z$ (median -0.6) stayed far above the $-3.0$ review cut for two honest reasons: (i) the deficit itself depends on the luminosity function near the limit, and (ii) with 20/44 frames defective, the MAD-based night scale is inflated by the defect population itself (clean-only scale 4.4 counts vs 18.5 whole-night; referenced to clean frames alone the same cloud frames would sit at $z = -6.6$ to $-3.0$, i.e. mostly flaggable). Grey transparency loss is thus only robustly observable relative to a photometric reference; this measured limitation is precisely the motivation for the planned post-photometry transparency-QC stage (frame zeropoint / comparison-star flux monitoring).
 
-The 44 production detections took 86 s of wall time
+The 44 production detections took 22 s of wall time
 (single worker). Full per-frame metrics and decisions:
 `validation/paper/data/frame_qc/frame_qc_night.csv`.
