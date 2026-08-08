@@ -747,6 +747,28 @@ def _solution_header_shape(solution_hdr: fits.Header, fallback_hdr: fits.Header 
     return float(nx), float(ny)
 
 
+def _first_frame_bytes(worker):
+    """One frame's in-memory size, for the RAM-aware worker cap.
+
+    Module-level rather than a method: the internal, astrometry.net and legacy
+    workers are separate classes with no common base, but all four attributes
+    it needs are named the same on each.
+    """
+    file_list = getattr(worker, "file_list", None)
+    if not file_list:
+        return None
+    name = file_list[0]
+    try:
+        if getattr(worker, "use_cropped", False):
+            cand = step2_cropped_dir(Path(worker.result_dir)) / name
+            if cand.exists():
+                return frame_bytes_from_header(cand)
+        path = Path(worker.params.get_file_path(name))
+    except Exception:
+        return None
+    return frame_bytes_from_header(path) if path.exists() else None
+
+
 class WcsWorkerBase:
     """Qt-free ASTAP WCS-solving worker (relocated from WcsWorker).
 
@@ -763,16 +785,6 @@ class WcsWorkerBase:
         self.log_message = _SignalShim()
         self.finished = _SignalShim()
         self.error = _SignalShim()
-
-    def _frame_bytes(self):
-        """One frame's in-memory size, for the RAM-aware worker cap."""
-        if not self.file_list:
-            return None
-        try:
-            path = self._resolve_source_fits_path(self.file_list[0])
-        except Exception:
-            return None
-        return frame_bytes_from_header(path) if path else None
 
     def __init__(self, file_list, params, data_dir, result_dir, cache_dir,
                  use_cropped=False, target_coord=None):
@@ -2350,7 +2362,8 @@ class WcsWorkerBase:
                 return filename, meta
 
             completed = 0
-            _default_workers = get_parallel_workers(self.params, stage="wcs")
+            _default_workers = get_parallel_workers(
+                self.params, stage="wcs", frame_bytes=_first_frame_bytes(self))
             max_workers = int(getattr(self.params.P, "wcs_max_workers", _default_workers))
             from queue import Queue as _Queue
             _slot_q: _Queue = _Queue()
@@ -2780,7 +2793,7 @@ class InternalWcsWorkerBase:
         results = {}
 
         max_workers = get_parallel_workers(
-            self.params, stage="wcs", frame_bytes=self._frame_bytes())
+            self.params, stage="wcs", frame_bytes=_first_frame_bytes(self))
         max_workers = max(1, int(max_workers))
         self._log(f"[Internal WCS] Solving {total} frames with {max_workers} worker(s)")
 
@@ -4137,7 +4150,8 @@ class AstrometryNetWorkerBase:
         cpulimit_s = float(getattr(self.params.P, "astnet_local_cpulimit_s", 30.0))
         blind_retry = bool(getattr(self.params.P, "astnet_blind_retry_on_fail", True))
         blind_cpulimit_s = float(getattr(self.params.P, "astnet_blind_cpulimit_s", 120.0))
-        max_workers = get_parallel_workers(self.params, stage="wcs")
+        max_workers = get_parallel_workers(
+            self.params, stage="wcs", frame_bytes=_first_frame_bytes(self))
 
         if scale_low <= 0 or scale_high <= 0:
             scale_low = float(pix_arc) * 0.85
