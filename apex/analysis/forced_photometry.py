@@ -37,6 +37,7 @@ from apex.utils.step_paths import (
     crop_is_active,
 )
 from apex.utils.qc_utils import filter_files_by_qc  # noqa: F401
+from apex.utils.io_utils import frame_bytes_from_header
 from apex.utils.photometry_utils import (
     phot_vectorized,
     refine_local_centroid,
@@ -460,7 +461,10 @@ def run_forced_photometry(
     _wcs_header_cache: Dict[str, fits.Header] = {}
     _wcs_cache_lock = Lock()
     _results_lock = Lock()
-    max_workers = get_parallel_workers(params, stage="forcedphot")
+    _first = params.get_file_path(file_list[0]) if file_list else None
+    max_workers = get_parallel_workers(
+        params, stage="forcedphot",
+        frame_bytes=frame_bytes_from_header(_first) if _first else None)
 
     def _stop_requested() -> bool:
         return should_stop() if should_stop else False

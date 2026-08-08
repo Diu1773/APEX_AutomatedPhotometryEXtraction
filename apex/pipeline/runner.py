@@ -29,11 +29,17 @@ class RunReport:
         return all(r.ok for r in self.results)
 
     def to_dict(self) -> dict:
+        from apex.utils.constants import get_worker_decisions
+
         return {
             "mode": self.mode,
             "started": self.started,
             "ended": self.ended,
             "success": self.success,
+            # "auto" is not a reproducible record. Store the count each stage
+            # actually got and the inputs that produced it (configured value,
+            # stage ceiling, RAM headroom) so a run can be explained later.
+            "worker_decisions": get_worker_decisions(),
             "steps": [r.to_dict() for r in self.results],
         }
 

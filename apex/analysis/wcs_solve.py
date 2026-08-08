@@ -57,6 +57,7 @@ from apex.utils.step_paths import (
     step1_dir,
 )
 from apex.utils.constants import get_parallel_workers, MAD_TO_SIGMA
+from apex.utils.io_utils import frame_bytes_from_header
 from apex.utils.gaia_catalog_service import (
     GaiaCatalogService,
     gaia_runtime_available,
@@ -762,6 +763,16 @@ class WcsWorkerBase:
         self.log_message = _SignalShim()
         self.finished = _SignalShim()
         self.error = _SignalShim()
+
+    def _frame_bytes(self):
+        """One frame's in-memory size, for the RAM-aware worker cap."""
+        if not self.file_list:
+            return None
+        try:
+            path = self._resolve_source_fits_path(self.file_list[0])
+        except Exception:
+            return None
+        return frame_bytes_from_header(path) if path else None
 
     def __init__(self, file_list, params, data_dir, result_dir, cache_dir,
                  use_cropped=False, target_coord=None):
@@ -2768,7 +2779,8 @@ class InternalWcsWorkerBase:
         n_qc_not_evaluated = 0
         results = {}
 
-        max_workers = get_parallel_workers(self.params, stage="wcs")
+        max_workers = get_parallel_workers(
+            self.params, stage="wcs", frame_bytes=self._frame_bytes())
         max_workers = max(1, int(max_workers))
         self._log(f"[Internal WCS] Solving {total} frames with {max_workers} worker(s)")
 

@@ -83,6 +83,16 @@ def run(label: str, *, config: Path, env_workers: str | None, steps: str,
     return m
 
 
+def checkpoint(path: Path, payload: dict) -> None:
+    """Write the batch after every run, not only at the end.
+
+    A scheduled shutdown killed a sweep at 05:20 that had already finished
+    three of six worker counts; the JSON was written last, so those results
+    only survived because the console log happened to be on disk.
+    """
+    resources.save_metrics(payload, path)
+
+
 def _row(m: dict) -> str:
     p = m["per_step"]
     return (f"{m['policy']:12s} wall={m['wall_s']:7.1f}s  "
@@ -111,6 +121,9 @@ def cmd_arms(args) -> int:
             m["repeat"] = rep
             runs.append(m)
             print(f"#{rep} " + _row(m), flush=True)
+            checkpoint(OUT_DIR / "o2_arms_NGC6811.json",
+                       {"label": "o2_arms_NGC6811", "complete": False,
+                        "runs": runs})
 
     print()
     summary = {}
@@ -129,8 +142,9 @@ def cmd_arms(args) -> int:
               f"[{s['wall_s_min']:.1f}, {s['wall_s_max']:.1f}]  "
               f"USS max {s['peak_uss_mb_max']:,.0f} MB")
 
-    resources.save_metrics({"label": "o2_arms_NGC6811", "summary": summary,
-                            "runs": runs}, OUT_DIR / "o2_arms_NGC6811.json")
+    resources.save_metrics({"label": "o2_arms_NGC6811", "complete": True,
+                            "summary": summary, "runs": runs},
+                           OUT_DIR / "o2_arms_NGC6811.json")
     print(f"saved -> {OUT_DIR / 'o2_arms_NGC6811.json'}")
     return 0
 
@@ -154,9 +168,12 @@ def cmd_sweep(args) -> int:
               f"USS={m['peak_uss_mb'] or 0:>6,.0f} MB  "
               f"{'ok' if m['all_ok'] else 'FAILED'} "
               f"cache={'own' if m['own_cache'] else 'SHARED!'}", flush=True)
+        checkpoint(OUT_DIR / "b2prime_detect_wcs.json",
+                   {"label": "b2prime_detect_wcs_NGC6811", "steps": "1-5",
+                    "complete": w == counts[-1], "runs": runs})
 
     resources.save_metrics({"label": "b2prime_detect_wcs_NGC6811",
-                            "steps": "1-5", "runs": runs},
+                            "steps": "1-5", "complete": True, "runs": runs},
                            OUT_DIR / "b2prime_detect_wcs.json")
     print(f"saved -> {OUT_DIR / 'b2prime_detect_wcs.json'}")
     return 0

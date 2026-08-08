@@ -350,10 +350,78 @@ STAGE_WORKER_CAPS = {
     "crop": 4,
 }
 
+# ── Memory admission control ────────────────────────────────────────────────
+#
+# A worker count picked from the core count alone is a promise the machine may
+# not be able to keep.  Measured on NGC 6811 (Steps 1-5, peak USS,
+# benchmark/perf/20260808/b2prime_detect_wcs.json):
+#
+#   1 worker 808 MB · 2 workers 1,101 MB · 4 workers 1,914 MB
+#
+# Least squares over those three points: 402 MB fixed + 374 MB per worker.
+# The slope is carried as a *multiple of the frame* rather than a constant —
+# 374 MB is 6.1x the float32 frame (3194x4788 = 61.2 MB) — because a different
+# camera changes the frame size, not the algorithm.
+WORKER_MEM_FRAME_MULTIPLE = 6.1
+WORKER_MEM_BASE_MB = 400.0
 
-def get_parallel_workers(params=None, stage=None) -> int:
+# Fraction of *available* RAM a run may plan to occupy.  The remainder is not
+# slack: it is the OS page cache holding the frames themselves.  A run that
+# eats it re-reads every frame from disk on the next pass — forced photometry
+# went 222.6 s -> 387.4 s on identical input when free RAM fell from ~12 GB to
+# 3.5 GB, while detection (which reads each frame once) was unchanged.
+RAM_BUDGET_FRACTION = 0.6
+
+# Every resolved worker count, with the reasoning that produced it.  The
+# pipeline runner writes this into pipeline_run.json: "auto" is not a
+# reproducible record unless the number it chose and why are both stored.
+WORKER_DECISIONS: list = []
+
+
+def reset_worker_decisions() -> None:
+    WORKER_DECISIONS.clear()
+
+
+def get_worker_decisions() -> list:
+    """Snapshot of the decisions made so far (newest last)."""
+    return [dict(d) for d in WORKER_DECISIONS]
+
+
+def available_ram_mb():
+    """Available (not merely free) RAM, or None when psutil is absent."""
+    try:
+        import psutil
+    except Exception:
+        return None
+    try:
+        return psutil.virtual_memory().available / 1e6
+    except Exception:
+        return None
+
+
+def workers_for_memory(frame_bytes, available_mb=None):
+    """How many workers fit in RAM given one frame's size.
+
+    Returns None when it cannot be decided (unknown frame size, or psutil not
+    installed) so the caller can fall back to the CPU-based count rather than
+    guess a number.
     """
-    Get parallel worker count from params or auto-detect.
+    if not frame_bytes or frame_bytes <= 0:
+        return None
+    if available_mb is None:
+        available_mb = available_ram_mb()
+    if available_mb is None:
+        return None
+    per_worker_mb = WORKER_MEM_FRAME_MULTIPLE * float(frame_bytes) / 1e6
+    if per_worker_mb <= 0:
+        return None
+    budget_mb = available_mb * RAM_BUDGET_FRACTION - WORKER_MEM_BASE_MB
+    return max(1, int(budget_mb // per_worker_mb))
+
+
+def get_parallel_workers(params=None, stage=None, *, frame_bytes=None) -> int:
+    """
+    Get parallel worker count from params, RAM headroom, or auto-detect.
 
     Central function for all steps to use consistent parallel settings.
 
@@ -362,13 +430,18 @@ def get_parallel_workers(params=None, stage=None) -> int:
         stage: Optional pipeline stage key ("detect", "wcs", "forcedphot",
             "crop"). Applies the measured per-stage ceiling from
             STAGE_WORKER_CAPS on top of the configured/auto count.
+        frame_bytes: Size of one frame in memory (float32). When given, the
+            count is additionally capped so the workers fit in the RAM that is
+            actually free right now — the difference between a policy and a
+            promise on a 16 GB laptop.
 
     Returns:
         Number of workers to use
 
     Usage:
         from apex.utils.constants import get_parallel_workers
-        max_workers = get_parallel_workers(self.params)
+        max_workers = get_parallel_workers(self.params, stage="detect",
+                                           frame_bytes=w * h * 4)
     """
     import os
 
@@ -384,7 +457,9 @@ def get_parallel_workers(params=None, stage=None) -> int:
         except ValueError:
             forced = 0
         if forced > 0:
-            return max(1, min(forced, 4 * (os.cpu_count() or 4)))
+            chosen = max(1, min(forced, 4 * (os.cpu_count() or 4)))
+            return _record_decision(stage, chosen, source="env",
+                                    env=forced)
 
     stage_cap = STAGE_WORKER_CAPS.get(str(stage)) if stage else None
 
@@ -404,11 +479,36 @@ def get_parallel_workers(params=None, stage=None) -> int:
         except (AttributeError, TypeError, ValueError):
             configured = None
 
+    source = "config"
     if configured is None:
         # Auto-detect: 75% of CPU cores, min 2, max cap
         cpu_count = os.cpu_count() or 4
         configured = max(2, min(int(cpu_count * 0.75), PARALLEL.MAX_WORKERS_CAP))
+        source = "auto"
 
+    chosen = configured
     if stage_cap is not None:
-        return max(1, min(configured, stage_cap))
-    return configured
+        chosen = min(chosen, stage_cap)
+
+    # RAM is the last word: a stage ceiling of 4 is still 4 too many when the
+    # machine has 1.9 GB free.  Only lowers, never raises.
+    available_mb = available_ram_mb()
+    memory_cap = workers_for_memory(frame_bytes, available_mb)
+    if memory_cap is not None:
+        chosen = min(chosen, memory_cap)
+
+    return _record_decision(
+        stage, max(1, chosen), source=source, configured=configured,
+        stage_cap=stage_cap, memory_cap=memory_cap,
+        available_ram_mb=available_mb, frame_bytes=frame_bytes)
+
+
+def _record_decision(stage, chosen: int, **why) -> int:
+    """Append one worker decision to the ledger and return the count."""
+    entry = {"stage": stage, "workers": int(chosen)}
+    for key, value in why.items():
+        if value is None:
+            continue
+        entry[key] = round(value, 1) if isinstance(value, float) else value
+    WORKER_DECISIONS.append(entry)
+    return int(chosen)

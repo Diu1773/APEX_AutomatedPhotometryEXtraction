@@ -26,6 +26,7 @@ from scipy.ndimage import gaussian_filter, median_filter
 from scipy.spatial import cKDTree as KDTree
 
 from apex.utils.constants import get_parallel_workers
+from apex.utils.io_utils import frame_bytes_from_header
 from apex.utils.fast_stats import finite_nanmedian, finite_nanstd, robust_median_mad
 from apex.utils.step_paths import (
     step2_cropped_dir,
@@ -183,6 +184,19 @@ def _normalize_detect_engine(value) -> str:
     return _normalize_detect_engine_util(value)
 
 
+
+def _probe_frame_bytes(file_list, params, use_cropped, result_dir):
+    """One frame's in-memory size, so the pool can be sized against free RAM."""
+    if not file_list:
+        return None
+    name = file_list[0]
+    try:
+        path = (step2_cropped_dir(result_dir) / name) if use_cropped             else params.get_file_path(name)
+    except Exception:
+        return None
+    return frame_bytes_from_header(path)
+
+
 def run_detection(file_list, params, data_dir, cache_dir, use_cropped=False,
                   filter_sigma_map=None, *, progress_cb=None, worker_status_cb=None,
                   file_done_cb=None, error_cb=None, should_stop=None, logger=None) -> dict:
@@ -251,7 +265,9 @@ def run_detection(file_list, params, data_dir, cache_dir, use_cropped=False,
         if isinstance(peak_scales, str):
             peak_scales = [float(s) for s in peak_scales.split(",") if s.strip()]
 
-        max_workers = get_parallel_workers(params, stage="detect")
+        max_workers = get_parallel_workers(
+            params, stage="detect",
+            frame_bytes=_probe_frame_bytes(file_list, params, use_cropped, result_dir))
 
         print(f"[DetectionWorker] max_workers={max_workers}, sigma_base={detect_sigma_base}")
 

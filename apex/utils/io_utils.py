@@ -14,6 +14,31 @@ from decimal import Decimal, InvalidOperation
 import pandas as pd
 
 
+def frame_bytes_from_header(path, dtype_bytes: int = 4) -> Optional[int]:
+    """In-memory size of one frame, from ``NAXIS1``/``NAXIS2`` alone.
+
+    The worker pool has to be sized against free RAM *before* any frame is
+    loaded, so the size has to come from the header: a few kB to read rather
+    than the 61 MB the frame itself costs.  ``dtype_bytes`` defaults to 4
+    because the pipeline loads frames as float32.
+
+    Returns None when the header cannot be read — callers treat that as
+    "unknown", not as zero.
+    """
+    from astropy.io import fits
+
+    try:
+        with fits.open(path, memmap=False) as hdul:
+            for hdu in hdul:
+                nx = hdu.header.get("NAXIS1")
+                ny = hdu.header.get("NAXIS2")
+                if nx and ny:
+                    return int(nx) * int(ny) * int(dtype_bytes)
+    except Exception:
+        return None
+    return None
+
+
 def load_toml(path: Union[str, Path]) -> dict:
     """Parse a TOML file, tolerating a UTF-8 BOM.
 
