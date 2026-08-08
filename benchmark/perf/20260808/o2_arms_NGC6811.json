@@ -1,0 +1,491 @@
+{
+ "label": "o2_arms_NGC6811",
+ "complete": true,
+ "summary": {
+  "global12": {
+   "n": 2,
+   "wall_s_median": 1334.5,
+   "wall_s_min": 1221.4,
+   "wall_s_max": 1447.5,
+   "peak_uss_mb_max": 7050.2
+  },
+  "stagecaps": {
+   "n": 2,
+   "wall_s_median": 376.8,
+   "wall_s_min": 368.2,
+   "wall_s_max": 385.4,
+   "peak_uss_mb_max": 3736.6
+  },
+  "serial": {
+   "n": 2,
+   "wall_s_median": 361.3,
+   "wall_s_min": 347.7,
+   "wall_s_max": 374.8,
+   "peak_uss_mb_max": 3738.7
+  }
+ },
+ "runs": [
+  {
+   "label": "global12",
+   "started": "2026-08-09T04:12:21",
+   "cmd": [
+    "C:\\Users\\bmffr\\Desktop\\Result\\Automated_Photometry_EXtraction\\.venv-deploy\\Scripts\\python.exe",
+    "-X",
+    "utf8",
+    "-m",
+    "apex.cli",
+    "run",
+    "--mode",
+    "cmd",
+    "--config",
+    "E:\\APEX_validation\\reprocess\\NGC6811\\apex_config_20260807.json",
+    "--steps",
+    "1-7",
+    "--data-dir",
+    "E:\\APEX_validation\\reprocess\\NGC6811\\sci",
+    "--result-dir",
+    "E:\\APEX_validation\\bench\\arm_global12_0",
+    "--force"
+   ],
+   "env": {
+    "git_commit": "58f9ba4",
+    "python": "3.12.3",
+    "platform": "Windows-11-10.0.26200-SP0",
+    "cpu_logical": 16,
+    "apex_max_workers_env": null,
+    "packages": {
+     "numpy": "2.4.4",
+     "scipy": "1.17.1",
+     "astropy": "7.2.0",
+     "photutils": "2.3.0",
+     "sep": "1.4.1",
+     "pandas": "2.3.3",
+     "astroscrappy": "1.3.0",
+     "bottleneck": "1.6.0",
+     "psutil": "7.2.2"
+    },
+    "machine": {
+     "ram_total_mb": 16847,
+     "ram_available_mb": 5166,
+     "ram_available_pct": 30.7,
+     "cpu_percent": 53.9,
+     "processes_over_200mb": 13
+    }
+   },
+   "wall_s": 1447.535,
+   "returncode": 0,
+   "peak_rss_mb": 6950.4,
+   "peak_rss_total_mb": 6950.4,
+   "peak_rss_launcher_mb": 4.4,
+   "peak_uss_mb": 6934.1,
+   "policy": "global12",
+   "per_step": {
+    "scan": 6.938,
+    "crop": 0.183,
+    "sky": 0.0,
+    "detect": 80.739,
+    "wcs": 136.453,
+    "refbuild": 6.296,
+    "forcedphot": 1211.528
+   },
+   "all_ok": true,
+   "messages": {
+    "scan": "21 files scanned; target NGC6811 @ (294.34000, 46.37800) [config]",
+    "crop": "crop skipped (no [crop] config); using original frames",
+    "sky": "sky/QC parameters taken from config (headless no-op; no files written)",
+    "detect": "21/21 frames detected; 21206 sources total; median FWHM 6.77px",
+    "wcs": "0/21 frames solved (internal); WCS-QC pass=0",
+    "refbuild": "master catalog built: 2001 sources (ref=pp_NGC6811-0001-R.fit, filter=R)",
+    "forcedphot": "21/21 frames photometered; detected=21157 forced=20864; transparency QC PASS 21/REVIEW 0/FAIL 0/SKIP 0"
+   },
+   "own_cache": true,
+   "gaia_seeded": false,
+   "repeat": 0
+  },
+  {
+   "label": "stagecaps",
+   "started": "2026-08-09T04:36:31",
+   "cmd": [
+    "C:\\Users\\bmffr\\Desktop\\Result\\Automated_Photometry_EXtraction\\.venv-deploy\\Scripts\\python.exe",
+    "-X",
+    "utf8",
+    "-m",
+    "apex.cli",
+    "run",
+    "--mode",
+    "cmd",
+    "--config",
+    "E:\\APEX_validation\\bench\\cfg_maxworkers12.json",
+    "--steps",
+    "1-7",
+    "--data-dir",
+    "E:\\APEX_validation\\reprocess\\NGC6811\\sci",
+    "--result-dir",
+    "E:\\APEX_validation\\bench\\arm_stagecaps_0",
+    "--force"
+   ],
+   "env": {
+    "git_commit": "58f9ba4",
+    "python": "3.12.3",
+    "platform": "Windows-11-10.0.26200-SP0",
+    "cpu_logical": 16,
+    "apex_max_workers_env": null,
+    "packages": {
+     "numpy": "2.4.4",
+     "scipy": "1.17.1",
+     "astropy": "7.2.0",
+     "photutils": "2.3.0",
+     "sep": "1.4.1",
+     "pandas": "2.3.3",
+     "astroscrappy": "1.3.0",
+     "bottleneck": "1.6.0",
+     "psutil": "7.2.2"
+    },
+    "machine": {
+     "ram_total_mb": 16847,
+     "ram_available_mb": 9172,
+     "ram_available_pct": 54.4,
+     "cpu_percent": 9.5,
+     "processes_over_200mb": 6
+    }
+   },
+   "wall_s": 368.208,
+   "returncode": 0,
+   "peak_rss_mb": 3790.0,
+   "peak_rss_total_mb": 3790.0,
+   "peak_rss_launcher_mb": 4.6,
+   "peak_uss_mb": 3736.6,
+   "policy": "stagecaps",
+   "per_step": {
+    "scan": 7.977,
+    "crop": 0.15,
+    "sky": 0.0,
+    "detect": 47.54,
+    "wcs": 102.178,
+    "refbuild": 5.235,
+    "forcedphot": 200.229
+   },
+   "all_ok": true,
+   "messages": {
+    "scan": "21 files scanned; target NGC6811 @ (294.34000, 46.37800) [config]",
+    "crop": "crop skipped (no [crop] config); using original frames",
+    "sky": "sky/QC parameters taken from config (headless no-op; no files written)",
+    "detect": "21/21 frames detected; 21210 sources total; median FWHM 6.77px",
+    "wcs": "21/21 frames solved (internal); WCS-QC pass=21",
+    "refbuild": "master catalog built: 2001 sources (ref=pp_NGC6811-0003-V.fit, filter=V)",
+    "forcedphot": "21/21 frames photometered; detected=21158 forced=20863; transparency QC PASS 21/REVIEW 0/FAIL 0/SKIP 0"
+   },
+   "own_cache": true,
+   "gaia_seeded": false,
+   "repeat": 0
+  },
+  {
+   "label": "serial",
+   "started": "2026-08-09T04:42:41",
+   "cmd": [
+    "C:\\Users\\bmffr\\Desktop\\Result\\Automated_Photometry_EXtraction\\.venv-deploy\\Scripts\\python.exe",
+    "-X",
+    "utf8",
+    "-m",
+    "apex.cli",
+    "run",
+    "--mode",
+    "cmd",
+    "--config",
+    "E:\\APEX_validation\\reprocess\\NGC6811\\apex_config_20260807.json",
+    "--steps",
+    "1-7",
+    "--data-dir",
+    "E:\\APEX_validation\\reprocess\\NGC6811\\sci",
+    "--result-dir",
+    "E:\\APEX_validation\\bench\\arm_serial_0",
+    "--force"
+   ],
+   "env": {
+    "git_commit": "58f9ba4",
+    "python": "3.12.3",
+    "platform": "Windows-11-10.0.26200-SP0",
+    "cpu_logical": 16,
+    "apex_max_workers_env": null,
+    "packages": {
+     "numpy": "2.4.4",
+     "scipy": "1.17.1",
+     "astropy": "7.2.0",
+     "photutils": "2.3.0",
+     "sep": "1.4.1",
+     "pandas": "2.3.3",
+     "astroscrappy": "1.3.0",
+     "bottleneck": "1.6.0",
+     "psutil": "7.2.2"
+    },
+    "machine": {
+     "ram_total_mb": 16847,
+     "ram_available_mb": 8974,
+     "ram_available_pct": 53.3,
+     "cpu_percent": 40.7,
+     "processes_over_200mb": 6
+    }
+   },
+   "wall_s": 347.71,
+   "returncode": 0,
+   "peak_rss_mb": 3773.4,
+   "peak_rss_total_mb": 3773.4,
+   "peak_rss_launcher_mb": 4.5,
+   "peak_uss_mb": 3717.2,
+   "policy": "serial",
+   "per_step": {
+    "scan": 7.454,
+    "crop": 0.19,
+    "sky": 0.001,
+    "detect": 44.66,
+    "wcs": 97.177,
+    "refbuild": 5.138,
+    "forcedphot": 189.958
+   },
+   "all_ok": true,
+   "messages": {
+    "scan": "21 files scanned; target NGC6811 @ (294.34000, 46.37800) [config]",
+    "crop": "crop skipped (no [crop] config); using original frames",
+    "sky": "sky/QC parameters taken from config (headless no-op; no files written)",
+    "detect": "21/21 frames detected; 21211 sources total; median FWHM 6.77px",
+    "wcs": "21/21 frames solved (internal); WCS-QC pass=21",
+    "refbuild": "master catalog built: 2000 sources (ref=pp_NGC6811-0002-R.fit, filter=R)",
+    "forcedphot": "21/21 frames photometered; detected=21160 forced=20840; transparency QC PASS 21/REVIEW 0/FAIL 0/SKIP 0"
+   },
+   "own_cache": true,
+   "gaia_seeded": false,
+   "repeat": 0
+  },
+  {
+   "label": "serial",
+   "started": "2026-08-09T04:48:31",
+   "cmd": [
+    "C:\\Users\\bmffr\\Desktop\\Result\\Automated_Photometry_EXtraction\\.venv-deploy\\Scripts\\python.exe",
+    "-X",
+    "utf8",
+    "-m",
+    "apex.cli",
+    "run",
+    "--mode",
+    "cmd",
+    "--config",
+    "E:\\APEX_validation\\reprocess\\NGC6811\\apex_config_20260807.json",
+    "--steps",
+    "1-7",
+    "--data-dir",
+    "E:\\APEX_validation\\reprocess\\NGC6811\\sci",
+    "--result-dir",
+    "E:\\APEX_validation\\bench\\arm_serial_1",
+    "--force"
+   ],
+   "env": {
+    "git_commit": "58f9ba4",
+    "python": "3.12.3",
+    "platform": "Windows-11-10.0.26200-SP0",
+    "cpu_logical": 16,
+    "apex_max_workers_env": null,
+    "packages": {
+     "numpy": "2.4.4",
+     "scipy": "1.17.1",
+     "astropy": "7.2.0",
+     "photutils": "2.3.0",
+     "sep": "1.4.1",
+     "pandas": "2.3.3",
+     "astroscrappy": "1.3.0",
+     "bottleneck": "1.6.0",
+     "psutil": "7.2.2"
+    },
+    "machine": {
+     "ram_total_mb": 16847,
+     "ram_available_mb": 9096,
+     "ram_available_pct": 54.0,
+     "cpu_percent": 22.4,
+     "processes_over_200mb": 6
+    }
+   },
+   "wall_s": 374.823,
+   "returncode": 0,
+   "peak_rss_mb": 3812.2,
+   "peak_rss_total_mb": 3812.2,
+   "peak_rss_launcher_mb": 4.5,
+   "peak_uss_mb": 3738.7,
+   "policy": "serial",
+   "per_step": {
+    "scan": 8.245,
+    "crop": 0.157,
+    "sky": 0.0,
+    "detect": 44.767,
+    "wcs": 134.919,
+    "refbuild": 4.67,
+    "forcedphot": 179.11
+   },
+   "all_ok": true,
+   "messages": {
+    "scan": "21 files scanned; target NGC6811 @ (294.34000, 46.37800) [config]",
+    "crop": "crop skipped (no [crop] config); using original frames",
+    "sky": "sky/QC parameters taken from config (headless no-op; no files written)",
+    "detect": "21/21 frames detected; 21211 sources total; median FWHM 6.77px",
+    "wcs": "0/21 frames solved (internal); WCS-QC pass=0",
+    "refbuild": "master catalog built: 2000 sources (ref=pp_NGC6811-0001-R.fit, filter=R)",
+    "forcedphot": "21/21 frames photometered; detected=21159 forced=20841; transparency QC PASS 21/REVIEW 0/FAIL 0/SKIP 0"
+   },
+   "own_cache": true,
+   "gaia_seeded": false,
+   "repeat": 1
+  },
+  {
+   "label": "stagecaps",
+   "started": "2026-08-09T04:54:48",
+   "cmd": [
+    "C:\\Users\\bmffr\\Desktop\\Result\\Automated_Photometry_EXtraction\\.venv-deploy\\Scripts\\python.exe",
+    "-X",
+    "utf8",
+    "-m",
+    "apex.cli",
+    "run",
+    "--mode",
+    "cmd",
+    "--config",
+    "E:\\APEX_validation\\bench\\cfg_maxworkers12.json",
+    "--steps",
+    "1-7",
+    "--data-dir",
+    "E:\\APEX_validation\\reprocess\\NGC6811\\sci",
+    "--result-dir",
+    "E:\\APEX_validation\\bench\\arm_stagecaps_1",
+    "--force"
+   ],
+   "env": {
+    "git_commit": "58f9ba4",
+    "python": "3.12.3",
+    "platform": "Windows-11-10.0.26200-SP0",
+    "cpu_logical": 16,
+    "apex_max_workers_env": null,
+    "packages": {
+     "numpy": "2.4.4",
+     "scipy": "1.17.1",
+     "astropy": "7.2.0",
+     "photutils": "2.3.0",
+     "sep": "1.4.1",
+     "pandas": "2.3.3",
+     "astroscrappy": "1.3.0",
+     "bottleneck": "1.6.0",
+     "psutil": "7.2.2"
+    },
+    "machine": {
+     "ram_total_mb": 16847,
+     "ram_available_mb": 9100,
+     "ram_available_pct": 54.0,
+     "cpu_percent": 24.9,
+     "processes_over_200mb": 6
+    }
+   },
+   "wall_s": 385.393,
+   "returncode": 0,
+   "peak_rss_mb": 3784.7,
+   "peak_rss_total_mb": 3784.7,
+   "peak_rss_launcher_mb": 4.5,
+   "peak_uss_mb": 3727.6,
+   "policy": "stagecaps",
+   "per_step": {
+    "scan": 7.778,
+    "crop": 0.152,
+    "sky": 0.0,
+    "detect": 41.706,
+    "wcs": 135.714,
+    "refbuild": 4.502,
+    "forcedphot": 192.236
+   },
+   "all_ok": true,
+   "messages": {
+    "scan": "21 files scanned; target NGC6811 @ (294.34000, 46.37800) [config]",
+    "crop": "crop skipped (no [crop] config); using original frames",
+    "sky": "sky/QC parameters taken from config (headless no-op; no files written)",
+    "detect": "21/21 frames detected; 21210 sources total; median FWHM 6.77px",
+    "wcs": "0/21 frames solved (internal); WCS-QC pass=0",
+    "refbuild": "master catalog built: 2001 sources (ref=pp_NGC6811-0001-R.fit, filter=R)",
+    "forcedphot": "21/21 frames photometered; detected=21160 forced=20861; transparency QC PASS 21/REVIEW 0/FAIL 0/SKIP 0"
+   },
+   "own_cache": true,
+   "gaia_seeded": false,
+   "repeat": 1
+  },
+  {
+   "label": "global12",
+   "started": "2026-08-09T05:01:15",
+   "cmd": [
+    "C:\\Users\\bmffr\\Desktop\\Result\\Automated_Photometry_EXtraction\\.venv-deploy\\Scripts\\python.exe",
+    "-X",
+    "utf8",
+    "-m",
+    "apex.cli",
+    "run",
+    "--mode",
+    "cmd",
+    "--config",
+    "E:\\APEX_validation\\reprocess\\NGC6811\\apex_config_20260807.json",
+    "--steps",
+    "1-7",
+    "--data-dir",
+    "E:\\APEX_validation\\reprocess\\NGC6811\\sci",
+    "--result-dir",
+    "E:\\APEX_validation\\bench\\arm_global12_1",
+    "--force"
+   ],
+   "env": {
+    "git_commit": "58f9ba4",
+    "python": "3.12.3",
+    "platform": "Windows-11-10.0.26200-SP0",
+    "cpu_logical": 16,
+    "apex_max_workers_env": null,
+    "packages": {
+     "numpy": "2.4.4",
+     "scipy": "1.17.1",
+     "astropy": "7.2.0",
+     "photutils": "2.3.0",
+     "sep": "1.4.1",
+     "pandas": "2.3.3",
+     "astroscrappy": "1.3.0",
+     "bottleneck": "1.6.0",
+     "psutil": "7.2.2"
+    },
+    "machine": {
+     "ram_total_mb": 16847,
+     "ram_available_mb": 8990,
+     "ram_available_pct": 53.4,
+     "cpu_percent": 23.4,
+     "processes_over_200mb": 6
+    }
+   },
+   "wall_s": 1221.434,
+   "returncode": 0,
+   "peak_rss_mb": 7106.4,
+   "peak_rss_total_mb": 7106.4,
+   "peak_rss_launcher_mb": 4.5,
+   "peak_uss_mb": 7050.2,
+   "policy": "global12",
+   "per_step": {
+    "scan": 8.307,
+    "crop": 0.154,
+    "sky": 0.0,
+    "detect": 41.285,
+    "wcs": 137.636,
+    "refbuild": 4.621,
+    "forcedphot": 1025.826
+   },
+   "all_ok": true,
+   "messages": {
+    "scan": "21 files scanned; target NGC6811 @ (294.34000, 46.37800) [config]",
+    "crop": "crop skipped (no [crop] config); using original frames",
+    "sky": "sky/QC parameters taken from config (headless no-op; no files written)",
+    "detect": "21/21 frames detected; 21209 sources total; median FWHM 6.77px",
+    "wcs": "0/21 frames solved (internal); WCS-QC pass=0",
+    "refbuild": "master catalog built: 2001 sources (ref=pp_NGC6811-0001-R.fit, filter=R)",
+    "forcedphot": "21/21 frames photometered; detected=21160 forced=20861; transparency QC PASS 21/REVIEW 0/FAIL 0/SKIP 0"
+   },
+   "own_cache": true,
+   "gaia_seeded": false,
+   "repeat": 1
+  }
+ ]
+}
