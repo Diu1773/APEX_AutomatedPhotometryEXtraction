@@ -381,3 +381,59 @@ B2 의 "wcs 가 w=2 에서 2.7 배" 도, 그 뒤 "이득 없음(99.6–172.5 s)"
 3. 같은 fixture 를 다른 날 잰 값을 비교할 때는 **한 단계라도 재현되는지
    먼저 본다** — detect 91.8 s 의 일치가 "기계가 통째로 느려진 게 아니다"
    를 즉시 말해 줬고, 그것이 코드 회귀 수색을 멈추게 했다.
+
+---
+
+# B3 — 라이트커브 빌드가 실제로 무엇을 읽는가 (2026-08-09)
+
+`benchmark/b3_lc_load.py` · YZ Boo 2 밤 워크스페이스
+(`E:\APEX_validation\reprocess\YZBoo_2n\result`, step7 TSV 364 장, 프레임당
+1,357 행 x 71 열) · 원자료 `benchmark/perf/20260809/b3_lc_load.json`
+
+**읽기 횟수는 결정적이므로 배경 부하와 무관하게 유효하다.** 이 절의 wall
+time 만 유휴 기계에서 다시 재면 된다(측정 당시 가용 RAM 11 %).
+
+| 경로 | 필터 | 읽은 프레임 | 읽은 행 | 별 | wall | USS |
+|---|---|---:|---:|---:|---:|---:|
+| service (1 패스) | g | 124 | 168,268 | 1,357 | 22.7 s | 164 MB |
+| service | r | 121 | 164,197 | 1,357 | 19.3 s | 157 MB |
+| service | i | 119 | 161,483 | 1,357 | 19.5 s | 162 MB |
+| per-star, 캐시 없음 (별 3 개) | g | **372** | **504,804** | 3 | 53.2 s | 146 MB |
+| per-star, 캐시 없음 (별 3 개) | r | 363 | 492,591 | 3 | 55.9 s | 146 MB |
+| per-star, 캐시 없음 (별 3 개) | i | 357 | 484,449 | 3 | 54.9 s | 585 MB |
+
+증폭은 별 수에 **정확히 선형**이다 — 372 = 3 x 124, 504,804 = 3 x 168,268.
+비교성 20 개를 쓰는 실제 빌드라면 프레임 읽기 2,480 회, g 필터만 약 6 분이다.
+
+## 캐시가 언제 무너지는가
+
+Qt-free 서비스 경로(`load_filter_photometry_timeseries`)는 이미 프레임을
+한 번씩만 읽어 frame x star 긴 표를 만든다 — **원하는 모양이 이미 있다.**
+
+GUI 빌더(`lc/step9_lightcurve_builder.py`)도 `_photometry_cache` 덕에 보통은
+한 패스다. 문제는 그 캐시가 **한 번에 한 디렉터리만** 들고 있다는 것이다:
+
+```python
+def _get_photometry_df(self, result_dir, fname):
+    if self._photometry_cache_dir != result_dir:
+        self._photometry_cache.clear()      # 통째로 버림
+        self._photometry_cache_dir = result_dir
+```
+
+`_preload_photometry_cache` 도 같은 규칙이다. 여러 `result_dir` 의 프레임을
+번갈아 만지는 순간(다중 밤 병합 워크스페이스가 `_result_dir` 열로 그렇게
+한다) 전환마다 전부 버리고 다시 읽는다. 위 표의 per-star 행이 그때의 비용이다.
+
+**O3 설계는 이 세 줄에서 나온다:**
+
+1. 캐시 키를 `result_dir` 하나가 아니라 `(result_dir, fname)` 으로 — 전환
+   thrash 제거. 가장 싸고 효과가 확실하다.
+2. 별별로 프레임을 훑는 대신 서비스 경로의 **frame x star 긴 표를 재사용**.
+   이미 있는 코드라 새로 만들 게 없다.
+3. bounded preload — YZ Boo 규모(124 프레임)에서는 164 MB 라 급하지 않다.
+   프레임 수가 수천이 되는 다중 밤에서 비로소 문제이므로, 상한은 O2 의
+   RAM 승인 제어와 같은 계수 체계로 둔다.
+
+한계: 이 워크스페이스는 단일 `result_dir` 이라 thrash 를 *직접* 재현하지
+못했다. 위의 per-star 수치는 캐시가 무너졌을 때의 비용을 같은 로더로 잰
+것이고, 전환 자체의 재현은 다중 result_dir 워크스페이스가 필요하다.

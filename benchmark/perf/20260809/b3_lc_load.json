@@ -1,0 +1,258 @@
+{
+ "label": "b3_lc_load",
+ "result_dir": "E:\\APEX_validation\\reprocess\\YZBoo_2n\\result",
+ "runs": [
+  {
+   "label": "service_g",
+   "started": "2026-08-09T01:38:27",
+   "env": {
+    "git_commit": "aff76bc",
+    "python": "3.12.3",
+    "platform": "Windows-11-10.0.26200-SP0",
+    "cpu_logical": 16,
+    "apex_max_workers_env": null,
+    "packages": {
+     "numpy": "2.4.4",
+     "scipy": "1.17.1",
+     "astropy": "7.2.0",
+     "photutils": "2.3.0",
+     "sep": "1.4.1",
+     "pandas": "2.3.3",
+     "astroscrappy": "1.3.0",
+     "bottleneck": "1.6.0",
+     "psutil": "7.2.2"
+    },
+    "machine": {
+     "ram_total_mb": 16847,
+     "ram_available_mb": 1602,
+     "ram_available_pct": 9.5,
+     "cpu_percent": 37.8,
+     "processes_over_200mb": 18
+    }
+   },
+   "wall_s": 22.652,
+   "peak_rss_mb": 204.1,
+   "peak_rss_total_mb": 204.1,
+   "peak_uss_mb": 164.5,
+   "frames_loaded": 124,
+   "rows_loaded": 168268,
+   "sidmap_built": 124,
+   "sidmap_reused": 0,
+   "filter": "g",
+   "path": "service",
+   "source": "aperture",
+   "table_rows": 80029,
+   "stars": 1357,
+   "frames_in_table": 0
+  },
+  {
+   "label": "service_r",
+   "started": "2026-08-09T01:38:52",
+   "env": {
+    "git_commit": "aff76bc",
+    "python": "3.12.3",
+    "platform": "Windows-11-10.0.26200-SP0",
+    "cpu_logical": 16,
+    "apex_max_workers_env": null,
+    "packages": {
+     "numpy": "2.4.4",
+     "scipy": "1.17.1",
+     "astropy": "7.2.0",
+     "photutils": "2.3.0",
+     "sep": "1.4.1",
+     "pandas": "2.3.3",
+     "astroscrappy": "1.3.0",
+     "bottleneck": "1.6.0",
+     "psutil": "7.2.2"
+    },
+    "machine": {
+     "ram_total_mb": 16847,
+     "ram_available_mb": 1697,
+     "ram_available_pct": 10.1,
+     "cpu_percent": 31.9,
+     "processes_over_200mb": 18
+    }
+   },
+   "wall_s": 19.302,
+   "peak_rss_mb": 197.6,
+   "peak_rss_total_mb": 197.6,
+   "peak_uss_mb": 156.8,
+   "frames_loaded": 121,
+   "rows_loaded": 164197,
+   "sidmap_built": 121,
+   "sidmap_reused": 0,
+   "filter": "r",
+   "path": "service",
+   "source": "aperture",
+   "table_rows": 78010,
+   "stars": 1357,
+   "frames_in_table": 0
+  },
+  {
+   "label": "service_i",
+   "started": "2026-08-09T01:39:14",
+   "env": {
+    "git_commit": "aff76bc",
+    "python": "3.12.3",
+    "platform": "Windows-11-10.0.26200-SP0",
+    "cpu_logical": 16,
+    "apex_max_workers_env": null,
+    "packages": {
+     "numpy": "2.4.4",
+     "scipy": "1.17.1",
+     "astropy": "7.2.0",
+     "photutils": "2.3.0",
+     "sep": "1.4.1",
+     "pandas": "2.3.3",
+     "astroscrappy": "1.3.0",
+     "bottleneck": "1.6.0",
+     "psutil": "7.2.2"
+    },
+    "machine": {
+     "ram_total_mb": 16847,
+     "ram_available_mb": 1423,
+     "ram_available_pct": 8.4,
+     "cpu_percent": 55.5,
+     "processes_over_200mb": 19
+    }
+   },
+   "wall_s": 19.455,
+   "peak_rss_mb": 201.4,
+   "peak_rss_total_mb": 201.4,
+   "peak_uss_mb": 162.1,
+   "frames_loaded": 119,
+   "rows_loaded": 161483,
+   "sidmap_built": 119,
+   "sidmap_reused": 0,
+   "filter": "i",
+   "path": "service",
+   "source": "aperture",
+   "table_rows": 83103,
+   "stars": 1357,
+   "frames_in_table": 0
+  },
+  {
+   "label": "per_star_g",
+   "started": "2026-08-09T01:39:37",
+   "env": {
+    "git_commit": "aff76bc",
+    "python": "3.12.3",
+    "platform": "Windows-11-10.0.26200-SP0",
+    "cpu_logical": 16,
+    "apex_max_workers_env": null,
+    "packages": {
+     "numpy": "2.4.4",
+     "scipy": "1.17.1",
+     "astropy": "7.2.0",
+     "photutils": "2.3.0",
+     "sep": "1.4.1",
+     "pandas": "2.3.3",
+     "astroscrappy": "1.3.0",
+     "bottleneck": "1.6.0",
+     "psutil": "7.2.2"
+    },
+    "machine": {
+     "ram_total_mb": 16847,
+     "ram_available_mb": 1478,
+     "ram_available_pct": 8.8,
+     "cpu_percent": 30.8,
+     "processes_over_200mb": 19
+    }
+   },
+   "wall_s": 53.185,
+   "peak_rss_mb": 187.4,
+   "peak_rss_total_mb": 187.4,
+   "peak_uss_mb": 146.4,
+   "frames_loaded": 372,
+   "rows_loaded": 504804,
+   "sidmap_built": 372,
+   "sidmap_reused": 0,
+   "filter": "g",
+   "path": "per_star_uncached",
+   "stars": 3,
+   "frames": 124
+  },
+  {
+   "label": "per_star_r",
+   "started": "2026-08-09T01:40:33",
+   "env": {
+    "git_commit": "aff76bc",
+    "python": "3.12.3",
+    "platform": "Windows-11-10.0.26200-SP0",
+    "cpu_logical": 16,
+    "apex_max_workers_env": null,
+    "packages": {
+     "numpy": "2.4.4",
+     "scipy": "1.17.1",
+     "astropy": "7.2.0",
+     "photutils": "2.3.0",
+     "sep": "1.4.1",
+     "pandas": "2.3.3",
+     "astroscrappy": "1.3.0",
+     "bottleneck": "1.6.0",
+     "psutil": "7.2.2"
+    },
+    "machine": {
+     "ram_total_mb": 16847,
+     "ram_available_mb": 1664,
+     "ram_available_pct": 9.9,
+     "cpu_percent": 40.3,
+     "processes_over_200mb": 19
+    }
+   },
+   "wall_s": 55.869,
+   "peak_rss_mb": 187.5,
+   "peak_rss_total_mb": 187.5,
+   "peak_uss_mb": 146.4,
+   "frames_loaded": 363,
+   "rows_loaded": 492591,
+   "sidmap_built": 363,
+   "sidmap_reused": 0,
+   "filter": "r",
+   "path": "per_star_uncached",
+   "stars": 3,
+   "frames": 121
+  },
+  {
+   "label": "per_star_i",
+   "started": "2026-08-09T01:41:32",
+   "env": {
+    "git_commit": "aff76bc",
+    "python": "3.12.3",
+    "platform": "Windows-11-10.0.26200-SP0",
+    "cpu_logical": 16,
+    "apex_max_workers_env": null,
+    "packages": {
+     "numpy": "2.4.4",
+     "scipy": "1.17.1",
+     "astropy": "7.2.0",
+     "photutils": "2.3.0",
+     "sep": "1.4.1",
+     "pandas": "2.3.3",
+     "astroscrappy": "1.3.0",
+     "bottleneck": "1.6.0",
+     "psutil": "7.2.2"
+    },
+    "machine": {
+     "ram_total_mb": 16847,
+     "ram_available_mb": 1702,
+     "ram_available_pct": 10.1,
+     "cpu_percent": 35.4,
+     "processes_over_200mb": 19
+    }
+   },
+   "wall_s": 54.936,
+   "peak_rss_mb": 623.5,
+   "peak_rss_total_mb": 623.5,
+   "peak_uss_mb": 584.6,
+   "frames_loaded": 357,
+   "rows_loaded": 484449,
+   "sidmap_built": 357,
+   "sidmap_reused": 0,
+   "filter": "i",
+   "path": "per_star_uncached",
+   "stars": 3,
+   "frames": 119
+  }
+ ]
+}
