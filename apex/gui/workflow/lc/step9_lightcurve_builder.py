@@ -68,7 +68,7 @@ from apex.utils.io_utils import (
     load_night_assignments as _load_night_assignments_util,
     load_headers_table as _load_headers_table_util,
 )
-from apex.utils.photometry_loader import load_frame_photometry
+from apex.utils.photometry_loader import FramePhotometryCache, load_frame_photometry
 from apex.utils.constants import MAD_TO_SIGMA, get_parallel_workers
 from apex.analysis.light_curve.global_ensemble import select_comparisons_from_qc
 from apex.analysis.light_curve.photometry_source_service import (
@@ -1055,8 +1055,11 @@ class LightCurveBuilderWindow(StepWindowBase):
         self._header_cache: dict[str, fits.Header | None] = {}
 
         # 측광 TSV 캐시 (파일별 측광 데이터)
-        self._photometry_cache: dict[str, pd.DataFrame] = {}
-        self._photometry_cache_dir: Path | None = None
+        # Keyed by (result_dir, frame) and bounded by bytes: a multi-night
+        # workspace interleaves frames from several result dirs, and the old
+        # one-directory cache threw everything away on each switch (measured
+        # cost: N_stars x N_frames reads — benchmark/perf/20260809/b3_lc_load.json).
+        self._photometry_cache = FramePhotometryCache()
         self._photometry_source_cache: dict[str, dict] = {}
         self._force_aperture_for_datasets = False
         self._lc_task_worker: _LightCurveTaskWorker | None = None
@@ -2197,7 +2200,6 @@ class LightCurveBuilderWindow(StepWindowBase):
         """캐시 클리어 (데이터셋/선택 변경 시 호출)"""
         self._diff_series_cache.clear()
         self._photometry_cache.clear()
-        self._photometry_cache_dir = None
         self._check_series_cache.clear()
         if clear_headers:
             self._header_cache.clear()
@@ -2312,7 +2314,6 @@ class LightCurveBuilderWindow(StepWindowBase):
         self._force_aperture_for_datasets = force_aperture
         if changed:
             self._photometry_cache.clear()
-            self._photometry_cache_dir = None
             self._diff_series_cache.clear()
             self._check_series_cache.clear()
         source_label = self.__dict__.get("photometry_source_label")
@@ -2348,27 +2349,20 @@ class LightCurveBuilderWindow(StepWindowBase):
 
     def _get_photometry_df(self, result_dir: Path, fname: str) -> pd.DataFrame | None:
         """Load photometry TSV with caching."""
-        # Clear cache if result_dir changed
-        if self._photometry_cache_dir != result_dir:
-            self._photometry_cache.clear()
-            self._photometry_cache_dir = result_dir
-
-        if fname in self._photometry_cache:
-            return self._photometry_cache[fname]
+        cached = self._photometry_cache.get(result_dir, fname)
+        if cached is not None:
+            return cached
 
         source = self._photometry_source_for_dir(result_dir)
         df = load_lightcurve_frame_photometry(result_dir, fname, source)
 
-        self._photometry_cache[fname] = df
+        self._photometry_cache.put(result_dir, fname, df)
         return df
 
     def _preload_photometry_cache(self, result_dir: Path, filenames: list[str]):
         """Bulk-preload photometry TSVs using ThreadPoolExecutor."""
-        if self._photometry_cache_dir != result_dir:
-            self._photometry_cache.clear()
-            self._photometry_cache_dir = result_dir
-
-        to_load = [fn for fn in filenames if fn not in self._photometry_cache]
+        to_load = [fn for fn in filenames
+                   if (result_dir, fn) not in self._photometry_cache]
         if not to_load:
             return
 
@@ -2388,7 +2382,7 @@ class LightCurveBuilderWindow(StepWindowBase):
 
         with ThreadPoolExecutor(max_workers=n_workers) as pool:
             for fname, df in pool.map(_load_one, to_load):
-                self._photometry_cache[fname] = df
+                self._photometry_cache.put(result_dir, fname, df)
 
         if QThread.currentThread() != self.thread():
             self.background_worker_clear.emit()

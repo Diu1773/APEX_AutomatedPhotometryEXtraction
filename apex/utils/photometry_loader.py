@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import re
+from collections import OrderedDict
 from pathlib import Path
 
 import pandas as pd
@@ -269,3 +270,106 @@ def load_frame_photometry(
                 df["ID"] = mapped_ids
 
     return df
+
+
+class FramePhotometryCache:
+    """LRU cache of per-frame photometry tables, keyed by (result_dir, frame).
+
+    The light-curve builder used to keep **one directory at a time** and throw
+    the whole cache away whenever it changed::
+
+        if self._photometry_cache_dir != result_dir:
+            self._photometry_cache.clear()
+
+    A multi-night workspace interleaves frames from several result directories,
+    so every switch discarded everything and re-read it. What that costs is
+    measured: three stars over 124 frames took 372 frame reads and 504,804 rows
+    instead of 124 and 168,268 — the amplification is exactly linear in stars
+    (benchmark/perf/20260809/b3_lc_load.json).
+
+    Bounded by **bytes, not entries**: a frame table scales with the master
+    catalog, so an entry count that is safe at 1,357 stars (0.7 MB each) is not
+    safe at 5,000. The budget defaults to a quarter of the RAM that is free
+    when the cache is first used, which is the same reasoning as the worker
+    admission control in ``apex.utils.constants`` — the rest of memory belongs
+    to the OS page cache holding the frames themselves.
+    """
+
+    _BUDGET_FRACTION = 0.25
+    _BUDGET_MIN_MB = 256.0
+    _BUDGET_MAX_MB = 4096.0
+
+    def __init__(self, budget_mb: float | None = None):
+        self._entries: OrderedDict[tuple[str, str], object] = OrderedDict()
+        self._sizes: dict[tuple[str, str], int] = {}
+        self._bytes = 0
+        self._budget_mb = budget_mb
+        self.hits = 0
+        self.misses = 0
+        self.evictions = 0
+
+    @property
+    def budget_bytes(self) -> int:
+        if self._budget_mb is None:
+            from apex.utils.constants import available_ram_mb
+
+            available = available_ram_mb()
+            share = (available * self._BUDGET_FRACTION) if available else self._BUDGET_MIN_MB
+            self._budget_mb = min(max(share, self._BUDGET_MIN_MB), self._BUDGET_MAX_MB)
+        return int(self._budget_mb * 1e6)
+
+    @staticmethod
+    def _key(result_dir, fname: str) -> tuple[str, str]:
+        return (str(Path(result_dir)), str(fname))
+
+    @staticmethod
+    def _sizeof(df) -> int:
+        try:
+            return int(df.memory_usage(deep=True).sum())
+        except Exception:
+            return 0
+
+    def get(self, result_dir, fname: str):
+        """Cached table, or None. A hit moves the entry to the MRU end."""
+        key = self._key(result_dir, fname)
+        if key not in self._entries:
+            self.misses += 1
+            return None
+        self._entries.move_to_end(key)
+        self.hits += 1
+        return self._entries[key]
+
+    def put(self, result_dir, fname: str, df) -> None:
+        key = self._key(result_dir, fname)
+        if key in self._entries:
+            self._bytes -= self._sizes.pop(key, 0)
+            del self._entries[key]
+        size = self._sizeof(df)
+        self._entries[key] = df
+        self._sizes[key] = size
+        self._bytes += size
+        budget = self.budget_bytes
+        while self._bytes > budget and len(self._entries) > 1:
+            old_key, _ = self._entries.popitem(last=False)
+            self._bytes -= self._sizes.pop(old_key, 0)
+            self.evictions += 1
+
+    def __contains__(self, key) -> bool:
+        result_dir, fname = key
+        return self._key(result_dir, fname) in self._entries
+
+    def __len__(self) -> int:
+        return len(self._entries)
+
+    def clear(self) -> None:
+        self._entries.clear()
+        self._sizes.clear()
+        self._bytes = 0
+
+    def stats(self) -> dict:
+        return {"entries": len(self._entries),
+                "bytes": self._bytes,
+                "budget_bytes": self.budget_bytes,
+                "hits": self.hits,
+                "misses": self.misses,
+                "evictions": self.evictions}
