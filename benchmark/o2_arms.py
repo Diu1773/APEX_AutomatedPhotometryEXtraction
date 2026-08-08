@@ -184,9 +184,28 @@ def cmd_sweep(args) -> int:
     """
     counts = [int(w) for w in args.workers.split(",")]
     out_path = OUT_DIR / "b2prime_detect_wcs.json"
-    donor = SCRATCH / "sweep2_warm"
+    donor = Path(args.gaia_donor) if args.gaia_donor else SCRATCH / "sweep2_warm"
     print("warm-up (discarded; also the Gaia catalog donor) …", flush=True)
-    run("warmup", config=CFG, env_workers="4", steps="1-5", out=donor)
+    if not (donor / "step5_wcs" / GAIA_FILES[0]).exists():
+        run("warmup", config=CFG, env_workers="4", steps="1-5", out=donor)
+
+    # Seeding failing silently turns the whole sweep into a network benchmark:
+    # every run re-downloads the field catalog and "wcs" then measures ESA's
+    # queue. It has happened — a warm-up run during a Gaia 404/503 window left
+    # step5_wcs empty and all twelve runs reported gaia=fetched. Refuse to
+    # start rather than produce another table that has to be thrown away.
+    if not (donor / "step5_wcs" / GAIA_FILES[0]).exists():
+        fallback = next((d for d in sorted(SCRATCH.glob("*/step5_wcs/" + GAIA_FILES[0]))
+                         if d.stat().st_size > 0), None)
+        if fallback is None:
+            print(f"ABORT: no Gaia catalog to seed from ({donor}/step5_wcs is "
+                  f"empty and no other run under {SCRATCH} has one). Without it "
+                  f"the wcs column measures the download, not the solving.",
+                  flush=True)
+            return 2
+        donor = fallback.parent.parent
+        print(f"warm-up produced no catalog; seeding from {donor.name} instead",
+              flush=True)
 
     runs, consecutive_failures = [], 0
     for rep in range(args.repeats):
@@ -202,6 +221,9 @@ def cmd_sweep(args) -> int:
                   f"{'ok' if m['all_ok'] else 'FAILED'} "
                   f"gaia={'seeded' if m['gaia_seeded'] else 'fetched'}",
                   flush=True)
+            if not m["gaia_seeded"]:
+                print("  ^ seeding failed for this run — its wcs time includes "
+                      "the catalog download and is not comparable", flush=True)
             checkpoint(out_path, {"label": "b2prime_detect_wcs_NGC6811",
                                   "steps": "1-5", "complete": False,
                                   "runs": runs})
@@ -255,6 +277,8 @@ def main() -> int:
     s = sub.add_parser("sweep")
     s.add_argument("--workers", default="1,2,4,8,12,16")
     s.add_argument("--repeats", type=int, default=1)
+    s.add_argument("--gaia-donor", default=None,
+                   help="run directory whose step5_wcs holds a fetched catalog")
     s.set_defaults(func=cmd_sweep)
     resources.warn_if_busy()
     args = ap.parse_args()
