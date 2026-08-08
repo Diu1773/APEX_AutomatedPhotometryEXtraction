@@ -150,32 +150,60 @@ def cmd_arms(args) -> int:
 
 
 def cmd_sweep(args) -> int:
-    """B2′: detect and wcs across worker counts, each with its own cache."""
+    """B2′: detect and wcs across worker counts, each with its own cache.
+
+    Repeats matter here more than extra worker counts: a single pass put wcs
+    between 99.6 s and 172.5 s with no trend, which cannot distinguish "no
+    parallel gain" from "noisy".  The order is reversed on odd repeats so a
+    drifting machine cannot favour one end of the range.
+    """
     counts = [int(w) for w in args.workers.split(",")]
+    out_path = OUT_DIR / "b2prime_detect_wcs.json"
     print("warm-up (discarded) …", flush=True)
     run("warmup", config=CFG, env_workers="4", steps="1-5",
         out=SCRATCH / "sweep2_warm")
 
     runs = []
+    for rep in range(args.repeats):
+        for w in (counts if rep % 2 == 0 else counts[::-1]):
+            m = run(f"w{w:02d}", config=CFG, env_workers=str(w), steps="1-5",
+                    out=SCRATCH / f"sweep2_w{w:02d}")
+            m["workers"], m["repeat"] = w, rep
+            runs.append(m)
+            p = m["per_step"]
+            print(f"#{rep} w={w:<3d} detect={p.get('detect', 0):6.1f}s  "
+                  f"wcs={p.get('wcs', 0):6.1f}s  wall={m['wall_s']:7.1f}s  "
+                  f"USS={m['peak_uss_mb'] or 0:>6,.0f} MB  "
+                  f"{'ok' if m['all_ok'] else 'FAILED'} "
+                  f"cache={'own' if m['own_cache'] else 'SHARED!'}", flush=True)
+            checkpoint(out_path, {"label": "b2prime_detect_wcs_NGC6811",
+                                  "steps": "1-5", "complete": False,
+                                  "runs": runs})
+
+    print()
+    print(f"{'w':>3} {'detect med':>11} {'range':>15} {'wcs med':>9} {'range':>15}")
+    summary = {}
     for w in counts:
-        m = run(f"w{w:02d}", config=CFG, env_workers=str(w), steps="1-5",
-                out=SCRATCH / f"sweep2_w{w:02d}")
-        m["workers"] = w
-        runs.append(m)
-        p = m["per_step"]
-        print(f"w={w:<3d} detect={p.get('detect', 0):6.1f}s  "
-              f"wcs={p.get('wcs', 0):6.1f}s  wall={m['wall_s']:7.1f}s  "
-              f"USS={m['peak_uss_mb'] or 0:>6,.0f} MB  "
-              f"{'ok' if m['all_ok'] else 'FAILED'} "
-              f"cache={'own' if m['own_cache'] else 'SHARED!'}", flush=True)
-        checkpoint(OUT_DIR / "b2prime_detect_wcs.json",
-                   {"label": "b2prime_detect_wcs_NGC6811", "steps": "1-5",
-                    "complete": w == counts[-1], "runs": runs})
+        det = sorted(m["per_step"].get("detect", 0)
+                     for m in runs if m["workers"] == w)
+        wcs = sorted(m["per_step"].get("wcs", 0)
+                     for m in runs if m["workers"] == w)
+        summary[w] = {"n": len(det),
+                      "detect_median": round(statistics.median(det), 1),
+                      "detect_min": round(det[0], 1), "detect_max": round(det[-1], 1),
+                      "wcs_median": round(statistics.median(wcs), 1),
+                      "wcs_min": round(wcs[0], 1), "wcs_max": round(wcs[-1], 1)}
+        s = summary[w]
+        det_range = "[{:.1f}, {:.1f}]".format(s["detect_min"], s["detect_max"])
+        wcs_range = "[{:.1f}, {:.1f}]".format(s["wcs_min"], s["wcs_max"])
+        print(f"{w:>3} {s['detect_median']:>11.1f} {det_range:>15} "
+              f"{s['wcs_median']:>9.1f} {wcs_range:>15}")
 
     resources.save_metrics({"label": "b2prime_detect_wcs_NGC6811",
-                            "steps": "1-5", "complete": True, "runs": runs},
-                           OUT_DIR / "b2prime_detect_wcs.json")
-    print(f"saved -> {OUT_DIR / 'b2prime_detect_wcs.json'}")
+                            "steps": "1-5", "complete": True,
+                            "summary": {str(k): v for k, v in summary.items()},
+                            "runs": runs}, out_path)
+    print(f"saved -> {out_path}")
     return 0
 
 
@@ -187,6 +215,7 @@ def main() -> int:
     a.set_defaults(func=cmd_arms)
     s = sub.add_parser("sweep")
     s.add_argument("--workers", default="1,2,4,8,12,16")
+    s.add_argument("--repeats", type=int, default=1)
     s.set_defaults(func=cmd_sweep)
     resources.warn_if_busy()
     args = ap.parse_args()
