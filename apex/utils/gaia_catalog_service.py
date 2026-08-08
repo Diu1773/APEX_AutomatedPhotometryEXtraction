@@ -110,30 +110,43 @@ def tap_query_with_deadline(service, adql: str, *, timeout_s: float | None = Non
     (message contains "timed out" so ``_classify_query_failure`` maps it to
     TIMEOUT and callers fall back to another mirror).
 
-    The abandoned thread is not awaited (``shutdown(wait=False)``); a hung
-    network read cannot be cancelled, but it is bounded to one leaked thread per
-    timed-out query and the process keeps moving.
+    The abandoned query is left to finish on a **daemon** thread. That detail
+    is the whole point: an earlier version used a ``ThreadPoolExecutor`` and
+    dropped it with ``shutdown(wait=False)``, which frees the *caller* but not
+    the *process* — futures' worker threads are non-daemon and
+    ``concurrent.futures`` installs an ``atexit`` hook that joins them, so the
+    interpreter sat waiting for a query nobody was listening to any more.
+    Measured on a benchmark run whose pipeline finished in 226 s and whose
+    process took 2,424 s to exit; three of six sweep points were inflated the
+    same way, and the giveaway was "Query finished" printing *after* the run
+    summary. A daemon thread is killed at exit instead.
     """
-    import concurrent.futures as _cf
+    import queue as _queue
+    import threading as _threading
 
     if not (deadline_s is not None and np.isfinite(deadline_s) and deadline_s > 0):
         base = float(timeout_s) if (timeout_s and np.isfinite(timeout_s) and timeout_s > 0) else 30.0
         deadline_s = max(base * 2.0, 60.0)
 
-    def _run():
-        job = tap_launch_job_async(service, adql, timeout_s=timeout_s, **kwargs)
-        return job.get_results()
+    outcome: _queue.Queue = _queue.Queue(maxsize=1)
 
-    ex = _cf.ThreadPoolExecutor(max_workers=1)
-    fut = ex.submit(_run)
+    def _run():
+        try:
+            job = tap_launch_job_async(service, adql, timeout_s=timeout_s, **kwargs)
+            outcome.put(("ok", job.get_results()))
+        except BaseException as exc:  # noqa: BLE001 - relayed to the caller
+            outcome.put(("error", exc))
+
+    _threading.Thread(target=_run, name="apex-tap-query", daemon=True).start()
     try:
-        return fut.result(timeout=float(deadline_s))
-    except _cf.TimeoutError as exc:
+        status, payload = outcome.get(timeout=float(deadline_s))
+    except _queue.Empty as exc:
         raise TimeoutError(
             f"TAP query timed out (hard deadline {deadline_s:.0f}s)"
         ) from exc
-    finally:
-        ex.shutdown(wait=False)
+    if status == "error":
+        raise payload
+    return payload
 
 
 def gaia_runtime_available() -> tuple[bool, str]:
