@@ -5,45 +5,45 @@
  "summary": {
   "1": {
    "n": 3,
-   "detect_median": 44.8,
-   "detect_min": 44.7,
-   "detect_max": 46.2,
-   "wcs_median": 134.4,
-   "wcs_min": 128.7,
-   "wcs_max": 134.8
+   "detect_median": 45.0,
+   "detect_min": 44.5,
+   "detect_max": 47.4,
+   "wcs_median": 27.0,
+   "wcs_min": 26.1,
+   "wcs_max": 29.4
   },
   "2": {
    "n": 3,
-   "detect_median": 40.5,
-   "detect_min": 39.8,
-   "detect_max": 66.0,
-   "wcs_median": 131.4,
-   "wcs_min": 107.7,
-   "wcs_max": 132.3
+   "detect_median": 40.6,
+   "detect_min": 40.2,
+   "detect_max": 43.2,
+   "wcs_median": 39.1,
+   "wcs_min": 38.8,
+   "wcs_max": 39.5
   },
   "4": {
    "n": 3,
-   "detect_median": 46.1,
-   "detect_min": 40.1,
-   "detect_max": 47.8,
-   "wcs_median": 131.7,
-   "wcs_min": 107.8,
-   "wcs_max": 134.8
+   "detect_median": 41.2,
+   "detect_min": 39.6,
+   "detect_max": 41.2,
+   "wcs_median": 42.4,
+   "wcs_min": 33.6,
+   "wcs_max": 42.4
   },
   "8": {
    "n": 3,
-   "detect_median": 44.4,
-   "detect_min": 41.6,
-   "detect_max": 48.0,
-   "wcs_median": 133.6,
-   "wcs_min": 132.1,
-   "wcs_max": 137.3
+   "detect_median": 41.1,
+   "detect_min": 40.9,
+   "detect_max": 43.0,
+   "wcs_median": 44.4,
+   "wcs_min": 37.1,
+   "wcs_max": 44.4
   }
  },
  "runs": [
   {
    "label": "w01",
-   "started": "2026-08-09T05:24:59",
+   "started": "2026-08-09T06:06:12",
    "cmd": [
     "C:\\Users\\bmffr\\Desktop\\Result\\Automated_Photometry_EXtraction\\.venv-deploy\\Scripts\\python.exe",
     "-X",
@@ -64,7 +64,7 @@
     "--force"
    ],
    "env": {
-    "git_commit": "58f9ba4",
+    "git_commit": "2f37cf2",
     "python": "3.12.3",
     "platform": "Windows-11-10.0.26200-SP0",
     "cpu_logical": 16,
@@ -82,25 +82,25 @@
     },
     "machine": {
      "ram_total_mb": 16847,
-     "ram_available_mb": 8770,
-     "ram_available_pct": 52.1,
-     "cpu_percent": 39.2,
-     "processes_over_200mb": 6
+     "ram_available_mb": 7865,
+     "ram_available_pct": 46.7,
+     "cpu_percent": 25.3,
+     "processes_over_200mb": 7
     }
    },
-   "wall_s": 187.554,
+   "wall_s": 86.484,
    "returncode": 0,
-   "peak_rss_mb": 845.0,
-   "peak_rss_total_mb": 845.0,
+   "peak_rss_mb": 828.8,
+   "peak_rss_total_mb": 828.8,
    "peak_rss_launcher_mb": 4.4,
-   "peak_uss_mb": 812.6,
+   "peak_uss_mb": 796.5,
    "policy": "w01",
    "per_step": {
-    "scan": 8.104,
-    "crop": 0.172,
+    "scan": 8.521,
+    "crop": 0.183,
     "sky": 0.0,
-    "detect": 46.249,
-    "wcs": 128.745
+    "detect": 47.41,
+    "wcs": 27.044
    },
    "all_ok": true,
    "messages": {
@@ -108,16 +108,16 @@
     "crop": "crop skipped (no [crop] config); using original frames",
     "sky": "sky/QC parameters taken from config (headless no-op; no files written)",
     "detect": "21/21 frames detected; 21211 sources total; median FWHM 6.77px",
-    "wcs": "0/21 frames solved (internal); WCS-QC pass=0"
+    "wcs": "21/21 frames solved (internal); WCS-QC pass=21"
    },
    "own_cache": true,
-   "gaia_seeded": false,
+   "gaia_seeded": true,
    "workers": 1,
    "repeat": 0
   },
   {
    "label": "w02",
-   "started": "2026-08-09T05:28:10",
+   "started": "2026-08-09T06:07:42",
    "cmd": [
     "C:\\Users\\bmffr\\Desktop\\Result\\Automated_Photometry_EXtraction\\.venv-deploy\\Scripts\\python.exe",
     "-X",
@@ -138,7 +138,7 @@
     "--force"
    ],
    "env": {
-    "git_commit": "58f9ba4",
+    "git_commit": "2f37cf2",
     "python": "3.12.3",
     "platform": "Windows-11-10.0.26200-SP0",
     "cpu_logical": 16,
@@ -156,42 +156,42 @@
     },
     "machine": {
      "ram_total_mb": 16847,
-     "ram_available_mb": 8764,
-     "ram_available_pct": 52.0,
-     "cpu_percent": 20.0,
-     "processes_over_200mb": 6
+     "ram_available_mb": 7823,
+     "ram_available_pct": 46.4,
+     "cpu_percent": 26.1,
+     "processes_over_200mb": 7
     }
    },
-   "wall_s": 184.96,
+   "wall_s": 90.746,
    "returncode": 0,
-   "peak_rss_mb": 1209.6,
-   "peak_rss_total_mb": 1209.6,
+   "peak_rss_mb": 1185.3,
+   "peak_rss_total_mb": 1185.3,
    "peak_rss_launcher_mb": 4.4,
-   "peak_uss_mb": 1163.1,
+   "peak_uss_mb": 1138.8,
    "policy": "w02",
    "per_step": {
-    "scan": 8.082,
-    "crop": 0.169,
+    "scan": 7.784,
+    "crop": 0.153,
     "sky": 0.0,
-    "detect": 40.508,
-    "wcs": 132.284
+    "detect": 40.577,
+    "wcs": 39.074
    },
    "all_ok": true,
    "messages": {
     "scan": "21 files scanned; target NGC6811 @ (294.34000, 46.37800) [config]",
     "crop": "crop skipped (no [crop] config); using original frames",
     "sky": "sky/QC parameters taken from config (headless no-op; no files written)",
-    "detect": "21/21 frames detected; 21211 sources total; median FWHM 6.77px",
-    "wcs": "0/21 frames solved (internal); WCS-QC pass=0"
+    "detect": "21/21 frames detected; 21207 sources total; median FWHM 6.77px",
+    "wcs": "21/21 frames solved (internal); WCS-QC pass=21"
    },
    "own_cache": true,
-   "gaia_seeded": false,
+   "gaia_seeded": true,
    "workers": 2,
    "repeat": 0
   },
   {
    "label": "w04",
-   "started": "2026-08-09T05:31:17",
+   "started": "2026-08-09T06:09:15",
    "cmd": [
     "C:\\Users\\bmffr\\Desktop\\Result\\Automated_Photometry_EXtraction\\.venv-deploy\\Scripts\\python.exe",
     "-X",
@@ -212,7 +212,7 @@
     "--force"
    ],
    "env": {
-    "git_commit": "58f9ba4",
+    "git_commit": "2f37cf2",
     "python": "3.12.3",
     "platform": "Windows-11-10.0.26200-SP0",
     "cpu_logical": 16,
@@ -230,116 +230,116 @@
     },
     "machine": {
      "ram_total_mb": 16847,
-     "ram_available_mb": 8679,
-     "ram_available_pct": 51.5,
-     "cpu_percent": 37.1,
-     "processes_over_200mb": 6
+     "ram_available_mb": 7822,
+     "ram_available_pct": 46.4,
+     "cpu_percent": 26.1,
+     "processes_over_200mb": 7
     }
    },
-   "wall_s": 190.233,
+   "wall_s": 95.426,
    "returncode": 0,
-   "peak_rss_mb": 1958.4,
-   "peak_rss_total_mb": 1958.4,
-   "peak_rss_launcher_mb": 4.5,
-   "peak_uss_mb": 1911.6,
+   "peak_rss_mb": 1955.1,
+   "peak_rss_total_mb": 1955.1,
+   "peak_rss_launcher_mb": 4.4,
+   "peak_uss_mb": 1910.3,
    "policy": "w04",
    "per_step": {
-    "scan": 7.96,
-    "crop": 0.157,
-    "sky": 0.0,
-    "detect": 46.117,
-    "wcs": 131.731
-   },
-   "all_ok": true,
-   "messages": {
-    "scan": "21 files scanned; target NGC6811 @ (294.34000, 46.37800) [config]",
-    "crop": "crop skipped (no [crop] config); using original frames",
-    "sky": "sky/QC parameters taken from config (headless no-op; no files written)",
-    "detect": "21/21 frames detected; 21205 sources total; median FWHM 6.77px",
-    "wcs": "0/21 frames solved (internal); WCS-QC pass=0"
-   },
-   "own_cache": true,
-   "gaia_seeded": false,
-   "workers": 4,
-   "repeat": 0
-  },
-  {
-   "label": "w08",
-   "started": "2026-08-09T05:34:30",
-   "cmd": [
-    "C:\\Users\\bmffr\\Desktop\\Result\\Automated_Photometry_EXtraction\\.venv-deploy\\Scripts\\python.exe",
-    "-X",
-    "utf8",
-    "-m",
-    "apex.cli",
-    "run",
-    "--mode",
-    "cmd",
-    "--config",
-    "E:\\APEX_validation\\reprocess\\NGC6811\\apex_config_20260807.json",
-    "--steps",
-    "1-5",
-    "--data-dir",
-    "E:\\APEX_validation\\reprocess\\NGC6811\\sci",
-    "--result-dir",
-    "E:\\APEX_validation\\bench\\sweep2_w08",
-    "--force"
-   ],
-   "env": {
-    "git_commit": "58f9ba4",
-    "python": "3.12.3",
-    "platform": "Windows-11-10.0.26200-SP0",
-    "cpu_logical": 16,
-    "apex_max_workers_env": null,
-    "packages": {
-     "numpy": "2.4.4",
-     "scipy": "1.17.1",
-     "astropy": "7.2.0",
-     "photutils": "2.3.0",
-     "sep": "1.4.1",
-     "pandas": "2.3.3",
-     "astroscrappy": "1.3.0",
-     "bottleneck": "1.6.0",
-     "psutil": "7.2.2"
-    },
-    "machine": {
-     "ram_total_mb": 16847,
-     "ram_available_mb": 8567,
-     "ram_available_pct": 50.8,
-     "cpu_percent": 20.6,
-     "processes_over_200mb": 6
-    }
-   },
-   "wall_s": 194.74,
-   "returncode": 0,
-   "peak_rss_mb": 3570.8,
-   "peak_rss_total_mb": 3570.8,
-   "peak_rss_launcher_mb": 4.4,
-   "peak_uss_mb": 3524.7,
-   "policy": "w08",
-   "per_step": {
-    "scan": 8.4,
+    "scan": 7.881,
     "crop": 0.154,
     "sky": 0.0,
-    "detect": 47.998,
-    "wcs": 133.57
+    "detect": 41.223,
+    "wcs": 42.403
    },
    "all_ok": true,
    "messages": {
     "scan": "21 files scanned; target NGC6811 @ (294.34000, 46.37800) [config]",
     "crop": "crop skipped (no [crop] config); using original frames",
     "sky": "sky/QC parameters taken from config (headless no-op; no files written)",
-    "detect": "21/21 frames detected; 21210 sources total; median FWHM 6.77px",
-    "wcs": "0/21 frames solved (internal); WCS-QC pass=0"
+    "detect": "21/21 frames detected; 21208 sources total; median FWHM 6.77px",
+    "wcs": "21/21 frames solved (internal); WCS-QC pass=21"
    },
    "own_cache": true,
-   "gaia_seeded": false,
+   "gaia_seeded": true,
+   "workers": 4,
+   "repeat": 0
+  },
+  {
+   "label": "w08",
+   "started": "2026-08-09T06:10:53",
+   "cmd": [
+    "C:\\Users\\bmffr\\Desktop\\Result\\Automated_Photometry_EXtraction\\.venv-deploy\\Scripts\\python.exe",
+    "-X",
+    "utf8",
+    "-m",
+    "apex.cli",
+    "run",
+    "--mode",
+    "cmd",
+    "--config",
+    "E:\\APEX_validation\\reprocess\\NGC6811\\apex_config_20260807.json",
+    "--steps",
+    "1-5",
+    "--data-dir",
+    "E:\\APEX_validation\\reprocess\\NGC6811\\sci",
+    "--result-dir",
+    "E:\\APEX_validation\\bench\\sweep2_w08",
+    "--force"
+   ],
+   "env": {
+    "git_commit": "2f37cf2",
+    "python": "3.12.3",
+    "platform": "Windows-11-10.0.26200-SP0",
+    "cpu_logical": 16,
+    "apex_max_workers_env": null,
+    "packages": {
+     "numpy": "2.4.4",
+     "scipy": "1.17.1",
+     "astropy": "7.2.0",
+     "photutils": "2.3.0",
+     "sep": "1.4.1",
+     "pandas": "2.3.3",
+     "astroscrappy": "1.3.0",
+     "bottleneck": "1.6.0",
+     "psutil": "7.2.2"
+    },
+    "machine": {
+     "ram_total_mb": 16847,
+     "ram_available_mb": 7715,
+     "ram_available_pct": 45.8,
+     "cpu_percent": 31.1,
+     "processes_over_200mb": 7
+    }
+   },
+   "wall_s": 99.855,
+   "returncode": 0,
+   "peak_rss_mb": 3546.0,
+   "peak_rss_total_mb": 3546.0,
+   "peak_rss_launcher_mb": 4.4,
+   "peak_uss_mb": 3500.3,
+   "policy": "w08",
+   "per_step": {
+    "scan": 8.904,
+    "crop": 0.164,
+    "sky": 0.0,
+    "detect": 43.029,
+    "wcs": 44.354
+   },
+   "all_ok": true,
+   "messages": {
+    "scan": "21 files scanned; target NGC6811 @ (294.34000, 46.37800) [config]",
+    "crop": "crop skipped (no [crop] config); using original frames",
+    "sky": "sky/QC parameters taken from config (headless no-op; no files written)",
+    "detect": "21/21 frames detected; 21208 sources total; median FWHM 6.77px",
+    "wcs": "21/21 frames solved (internal); WCS-QC pass=21"
+   },
+   "own_cache": true,
+   "gaia_seeded": true,
    "workers": 8,
    "repeat": 0
   },
   {
    "label": "w08",
-   "started": "2026-08-09T05:37:47",
+   "started": "2026-08-09T06:12:35",
    "cmd": [
     "C:\\Users\\bmffr\\Desktop\\Result\\Automated_Photometry_EXtraction\\.venv-deploy\\Scripts\\python.exe",
     "-X",
@@ -360,7 +360,7 @@
     "--force"
    ],
    "env": {
-    "git_commit": "58f9ba4",
+    "git_commit": "2f37cf2",
     "python": "3.12.3",
     "platform": "Windows-11-10.0.26200-SP0",
     "cpu_logical": 16,
@@ -378,25 +378,25 @@
     },
     "machine": {
      "ram_total_mb": 16847,
-     "ram_available_mb": 8647,
-     "ram_available_pct": 51.3,
-     "cpu_percent": 17.4,
-     "processes_over_200mb": 6
+     "ram_available_mb": 7955,
+     "ram_available_pct": 47.2,
+     "cpu_percent": 20.6,
+     "processes_over_200mb": 7
     }
    },
-   "wall_s": 193.313,
+   "wall_s": 89.008,
    "returncode": 0,
-   "peak_rss_mb": 3544.5,
-   "peak_rss_total_mb": 3544.5,
-   "peak_rss_launcher_mb": 4.4,
-   "peak_uss_mb": 3499.7,
+   "peak_rss_mb": 3506.7,
+   "peak_rss_total_mb": 3506.7,
+   "peak_rss_launcher_mb": 4.5,
+   "peak_uss_mb": 3456.9,
    "policy": "w08",
    "per_step": {
-    "scan": 8.086,
-    "crop": 0.157,
+    "scan": 7.666,
+    "crop": 0.159,
     "sky": 0.0,
-    "detect": 44.374,
-    "wcs": 137.291
+    "detect": 40.939,
+    "wcs": 37.105
    },
    "all_ok": true,
    "messages": {
@@ -404,16 +404,16 @@
     "crop": "crop skipped (no [crop] config); using original frames",
     "sky": "sky/QC parameters taken from config (headless no-op; no files written)",
     "detect": "21/21 frames detected; 21207 sources total; median FWHM 6.77px",
-    "wcs": "0/21 frames solved (internal); WCS-QC pass=0"
+    "wcs": "21/21 frames solved (internal); WCS-QC pass=21"
    },
    "own_cache": true,
-   "gaia_seeded": false,
+   "gaia_seeded": true,
    "workers": 8,
    "repeat": 1
   },
   {
    "label": "w04",
-   "started": "2026-08-09T05:41:03",
+   "started": "2026-08-09T06:14:06",
    "cmd": [
     "C:\\Users\\bmffr\\Desktop\\Result\\Automated_Photometry_EXtraction\\.venv-deploy\\Scripts\\python.exe",
     "-X",
@@ -434,7 +434,7 @@
     "--force"
    ],
    "env": {
-    "git_commit": "58f9ba4",
+    "git_commit": "2f37cf2",
     "python": "3.12.3",
     "platform": "Windows-11-10.0.26200-SP0",
     "cpu_logical": 16,
@@ -452,25 +452,25 @@
     },
     "machine": {
      "ram_total_mb": 16847,
-     "ram_available_mb": 8558,
-     "ram_available_pct": 50.8,
-     "cpu_percent": 32.2,
-     "processes_over_200mb": 6
+     "ram_available_mb": 7932,
+     "ram_available_pct": 47.1,
+     "cpu_percent": 12.6,
+     "processes_over_200mb": 7
     }
    },
-   "wall_s": 168.897,
+   "wall_s": 93.539,
    "returncode": 0,
-   "peak_rss_mb": 2016.7,
-   "peak_rss_total_mb": 2016.7,
+   "peak_rss_mb": 1965.6,
+   "peak_rss_total_mb": 1965.6,
    "peak_rss_launcher_mb": 4.4,
-   "peak_uss_mb": 1967.9,
+   "peak_uss_mb": 1918.2,
    "policy": "w04",
    "per_step": {
-    "scan": 8.796,
-    "crop": 0.16,
+    "scan": 7.699,
+    "crop": 0.151,
     "sky": 0.0,
-    "detect": 47.811,
-    "wcs": 107.78
+    "detect": 39.57,
+    "wcs": 42.428
    },
    "all_ok": true,
    "messages": {
@@ -478,16 +478,16 @@
     "crop": "crop skipped (no [crop] config); using original frames",
     "sky": "sky/QC parameters taken from config (headless no-op; no files written)",
     "detect": "21/21 frames detected; 21207 sources total; median FWHM 6.77px",
-    "wcs": "0/21 frames solved (internal); WCS-QC pass=0"
+    "wcs": "21/21 frames solved (internal); WCS-QC pass=21"
    },
    "own_cache": true,
-   "gaia_seeded": false,
+   "gaia_seeded": true,
    "workers": 4,
    "repeat": 1
   },
   {
    "label": "w02",
-   "started": "2026-08-09T05:43:54",
+   "started": "2026-08-09T06:15:42",
    "cmd": [
     "C:\\Users\\bmffr\\Desktop\\Result\\Automated_Photometry_EXtraction\\.venv-deploy\\Scripts\\python.exe",
     "-X",
@@ -508,7 +508,7 @@
     "--force"
    ],
    "env": {
-    "git_commit": "58f9ba4",
+    "git_commit": "2f37cf2",
     "python": "3.12.3",
     "platform": "Windows-11-10.0.26200-SP0",
     "cpu_logical": 16,
@@ -526,42 +526,42 @@
     },
     "machine": {
      "ram_total_mb": 16847,
-     "ram_available_mb": 8163,
-     "ram_available_pct": 48.5,
-     "cpu_percent": 24.5,
-     "processes_over_200mb": 6
+     "ram_available_mb": 7913,
+     "ram_available_pct": 47.0,
+     "cpu_percent": 21.9,
+     "processes_over_200mb": 7
     }
    },
-   "wall_s": 218.48,
+   "wall_s": 90.436,
    "returncode": 0,
-   "peak_rss_mb": 1166.5,
-   "peak_rss_total_mb": 1166.5,
-   "peak_rss_launcher_mb": 4.4,
-   "peak_uss_mb": 1122.9,
+   "peak_rss_mb": 1219.9,
+   "peak_rss_total_mb": 1219.9,
+   "peak_rss_launcher_mb": 4.5,
+   "peak_uss_mb": 1170.7,
    "policy": "w02",
    "per_step": {
-    "scan": 8.303,
-    "crop": 0.149,
+    "scan": 8.111,
+    "crop": 0.15,
     "sky": 0.0,
-    "detect": 66.04,
-    "wcs": 131.4
+    "detect": 40.173,
+    "wcs": 38.805
    },
    "all_ok": true,
    "messages": {
     "scan": "21 files scanned; target NGC6811 @ (294.34000, 46.37800) [config]",
     "crop": "crop skipped (no [crop] config); using original frames",
     "sky": "sky/QC parameters taken from config (headless no-op; no files written)",
-    "detect": "21/21 frames detected; 21209 sources total; median FWHM 6.77px",
-    "wcs": "0/21 frames solved (internal); WCS-QC pass=0"
+    "detect": "21/21 frames detected; 21207 sources total; median FWHM 6.77px",
+    "wcs": "21/21 frames solved (internal); WCS-QC pass=21"
    },
    "own_cache": true,
-   "gaia_seeded": false,
+   "gaia_seeded": true,
    "workers": 2,
    "repeat": 1
   },
   {
    "label": "w01",
-   "started": "2026-08-09T05:47:35",
+   "started": "2026-08-09T06:17:15",
    "cmd": [
     "C:\\Users\\bmffr\\Desktop\\Result\\Automated_Photometry_EXtraction\\.venv-deploy\\Scripts\\python.exe",
     "-X",
@@ -582,7 +582,7 @@
     "--force"
    ],
    "env": {
-    "git_commit": "58f9ba4",
+    "git_commit": "2f37cf2",
     "python": "3.12.3",
     "platform": "Windows-11-10.0.26200-SP0",
     "cpu_logical": 16,
@@ -600,25 +600,25 @@
     },
     "machine": {
      "ram_total_mb": 16847,
-     "ram_available_mb": 8006,
-     "ram_available_pct": 47.5,
-     "cpu_percent": 15.2,
-     "processes_over_200mb": 6
+     "ram_available_mb": 7919,
+     "ram_available_pct": 47.0,
+     "cpu_percent": 7.9,
+     "processes_over_200mb": 7
     }
    },
-   "wall_s": 191.638,
+   "wall_s": 82.121,
    "returncode": 0,
-   "peak_rss_mb": 838.9,
-   "peak_rss_total_mb": 838.9,
+   "peak_rss_mb": 816.3,
+   "peak_rss_total_mb": 816.3,
    "peak_rss_launcher_mb": 4.4,
-   "peak_uss_mb": 808.3,
+   "peak_uss_mb": 783.9,
    "policy": "w01",
    "per_step": {
-    "scan": 7.9,
-    "crop": 0.155,
+    "scan": 8.187,
+    "crop": 0.152,
     "sky": 0.0,
-    "detect": 44.754,
-    "wcs": 134.4
+    "detect": 44.48,
+    "wcs": 26.103
    },
    "all_ok": true,
    "messages": {
@@ -626,16 +626,16 @@
     "crop": "crop skipped (no [crop] config); using original frames",
     "sky": "sky/QC parameters taken from config (headless no-op; no files written)",
     "detect": "21/21 frames detected; 21211 sources total; median FWHM 6.77px",
-    "wcs": "0/21 frames solved (internal); WCS-QC pass=0"
+    "wcs": "21/21 frames solved (internal); WCS-QC pass=21"
    },
    "own_cache": true,
-   "gaia_seeded": false,
+   "gaia_seeded": true,
    "workers": 1,
    "repeat": 1
   },
   {
    "label": "w01",
-   "started": "2026-08-09T05:50:49",
+   "started": "2026-08-09T06:18:40",
    "cmd": [
     "C:\\Users\\bmffr\\Desktop\\Result\\Automated_Photometry_EXtraction\\.venv-deploy\\Scripts\\python.exe",
     "-X",
@@ -656,7 +656,7 @@
     "--force"
    ],
    "env": {
-    "git_commit": "58f9ba4",
+    "git_commit": "2f37cf2",
     "python": "3.12.3",
     "platform": "Windows-11-10.0.26200-SP0",
     "cpu_logical": 16,
@@ -674,25 +674,25 @@
     },
     "machine": {
      "ram_total_mb": 16847,
-     "ram_available_mb": 7952,
-     "ram_available_pct": 47.2,
-     "cpu_percent": 48.2,
-     "processes_over_200mb": 6
+     "ram_available_mb": 7924,
+     "ram_available_pct": 47.0,
+     "cpu_percent": 31.0,
+     "processes_over_200mb": 7
     }
    },
-   "wall_s": 193.064,
+   "wall_s": 85.684,
    "returncode": 0,
-   "peak_rss_mb": 833.8,
-   "peak_rss_total_mb": 833.8,
+   "peak_rss_mb": 836.4,
+   "peak_rss_total_mb": 836.4,
    "peak_rss_launcher_mb": 4.4,
-   "peak_uss_mb": 801.4,
+   "peak_uss_mb": 804.1,
    "policy": "w01",
    "per_step": {
-    "scan": 8.847,
-    "crop": 0.165,
+    "scan": 7.64,
+    "crop": 0.154,
     "sky": 0.0,
-    "detect": 44.702,
-    "wcs": 134.835
+    "detect": 44.966,
+    "wcs": 29.353
    },
    "all_ok": true,
    "messages": {
@@ -700,16 +700,16 @@
     "crop": "crop skipped (no [crop] config); using original frames",
     "sky": "sky/QC parameters taken from config (headless no-op; no files written)",
     "detect": "21/21 frames detected; 21211 sources total; median FWHM 6.77px",
-    "wcs": "0/21 frames solved (internal); WCS-QC pass=0"
+    "wcs": "21/21 frames solved (internal); WCS-QC pass=21"
    },
    "own_cache": true,
-   "gaia_seeded": false,
+   "gaia_seeded": true,
    "workers": 1,
    "repeat": 2
   },
   {
    "label": "w02",
-   "started": "2026-08-09T05:54:04",
+   "started": "2026-08-09T06:20:08",
    "cmd": [
     "C:\\Users\\bmffr\\Desktop\\Result\\Automated_Photometry_EXtraction\\.venv-deploy\\Scripts\\python.exe",
     "-X",
@@ -730,7 +730,7 @@
     "--force"
    ],
    "env": {
-    "git_commit": "58f9ba4",
+    "git_commit": "2f37cf2",
     "python": "3.12.3",
     "platform": "Windows-11-10.0.26200-SP0",
     "cpu_logical": 16,
@@ -748,42 +748,42 @@
     },
     "machine": {
      "ram_total_mb": 16847,
-     "ram_available_mb": 8224,
-     "ram_available_pct": 48.8,
-     "cpu_percent": 20.8,
-     "processes_over_200mb": 6
+     "ram_available_mb": 7907,
+     "ram_available_pct": 46.9,
+     "cpu_percent": 25.3,
+     "processes_over_200mb": 7
     }
    },
-   "wall_s": 159.768,
+   "wall_s": 93.643,
    "returncode": 0,
-   "peak_rss_mb": 1145.8,
-   "peak_rss_total_mb": 1145.8,
-   "peak_rss_launcher_mb": 4.4,
-   "peak_uss_mb": 1100.5,
+   "peak_rss_mb": 1213.1,
+   "peak_rss_total_mb": 1213.1,
+   "peak_rss_launcher_mb": 4.5,
+   "peak_uss_mb": 1167.6,
    "policy": "w02",
    "per_step": {
-    "scan": 7.792,
-    "crop": 0.155,
+    "scan": 7.575,
+    "crop": 0.161,
     "sky": 0.0,
-    "detect": 39.784,
-    "wcs": 107.656
+    "detect": 43.21,
+    "wcs": 39.519
    },
    "all_ok": true,
    "messages": {
     "scan": "21 files scanned; target NGC6811 @ (294.34000, 46.37800) [config]",
     "crop": "crop skipped (no [crop] config); using original frames",
     "sky": "sky/QC parameters taken from config (headless no-op; no files written)",
-    "detect": "21/21 frames detected; 21209 sources total; median FWHM 6.77px",
-    "wcs": "0/21 frames solved (internal); WCS-QC pass=0"
+    "detect": "21/21 frames detected; 21208 sources total; median FWHM 6.77px",
+    "wcs": "21/21 frames solved (internal); WCS-QC pass=21"
    },
    "own_cache": true,
-   "gaia_seeded": false,
+   "gaia_seeded": true,
    "workers": 2,
    "repeat": 2
   },
   {
    "label": "w04",
-   "started": "2026-08-09T05:56:46",
+   "started": "2026-08-09T06:21:44",
    "cmd": [
     "C:\\Users\\bmffr\\Desktop\\Result\\Automated_Photometry_EXtraction\\.venv-deploy\\Scripts\\python.exe",
     "-X",
@@ -804,7 +804,7 @@
     "--force"
    ],
    "env": {
-    "git_commit": "58f9ba4",
+    "git_commit": "2f37cf2",
     "python": "3.12.3",
     "platform": "Windows-11-10.0.26200-SP0",
     "cpu_logical": 16,
@@ -822,25 +822,25 @@
     },
     "machine": {
      "ram_total_mb": 16847,
-     "ram_available_mb": 8246,
-     "ram_available_pct": 48.9,
-     "cpu_percent": 25.2,
-     "processes_over_200mb": 6
+     "ram_available_mb": 7983,
+     "ram_available_pct": 47.4,
+     "cpu_percent": 24.9,
+     "processes_over_200mb": 7
     }
    },
-   "wall_s": 187.359,
+   "wall_s": 86.079,
    "returncode": 0,
-   "peak_rss_mb": 1977.8,
-   "peak_rss_total_mb": 1977.8,
-   "peak_rss_launcher_mb": 4.4,
-   "peak_uss_mb": 1931.1,
+   "peak_rss_mb": 1952.4,
+   "peak_rss_total_mb": 1952.4,
+   "peak_rss_launcher_mb": 4.5,
+   "peak_uss_mb": 1906.9,
    "policy": "w04",
    "per_step": {
-    "scan": 7.929,
-    "crop": 0.172,
+    "scan": 8.042,
+    "crop": 0.157,
     "sky": 0.0,
-    "detect": 40.133,
-    "wcs": 134.75
+    "detect": 41.204,
+    "wcs": 33.554
    },
    "all_ok": true,
    "messages": {
@@ -848,16 +848,16 @@
     "crop": "crop skipped (no [crop] config); using original frames",
     "sky": "sky/QC parameters taken from config (headless no-op; no files written)",
     "detect": "21/21 frames detected; 21208 sources total; median FWHM 6.77px",
-    "wcs": "0/21 frames solved (internal); WCS-QC pass=0"
+    "wcs": "21/21 frames solved (internal); WCS-QC pass=21"
    },
    "own_cache": true,
-   "gaia_seeded": false,
+   "gaia_seeded": true,
    "workers": 4,
    "repeat": 2
   },
   {
    "label": "w08",
-   "started": "2026-08-09T05:59:56",
+   "started": "2026-08-09T06:23:13",
    "cmd": [
     "C:\\Users\\bmffr\\Desktop\\Result\\Automated_Photometry_EXtraction\\.venv-deploy\\Scripts\\python.exe",
     "-X",
@@ -878,7 +878,7 @@
     "--force"
    ],
    "env": {
-    "git_commit": "58f9ba4",
+    "git_commit": "2f37cf2",
     "python": "3.12.3",
     "platform": "Windows-11-10.0.26200-SP0",
     "cpu_logical": 16,
@@ -896,36 +896,36 @@
     },
     "machine": {
      "ram_total_mb": 16847,
-     "ram_available_mb": 8216,
-     "ram_available_pct": 48.8,
-     "cpu_percent": 24.1,
-     "processes_over_200mb": 6
+     "ram_available_mb": 7991,
+     "ram_available_pct": 47.4,
+     "cpu_percent": 22.0,
+     "processes_over_200mb": 7
     }
    },
-   "wall_s": 186.089,
+   "wall_s": 96.444,
    "returncode": 0,
-   "peak_rss_mb": 3495.8,
-   "peak_rss_total_mb": 3495.8,
+   "peak_rss_mb": 3629.4,
+   "peak_rss_total_mb": 3629.4,
    "peak_rss_launcher_mb": 4.4,
-   "peak_uss_mb": 3449.0,
+   "peak_uss_mb": 3580.7,
    "policy": "w08",
    "per_step": {
-    "scan": 7.99,
-    "crop": 0.158,
+    "scan": 7.637,
+    "crop": 0.164,
     "sky": 0.0,
-    "detect": 41.638,
-    "wcs": 132.102
+    "detect": 41.073,
+    "wcs": 44.436
    },
    "all_ok": true,
    "messages": {
     "scan": "21 files scanned; target NGC6811 @ (294.34000, 46.37800) [config]",
     "crop": "crop skipped (no [crop] config); using original frames",
     "sky": "sky/QC parameters taken from config (headless no-op; no files written)",
-    "detect": "21/21 frames detected; 21208 sources total; median FWHM 6.77px",
-    "wcs": "0/21 frames solved (internal); WCS-QC pass=0"
+    "detect": "21/21 frames detected; 21207 sources total; median FWHM 6.77px",
+    "wcs": "21/21 frames solved (internal); WCS-QC pass=21"
    },
    "own_cache": true,
-   "gaia_seeded": false,
+   "gaia_seeded": true,
    "workers": 8,
    "repeat": 2
   }

@@ -328,39 +328,49 @@ PARALLEL = ParallelConstants()
 
 
 # Per-stage worker ceilings, measured rather than assumed. NGC 6811, 21 frames
-# of 3194x4788, 16 logical cores; medians of 3 repeats with the order reversed
-# between repeats (benchmark/perf/20260808/b2prime_detect_wcs.json).
+# of 3194x4788, 16 logical cores, frames on an external volume; medians of 3
+# repeats on an idle machine with the order reversed between repeats and the
+# Gaia field catalog pre-seeded so "wcs" times the solving, not the download
+# (benchmark/perf/20260808/b2prime_detect_wcs.json).
 #
-#   workers        1        2        4        8
-#   detect      66.5 s   61.5 s   54.4 s   79.7 s
-#   wcs         38.5 s   44.2 s   47.4 s   57.4 s
+#   workers        1        2        4        8      peak USS @ 1 / 8
+#   detect      45.0 s   40.6 s   41.2 s   41.1 s
+#   wcs         27.0 s   39.1 s   42.4 s   44.4 s    0.8 GB / 3.5 GB
 #
-# wcs is unambiguous: every one of the three 1-worker times (34.3/38.5/46.0 s)
-# is below every one of the three 4-worker times (46.6/47.4/50.4 s), and the
-# curve rises monotonically. Parallel plate solving is *slower* here, so the
-# ceiling is 1. An earlier sweep appeared to show a 2.7x gain; that sweep was
-# measuring the per-run Gaia catalog download, not the solving.
+# Both are clean 3-vs-3 separations, the strongest a three-sample comparison
+# can give:
 #
-# detect is NOT resolvable at this noise level — the 1-worker range
-# [48.7, 82.0] overlaps the 4-worker range [49.8, 74.5] almost entirely. The
-# medians favour 4 and 8 workers is clearly worse, so 4 stands as the best
-# available estimate rather than a demonstrated optimum. Re-measure on an idle
-# machine before quoting a speed-up.
+#   detect  every 1-worker time (44.5/45.0/47.4) is above every 2-worker time
+#           (40.2/40.6/43.2) — a real ~10 % gain — and 4 and 8 then add nothing
+#           while costing +0.75 GB and +2.3 GB. So the ceiling is 2, not 4.
+#   wcs     every 1-worker time (26.1/27.0/29.4) is below every 2-worker time
+#           (38.8/39.1/39.5), rising monotonically after that. Parallel plate
+#           solving is *slower* here, so the ceiling is 1.
 #
-# forcedphot: 222.6 s at 1 worker vs 935.7 s at 16 (benchmark/perf/20260807).
-# It is already vectorised across sources within a frame, so per-frame threads
-# add contention (GIL hand-offs, memory bandwidth, concurrent reads of the same
-# volume) with no work to hide it. Serial is the measured optimum; the
-# mechanism is tracked separately.
+# Two earlier sweeps got wcs wrong in opposite directions, both because of what
+# was being timed rather than how: one shared an astrometry.net solution cache
+# across runs (apparent 2.7x gain), the other re-downloaded the Gaia catalog
+# every run (apparent flat 107-137 s). Seed the catalog before quoting this row.
+#
+# forcedphot: 222.6 s at 1 worker vs 935.7 s at 16, and in the whole-pipeline
+# comparison 179-200 s serial vs 1,026-1,212 s at 12. It is already vectorised
+# across sources within a frame, so per-frame threads add contention (GIL
+# hand-offs, memory bandwidth, concurrent reads of the same volume) with no
+# work to hide it. Serial is the measured optimum; the mechanism is tracked
+# separately.
+#
+# These are ceilings for *this* reference machine — one laptop, one external
+# volume. A deployment with local NVMe may scale further, which is what
+# ``max_workers`` is for; the ceilings only ever lower it.
 #
 # ``max_workers`` names a maximum, so taking the smaller of it and the stage
 # ceiling is consistent with the setting's meaning. ``APEX_MAX_WORKERS`` stays
 # exempt because the sweep must be able to probe above these values.
 STAGE_WORKER_CAPS = {
-    "detect": 4,
+    "detect": 2,
     "wcs": 1,
     "forcedphot": 1,
-    "crop": 4,
+    "crop": 2,
 }
 
 # ── Memory admission control ────────────────────────────────────────────────

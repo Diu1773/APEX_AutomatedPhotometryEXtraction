@@ -118,7 +118,7 @@ def test_every_decision_records_why(monkeypatch):
     assert entry["workers"] == 1
     assert entry["source"] == "config"
     assert entry["configured"] == 16
-    assert entry["stage_cap"] == 4
+    assert entry["stage_cap"] == C.STAGE_WORKER_CAPS["detect"]
     assert entry["memory_cap"] == 1
     assert entry["available_ram_mb"] == 1_900
 
