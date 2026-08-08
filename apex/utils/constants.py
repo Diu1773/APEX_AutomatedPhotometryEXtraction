@@ -327,25 +327,38 @@ class ParallelConstants:
 PARALLEL = ParallelConstants()
 
 
-# Per-stage worker ceilings, measured rather than assumed
-# (benchmark/perf/20260807/RESULTS.md, NGC 6811 21 frames, 16 logical cores).
+# Per-stage worker ceilings, measured rather than assumed. NGC 6811, 21 frames
+# of 3194x4788, 16 logical cores; medians of 3 repeats with the order reversed
+# between repeats (benchmark/perf/20260808/b2prime_detect_wcs.json).
 #
-#   stage        1 worker   best parallel      verdict
-#   detect        91.8 s     41.9 s @ 2        gains, saturates at 2
-#   wcs          106.5 s     39.0 s @ 2        gains, saturates at 2
-#   forcedphot   222.6 s    935.7 s @ 16       4x SLOWER at every count
+#   workers        1        2        4        8
+#   detect      66.5 s   61.5 s   54.4 s   79.7 s
+#   wcs         38.5 s   44.2 s   47.4 s   57.4 s
 #
-# Forced photometry is already vectorised across sources within a frame, so the
-# per-frame threads add contention (GIL hand-offs, memory bandwidth, concurrent
-# reads of the same volume) without work to hide it. Running it serially is the
-# measured optimum here; the mechanism is tracked separately.
+# wcs is unambiguous: every one of the three 1-worker times (34.3/38.5/46.0 s)
+# is below every one of the three 4-worker times (46.6/47.4/50.4 s), and the
+# curve rises monotonically. Parallel plate solving is *slower* here, so the
+# ceiling is 1. An earlier sweep appeared to show a 2.7x gain; that sweep was
+# measuring the per-run Gaia catalog download, not the solving.
+#
+# detect is NOT resolvable at this noise level — the 1-worker range
+# [48.7, 82.0] overlaps the 4-worker range [49.8, 74.5] almost entirely. The
+# medians favour 4 and 8 workers is clearly worse, so 4 stands as the best
+# available estimate rather than a demonstrated optimum. Re-measure on an idle
+# machine before quoting a speed-up.
+#
+# forcedphot: 222.6 s at 1 worker vs 935.7 s at 16 (benchmark/perf/20260807).
+# It is already vectorised across sources within a frame, so per-frame threads
+# add contention (GIL hand-offs, memory bandwidth, concurrent reads of the same
+# volume) with no work to hide it. Serial is the measured optimum; the
+# mechanism is tracked separately.
 #
 # ``max_workers`` names a maximum, so taking the smaller of it and the stage
 # ceiling is consistent with the setting's meaning. ``APEX_MAX_WORKERS`` stays
 # exempt because the sweep must be able to probe above these values.
 STAGE_WORKER_CAPS = {
     "detect": 4,
-    "wcs": 4,
+    "wcs": 1,
     "forcedphot": 1,
     "crop": 4,
 }

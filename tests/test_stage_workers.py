@@ -28,14 +28,20 @@ def _no_env_override(monkeypatch):
     monkeypatch.delenv("APEX_MAX_WORKERS", raising=False)
 
 
-def test_forcedphot_runs_serially_by_default():
-    assert get_parallel_workers(stage="forcedphot") == 1
+def test_the_serial_stages_stay_serial():
+    """Both are measured optima, not defaults nobody got round to raising.
+
+    forcedphot: 222.6 s at 1 worker vs 935.7 s at 16.
+    wcs: all three 1-worker times (34.3/38.5/46.0 s) sit below all three
+    4-worker times (46.6/47.4/50.4 s), rising monotonically with workers.
+    """
+    for stage in ("forcedphot", "wcs"):
+        assert get_parallel_workers(stage=stage) == 1
 
 
-def test_detect_and_wcs_are_capped_but_parallel():
-    for stage in ("detect", "wcs"):
-        workers = get_parallel_workers(stage=stage)
-        assert 1 < workers <= STAGE_WORKER_CAPS[stage]
+def test_detect_is_capped_but_parallel():
+    workers = get_parallel_workers(stage="detect")
+    assert 1 < workers <= STAGE_WORKER_CAPS["detect"]
 
 
 def test_unknown_stage_keeps_the_general_default():
