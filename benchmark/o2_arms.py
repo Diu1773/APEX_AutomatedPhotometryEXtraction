@@ -55,11 +55,35 @@ def config_with_max_workers(value: int) -> Path:
     return out
 
 
+GAIA_FILES = ("gaia_fov.ecsv", "gaia_fov_meta.json")
+
+
+def seed_gaia(donor: Path, out: Path) -> bool:
+    """Copy a fetched Gaia field catalog into a fresh result dir.
+
+    The Step 5 catalog is cached at ``step5_wcs/gaia_fov.ecsv`` *inside the
+    result dir*, so wiping the dir per run makes every run re-download it and
+    the measured "wcs" time is then dominated by network latency, not by
+    parallel scaling — one sweep put the same stage at 733.2 s and 8.3 s.
+    Seeding from a donor run makes the sweep measure solving.
+    """
+    src_dir = donor / "step5_wcs"
+    dst_dir = out / "step5_wcs"
+    if not (src_dir / GAIA_FILES[0]).exists():
+        return False
+    dst_dir.mkdir(parents=True, exist_ok=True)
+    for name in GAIA_FILES:
+        if (src_dir / name).exists():
+            shutil.copy2(src_dir / name, dst_dir / name)
+    return True
+
+
 def run(label: str, *, config: Path, env_workers: str | None, steps: str,
-        out: Path) -> dict:
+        out: Path, gaia_donor: Path | None = None) -> dict:
     if out.exists():
         shutil.rmtree(out)
     out.mkdir(parents=True, exist_ok=True)
+    seeded = seed_gaia(gaia_donor, out) if gaia_donor else False
 
     env = {k: v for k, v in os.environ.items() if k != "APEX_MAX_WORKERS"}
     if env_workers:
@@ -80,6 +104,7 @@ def run(label: str, *, config: Path, env_workers: str | None, steps: str,
     else:
         m["per_step"], m["all_ok"], m["messages"] = {}, False, {}
     m["own_cache"] = (out / "cache").exists()
+    m["gaia_seeded"] = seeded
     return m
 
 
@@ -159,15 +184,15 @@ def cmd_sweep(args) -> int:
     """
     counts = [int(w) for w in args.workers.split(",")]
     out_path = OUT_DIR / "b2prime_detect_wcs.json"
-    print("warm-up (discarded) …", flush=True)
-    run("warmup", config=CFG, env_workers="4", steps="1-5",
-        out=SCRATCH / "sweep2_warm")
+    donor = SCRATCH / "sweep2_warm"
+    print("warm-up (discarded; also the Gaia catalog donor) …", flush=True)
+    run("warmup", config=CFG, env_workers="4", steps="1-5", out=donor)
 
-    runs = []
+    runs, consecutive_failures = [], 0
     for rep in range(args.repeats):
         for w in (counts if rep % 2 == 0 else counts[::-1]):
             m = run(f"w{w:02d}", config=CFG, env_workers=str(w), steps="1-5",
-                    out=SCRATCH / f"sweep2_w{w:02d}")
+                    out=SCRATCH / f"sweep2_w{w:02d}", gaia_donor=donor)
             m["workers"], m["repeat"] = w, rep
             runs.append(m)
             p = m["per_step"]
@@ -175,19 +200,33 @@ def cmd_sweep(args) -> int:
                   f"wcs={p.get('wcs', 0):6.1f}s  wall={m['wall_s']:7.1f}s  "
                   f"USS={m['peak_uss_mb'] or 0:>6,.0f} MB  "
                   f"{'ok' if m['all_ok'] else 'FAILED'} "
-                  f"cache={'own' if m['own_cache'] else 'SHARED!'}", flush=True)
+                  f"gaia={'seeded' if m['gaia_seeded'] else 'fetched'}",
+                  flush=True)
             checkpoint(out_path, {"label": "b2prime_detect_wcs_NGC6811",
                                   "steps": "1-5", "complete": False,
                                   "runs": runs})
+            # A batch that keeps going after the children stop starting writes
+            # a summary of zeros. Session teardown killed eight runs in a row
+            # this way and the medians came out 0.0.
+            consecutive_failures = 0 if m["all_ok"] else consecutive_failures + 1
+            if consecutive_failures >= 2:
+                print("two runs failed back to back — stopping the batch",
+                      flush=True)
+                rep = args.repeats
+                break
+        else:
+            continue
+        break
 
     print()
     print(f"{'w':>3} {'detect med':>11} {'range':>15} {'wcs med':>9} {'range':>15}")
     summary = {}
     for w in counts:
-        det = sorted(m["per_step"].get("detect", 0)
-                     for m in runs if m["workers"] == w)
-        wcs = sorted(m["per_step"].get("wcs", 0)
-                     for m in runs if m["workers"] == w)
+        good = [m for m in runs if m["workers"] == w and m["all_ok"]]
+        if not good:
+            continue
+        det = sorted(m["per_step"].get("detect", 0) for m in good)
+        wcs = sorted(m["per_step"].get("wcs", 0) for m in good)
         summary[w] = {"n": len(det),
                       "detect_median": round(statistics.median(det), 1),
                       "detect_min": round(det[0], 1), "detect_max": round(det[-1], 1),
