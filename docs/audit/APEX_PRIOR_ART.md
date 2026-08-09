@@ -136,3 +136,38 @@ DL"* 로 같은 검증 전략을 쓴다. APEX 의 ccdproc·IRAF·PS1/Gaia 대조
 4. **ASteCA 와 APEX step12 의 실제 결과 비교.** 같은 성단(M67·NGC 6811)에
    둘 다 돌려 비교하면 §5 가 크게 강해진다 — ASteCA 입력이 카탈로그이므로
    **APEX Step 7 산출물을 그대로 먹일 수 있다.** 비용이 낮다.
+
+---
+
+## 6. ASteCA 직접 비교 — 실현 가능성 확인 (2026-08-09)
+
+`APEX_PRIOR_ART.md` §5-4 의 "APEX Step 7 산출물을 ASteCA 에 그대로 먹인다"가
+실제로 되는지 확인했다. **된다.**
+
+| 항목 | 확인 결과 |
+|---|---|
+| 설치 | `pip install asteca` 로 0.7.0 설치됨 (Python ≥ 3.12). **APEX venv 를 건드리지 않도록 별도 venv** `C:\ast_v` 에 두었다 (경로가 길면 Windows 파일명 제한에 걸린다) |
+| 입력 API | `Cluster(ra, dec, mag, e_mag, color, e_color, plx, e_plx, pmra, e_pmra, pmde, e_pmde, …)` — numpy 배열을 직접 받는다. 파일 포맷 변환이 필요 없다 |
+| APEX 산출물 적합성 | `cmd_zeropoint/median_by_ID_filter_wide_cmd.csv` 가 **그 컬럼을 전부 갖고 있다.** M67 기준 1,005 별, `mag_cal_g/r/i` + 오차, `ra_deg`·`dec_deg`, 그리고 `parallax`·`pmra`·`pmdec` + 오차(ASteCA 멤버십 판정용) |
+| 이소크론 격자 | ASteCA 는 PARSEC·MIST·BASTI 를 읽는다. **APEX 가 PARSEC CMD 3.9 격자를 이미 갖고 있다** — SDSS 396 MB(`umag gmag rmag imag zmag`), Johnson 434 MB(`UXmag BXmag Bmag Vmag Rmag Imag …`). 컬럼명(`Zini`·`logAge`·`Mini`)도 ASteCA 기대값과 같다. **다운로드 불필요이고, 두 도구가 동일한 이론 모델을 쓴다** |
+
+**방법론 차이가 실재하며 논문에 쓸 만하다:**
+
+- **ASteCA** — 합성 성단 생성(IMF·질량·이항성·소광법칙) 후 관측 CMD 와
+  Poisson likelihood ratio(Tremmel+ 2013)로 비교
+- **APEX** — 이소크론에 직접 MCMC. EEP 보간 + 전색상 공분산 + Gaia 시차
+  사전분포
+
+같은 성단·같은 측광·같은 이론 격자에 **접근이 다른 두 도구**를 태우는 비교는
+§5 에 그대로 들어간다.
+
+### 걸림돌 — APEX 쪽 step12 결과가 재처리 트리에 없다
+
+재처리는 Step 0–7 + CMD10(영점)까지만 돌았다. `E:\APEX_validation\reprocess\
+M67\result\` 에 `cmd_zeropoint` 는 있으나 이소크론 산출물이 없다. 메모리에
+기록된 M67 복귀값([M/H] +0.06 · 나이 3.83 · E 0.011)은 `observed_Analysis`
+트리의 것이고 그 입력은 이미 없다.
+
+**따라서 비교 순서는**: (1) 재처리 트리에 APEX step12 실행 →
+(2) 같은 `median_by_ID_filter_wide_cmd.csv` 로 ASteCA 실행 → (3) 대조.
+(1) 이 MCMC 라 비용이 있다.
