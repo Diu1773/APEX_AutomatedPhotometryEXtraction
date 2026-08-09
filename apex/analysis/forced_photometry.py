@@ -428,6 +428,105 @@ def _frame_centering_stats(
     }
 
 
+def _forced_phot_chunk(payload: dict) -> dict:
+    """Photometer a subset of frames inside a worker **process**.
+
+    Measured on NGC 6811: forced photometry never leaves one core no matter how
+    many threads it gets (83 % CPU at 1 worker, 109 % at 12), because
+    photutils' per-aperture statistics hold the interpreter lock. Threads
+    therefore cost 4.2x wall time and buy nothing; separate processes each own
+    an interpreter lock, so the work can actually spread.
+
+    Re-entering :func:`run_forced_photometry` with a slice of the file list
+    keeps one implementation of the photometry: the child runs exactly the code
+    the thread path runs. ``write_summary=False`` because the parent owns the
+    merged index; the stage ceiling of 1 keeps the child single-threaded.
+
+    Callbacks do not cross a process boundary, so the child is given none and
+    the parent reports progress per chunk instead of per frame.
+    """
+    return run_forced_photometry(
+        payload["files"],
+        payload["params"],
+        payload["data_dir"],
+        payload["cache_dir"],
+        result_dir=payload["result_dir"],
+        output_dir=payload["output_dir"],
+        write_summary=False,
+    )
+
+
+def _chunk_frames(tasks: list, n_chunks: int) -> list:
+    """Split ``(filt, fname, master_df)`` tasks into at most ``n_chunks`` groups.
+
+    Chunking rather than one task per frame: each child re-runs the setup in
+    :func:`run_forced_photometry` (master catalogues, header table), so a chunk
+    pays that once for several frames.  Frames of one filter stay together for
+    the same reason.
+    """
+    if n_chunks <= 1 or len(tasks) <= 1:
+        return [tasks]
+    by_filter: dict = {}
+    for task in tasks:
+        by_filter.setdefault(task[0], []).append(task)
+
+    chunks: list = []
+    for filter_tasks in by_filter.values():
+        per = max(1, -(-len(filter_tasks) // max(1, n_chunks // max(1, len(by_filter)))))
+        for i in range(0, len(filter_tasks), per):
+            chunks.append(filter_tasks[i:i + per])
+    return chunks or [tasks]
+
+
+def _run_tasks_in_processes(tasks, params, data_dir, cache_dir, result_dir,
+                            out_dir, *, frame_bytes=None, log=None,
+                            progress_cb=None, should_stop=None):
+    """Photometer every task across worker processes; None means "not available".
+
+    Falls back by returning None rather than raising: a machine that cannot
+    spawn processes (frozen build, restricted environment) must still get its
+    photometry from the thread path.
+    """
+    from concurrent.futures import ProcessPoolExecutor
+
+    def _say(message):
+        (log(message) if log else None)
+
+    workers = get_parallel_workers(params, stage="forcedphot_proc",
+                                   frame_bytes=frame_bytes)
+    if workers <= 1:
+        return None
+
+    chunks = _chunk_frames(tasks, workers)
+    payloads = [{
+        "files": [fname for (_filt, fname, _mdf) in chunk],
+        "params": params,
+        "data_dir": str(data_dir),
+        "cache_dir": str(cache_dir),
+        "result_dir": str(result_dir),
+        "output_dir": str(out_dir),
+    } for chunk in chunks]
+
+    merged = {"index_rows": [], "apcorr_rows": [], "center_stats_rows": []}
+    done = 0
+    total = len(tasks)
+    _say(f"[FORCED] Starting forced photometry in {workers} processes "
+         f"({total} frames in {len(chunks)} chunks)")
+    try:
+        with ProcessPoolExecutor(max_workers=workers) as pool:
+            for result in pool.map(_forced_phot_chunk, payloads):
+                for key in merged:
+                    merged[key].extend(result.get(key, []))
+                done += len(result.get("index_rows", []))
+                (progress_cb(done, total, "") if progress_cb else None)
+                if should_stop is not None and should_stop():
+                    break
+    except Exception as exc:  # noqa: BLE001 - never lose the photometry
+        _say(f"[FORCED] process pool unavailable ({exc}); using threads")
+        return None
+    return merged
+
+
 def run_forced_photometry(
     file_list,
     params,
@@ -444,6 +543,8 @@ def run_forced_photometry(
     error_cb=None,
     should_stop=None,
     logger=None,
+    use_processes: bool = False,
+    write_summary: bool = True,
 ) -> dict:
     """Headless forced aperture photometry over ``file_list``.
 
@@ -462,9 +563,9 @@ def run_forced_photometry(
     _wcs_cache_lock = Lock()
     _results_lock = Lock()
     _first = params.get_file_path(file_list[0]) if file_list else None
+    _frame_bytes_hint = frame_bytes_from_header(_first) if _first else None
     max_workers = get_parallel_workers(
-        params, stage="forcedphot",
-        frame_bytes=frame_bytes_from_header(_first) if _first else None)
+        params, stage="forcedphot", frame_bytes=_frame_bytes_hint)
 
     def _stop_requested() -> bool:
         return should_stop() if should_stop else False
@@ -1467,6 +1568,17 @@ def run_forced_photometry(
         for fname in files:
             tasks.append((filt, fname, master_df))
 
+    if use_processes and len(tasks) > 1:
+        merged = _run_tasks_in_processes(
+            tasks, params, data_dir, cache_dir, result_dir, out_dir,
+            frame_bytes=_frame_bytes_hint, log=_log, progress_cb=progress_cb,
+            should_stop=_stop_requested)
+        if merged is not None:
+            index_rows.extend(merged["index_rows"])
+            apcorr_rows.extend(merged["apcorr_rows"])
+            center_stats_rows.extend(merged["center_stats_rows"])
+            tasks = []
+
     _log(f"[FORCED] Starting parallel forced photometry with {max_workers} workers ({len(tasks)} frames)")
 
     executor = ThreadPoolExecutor(max_workers=max_workers)
@@ -1618,7 +1730,7 @@ def run_forced_photometry(
         }
 
     index_write_ok = False
-    if index_rows:
+    if index_rows and write_summary:
         idx_df = pd.DataFrame(index_rows)
         try:
             idx_df.to_csv(out_dir / "photometry_index.csv",  index=False, float_format="%.6f")
@@ -1627,7 +1739,7 @@ def run_forced_photometry(
         except Exception as exc:
             _log(f"[FORCED] photometry_index write failed: {exc}")
 
-    if apcorr_rows:
+    if apcorr_rows and write_summary:
         try:
             pd.DataFrame(apcorr_rows).to_csv(
                 out_dir / "apcorr_summary.csv", index=False, float_format="%.6f"
@@ -1635,7 +1747,7 @@ def run_forced_photometry(
         except Exception as exc:
             _log(f"[FORCED] apcorr_summary write failed: {exc}")
 
-    if center_stats_rows:
+    if center_stats_rows and write_summary:
         try:
             pd.DataFrame(center_stats_rows).to_csv(
                 out_dir / "centering_stats.csv", index=False, float_format="%.6f"

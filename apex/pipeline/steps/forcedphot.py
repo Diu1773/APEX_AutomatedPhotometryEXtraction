@@ -9,6 +9,8 @@ Step 5 (FITS headers / ASTAP sidecars), and writes
 
 from __future__ import annotations
 
+import os
+
 import json
 from pathlib import Path
 from typing import List
@@ -66,6 +68,11 @@ class ForcedPhotStep(PipelineStep):
 
         from apex.analysis.forced_photometry import run_forced_photometry
 
+        # Opt-in until parity and speed are measured on this machine. The
+        # thread path stays the default: it is what every committed validation
+        # run used.
+        use_processes = os.environ.get("APEX_FORCEDPHOT_PROCESSES", "") not in ("", "0")
+
         summary = run_forced_photometry(
             file_list,
             ctx.params,
@@ -73,6 +80,7 @@ class ForcedPhotStep(PipelineStep):
             ctx.params.P.cache_dir,
             result_dir=ctx.result_dir,
             logger=ctx.logger,
+            use_processes=use_processes,
         )
 
         out_dir = step7_forced_phot_dir(ctx.result_dir)
