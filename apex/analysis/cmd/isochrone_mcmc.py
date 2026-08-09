@@ -1506,16 +1506,18 @@ def fit_isochrone_mcmc(
     except Exception:
         rhat = None
     if rhat is not None and np.all(np.isfinite(rhat)):
-        worst = float(np.max(rhat))
-        agreed = worst < 1.05
+        # Reported, NOT used as a verdict. Split-R-hat assumes independent
+        # chains; emcee walkers are not independent — they propose from each
+        # other. On this posterior (a narrow degeneracy ridge) the walkers
+        # spread *along* the ridge and each barely moves, which inflates
+        # R-hat to 3-4 while the ensemble as a whole still covers the
+        # posterior. Measured: four different seeds agree to 0.02 dex in
+        # [M/H] and 0.004 in E(B-V), so the medians are seed-independent
+        # even at R-hat 3.2-4.4. Treat this as a mixing-efficiency number.
         convergence_detail = (
-            f"{convergence_detail}; split-R-hat max {worst:.3f} "
-            f"({'halves agree' if agreed else 'halves disagree'})"
+            f"{convergence_detail}; walker spread R-hat max "
+            f"{float(np.max(rhat)):.2f} (ensemble sampler — diagnostic only)"
         ).lstrip("; ")
-        # A chain whose halves agree and whose acceptance is healthy is usable
-        # even when the autocorrelation criterion cannot be satisfied.
-        if not convergence_ok and agreed and 0.15 <= acc <= 0.7:
-            convergence_ok = True
 
     discard = 0  # burn-in already discarded via reset()
     flat = sampler.get_chain(discard=discard, thin=thin, flat=True)

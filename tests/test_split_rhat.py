@@ -6,9 +6,13 @@ verdict is always "run longer" no matter how good the answer is. Meanwhile the
 estimates were stable to three decimals across 32x2000, 64x4000 and 64x8000
 (age 2.805 / 2.803 / 2.802, [M/H] -0.504 / -0.502 / -0.502).
 
-Split-R-hat asks whether independent halves of the ensemble agree, which is the
-question the user actually has. These tests pin it against cases whose answer
-is known by construction.
+Split-R-hat is reported as a *mixing-efficiency* number, not as a verdict:
+it assumes independent chains, and emcee walkers propose from each other. On
+this posterior the walkers spread along the degeneracy ridge and each barely
+moves, which inflates R-hat to 3-4 even though four different seeds agree to
+0.02 dex in [M/H]. These tests pin the statistic itself against cases whose
+answer is known by construction; whether a given value should block a fit is a
+separate question that the seed test answers better.
 """
 
 from __future__ import annotations

@@ -69,6 +69,15 @@ def main() -> int:
     ap.add_argument("--f-field", type=float, default=None,
                     help="field-contamination fraction (default 0.1)")
     ap.add_argument("--seed", type=int, default=2024)
+    # The convergence question this posterior actually poses is "does the
+    # answer depend on where the walkers started?", not "is the
+    # autocorrelation time small". tau never settles here (44 at 400 steps,
+    # 202 at 4,000) and split-R-hat is inflated because emcee's walkers are
+    # not independent chains. Repeating the fit from different seeds answers
+    # it directly: four seeds agreed to 0.02 dex in [M/H].
+    ap.add_argument("--seed-check", type=int, default=0, metavar="N",
+                    help="repeat the fit with N extra seeds and report the "
+                         "spread of the medians (0 = off)")
     ap.add_argument("--mag-max", type=float, default=None,
                     help="drop stars fainter than this in the magnitude band "
                          "(diagnostic: isolates the bright end where the "
@@ -161,6 +170,29 @@ def main() -> int:
     out = fit_cluster_isochrone(df, cfg, make_figures=False, progress_cb=_progress)
     elapsed = time.perf_counter() - t0
 
+    seed_check = None
+    if args.seed_check > 0:
+        import dataclasses
+
+        keys = ("age_gyr", "metallicity", "e_bv", "distance_mod")
+        runs = [{k: out.summary[k][1] for k in keys if k in out.summary}]
+        for i in range(int(args.seed_check)):
+            alt = dataclasses.replace(cfg, seed=int(args.seed) + 1000 * (i + 1))
+            print(f"  [seed-check {i+1}/{args.seed_check}] seed={alt.seed}",
+                  flush=True)
+            r = fit_cluster_isochrone(df, alt, make_figures=False)
+            runs.append({k: r.summary[k][1] for k in keys if k in r.summary})
+        seed_check = {"n_seeds": len(runs), "runs": runs, "spread": {}}
+        print("  seed-check spread (max - min over seeds):")
+        for k in keys:
+            vals = [r[k] for r in runs if k in r]
+            if not vals:
+                continue
+            spread = float(max(vals) - min(vals))
+            seed_check["spread"][k] = spread
+            print(f"    {k:14s} {spread:.4f}   "
+                  f"[{min(vals):.4f}, {max(vals):.4f}]", flush=True)
+
     out_dir = step12_iso_dir(result_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
 
@@ -184,6 +216,7 @@ def main() -> int:
             "f_bin": cfg.f_bin, "f_field": cfg.f_field,
         },
         "elapsed_s": elapsed,
+        "seed_check": seed_check,
         "wide_table": str(wide),
     }
     (out_dir / "isochrone_fit.json").write_text(
