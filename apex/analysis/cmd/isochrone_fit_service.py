@@ -96,6 +96,8 @@ def _summary_dict(result, e_color_to_ebv: float) -> Dict[str, Any]:
         "acceptance_fraction": float(result.acceptance_fraction),
         "convergence_ok": bool(result.convergence_ok),
         "convergence_detail": str(getattr(result, "convergence_detail", "")),
+        "rhat_max": (float(max(result.rhat)) if getattr(result, "rhat", None)
+                     is not None else None),
     }
     e_bv = trip(getattr(result, "e_bv_p", None))
     if e_bv is None and out["e_color"] is not None:

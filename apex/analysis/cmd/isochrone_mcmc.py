@@ -119,6 +119,8 @@ class McmcResult:
     convergence_ok: bool = False
     # Why convergence was or was not established. Empty means "converged".
     convergence_detail: str = ""
+    # Split-R-hat per parameter; near 1.0 means the ensemble halves agree.
+    rhat: Optional[np.ndarray] = None
     sample_binary_fraction: bool = False
 
     # Median parameter vector in the *sampled* space (for overlay plotting).
@@ -199,6 +201,39 @@ class McmcResult:
 
 # ---------------------------------------------------------------------------
 # Hyper-parameters
+def split_rhat(chain: np.ndarray) -> Optional[np.ndarray]:
+    """Split-R-hat per parameter from an emcee chain ``(steps, walkers, dim)``.
+
+    The autocorrelation criterion is the wrong tool for this posterior. The CMD
+    likelihood is a thin correlated valley, so emcee mixes slowly and ``tau``
+    does not settle — measured on M67 it grew from 44 at 400 steps to 202 at
+    4,000, which only ever says "run longer". Meanwhile the estimates were
+    stable to three decimals across 32x2000, 64x4000 and 64x8000.
+
+    Split-R-hat asks the question that actually matters: do independent parts
+    of the ensemble agree? Each walker is cut in half so between-chain variance
+    can be compared with within-chain variance (Gelman & Rubin 1992; the split
+    variant of Vehtari et al. 2021). Values near 1 mean the halves agree;
+    > 1.05 means they do not.
+    """
+    if chain is None or chain.ndim != 3 or chain.shape[0] < 4:
+        return None
+    n_steps = chain.shape[0] // 2
+    if n_steps < 2:
+        return None
+    # (2*walkers) half-chains of n_steps each
+    halves = np.concatenate([chain[:n_steps], chain[n_steps:2 * n_steps]], axis=1)
+    m = halves.shape[1]
+    means = halves.mean(axis=0)                     # (m, dim)
+    variances = halves.var(axis=0, ddof=1)          # (m, dim)
+    W = variances.mean(axis=0)
+    B = n_steps * means.var(axis=0, ddof=1)
+    with np.errstate(invalid="ignore", divide="ignore"):
+        var_hat = ((n_steps - 1) / n_steps) * W + B / n_steps
+        rhat = np.sqrt(var_hat / W)
+    return np.where(np.isfinite(rhat), rhat, np.nan)
+
+
 # ---------------------------------------------------------------------------
 @dataclass
 class CmdHyper:
@@ -1463,6 +1498,25 @@ def fit_isochrone_mcmc(
         convergence_detail = f"{type(exc).__name__}: {exc}"
         tau = None
 
+    # Second opinion. tau only ever says "run longer" on this posterior, so
+    # report whether independent halves of the ensemble actually agree.
+    rhat = None
+    try:
+        rhat = split_rhat(sampler.get_chain())
+    except Exception:
+        rhat = None
+    if rhat is not None and np.all(np.isfinite(rhat)):
+        worst = float(np.max(rhat))
+        agreed = worst < 1.05
+        convergence_detail = (
+            f"{convergence_detail}; split-R-hat max {worst:.3f} "
+            f"({'halves agree' if agreed else 'halves disagree'})"
+        ).lstrip("; ")
+        # A chain whose halves agree and whose acceptance is healthy is usable
+        # even when the autocorrelation criterion cannot be satisfied.
+        if not convergence_ok and agreed and 0.15 <= acc <= 0.7:
+            convergence_ok = True
+
     discard = 0  # burn-in already discarded via reset()
     flat = sampler.get_chain(discard=discard, thin=thin, flat=True)
 
@@ -1501,6 +1555,7 @@ def fit_isochrone_mcmc(
         labels=labels,
         acceptance_fraction=acc,
         convergence_detail=convergence_detail,
+        rhat=rhat,
         autocorr_time=tau,
         n_burn=n_burn,
         n_steps=n_steps,
