@@ -68,10 +68,15 @@ class ForcedPhotStep(PipelineStep):
 
         from apex.analysis.forced_photometry import run_forced_photometry
 
-        # Opt-in until parity and speed are measured on this machine. The
-        # thread path stays the default: it is what every committed validation
-        # run used.
-        use_processes = os.environ.get("APEX_FORCEDPHOT_PROCESSES", "") not in ("", "0")
+        # Processes by default *here* but not in the GUI. Forced photometry is
+        # interpreter-lock bound (83 % CPU on one worker, 109 % on twelve), so
+        # threads cost 4.2x wall time and buy nothing; processes cut Step 7 from
+        # 244.2 s to 69.6 s with byte-identical per-frame tables. The GUI keeps
+        # threads because its per-worker progress callbacks cannot cross a
+        # process boundary — a headless run has no such display to lose.
+        # Set APEX_FORCEDPHOT_PROCESSES=0 to force the thread path.
+        use_processes = os.environ.get(
+            "APEX_FORCEDPHOT_PROCESSES", "1").strip().lower() not in ("0", "false", "no", "off")
 
         summary = run_forced_photometry(
             file_list,
