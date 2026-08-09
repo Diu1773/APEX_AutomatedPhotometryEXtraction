@@ -1,0 +1,100 @@
+# 선행연구 위치잡기 — 도구 수준 대안과 노벨티 판정
+
+작성 2026-08-09. `APEX_COMPONENT_AUDIT.md` 는 **프리미티브 수준**(astropy·
+photutils·ccdproc·SEP)에서 "왜 패키지를 통째로 쓰지 않았나"를 이미 답했다.
+비어 있던 것은 **도구 수준** — 완제품 파이프라인과의 비교다. 심사자가
+"왜 ASteCA 를 안 쓰나", "AutoPhOT 과 뭐가 다른가"를 물었을 때 답할 근거다.
+
+판정 규칙은 `APEX_COMPONENT_AUDIT.md` 의 것을 그대로 쓴다 —
+**조립되었다는 이유만으로 novel 이 되지 않는다.**
+
+---
+
+## 1. 도구 수준 지형도
+
+| 도구 | 출처 | 범위 | APEX 와 겹치는 구간 | 확인 |
+|---|---|---|---|---|
+| **AstroImageJ** | Collins+ 2017, AJ 153, 77 | GUI 데스크톱. 이미지 보정 + 차등측광 + 앙상블 + 추세제거 + 트랜싯 모델 적합 | **Step 0–7 + LC 전체.** 형태가 가장 가깝다 | 확인 |
+| **PhotometryPipeline** | Mommert 2017 (ascl:1703.004) | "small to medium-sized observatories" 대상 자동 파이프라인. SExtractor + SCAMP 로 정합·측광, 온라인 카탈로그로 측광 보정 | Step 4–7 + **대상 사용자층이 동일** | 확인 |
+| **AutoPhOT** | Brennan & Fraser 2022, **A&A 667, A62** | 초신성·트랜지언트용. 구경+PSF 측광, 템플릿 차감, 인공성 주입 한계등급 | Step 4–7 | 확인 |
+| **PhoPS** | Erece & Kilic, arXiv:2607.27414 (2026-07-29 제출, **아직 arXiv**) | 측성+측광 자동화. **관측 시각으로 전파한 Gaia DR3 인덱스를 동적 생성** → 사전 설치 인덱스 불요. RANSAC 기반 위치의존 영점 | Step 5 + 7 | 확인 |
+| **ASteCA** | Perren+ 2015, **A&A 576, A6** (현행 v0.7) | 성단 구조·멤버십·합성 CMD·우도. **입력이 이미 만들어진 측광 카탈로그** — 이미지 처리를 하지 않는다 | **Step 12 만** | 확인 |
+| `isochrones` | Morton 2015 (ascl:1503.010) | 항성모델 격자 인터페이스. **개별 별**의 질량·나이·거리·소광 추정 | 성단 CMD 동시 피팅의 직접 대체물 아님 (격자 계층으로는 대체 가능) | 확인 |
+| `PySysRem` | Tamuz+ 2005 알고리즘의 파이썬 구현 | SYSREM | LC 추세제거 | 확인 |
+| `wotan` | Hippke+ 2019, AJ 158, 143 | 시계열 추세제거 종합. **트랜싯 탐색용 단일 광도곡선** 겨냥 | 다중밤 앙상블과 겨냥이 다름 | 확인 |
+| `astropy.timeseries` | — | Lomb–Scargle, BLS | **PDM 은 없다** | 확인 |
+| VaST · Astrokit | Sokolovsky+ · — | 변광성 탐색·고정밀 차등측광 | LC | 미확인 |
+
+---
+
+## 2. APEX 구성요소별 최근접 대안과 판정
+
+판정 3단: **주장 가능** / **워크플로 기여** / **주장 불가**
+
+| APEX 구성요소 | 최근접 도구 수준 대안 | 판정 | 근거 |
+|---|---|---|---|
+| Step 0 검출기 보정 (raw→science) | ccdproc (프리미티브) · AstroImageJ (도구) | **워크플로 기여** | 알고리즘은 표준. ccdproc 과 **비트동일** 증명이 자산이지 우월성이 아니다. 다만 **AutoPhOT·PhoPS·ASteCA 는 raw 를 다루지 않는다** — 파이프라인 경계로서는 실재하는 차이 |
+| 내장 WCS 솔버 (인덱스 불요) | **PhoPS** 가 같은 문제를 같은 방향으로 푼다 (동적 Gaia 인덱스) | **주장 불가로 하향** | 2026-07 이전이라면 "인덱스 없는 측성"이 카드였다. 지금은 선행연구가 있으므로 **인용하고 차이를 서술**해야 한다 |
+| 검출·구경측광 | SEP·photutils (프리미티브) · AutoPhOT·PP (도구) | **주장 불가** | 커널은 위임. APEX 기여는 오케스트레이션·QC |
+| 프레임 QC 게이트 (depth-cost, 초과검출) | BANZAI 등 시설 QC. 물리 보정된 depth-cost 게이트는 흔치 않음 | **주장 가능(조건부)** | `APEX_NATIVE_PROVENANCE.md` 가 "논문 신규성"으로 표시. **다만 문헌 대조가 아직 없다** — 확인 필요 |
+| 구경보정 워크플로 | photutils 프리미티브 + 각 파이프라인의 자체 정책 | **워크플로 기여** | 감사 문서 문구 그대로: "does not replace photutils" |
+| PTC 검출기 특성화 | LSST `cp_pipe` PTC 태스크. 방법은 Janesick 표준 | **주장 불가 (방법)** / **주장 가능 (결과)** | 구현은 수십 줄. **가치는 발견에 있다 — 헤더 EGAIN 이 14배 틀렸고 측광에 미치는 영향을 정량화** |
+| CMD 이소크론 피팅 | **ASteCA** — 같은 문제(나이·금속량·거리·소광 동시) | **주장 불가로 하향** | ASteCA 는 합성 CMD + 유전 알고리즘, APEX 는 EEP 보간 + 전색상 공분산 + Gaia 시차 사전분포 + MCMC. **접근이 다르나 문제는 같다.** 인용·비교 필수 |
+| U/B/V 영점 재앵커 | — | **주장 가능 (결과)** | 이건 엔진이 아니라 **발견**이다. rail 해소 소거실험이 근거 |
+| SYSREM | `PySysRem` | **주장 불가** | 알고리즘도 구현도 선행 존재. APEX 고유는 결측·가중·타깃 제외 계약 |
+| PDM | **없음** (astropy 는 LS·BLS 만) | **워크플로 기여** | 선택한 스택에 부재하는 것은 사실. 다만 Stellingwerf 1978 구현이며 novel 아님 |
+| 다중밤 앙상블·1일 별칭 해소 | AstroImageJ 앙상블 · wotan(겨냥 다름) | **미확인** | AIJ 가 다중밤 성단 규모를 다루는지 확인 필요 |
+
+---
+
+## 3. 남는 것 — 논문이 실제로 주장할 수 있는 것
+
+개별 구성요소에 알고리즘 노벨티는 **거의 없다.** 그건 문제가 아니다 —
+AutoPhOT 도 photutils·astropy 위에 서 있고 A&A Section 15 에 실렸다.
+남는 것은 셋이다.
+
+**(1) 파이프라인 경계** — 확인된 사실로 뒷받침된다.
+AutoPhOT·PhoPS·ASteCA 는 **이미 보정된 데이터에서 시작**한다. PhotometryPipeline
+과 AstroImageJ 는 보정을 다루지만 각각 소행성 측광·트랜싯 시계열에 특화돼
+있다. **raw → science → (성단 CMD ∧ 다중밤 광도곡선)** 을 한 도구에서
+끝내는 조합은 조사 범위에서 확인되지 않았다.
+
+**(2) 발견** — 구현자가 누구든 무관하게 성립한다.
+- 헤더 EGAIN 이 실측 대비 14배 틀림 (0.0495 vs 0.689) 과 그 측광 영향
+- B 필터 faint 편차의 범인이 Gaia BP 감광이고, 밴드마다 범인이 바뀜
+- 재현성의 근원이 SEP 디블렌딩 (2.7 %, 중앙 MAD 0.0 mmag, 꼬리 15.9 mmag)
+- U/B/V 영점을 한 표준계에 앵커해야 이소크론 rail 이 풀림
+
+**(3) 검증의 폭** — AutoPhOT 이 쓴 전략과 같고, APEX 가 더 넓다.
+ccdproc 비트동일 · IRAF 교차검증 · PS1/Gaia 대조 · 문헌 주기 재현 ·
+LCO 2기기 vs BANZAI 교차기기.
+
+---
+
+## 4. 반드시 인용해야 할 것 (누락 시 심사에서 지적됨)
+
+| 문헌 | 왜 |
+|---|---|
+| Perren, Vázquez & Piatti 2015, A&A 576, A6 (ASteCA) | Step 12 와 같은 문제를 푸는 선행 도구 |
+| Collins+ 2017, AJ 153, 77 (AstroImageJ) | 형태가 가장 가까운 GUI 데스크톱 도구 |
+| Mommert 2017 (PhotometryPipeline) | "small to medium-sized observatories" 를 먼저 표방 |
+| Brennan & Fraser 2022, A&A 667, A62 (AutoPhOT) | 같은 절의 직전 사례이자 문체 준거 |
+| Erece & Kilic 2026, arXiv:2607.27414 (PhoPS) | 인덱스 없는 측성을 먼저 발표 |
+| Tamuz+ 2005 · Stellingwerf 1978 · Hippke+ 2019 | 알고리즘 출처 (일부는 이미 인용) |
+
+---
+
+## 5. 아직 확인 못 한 것
+
+논문 문장으로 쓰기 전에 확인해야 한다. **기억으로 쓰지 말 것.**
+
+1. **AstroImageJ 가 성단 규모(수천 별) 마스터 카탈로그와 CMD 를 다루는가.**
+   문헌은 "streamlined for time-series differential photometry" 라고만 한다.
+   못 다룬다면 (1) 의 근거가 강해지고, 다룬다면 다시 써야 한다.
+2. **PhotometryPipeline 이 raw 보정(bias/dark/flat)을 하는가.** 지금 확인된
+   것은 정합·측광·보정(zero-point)까지다.
+3. **depth-cost 게이트·초과검출 게이트에 문헌 선례가 있는가.** 지금 "논문
+   신규성" 표기의 유일한 근거는 내부 커밋 메시지다.
+4. **ASteCA 와 APEX step12 의 실제 결과 비교.** 같은 성단(M67·NGC 6811)에
+   둘 다 돌려 비교하면 §5 가 크게 강해진다 — ASteCA 입력이 카탈로그이므로
+   **APEX Step 7 산출물을 그대로 먹일 수 있다.** 비용이 낮다.
