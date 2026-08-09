@@ -95,6 +95,7 @@ def _summary_dict(result, e_color_to_ebv: float) -> Dict[str, Any]:
         "distance_pc": trip(result.distance_pc_p),
         "acceptance_fraction": float(result.acceptance_fraction),
         "convergence_ok": bool(result.convergence_ok),
+        "convergence_detail": str(getattr(result, "convergence_detail", "")),
     }
     e_bv = trip(getattr(result, "e_bv_p", None))
     if e_bv is None and out["e_color"] is not None:
@@ -271,7 +272,9 @@ def fit_cluster_isochrone(
     summary = _summary_dict(result, 1.0 / R_color if R_color else 1.0)
     if not result.convergence_ok:
         warnings.append(
-            f"MCMC not converged (acceptance {result.acceptance_fraction:.2f}); "
+            f"MCMC not converged — "
+            f"{getattr(result, 'convergence_detail', '') or 'reason unavailable'}"
+            f" (acceptance {result.acceptance_fraction:.2f}); "
             "treat the posterior with caution — see methodology §10."
         )
 

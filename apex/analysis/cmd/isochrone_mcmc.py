@@ -117,6 +117,8 @@ class McmcResult:
     n_walkers: int = 0
     n_dim: int = 4
     convergence_ok: bool = False
+    # Why convergence was or was not established. Empty means "converged".
+    convergence_detail: str = ""
     sample_binary_fraction: bool = False
 
     # Median parameter vector in the *sampled* space (for overlay plotting).
@@ -1432,6 +1434,10 @@ def fit_isochrone_mcmc(
     tau = None
     thin = 1
     convergence_ok = False
+    # Why the run is or is not judged converged. A bare ``except: tau = None``
+    # used to swallow this, so every fit reported "not converged" with no way
+    # to tell an unconverged chain from a diagnostic that never ran.
+    convergence_detail = ""
     try:
         tau = sampler.get_autocorr_time(tol=0)
         tau = np.asarray(tau, dtype=float)
@@ -1439,8 +1445,22 @@ def fit_isochrone_mcmc(
             max_tau = float(np.max(tau))
             thin = max(1, int(max_tau // 2))
             # Standard emcee convergence heuristic: chain >= 50 autocorr times.
-            convergence_ok = bool(n_steps > 50 * max_tau) and (0.15 <= acc <= 0.7)
-    except Exception:
+            long_enough = bool(n_steps > 50 * max_tau)
+            acc_ok = 0.15 <= acc <= 0.7
+            convergence_ok = long_enough and acc_ok
+            if not long_enough:
+                convergence_detail = (
+                    f"chain is {n_steps} steps but the autocorrelation time is "
+                    f"{max_tau:.0f}; {int(50 * max_tau)} are needed")
+            elif not acc_ok:
+                convergence_detail = f"acceptance {acc:.3f} outside 0.15-0.70"
+        else:
+            convergence_detail = (
+                "autocorrelation time is not finite/positive "
+                f"({np.array2string(tau, precision=1)})")
+            tau = None
+    except Exception as exc:  # noqa: BLE001 - reported, not hidden
+        convergence_detail = f"{type(exc).__name__}: {exc}"
         tau = None
 
     discard = 0  # burn-in already discarded via reset()
@@ -1480,6 +1500,7 @@ def fit_isochrone_mcmc(
         flat_chain=flat_store,
         labels=labels,
         acceptance_fraction=acc,
+        convergence_detail=convergence_detail,
         autocorr_time=tau,
         n_burn=n_burn,
         n_steps=n_steps,

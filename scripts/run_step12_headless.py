@@ -59,6 +59,15 @@ def main() -> int:
     ap.add_argument("--steps", type=int, default=2000)
     ap.add_argument("--burn", type=int, default=600)
     ap.add_argument("--err-floor", type=float, default=0.02)
+    # The binary and field fractions differ between clusters — an old open
+    # cluster is not a sparse young one — so they must not stay compiled-in
+    # constants. Defaults match IsochroneFitConfig; the cross-check against
+    # ASteCA (validation/asteca_crosscheck/) is what made their fixedness
+    # visible.
+    ap.add_argument("--f-bin", type=float, default=None,
+                    help="binary fraction in the CMD mixture (default 0.3)")
+    ap.add_argument("--f-field", type=float, default=None,
+                    help="field-contamination fraction (default 0.1)")
     ap.add_argument("--seed", type=int, default=2024)
     ap.add_argument("--mag-max", type=float, default=None,
                     help="drop stars fainter than this in the magnitude band "
@@ -134,6 +143,8 @@ def main() -> int:
         max_stars=args.max_stars, n_walkers=args.walkers,
         n_steps=args.steps, n_burn=args.burn,
         err_floor=args.err_floor, seed=args.seed,
+        **({} if args.f_bin is None else {"f_bin": float(args.f_bin)}),
+        **({} if args.f_field is None else {"f_field": float(args.f_field)}),
     )
     print(f"fit: colors={colors} mag={args.mag} age={a_min}-{a_max} Gyr "
           f"iso={iso_file.name} membership={cfg.use_membership} "
@@ -170,6 +181,7 @@ def main() -> int:
             "mag_max": args.mag_max,
             "walkers": args.walkers, "steps": args.steps, "burn": args.burn,
             "err_floor": args.err_floor, "seed": args.seed,
+            "f_bin": cfg.f_bin, "f_field": cfg.f_field,
         },
         "elapsed_s": elapsed,
         "wide_table": str(wide),
