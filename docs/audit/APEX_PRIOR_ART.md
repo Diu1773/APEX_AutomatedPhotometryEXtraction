@@ -14,7 +14,7 @@ photutils·ccdproc·SEP)에서 "왜 패키지를 통째로 쓰지 않았나"를 
 
 | 도구 | 출처 | 범위 | APEX 와 겹치는 구간 | 확인 |
 |---|---|---|---|---|
-| **AstroImageJ** | Collins+ 2017, AJ 153, 77 | GUI 데스크톱. 이미지 보정 + 차등측광 + 앙상블 + 추세제거 + 트랜싯 모델 적합 | **Step 0–7 + LC 전체.** 형태가 가장 가깝다 | 확인 |
+| **AstroImageJ** | Collins+ 2017, AJ 153, 77 | GUI 데스크톱(Java/ImageJ). **bias·dark·flat·비선형 보정 포함**, 시계열 다중구경 차등측광, 앙상블, 동시 추세제거·트랜싯 적합. 측성은 **astrometry.net 웹 인터페이스** | **Step 0–7 + LC 전체.** 형태가 가장 가깝다 | 확인(본문) |
 | **PhotometryPipeline** | Mommert 2017 (ascl:1703.004) | "small to medium-sized observatories" 대상 자동 파이프라인. SExtractor + SCAMP 로 정합·측광, 온라인 카탈로그로 측광 보정 | Step 4–7 + **대상 사용자층이 동일** | 확인 |
 | **AutoPhOT** | Brennan & Fraser 2022, **A&A 667, A62** | 초신성·트랜지언트용. 구경+PSF 측광, 템플릿 차감, 인공성 주입 한계등급 | Step 4–7 | 확인 |
 | **PhoPS** | Erece & Kilic, arXiv:2607.27414 (2026-07-29 제출, **아직 arXiv**) | 측성+측광 자동화. **관측 시각으로 전파한 Gaia DR3 인덱스를 동적 생성** → 사전 설치 인덱스 불요. RANSAC 기반 위치의존 영점 | Step 5 + 7 | 확인 |
@@ -84,13 +84,51 @@ LCO 2기기 vs BANZAI 교차기기.
 
 ---
 
+## 4-b. AstroImageJ 본문 확인 결과 (2026-08-09)
+
+기능 목록 22 개를 본문에서 직접 확인했다. **AIJ 는 예상보다 넓다** — 5 번이
+"Data Processor (DP) facility for image calibration including bias, dark, flat,
+and nonlinearity correction" 이므로 **raw 보정을 한다.** 6 번이 시계열
+다중구경 차등측광, 10 번이 동시 추세제거 적합이다. 즉 **광도곡선 쪽에서는
+raw → science → LC 를 이미 한 도구가 덮는다.**
+
+두 가지가 갈린다.
+
+**(1) 측성이 네트워크 의존이다.** 기능 11 번은
+*"Plate solving and addition of World Coordinate System (WCS) headers to images
+seamlessly using the **astrometry.net web interface**"* 다. 웹 인터페이스이므로
+인터넷 없는 돔에서는 성립하지 않는다. **APEX 내장 솔버의 오프라인 알리바이는
+AIJ 에 대해 살아 있고**, git 상 `wcs_solve.py` 2026-04-28 · quad solver
+06-10 으로 PhoPS arXiv 제출(07-29)보다 앞선다 — "독립 개발, 동시기 발표"로
+서술 가능하다.
+
+**(2) 성단 경로가 없다.** 22 개 기능 어디에도 마스터 카탈로그·다중필터
+교차매칭·CMD·이소크론이 없다. 초록은 *"streamlined for time-series
+differential photometry … especially exoplanet transits"*, 사용처는 KELT
+트랜싯 후속관측 팀이다.
+
+### 그래서 "파이프라인 경계" 주장을 이렇게 좁힌다
+
+| 갈래 | 판정 |
+|---|---|
+| **광도곡선** | **novelty 주장 불가.** AstroImageJ 가 raw → LC 를 이미 덮는다. APEX 는 비교·위치잡기만 한다 (차이: Python vs Java, 헤드리스 CLI·재현성, 다중 밤 병합, 성단 규모 마스터 카탈로그 — 마지막 둘은 AIJ 에 부재) |
+| **성단 CMD** | **주장 가능.** raw → science → 마스터 카탈로그 → CMD → 이소크론을 한 도구에서 끝내는 사례가 조사 범위에서 확인되지 않았다. ASteCA 는 카탈로그에서 시작하고, AIJ 는 CMD 경로가 없다 |
+| **오프라인 측성** | **조건부 주장 가능.** AIJ 는 웹, ASTAP·astrometry.net 은 인덱스 DB 필요, PhoPS 는 동적 생성이나 2026-07 발표. 인용 후 "독립 개발" 서술 |
+
+**함의**: 논문의 무게 중심을 **성단 CMD 갈래**에 두고, LC 갈래는 "같은 도구
+안에서 같은 측광 산출물로 이어진다"는 통합 논거로만 쓰는 것이 안전하다.
+
+또 하나 — AIJ 도 *"verified the accuracy of AIJ against IRAF, IDL, and MaxIm
+DL"* 로 같은 검증 전략을 쓴다. APEX 의 ccdproc·IRAF·PS1/Gaia 대조는 이 절의
+표준 관행이며, 그 자체로 novelty 는 아니지만 **빠지면 감점**이다.
+
 ## 5. 아직 확인 못 한 것
 
 논문 문장으로 쓰기 전에 확인해야 한다. **기억으로 쓰지 말 것.**
 
-1. **AstroImageJ 가 성단 규모(수천 별) 마스터 카탈로그와 CMD 를 다루는가.**
-   문헌은 "streamlined for time-series differential photometry" 라고만 한다.
-   못 다룬다면 (1) 의 근거가 강해지고, 다룬다면 다시 써야 한다.
+1. ~~AstroImageJ 가 성단 규모 CMD 를 다루는가~~ → **4-b 에서 해소.**
+   기능 목록에 CMD·마스터 카탈로그·이소크론이 없다. 다만 raw 보정과 LC 는
+   덮으므로 주장 범위를 성단 갈래로 좁혔다.
 2. **PhotometryPipeline 이 raw 보정(bias/dark/flat)을 하는가.** 지금 확인된
    것은 정합·측광·보정(zero-point)까지다.
 3. **depth-cost 게이트·초과검출 게이트에 문헌 선례가 있는가.** 지금 "논문
