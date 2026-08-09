@@ -1559,6 +1559,15 @@ def run_forced_photometry(
                     "apcorr":       apcorr_val,
                     "path":         info["out_path"],
                 }
+                # Per-phase timings ride along into photometry_index.csv. They
+                # were already measured and then thrown away: the headless
+                # path passes no log callback, so the only place they surfaced
+                # was a GUI log line. Persisting them is what lets a "this
+                # stage is 5.5x slower in parallel" question be answered from
+                # a finished run instead of a fresh experiment.
+                index_row["elapsed_s"] = round(float(info.get("elapsed_s", 0.0)), 3)
+                for key, value in (info.get("timing") or {}).items():
+                    index_row[key] = round(float(value), 3)
                 noise_info = info.get("noise") or {}
                 if noise_info:
                     index_row.update(noise_info)
