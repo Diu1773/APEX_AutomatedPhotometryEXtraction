@@ -1,0 +1,165 @@
+{
+ "summary": [
+  {
+   "engine": "internal",
+   "frames": 8,
+   "solved": 8,
+   "qc_pass": 8,
+   "resid_med_px": 0.34575382692774004,
+   "rms_px": 0.4455776388848498,
+   "resid_p99_px": 2.9069223016025934,
+   "match_n": 879.0,
+   "inlier_rate": 0.8986094415266894,
+   "elapsed_s": 11.114148139953613,
+   "pix_scale_arcsec": 0.394983648979909
+  },
+  {
+   "engine": "astap",
+   "frames": 8,
+   "solved": 8,
+   "qc_pass": 8,
+   "resid_med_px": 0.49264782329777046,
+   "rms_px": 0.6276536907568747,
+   "resid_p99_px": 3.2330642687898434,
+   "match_n": 600.0,
+   "inlier_rate": 0.9166296270052413,
+   "elapsed_s": 3.0554959774017334,
+   "pix_scale_arcsec": 0.39498365074199904
+  },
+  {
+   "engine": "astnet",
+   "frames": 8,
+   "solved": 8,
+   "qc_pass": 7,
+   "resid_med_px": 0.49264782329777046,
+   "rms_px": 0.6276536907568747,
+   "resid_p99_px": 3.2330642687898434,
+   "match_n": 600.0,
+   "inlier_rate": 0.9166296270052413,
+   "elapsed_s": 150.75270414352417,
+   "pix_scale_arcsec": 0.39498365074199904
+  }
+ ],
+ "per_frame": [
+  {
+   "engine": "internal",
+   "frame": "pp_messier13-0003-B.fit",
+   "resid_med_px": 0.509973689962276
+  },
+  {
+   "engine": "internal",
+   "frame": "pp_messier13-0002-B.fit",
+   "resid_med_px": 0.4057302229538442
+  },
+  {
+   "engine": "internal",
+   "frame": "pp_messier13-0003-R.fit",
+   "resid_med_px": 0.3040714021626448
+  },
+  {
+   "engine": "internal",
+   "frame": "pp_messier13-0002-V.fit",
+   "resid_med_px": 0.3450442788169811
+  },
+  {
+   "engine": "internal",
+   "frame": "pp_messier13-0001-V.fit",
+   "resid_med_px": 0.334127112457325
+  },
+  {
+   "engine": "internal",
+   "frame": "pp_messier13-0001-R.fit",
+   "resid_med_px": 0.346463375038499
+  },
+  {
+   "engine": "internal",
+   "frame": "pp_messier13-0002-R.fit",
+   "resid_med_px": 0.3294687684752996
+  },
+  {
+   "engine": "internal",
+   "frame": "pp_messier13-0001-B.fit",
+   "resid_med_px": 0.4191804619346796
+  },
+  {
+   "engine": "astap",
+   "frame": "pp_messier13-0001-R.fit",
+   "resid_med_px": 0.48035457748062
+  },
+  {
+   "engine": "astap",
+   "frame": "pp_messier13-0001-B.fit",
+   "resid_med_px": 0.9210152721030844
+  },
+  {
+   "engine": "astap",
+   "frame": "pp_messier13-0002-B.fit",
+   "resid_med_px": 0.9759102709963988
+  },
+  {
+   "engine": "astap",
+   "frame": "pp_messier13-0002-R.fit",
+   "resid_med_px": 0.5046747237260506
+  },
+  {
+   "engine": "astap",
+   "frame": "pp_messier13-0001-V.fit",
+   "resid_med_px": 0.4791392170311295
+  },
+  {
+   "engine": "astap",
+   "frame": "pp_messier13-0002-V.fit",
+   "resid_med_px": 0.4689833803758007
+  },
+  {
+   "engine": "astap",
+   "frame": "pp_messier13-0003-B.fit",
+   "resid_med_px": 0.562918329677529
+  },
+  {
+   "engine": "astap",
+   "frame": "pp_messier13-0003-R.fit",
+   "resid_med_px": 0.4806209228694903
+  },
+  {
+   "engine": "astnet",
+   "frame": "pp_messier13-0001-V.fit",
+   "resid_med_px": 0.4791392170311295
+  },
+  {
+   "engine": "astnet",
+   "frame": "pp_messier13-0002-R.fit",
+   "resid_med_px": 0.5046747237260506
+  },
+  {
+   "engine": "astnet",
+   "frame": "pp_messier13-0003-R.fit",
+   "resid_med_px": 0.4806209228694903
+  },
+  {
+   "engine": "astnet",
+   "frame": "pp_messier13-0001-B.fit",
+   "resid_med_px": 0.9430615338525524
+  },
+  {
+   "engine": "astnet",
+   "frame": "pp_messier13-0001-R.fit",
+   "resid_med_px": 0.48035457748062
+  },
+  {
+   "engine": "astnet",
+   "frame": "pp_messier13-0002-V.fit",
+   "resid_med_px": 0.4689833803758007
+  },
+  {
+   "engine": "astnet",
+   "frame": "pp_messier13-0002-B.fit",
+   "resid_med_px": 0.9759102709963988
+  },
+  {
+   "engine": "astnet",
+   "frame": "pp_messier13-0003-B.fit",
+   "resid_med_px": 0.562918329677529
+  }
+ ]
+}
