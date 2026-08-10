@@ -1,3 +1,19 @@
+# !! 아래 count 는 프레임 수가 아니다 — 읽기 전에 이것부터 읽을 것 (2026-08-11)
+#
+# LCO archive API 의 `count` 는 `count_estimated: true` 가 붙는 추정값이고
+# 실제와 크게 다르다. 전수 페이징으로 다시 세면:
+#     U  : count=96  ->  실제 0 장   (NGC 6811 의 U 밴드는 아카이브에 없다)
+#     B  : count=66  ->  실제 2 장 (raw)
+#     V  : count=94  ->  실제 2 장 (raw)
+# 공개 NGC 6811 프레임은 전부 109 장이며 두 밤뿐이다:
+#     2016-12-13 fs02 (2m)  6 장  B2 V2 R2
+#     2023-09-07 fa05 (1m)  103 장  gp30 rp30 ip29 zs14
+#
+# 실사·취득 처방: validation/psf_crossinstrument/LCO_NGC6811_REALITY.md
+# 재조회 스크립트: estimate_lco_ngc6811.py (target_name 은 공백 포함 "NGC 6811")
+#
+# ---- 이하 원본 (틀린 수치, 기록용으로만 보존) ----
+
 U: count=96 fetched=0
 B: count=66 fetched=2
 V: count=94 fetched=2
