@@ -1,0 +1,11 @@
+{
+ "ram_total_mb": 16847,
+ "ram_available_mb": 2283,
+ "ram_available_pct": 13.6,
+ "cpu_percent": 25.5,
+ "processes_over_200mb": 17,
+ "label": "start",
+ "time": "2026-08-11 02:37:42",
+ "e_free_gb": 147.2,
+ "c_free_gb": 45.9
+}

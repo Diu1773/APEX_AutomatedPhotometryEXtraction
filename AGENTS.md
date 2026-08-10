@@ -90,3 +90,17 @@ Stop hook (`Main/scripts/hook_track_freshness.py`) 이 이걸 검사한다. 차�
 - 실행은 `run.bat` 또는 `.venv-deploy\Scripts\python`. 시스템 python 아님.
 - `step10_zeropoint_calibration.py` 의 pandas `DataFrameGroupBy.apply` 는 폐기 예정이다.
   pandas를 올리면 영점보정 결과가 조용히 달라질 수 있다.
+
+## Research OS 세션 브리지
+
+연구 질문이나 실험 방향을 새로 잡을 때는 Main의 Research OS 제어층을 먼저 동기화한다.
+컨텍스트에 `SESSION_SYNC_V1`이 없으면 작업 전에 한 번 실행한다.
+
+```text
+python -X utf8 C:/Users/bmffr/Desktop/Main/scripts/session_sync.py --cwd .
+```
+
+원시 아이디어는 `C:/Users/bmffr/Desktop/Main/RESEARCH_INBOX.md`에 남긴다.
+하네스는 질문 후보 확장·문헌 검색·독립 비평·사람 승인을 분리한다. 자동으로 결론을 확정하거나
+이 레포의 파일을 바꾸지 않는다. `ResearchCandidate` 검토용 또는 승인된 theory/experiment
+handoff는 `.research-os/handoff/`의 최신 JSON을 먼저 읽는다.

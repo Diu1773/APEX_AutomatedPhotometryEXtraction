@@ -187,8 +187,24 @@ Domain facts for code review (the generic `/review-math`, `/review-deps`,
 ### Performance
 
 - **Typical scale**: N_frames 50–500 (single night), up to ~3000 (multi-night); N_stars 100–5000 (master catalog), 20–200 (references); ~16M px/frame (4000×4000); up to 50,000 PDM/LS trial periods.
-- **Frame loops**: Step 7 forced phot `ThreadPoolExecutor`; LC step9 `_build_star_mag_series` file iteration.
-- **Preload cache**: `_preload_photometry_cache(result_dir, filenames)` exists — flag code that bypasses it and re-reads per star/frame.
-- **Worker count**: use `get_parallel_workers()` (`apex/utils/constants.py`), never hardcode. numpy/C ops release the GIL, so threads help CPU-bound numeric work.
+- **Frame loops**: Step 7 forced phot runs in **processes** headless (`APEX_FORCEDPHOT_PROCESSES=0` forces threads) and threads in the GUI; LC step9 `_build_star_mag_series` file iteration.
+- **Preload cache**: LC frames go through `FramePhotometryCache` (`apex/utils/photometry_loader.py`), keyed by `(result_dir, frame)` and bounded by bytes — flag code that bypasses it and re-reads per star/frame.
+- **Worker count**: use `get_parallel_workers(params, stage=…, frame_bytes=…)` (`apex/utils/constants.py`), never hardcode. Stage ceilings and the RAM budget are measured, not assumed (`benchmark/perf/20260807/RESULTS.md`).
+- **Threads do not always help numeric work.** Measured on Step 7: 83 % CPU at one worker, 109 % at twelve — it never leaves one core, because photutils' per-aperture statistics hold the GIL between many small numpy calls. Twelve threads cost 4.2× wall time. Ask what a stage *waits on*: frame reads gain from threads (34.1 s → 18.7 s), per-aperture computation needs processes (244.2 s → 69.6 s, byte-identical output).
 - **Batched numerics**: `_pdm_theta_vectorized` caps each batch at ~50 MB by design — preserve such memory bounds.
 - **Qt tables**: bulk `setItem` is faster with `setSortingEnabled(False)` around the batch.
+
+## Research OS 세션 브리지
+
+연구 질문이나 실험 방향을 새로 잡을 때는 제어층 하네스를 먼저 동기화한다.
+컨텍스트에 `SESSION_SYNC_V1`이 없으면 작업 전에 한 번 실행한다.
+
+```text
+python -X utf8 C:/Users/bmffr/Desktop/Main/scripts/session_sync.py --cwd .
+```
+
+원시 아이디어는 `C:/Users/bmffr/Desktop/Main/RESEARCH_INBOX.md`에 남길 수 있다.
+하네스는 먼저 질문 후보만 확장하며, 논문 검색·novelty 판정·승인·프로젝트 파일 변경은
+사람이 선택한 다음 단계에서만 한다.
+ResearchCandidate 검토용 또는 승인된 theory/experiment handoff는 이 프로젝트의
+`.research-os/handoff/`에 JSON으로 도착한다. 새 작업 전 최신 파일과 이 문서의 기존 테스트를 읽고, 자동 실행하지 않는다.
