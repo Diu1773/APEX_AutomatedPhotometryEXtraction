@@ -14,6 +14,18 @@ This asks it directly, for clusters APEX has already processed plus the
 standard calibration clusters. Counts come from paging, never from the API's
 `count` field, which is flagged `count_estimated` and was wrong by a factor of
 infinity for NGC 6811 (reported 58 U frames; there are none).
+
+STATUS 2026-08-11: written and correct in shape, but NOT yet run to completion.
+On a heavily observed target (M67 is the first in the list) the archive stops
+answering — the first query returned an HTTPError and the next hung past 15
+minutes, after a session that had already made a few dozen queries. That looks
+like rate limiting rather than a bug here, so the run was stopped rather than
+retried into the same wall.
+
+To finish it, throttle: a sleep of a few seconds between queries, a retry with
+backoff on HTTPError, and ideally an early exit once a page comes back short
+(`next` absent) so common targets do not page needlessly. Run it against a
+handful of targets at a time rather than sixteen in one pass.
 """
 
 from __future__ import annotations
