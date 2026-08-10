@@ -1,0 +1,19 @@
+{
+ "equi_10bins": {
+  "best_period_pypdm": 0.1040200000000122,
+  "best_period_apex": 0.10429465382747093,
+  "delta_period_d": -0.00027465382745872624,
+  "theta_correlation_on_apex_grid": 0.9959826212025594,
+  "theta_min_pypdm": 0.10418562196611063,
+  "theta_min_apex": 0.11244156939902866
+ },
+ "cover_10x3": {
+  "best_period_pypdm": 0.10422000000001226,
+  "best_period_apex": 0.10429465382747093,
+  "delta_period_d": -7.4653827458665e-05,
+  "theta_correlation_on_apex_grid": 0.996847744340477,
+  "theta_min_pypdm": 0.10775445897131158,
+  "theta_min_apex": 0.11244156939902866
+ },
+ "literature_period_d": 0.104092
+}
