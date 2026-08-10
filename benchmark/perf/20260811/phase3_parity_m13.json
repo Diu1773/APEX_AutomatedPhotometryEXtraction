@@ -1,0 +1,32 @@
+{
+ "gates": {
+  "changed_fraction": 0.05,
+  "median_mad_mmag": 0.1,
+  "max_abs_mmag": 30.0
+ },
+ "results": [
+  {
+   "target": "M13",
+   "calibrated": {
+    "n_baseline": 15,
+    "n_new": 15,
+    "n_common": 15,
+    "n_pixel_mismatched": 0,
+    "pixel_mismatched": [],
+    "n_header_differs": 0,
+    "n_header_differs_wcs_only": 0,
+    "header_differs": [],
+    "pass": true
+   },
+   "photometry": {
+    "n_matched": 22545,
+    "changed_fraction": 0.0014,
+    "median_mad_mmag": 0.0,
+    "median_abs_of_changed_mmag": 553.442,
+    "max_abs_mmag": 755.079,
+    "pass": false
+   },
+   "pass": false
+  }
+ ]
+}

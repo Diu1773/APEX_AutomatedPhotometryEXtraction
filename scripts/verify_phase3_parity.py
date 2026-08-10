@@ -117,7 +117,21 @@ def compare_calibrated(base: Path, new: Path) -> dict:
 
 
 def compare_photometry(base_dir: Path, new_dir: Path) -> dict:
-    """Step 7 products are matched by source_id and judged statistically."""
+    """Step 7 products are matched row-for-row and judged statistically.
+
+    The key is `master_id`, not `source_id`, and that distinction produced a
+    false failure before it was fixed. In M13 exactly one Gaia `source_id` per
+    frame is carried by two master entries 4.7 px apart — two detections in the
+    crowded core cross-matched to the same Gaia star. Merging on `source_id`
+    then joins baseline row 1 against new row 2 and reports their difference as
+    a photometric change: M13 came out at max |delta| = 755 mmag when the two
+    values were simply each other, swapped. `master_id` is unique per frame
+    (1501 of 1501 rows checked), so it is the honest key.
+
+    The duplicate cross-matches are still counted and reported, because a Gaia
+    source claimed by two master entries is worth knowing about even though it
+    is not a parity question.
+    """
     def load(d: Path) -> pd.DataFrame | None:
         frames = []
         for tsv in sorted(d.glob("*.tsv")):
@@ -125,9 +139,12 @@ def compare_photometry(base_dir: Path, new_dir: Path) -> dict:
                 t = pd.read_csv(tsv, sep="\t")
             except Exception:
                 continue
-            if {"source_id", "mag_inst"} <= set(t.columns):
+            if {"master_id", "mag_inst"} <= set(t.columns):
                 t["__frame"] = tsv.name
-                frames.append(t[["__frame", "source_id", "mag_inst"]])
+                cols = ["__frame", "master_id", "mag_inst"]
+                if "source_id" in t.columns:
+                    cols.append("source_id")
+                frames.append(t[cols])
         return pd.concat(frames, ignore_index=True) if frames else None
 
     b, n = load(base_dir), load(new_dir)
@@ -135,7 +152,9 @@ def compare_photometry(base_dir: Path, new_dir: Path) -> dict:
         return {"pass": False, "reason": "photometry tables not found",
                 "baseline_found": b is not None, "new_found": n is not None}
 
-    merged = b.merge(n, on=["__frame", "source_id"], suffixes=("_b", "_n"))
+    dup_srcid = (int(b.duplicated(["__frame", "source_id"]).sum())
+                 if "source_id" in b.columns else 0)
+    merged = b.merge(n, on=["__frame", "master_id"], suffixes=("_b", "_n"))
     if merged.empty:
         return {"pass": False, "reason": "no source_id overlap",
                 "n_baseline": len(b), "n_new": len(n)}
@@ -151,6 +170,7 @@ def compare_photometry(base_dir: Path, new_dir: Path) -> dict:
 
     return {
         "n_matched": int(len(merged)),
+        "n_duplicate_source_id_rows": dup_srcid,
         "changed_fraction": round(frac, 4),
         "median_mad_mmag": round(med_mad, 4),
         "median_abs_of_changed_mmag": round(med_changed, 4),
@@ -216,6 +236,10 @@ def main() -> int:
                   f"median MAD {ph['median_mad_mmag']:.4f} mmag | "
                   f"max |delta| {ph['max_abs_mmag']:.2f} mmag "
                   f"({'PASS' if ph['pass'] else 'FAIL'})")
+            if ph.get("n_duplicate_source_id_rows"):
+                print(f"    note: {ph['n_duplicate_source_id_rows']} row(s) share "
+                      f"a Gaia source_id with another master entry "
+                      f"(matched on master_id, which is unique)")
         elif ph:
             print(f"  photometry: {ph.get('reason')}")
 

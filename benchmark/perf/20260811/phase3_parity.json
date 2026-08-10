@@ -1,0 +1,95 @@
+{
+ "gates": {
+  "changed_fraction": 0.05,
+  "median_mad_mmag": 0.1,
+  "max_abs_mmag": 30.0
+ },
+ "results": [
+  {
+   "target": "NGC6811",
+   "calibrated": {
+    "n_baseline": 21,
+    "n_new": 21,
+    "n_common": 21,
+    "n_pixel_mismatched": 0,
+    "pixel_mismatched": [],
+    "n_header_differs": 2,
+    "n_header_differs_wcs_only": 2,
+    "header_differs": [
+     "pp_NGC6811-0003-V.fit",
+     "pp_NGC6811-0005-B.fit"
+    ],
+    "pass": true
+   },
+   "photometry": {
+    "n_matched": 42000,
+    "n_duplicate_source_id_rows": 0,
+    "changed_fraction": 0.0,
+    "median_mad_mmag": 0.0,
+    "median_abs_of_changed_mmag": 0.0,
+    "max_abs_mmag": 0.0,
+    "pass": true
+   },
+   "pass": true
+  },
+  {
+   "target": "M67",
+   "calibrated": {
+    "n_baseline": 30,
+    "n_new": 30,
+    "n_common": 30,
+    "n_pixel_mismatched": 0,
+    "pixel_mismatched": [],
+    "n_header_differs": 30,
+    "n_header_differs_wcs_only": 30,
+    "header_differs": [
+     "pp_Messier67-0001-g.fit",
+     "pp_Messier67-0001-i.fit",
+     "pp_Messier67-0001-r.fit",
+     "pp_Messier67-0002-g.fit",
+     "pp_Messier67-0002-i.fit",
+     "pp_Messier67-0002-r.fit",
+     "pp_Messier67-0003-g.fit",
+     "pp_Messier67-0003-i.fit",
+     "pp_Messier67-0003-r.fit",
+     "pp_Messier67-0004-g.fit"
+    ],
+    "pass": true
+   },
+   "photometry": {
+    "n_matched": 30180,
+    "n_duplicate_source_id_rows": 0,
+    "changed_fraction": 0.0318,
+    "median_mad_mmag": 0.0,
+    "median_abs_of_changed_mmag": 0.001,
+    "max_abs_mmag": 2.042,
+    "pass": true
+   },
+   "pass": true
+  },
+  {
+   "target": "M13",
+   "calibrated": {
+    "n_baseline": 15,
+    "n_new": 15,
+    "n_common": 15,
+    "n_pixel_mismatched": 0,
+    "pixel_mismatched": [],
+    "n_header_differs": 0,
+    "n_header_differs_wcs_only": 0,
+    "header_differs": [],
+    "pass": true
+   },
+   "photometry": {
+    "n_matched": 22515,
+    "n_duplicate_source_id_rows": 15,
+    "changed_fraction": 0.0,
+    "median_mad_mmag": 0.0,
+    "median_abs_of_changed_mmag": 0.0,
+    "max_abs_mmag": 0.0,
+    "pass": true
+   },
+   "pass": true
+  }
+ ]
+}
