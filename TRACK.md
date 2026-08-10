@@ -57,6 +57,13 @@ M5 에 대해 성립하지 않는다.**
 상세·취득 처방: `validation/psf_crossinstrument/LCO_NGC6811_REALITY.md`.
 정정 반영: 성적표 · `validation/paper/AUDIT_INTAKE_20260810.md` · 원본 txt 배너.
 
+**U 밴드 논거는 되살아난다 — 다른 성단에 SDSS u′ 가 있다.** 16 개 성단을
+조회한 결과 NGC 7789(u′ 12 장, kb88 단일 기기 2 밤) · M5(u′ 18 장, 기기 분산,
+**APEX 가 이미 처리한 성단**) · M45(u′ 18 장, kb55 에 16 장)가 후보다.
+Johnson U 는 사실상 없고 u′ 가 그 역할을 한다(u′−g′ ≈ U−B). **수치는 하한**
+이며 질의 실패로 M67·NGC 6811·M13·M3 는 측정되지 못했다.
+상세·먼저 확인할 것 셋: `validation/psf_crossinstrument/LCO_U_SEARCH_RESULT.md`.
+
 **미해결 하나**: M67 영점의 `n_fit_calibrators` 가 g 564→503 (10.8 %) 흔들리고
 색항이 0.212→0.228 움직인다. 측정 수준 선택은 비트동일이고(전 필드 일치,
 `median_snr_ref` 소수 6 자리 동일) step10 코드도 무변경이므로 차이는 최종
