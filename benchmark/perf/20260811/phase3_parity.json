@@ -30,6 +30,61 @@
     "max_abs_mmag": 0.0,
     "pass": true
    },
+   "cmd_table": {
+    "n_stars_baseline": 1986,
+    "n_stars_new": 1986,
+    "n_matched": 1986,
+    "bands": {
+     "mag_std_B": {
+      "n": 1912,
+      "changed_fraction": 0.0,
+      "max_abs_mmag": 0.0,
+      "median_shift_mmag": 0.0,
+      "median_mad_mmag": 0.0
+     },
+     "mag_std_R": {
+      "n": 1909,
+      "changed_fraction": 0.0,
+      "max_abs_mmag": 0.0,
+      "median_shift_mmag": 0.0,
+      "median_mad_mmag": 0.0
+     },
+     "mag_std_V": {
+      "n": 1912,
+      "changed_fraction": 0.0,
+      "max_abs_mmag": 0.0,
+      "median_shift_mmag": 0.0,
+      "median_mad_mmag": 0.0
+     },
+     "mag_std_err_B": {
+      "n": 1912,
+      "changed_fraction": 0.0,
+      "max_abs_mmag": 0.0,
+      "median_shift_mmag": 0.0,
+      "median_mad_mmag": 0.0
+     },
+     "mag_std_err_R": {
+      "n": 1909,
+      "changed_fraction": 0.0,
+      "max_abs_mmag": 0.0,
+      "median_shift_mmag": 0.0,
+      "median_mad_mmag": 0.0
+     },
+     "mag_std_err_V": {
+      "n": 1912,
+      "changed_fraction": 0.0,
+      "max_abs_mmag": 0.0,
+      "median_shift_mmag": 0.0,
+      "median_mad_mmag": 0.0
+     }
+    },
+    "worst_max_abs_mmag": 0.0,
+    "worst_changed_fraction": 0.0,
+    "worst_median_mad_mmag": 0.0,
+    "worst_median_shift_mmag": 0.0,
+    "gate_mmag": 5.0,
+    "pass": true
+   },
    "pass": true
   },
   {
@@ -65,6 +120,61 @@
     "max_abs_mmag": 2.042,
     "pass": true
    },
+   "cmd_table": {
+    "n_stars_baseline": 1005,
+    "n_stars_new": 1005,
+    "n_matched": 1005,
+    "bands": {
+     "mag_std_err_g": {
+      "n": 949,
+      "changed_fraction": 0.9852,
+      "max_abs_mmag": 27.602,
+      "median_shift_mmag": 0.0,
+      "median_mad_mmag": 0.0
+     },
+     "mag_std_err_i": {
+      "n": 949,
+      "changed_fraction": 0.9989,
+      "max_abs_mmag": 8.278,
+      "median_shift_mmag": 0.0,
+      "median_mad_mmag": 0.0
+     },
+     "mag_std_err_r": {
+      "n": 949,
+      "changed_fraction": 0.9989,
+      "max_abs_mmag": 8.038,
+      "median_shift_mmag": 0.0,
+      "median_mad_mmag": 0.0
+     },
+     "mag_std_g": {
+      "n": 949,
+      "changed_fraction": 1.0,
+      "max_abs_mmag": 108.21,
+      "median_shift_mmag": 0.6958,
+      "median_mad_mmag": 1.4734
+     },
+     "mag_std_i": {
+      "n": 949,
+      "changed_fraction": 1.0,
+      "max_abs_mmag": 16.299,
+      "median_shift_mmag": 0.2599,
+      "median_mad_mmag": 1.2458
+     },
+     "mag_std_r": {
+      "n": 949,
+      "changed_fraction": 1.0,
+      "max_abs_mmag": 26.494,
+      "median_shift_mmag": 0.4914,
+      "median_mad_mmag": 1.1475
+     }
+    },
+    "worst_max_abs_mmag": 108.21,
+    "worst_changed_fraction": 1.0,
+    "worst_median_mad_mmag": 1.4734,
+    "worst_median_shift_mmag": 0.6958,
+    "gate_mmag": 5.0,
+    "pass": true
+   },
    "pass": true
   },
   {
@@ -87,6 +197,61 @@
     "median_mad_mmag": 0.0,
     "median_abs_of_changed_mmag": 0.0,
     "max_abs_mmag": 0.0,
+    "pass": true
+   },
+   "cmd_table": {
+    "n_stars_baseline": 1479,
+    "n_stars_new": 1479,
+    "n_matched": 1479,
+    "bands": {
+     "mag_std_B": {
+      "n": 1420,
+      "changed_fraction": 0.0,
+      "max_abs_mmag": 0.0,
+      "median_shift_mmag": 0.0,
+      "median_mad_mmag": 0.0
+     },
+     "mag_std_R": {
+      "n": 1415,
+      "changed_fraction": 0.0,
+      "max_abs_mmag": 0.0,
+      "median_shift_mmag": 0.0,
+      "median_mad_mmag": 0.0
+     },
+     "mag_std_V": {
+      "n": 1420,
+      "changed_fraction": 0.0,
+      "max_abs_mmag": 0.0,
+      "median_shift_mmag": 0.0,
+      "median_mad_mmag": 0.0
+     },
+     "mag_std_err_B": {
+      "n": 1420,
+      "changed_fraction": 0.0,
+      "max_abs_mmag": 0.0,
+      "median_shift_mmag": 0.0,
+      "median_mad_mmag": 0.0
+     },
+     "mag_std_err_R": {
+      "n": 1415,
+      "changed_fraction": 0.0,
+      "max_abs_mmag": 0.0,
+      "median_shift_mmag": 0.0,
+      "median_mad_mmag": 0.0
+     },
+     "mag_std_err_V": {
+      "n": 1420,
+      "changed_fraction": 0.0,
+      "max_abs_mmag": 0.0,
+      "median_shift_mmag": 0.0,
+      "median_mad_mmag": 0.0
+     }
+    },
+    "worst_max_abs_mmag": 0.0,
+    "worst_changed_fraction": 0.0,
+    "worst_median_mad_mmag": 0.0,
+    "worst_median_shift_mmag": 0.0,
+    "gate_mmag": 5.0,
     "pass": true
    },
    "pass": true

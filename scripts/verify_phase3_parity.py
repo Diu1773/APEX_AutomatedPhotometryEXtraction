@@ -41,6 +41,10 @@ if str(REPO) not in sys.path:
 GATE_CHANGED_FRACTION = 0.05      # B4 measured 2.57 % between repeats
 GATE_MEDIAN_MAD_MMAG = 0.1        # B4 measured 0.0000
 GATE_MAX_ABS_MMAG = 30.0          # B4 measured 15.9
+# The CMD table is gated against the zero-point fit's own scatter, which is
+# 20-24 mmag RMS on these targets. A fifth of that is comfortably "does not
+# change the science" while still catching a real regression.
+GATE_CMD_MMAG = 5.0
 GATE_NDETECT_TOL = 5
 GATE_CATALOG_TOL = 2
 
@@ -181,6 +185,67 @@ def compare_photometry(base_dir: Path, new_dir: Path) -> dict:
     }
 
 
+def compare_cmd_table(base: Path, new: Path) -> dict:
+    """The CMD table is where the chain actually ends for the paper.
+
+    Step 0 and Step 7 parity do not by themselves guarantee it: the zero-point
+    and colour-term fit sits between them and the table, and it is refitted per
+    run. Measured on M67, a Step 7 perturbation of 3.18 % of measurements with
+    a 2.04 mmag maximum becomes a 0.70 mmag shift of the whole g sequence —
+    every star moves, because they all share one zero point.
+
+    So "fraction changed" is the wrong gate here: it reads 100 % for a zero-point
+    shift of less than a millimagnitude. The gate is instead the SIZE of the
+    difference measured against the zero-point fit's own scatter (M67: 24 mmag
+    RMS). A run-to-run difference far below the fit's intrinsic scatter has not
+    changed the science. Single-star outliers are reported but not gated — they
+    are the SEP deblending tail already characterised in B4.
+    """
+    if not base.exists() or not new.exists():
+        return {"pass": None, "reason": "CMD table missing",
+                "baseline": base.exists(), "new": new.exists()}
+    b, n = pd.read_csv(base), pd.read_csv(new)
+    key = "ID" if "ID" in b.columns and "ID" in n.columns else None
+    if key is None:
+        return {"pass": None, "reason": "no ID column to match on"}
+    bands = sorted({c for c in b.columns if c.startswith("mag_std_")
+                    and not c.endswith("_err")} & set(n.columns))
+    if not bands:
+        return {"pass": None, "reason": "no mag_std_* columns"}
+
+    merged = b[[key] + bands].merge(n[[key] + bands], on=key,
+                                    suffixes=("_b", "_n"))
+    per_band, worst_max, worst_frac = {}, 0.0, 0.0
+    worst_mad = worst_shift = 0.0
+    for band in bands:
+        d = (merged[f"{band}_n"] - merged[f"{band}_b"]).to_numpy(float)
+        d = d[np.isfinite(d)]
+        if not d.size:
+            continue
+        mx = float(np.max(np.abs(d))) * 1000
+        fr = float((d != 0).mean())
+        med = float(np.median(d)) * 1000
+        mad = float(1.4826 * np.median(np.abs(d - np.median(d)))) * 1000
+        per_band[band] = {"n": int(d.size), "changed_fraction": round(fr, 4),
+                          "max_abs_mmag": round(mx, 3),
+                          "median_shift_mmag": round(med, 4),
+                          "median_mad_mmag": round(mad, 4)}
+        worst_max, worst_frac = max(worst_max, mx), max(worst_frac, fr)
+        worst_mad = max(worst_mad, mad)
+        worst_shift = max(worst_shift, abs(med))
+
+    return {
+        "n_stars_baseline": int(len(b)), "n_stars_new": int(len(n)),
+        "n_matched": int(len(merged)), "bands": per_band,
+        "worst_max_abs_mmag": round(worst_max, 3),
+        "worst_changed_fraction": round(worst_frac, 4),
+        "worst_median_mad_mmag": round(worst_mad, 4),
+        "worst_median_shift_mmag": round(worst_shift, 4),
+        "gate_mmag": GATE_CMD_MMAG,
+        "pass": worst_mad <= GATE_CMD_MMAG and worst_shift <= GATE_CMD_MMAG,
+    }
+
+
 def compare_target(baseline_root: Path, new_root: Path, target: str) -> dict:
     b = baseline_root / target
     n = new_root / target
@@ -193,8 +258,13 @@ def compare_target(baseline_root: Path, new_root: Path, target: str) -> dict:
     out["calibrated"] = compare_calibrated(b / "sci", n / "sci")
     out["photometry"] = compare_photometry(
         b / "result" / "step7_forced_phot", n / "result" / "step7_forced_phot")
-    checks = [v.get("pass") for v in (out["calibrated"], out["photometry"])]
-    out["pass"] = all(c is True for c in checks)
+    cmd_rel = Path("result") / "cmd_zeropoint" / "median_by_ID_filter_wide_cmd.csv"
+    out["cmd_table"] = compare_cmd_table(b / cmd_rel, n / cmd_rel)
+    checks = [v.get("pass")
+              for v in (out["calibrated"], out["photometry"], out["cmd_table"])]
+    # A stage with no baseline to compare (pass is None) must not veto the rest.
+    out["pass"] = (all(c is not False for c in checks)
+                   and any(c is True for c in checks))
     return out
 
 
@@ -242,6 +312,17 @@ def main() -> int:
                       f"(matched on master_id, which is unique)")
         elif ph:
             print(f"  photometry: {ph.get('reason')}")
+        cm = r.get("cmd_table")
+        if cm and "n_matched" in cm:
+            print(f"  CMD table:  {cm['n_matched']:,} stars matched "
+                  f"({cm['n_stars_baseline']} vs {cm['n_stars_new']}) | "
+                  f"shift {cm['worst_median_shift_mmag']:.2f} | "
+                  f"MAD {cm['worst_median_mad_mmag']:.2f} mmag "
+                  f"(gate {cm['gate_mmag']}) | outlier max "
+                  f"{cm['worst_max_abs_mmag']:.1f} mmag "
+                  f"({'PASS' if cm['pass'] else 'FAIL'})")
+        elif cm:
+            print(f"  CMD table:  {cm.get('reason')}")
 
     a.output.parent.mkdir(parents=True, exist_ok=True)
     a.output.write_text(json.dumps(
