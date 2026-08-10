@@ -1,0 +1,60 @@
+{
+ "target": "NGC 6811",
+ "rate_mb_s": 3.0,
+ "raw_rlevel00": {
+  "n": 109,
+  "bytes": 1104056640,
+  "gb": 1.1,
+  "by_filter": {
+   "rp": 30,
+   "gp": 30,
+   "ip": 29,
+   "zs": 14,
+   "R": 2,
+   "V": 2,
+   "B": 2
+  }
+ },
+ "banzai_rlevel91": {
+  "n": 109,
+  "bytes": 4226932800,
+  "gb": 4.23,
+  "by_filter": {
+   "rp": 30,
+   "gp": 30,
+   "ip": 29,
+   "zs": 14,
+   "R": 2,
+   "V": 2,
+   "B": 2
+  }
+ },
+ "nights": [
+  {
+   "day_obs": "2016-12-13",
+   "instrument": "fs02",
+   "n": 6,
+   "bytes": 13115520,
+   "gb": 0.01,
+   "by_filter": {
+    "R": 2,
+    "V": 2,
+    "B": 2
+   }
+  },
+  {
+   "day_obs": "2023-09-07",
+   "instrument": "fa05",
+   "n": 103,
+   "bytes": 1043282880,
+   "gb": 1.04,
+   "by_filter": {
+    "rp": 30,
+    "gp": 30,
+    "ip": 29,
+    "zs": 14
+   }
+  }
+ ],
+ "nights_with_full_ubv": []
+}

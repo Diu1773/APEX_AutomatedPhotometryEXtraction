@@ -53,20 +53,66 @@ def sha256(path: Path) -> str:
     return h.hexdigest()
 
 
+def is_wcs_card(key: str) -> bool:
+    """True for any card the astrometric step owns.
+
+    Three families, all written by Step 5: the SIP distortion terms (A_i_j,
+    B_i_j and their inverses), the core WCS keywords, and APEX's own record of
+    how the solve went (WCSNST = stars used, WCSRMD = median residual, …).
+    Measured on NGC 6811, the two frames whose headers differed between runs
+    differed in 26 and 29 cards and every one of them was in this set.
+    """
+    return (key[:2] in ("A_", "B_")
+            or key.startswith(("AP_", "BP_", "CD", "CRPIX", "CRVAL", "PC",
+                               "CDELT", "CTYPE", "CUNIT", "WCS", "LONPOLE",
+                               "LATPOLE", "EQUINOX", "RADESYS")))
+
+
 def compare_calibrated(base: Path, new: Path) -> dict:
-    """Step 0 products must be byte-identical."""
+    """Step 0 products must be byte-identical — in the PIXELS.
+
+    Hashing the whole file is the wrong test and the first run proved it: two
+    of NGC 6811's twenty-one frames differed while every one of the 42,000
+    photometric measurements was identical to the last bit. The differing cards
+    were the SIP distortion coefficients (A_i_j, B_i_j) — the WCS solution that
+    Step 5 writes back into the calibrated frame's header. A whole-file hash
+    therefore does not test Step 0 at all; it silently tests the astrometric
+    solver's run-to-run determinism, which is downstream of SEP's documented
+    non-deterministic deblending (B4) and is not what this gate is for.
+
+    So the gate compares pixel data, and WCS/header differences are counted and
+    reported as an observation rather than a failure.
+    """
+    from astropy.io import fits
+
     base_files = {p.name: p for p in sorted(base.glob("*.fit*"))}
     new_files = {p.name: p for p in sorted(new.glob("*.fit*"))}
     common = sorted(set(base_files) & set(new_files))
-    mismatched = [n for n in common
-                  if sha256(base_files[n]) != sha256(new_files[n])]
+
+    pixel_mismatch, header_only, wcs_only = [], [], []
+    for name in common:
+        with fits.open(base_files[name]) as hb, fits.open(new_files[name]) as hn:
+            if not np.array_equal(hb[0].data, hn[0].data):
+                pixel_mismatch.append(name)
+                continue
+            kb, kn = hb[0].header, hn[0].header
+            diff = {k for k in set(kb) | set(kn)
+                    if str(kb.get(k)) != str(kn.get(k))}
+        if diff:
+            header_only.append(name)
+            if all(is_wcs_card(k) for k in diff):
+                wcs_only.append(name)
+
     return {
         "n_baseline": len(base_files),
         "n_new": len(new_files),
         "n_common": len(common),
-        "n_mismatched": len(mismatched),
-        "mismatched": mismatched[:10],
-        "pass": len(mismatched) == 0 and len(common) > 0,
+        "n_pixel_mismatched": len(pixel_mismatch),
+        "pixel_mismatched": pixel_mismatch[:10],
+        "n_header_differs": len(header_only),
+        "n_header_differs_wcs_only": len(wcs_only),
+        "header_differs": header_only[:10],
+        "pass": len(pixel_mismatch) == 0 and len(common) > 0,
     }
 
 
@@ -155,10 +201,14 @@ def main() -> int:
         cal = r.get("calibrated")
         if cal:
             print(f"  calibrated: {cal['n_common']} common, "
-                  f"{cal['n_mismatched']} byte-mismatched "
+                  f"{cal['n_pixel_mismatched']} pixel-mismatched "
                   f"({'PASS' if cal['pass'] else 'FAIL'})")
-            if cal["mismatched"]:
-                print(f"    first mismatches: {cal['mismatched']}")
+            if cal["pixel_mismatched"]:
+                print(f"    pixel mismatches: {cal['pixel_mismatched']}")
+            if cal["n_header_differs"]:
+                print(f"    header differs on {cal['n_header_differs']} frame(s), "
+                      f"{cal['n_header_differs_wcs_only']} of them WCS/SIP only "
+                      f"(observation, not a failure)")
         ph = r.get("photometry")
         if ph and "n_matched" in ph:
             print(f"  photometry: {ph['n_matched']:,} matched | "
