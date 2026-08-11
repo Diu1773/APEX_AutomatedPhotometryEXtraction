@@ -128,7 +128,7 @@ def main() -> int:
     print("\n=== 회차 통합 ===")
     print(header)
     print("-" * len(header))
-    for scope in ("overall", "matched", "crowding", "snr"):
+    for scope in ("overall", "matched", "matched-crowding", "crowding", "snr"):
         part = pooled[pooled["scope"] == scope].sort_values(["label", "engine"])
         for _, r in part.iterrows():
             print(f"{r['engine']:>20}{r['scope']:>10}{r['label']:>16}"

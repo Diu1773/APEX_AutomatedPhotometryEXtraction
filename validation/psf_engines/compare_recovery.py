@@ -235,11 +235,17 @@ def main() -> int:
 
     rows = (summarise(apex_scored, f"APEX step8 ({args.apex_mode})")
             + summarise(dao_scored, "IRAF ALLSTAR"))
+    # Broken out by crowding as well, because "equivalent overall" can hide the
+    # regime that matters: a PSF engine earns its place in the blended bin, and
+    # an engine that is equal on average while losing there is not equal.
     for frame, engine in ((apex_matched, f"APEX step8 ({args.apex_mode})"),
                           (dao_matched, "IRAF ALLSTAR")):
         for row in summarise(frame, engine):
             if row["scope"] == "overall":
                 row["scope"], row["label"] = "matched", "both kept"
+                rows.append(row)
+            elif row["scope"] == "crowding":
+                row["scope"] = "matched-crowding"
                 rows.append(row)
     table = pd.DataFrame(rows)
 
@@ -254,7 +260,7 @@ def main() -> int:
               f"{'compl':>8}{'bias':>9}{'scatter':>9}")
     print(header)
     print("-" * len(header))
-    for scope in ("overall", "matched", "crowding", "snr"):
+    for scope in ("overall", "matched", "matched-crowding", "crowding", "snr"):
         part = table[table["scope"] == scope].sort_values(["label", "engine"])
         for _, r in part.iterrows():
             print(f"{r['engine']:>13}{r['scope']:>10}{r['label']:>16}"
