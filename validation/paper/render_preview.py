@@ -389,18 +389,16 @@ body{font-family:var(--serif);font-size:11.2px;line-height:1.32;color:var(--ink)
 /* ── 지면 ── */
 #src{display:none;}
 #stage{overflow:hidden;}
-/* 판면 모드: PDF 뷰어처럼 A4 쪽을 세로로 이어 붙인다. 휠은 자연스럽게
-   현재 쪽의 끝에서 다음 쪽으로 이어지고, ‹›·PageUp/Down은 해당 쪽으로 이동한다. */
-/* The document itself owns the vertical scroll bar.  Keeping the stage as a
-   second scroll container made wheel events disappear on file:// previews
-   (and also hid the reflow reader because body.paged remained active). */
-body.paged{overflow-x:auto;overflow-y:auto;}
-body.paged #stage{display:block;overflow:visible;min-height:100vh;}
-body.paged.reflow{overflow:auto;}
-body.paged #sizer{display:block;}
-body.paged #book{display:block;}
-body.paged .page{display:block;}
+/* 판면 모드: PDF 뷰어처럼 한 화면에 A4 한 쪽만 표시한다. 휠·PageUp/Down·
+   ‹› 버튼으로 쪽을 넘기며, 읽기 모드에서는 원고 전체를 연속으로 흘린다. */
+body.paged{overflow:hidden;}
+body.paged #stage{display:flex;align-items:flex-start;justify-content:center;
+  overflow:auto;min-height:100vh;}
+body.paged #sizer{flex:0 0 auto;}
+body.paged #book{flex:0 0 auto;}
+body.paged .page{display:none;}
 body.paged .page.active{display:block;}
+body.paged.reflow{overflow:auto;}
 #sizer{position:relative;}
 #book{transform-origin:top left;width:var(--pw);}
 .page{position:relative;width:var(--pw);height:var(--ph);background:#fff;
@@ -1223,21 +1221,17 @@ JS = r"""
       scale=Math.max(0.5,pageScale*zoom);
       /* 판면 모드도 모든 쪽을 같은 스크롤 영역에 둔다. 페이지를 숨겼다
          다시 보이는 방식은 확대 페이지 끝에서 다음 쪽으로 이어지지 않는다. */
-      book.style.height='auto';
-      var bookH=Math.max(GEO.PH, book.scrollHeight);
-      var pcw=Math.ceil(PW*scale), pch=Math.ceil(bookH*scale);
+      var pcw=Math.ceil(PW*scale), pch=Math.ceil(GEO.PH*scale);
       sizer.style.width=pcw+'px';
       sizer.style.height=pch+'px';
       sizer.style.margin='18px auto 28px';
       book.style.transform='scale('+scale+')';
       book.style.width=PW+'px';
-      book.style.height='auto';
-      /* Let the root document scroll vertically.  The old fixed-height stage
-         was a nested scroller and stopped working for local file previews. */
-      stage.style.height=(pch+46)+'px';
+      book.style.height=GEO.PH+'px';
+      stage.style.height=Math.max(420,h)+'px';
       stage.style.minHeight='0';
-      stage.style.overflowX='visible';
-      stage.style.overflowY='visible';
+      stage.style.overflowX='auto';
+      stage.style.overflowY='auto';
       if (zind) zind.textContent=Math.round(scale*100)+'%';
       applyPageVisibility();
       onScroll();
@@ -1260,12 +1254,8 @@ JS = r"""
     if (document.body.classList.contains('paged')){
       currentPage=i;
       fit();
-      var top=(sizer.offsetTop||18)+(p.el.offsetTop*scale)-8;
-      if (stage && stage.scrollHeight>stage.clientHeight+1){
-        stage.scrollTo({top:Math.max(0,top), behavior:'smooth'});
-      } else {
-        window.scrollTo({top:Math.max(0,top), behavior:'smooth'});
-      }
+      applyPageVisibility();
+      if (stage) stage.scrollTo({top:0,left:0, behavior:'smooth'});
       if (ind) ind.textContent=(currentPage+1)+' / '+pages.length;
       return;
     }
@@ -1274,14 +1264,6 @@ JS = r"""
   function onScroll(){
     if (!pages.length) return;
     if (document.body.classList.contains('paged')){
-      var nested=stage && stage.scrollHeight>stage.clientHeight+1;
-      var base=sizer.offsetTop||0;
-      var scrollTop=nested ? (stage.scrollTop||0) : (window.scrollY||window.pageYOffset||0);
-      var y=(scrollTop-base)/scale + 40, cur=0;
-      for (var j=0;j<pages.length;j++){
-        if (pages[j].el.offsetTop<=y) cur=j; else break;
-      }
-      currentPage=cur;
       if (ind) ind.textContent=(currentPage+1)+' / '+pages.length;
       return;
     }
@@ -1296,15 +1278,13 @@ JS = r"""
   function on(id, fn){ var e=document.getElementById(id); if (e) e.addEventListener('click', fn); }
   on('prev', function(){ goto(currentPage-1); });
   on('next', function(){ goto(currentPage+1); });
-  var zoomWheelLock=false;
+  var zoomWheelLock=false, pageWheelLock=false;
   document.addEventListener('wheel', function(ev){
     if (!document.body.classList.contains('paged') ||
         document.body.classList.contains('reflow')) return;
-    /* 페이지·그림 위에서는 브라우저가 wheel 대상의 조상 중 어느 요소를
-       스크롤할지 브라우저별로 다르게 고른다. 특히 file:// 로 직접 연 탭에서는
-       body가 overflow:hidden이라 휠이 아무 일도 하지 않는 경우가 있다. 판면
-       안의 이벤트는 여기서 명시적으로 #stage에 전달해 PDF 뷰어처럼 항상
-       이어서 이동하게 한다. */
+    /* 판면 모드에서는 현재 쪽 하나만 보인다. 확대해서 쪽 자체가 화면보다
+       커진 경우에는 먼저 그 쪽 안을 스크롤하고, 위·아래 끝에서만 다음/이전
+       쪽으로 넘긴다. 맞춤 배율에서는 휠 한 번이 곧 한 쪽 이동이다. */
     var inStage=stage && (ev.target===stage || stage.contains(ev.target));
     if (!inStage) return;
     /* PDF 뷰어 관례: Ctrl/Cmd+휠은 현재 쪽의 확대율을 바꾼다. 브라우저의
@@ -1325,17 +1305,21 @@ JS = r"""
       if (Math.abs(dx)>0){
         var sx=Math.max(-160,Math.min(160,dx*.65));
         if (stage && stage.scrollWidth>stage.clientWidth+1) stage.scrollLeft+=sx;
-        else window.scrollTo({left:Math.max(0,(window.scrollX||0)+sx), behavior:'auto'});
       }
       return;
     }
-    /* 일반 휠도 stage를 직접 움직인다. preventDefault를 함께 써서 native
-       scroll과 이 보정이 겹쳐 두 배로 움직이지 않게 한다. */
-    if (Math.abs(ev.deltaY)>0 && stage.style.overflowY!=='visible' &&
-        stage.scrollHeight>stage.clientHeight){
-      stage.scrollTop += ev.deltaY;
-      ev.preventDefault();
-    }
+    if (Math.abs(ev.deltaY)<1 || pageWheelLock) return;
+    var down=ev.deltaY>0;
+    /* sizer has presentation margins, so its 8–46 px overflow at fit-to-page
+       is not a real page scroll range.  Use the scaled A4 height instead. */
+    var canScroll=stage && (GEO.PH*scale)>stage.clientHeight+2;
+    var atTop=!canScroll || stage.scrollTop<=1;
+    var atBottom=!canScroll || stage.scrollTop>=stage.scrollHeight-stage.clientHeight-1;
+    if (canScroll && ((down && !atBottom) || (!down && !atTop))) return;
+    ev.preventDefault();
+    pageWheelLock=true;
+    goto(currentPage+(down ? 1 : -1));
+    window.setTimeout(function(){ pageWheelLock=false; },240);
   }, {passive:false});
   document.addEventListener('keydown', function(ev){
     var tag=(ev.target && ev.target.tagName)||'';
