@@ -20,8 +20,8 @@ CMD를 만들고 관측과 비교하는 것이다. 아래 표의 "표준 항목"
 | **IMF** | Kroupa (2001) 밀도로 트랙 따라 가중 | `isochrone_fitter_v2.py:462` | ○ |
 | 측광 오차 | 별별 오차 + 계통 바닥 0.02 등급 | `isochrone_mcmc.py:74` | ○ |
 | 회원 판정 | 고유운동·시차 nσ 컷 | `member_meta` (pm_sigma, plx_nsig) | ○ |
-| **완전도 함수** | **적합에 미사용.** 측정은 존재(`detection_limit.py`)하나 CMD 경로에서 호출되지 않음 | `apex/analysis/cmd/` 내 0 회 | **✕** |
-| **미분 소광** | **모델링 없음.** 0.02 등급 오차 바닥이 "흡수한다"고 주석에 적혀 있을 뿐 | `isochrone_mcmc.py:76` 주석 | **✕** |
+| **완전도 함수** | **적합에 미사용.** 측정은 존재(`detection_limit.py`)하나 CMD 경로에서 호출되지 않음. **ASteCA 0.7 도 미구현**(패키지 전체에서 completeness 0 회) — 분야 공통 공백이지 APEX 만의 결함이 아니다 | `apex/analysis/cmd/` 내 0 회 | **✕ (양쪽 다)** |
+| **미분 소광** | **모델링 없음.** 0.02 등급 오차 바닥이 "흡수한다"고 주석에 적혀 있을 뿐. **ASteCA 도 미처리** — 저자 인용: *"the code will by default assume a unique extinction value"* | `isochrone_mcmc.py:76` 주석 | **✕ (양쪽 다)** |
 | **시차 영점 오프셋** | **미적용.** `dm = 5·log10(1000/plx) − 5` 생역산 | `isochrone_fit_service.py:205` | **✕** |
 | 총질량·몬테카를로 합성 | 해석적 IMF 가중 합성곱(합성 성단 생성 아님) | `isochrone_mcmc.py:19` | △ 접근이 다름 |
 
@@ -109,3 +109,58 @@ dm_window [9.631, 9.751]          (± 0.06)
   때문이다 — 9 kpc에서는 RUWE 상승이 쌍성이 아니라 블렌딩에서 온다.
   (`validation/ruwe_binary_conflict.py`)
 - **C\* 컷은 산포를 개선한다** — M13 세 밴드 8~11 %. (`validation/CSTAR_DECISION.md`)
+
+
+---
+
+# ASteCA 가 스스로 밝힌 한계 — 원문 확인 (2026-08-11)
+
+`ASteCA` 는 A&A 576, A6 (Perren, Vázquez & Piatti 2015) 로 정식 게재된 코드다.
+arXiv:1412.2366 전문(31 쪽)을 받아 저자들이 직접 적은 한계를 확인했다. 이것이
+중요한 이유는 **APEX 의 공백 중 어디까지가 APEX 만의 문제이고 어디부터가
+분야 공통인지**를 가르기 때문이다.
+
+## 저자 인용 (§3.1.5 및 결론)
+
+| 저자가 밝힌 한계 | 원문 |
+|---|---|
+| **미분 소광 미처리** | *"Regions affected by differential reddening also pose a great challenge, as the code will by default assume a unique extinction value."* |
+| **결과가 손으로 정하는 멤버십 컷에 좌우됨** | §3.1.5: `prob_min` 을 0.75 → 0.85 로 올리자 *"very unreliable cluster parameters"* 가 *"a very good fit with small errors"* 로 바뀐다 |
+| **회원 수가 적거나 장 오염이 크면 취약** | *"even a single misinterpreted star can make a substantial difference, specially when determining the age"* |
+| **어린 성단은 나이가 과대평가되기 쉬움** | *"can induce the code to assign larger age values by identifying bright field stars as spurious members"* |
+| **저자 스스로의 권고** | *"treat returned values as first order approximations"* |
+| 2015 년 판은 단일 CMD(한 등급 + 한 색)만 | *"We plan on lifting this limitation altogether in an immediate following version"* |
+| 질량 범위가 자유 파라미터가 아님 | *"We plan on removing this restriction in a future version"* |
+| **완전도 함수** | 2015 논문은 쓴다고 기술하나 **현행 라이브러리 0.7 에는 구현이 없다**(패키지 전체 검색 0 회, 2026-08-11 확인) |
+
+## 그래서 무엇이 APEX 의 공백이고 무엇이 아닌가
+
+**분야 공통 공백 — APEX 만의 결함이 아니다. 논문에 그렇게 쓸 수 있다.**
+
+- **미분 소광**: 둘 다 단일 소광값 가정. ASteCA 는 저자가 명시적으로 인정.
+- **완전도**: APEX 미구현, ASteCA 0.7 도 미구현.
+
+이 둘은 "우리는 이러이러한 이유로 다루지 않았고, 참조 구현도 다루지 않는다"
+로 서술하면 방어된다. **감추면 지적당하고, 밝히면서 참조 구현도 같다고 쓰면
+지적당하지 않는다.**
+
+**APEX 가 실제로 다른 것 — 저자가 인정한 취약점을 구조적으로 피한다.**
+
+ASteCA 의 가장 큰 자기고백은 **결과가 손으로 정하는 `prob_min` 에 좌우된다**는
+것이다(0.75 → 0.85 로 결론이 뒤집힌다). 이것은 이 세션의 실측과 정확히 맞물린다 —
+`validation/asteca_crosscheck/m67_variants.json` 에서 ASteCA 는 통상적인 별 컷
+변경만으로 나이 0.6 Gyr · [M/H] 0.17 dex 가 흔들렸고, APEX 는 **시드 4 개에서
+[M/H] 0.021 dex 안**으로 일치했다.
+
+즉 **"손잡이를 돌리면 답이 바뀌지 않는다"가 APEX 가 주장할 수 있는 것**이고,
+그 근거는 우리 실측과 **저자 자신의 논문 양쪽**에 있다. 유전 알고리즘 + 확률
+컷이 아니라 MCMC 사후분포 + 사전분포로 창을 거는 설계 차이에서 온다.
+
+**다만 그 창이 대가를 치른다** — 이 감사의 발견 2 가 그것이다. M67 적합이 시차
+창 하한에 railed 되어 있다. 손잡이를 없앤 대신 창이 답을 가둘 수 있다.
+**양쪽 다 논문에 적어야 정직하다.**
+
+## 아직 안 한 것
+
+ASteCA 를 인용한 후속 문헌이 지적한 한계는 조사하지 않았다. 저자 자신의
+서술만 확인했다.
