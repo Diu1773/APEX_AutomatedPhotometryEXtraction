@@ -66,8 +66,9 @@ Johnson U 는 사실상 없고 u′ 가 그 역할을 한다(u′−g′ ≈ U�
 
 **규명 완료 — M67 영점 보정성 수 흔들림은 Gaia 서버가 바뀐 탓이었다.**
 clean run 에서 ESA TAP 이 타임아웃해 VizieR 로 폴백했고(`gaia_fov_meta.json`
-`"esa"` vs `"vizier_fallback"`), **VizieR 에는 `ruwe` 가 있고 APEX 의 ESA 질의는
-그 열을 안 가져온다.** `gaia_quality_mask` 가 결측 열에 관대하므로 baseline 은
+`"esa"` vs `"vizier_fallback"`), 둘은 같은 Gaia DR3 이고, **APEX 의 VizieR
+질의는 `RUWE` 를 SELECT 하는데 ESA 질의는 하지 않는다**(ESA 테이블에 열이 없는
+게 아니라 질의가 빠뜨린 것). `gaia_quality_mask` 가 결측 열에 관대하므로 baseline 은
 RUWE ≤ 1.4 컷을 조용히 건너뛰고 clean run 은 적용했다. 실측 ESA 1900/1900 통과
 vs VizieR 1749/1900(151 제외), 보정성 910 중 RUWE>1.4 가 84 개(9.2 %)로 관측된
 밴드당 59~61 개 감소와 일치한다. 적합의 결함이 아니다(산포 24.25→24.12 mmag).

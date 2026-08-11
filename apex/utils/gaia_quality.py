@@ -17,6 +17,7 @@ __all__ = [
     "gaia_corrected_excess_factor",
     "gaia_cstar_sigma",
     "gaia_quality_mask",
+    "gaia_quality_report",
 ]
 
 
@@ -69,9 +70,11 @@ def gaia_quality_report(
     night of investigation. On M67 the same code, same target and same night
     kept 564 calibrators in one run and 503 in the next; the zero point moved
     only 7 mmag, so nothing looked broken, and the cause was invisible from the
-    outputs. It was this: ESA TAP timed out and APEX fell back to VizieR, whose
-    table carries `ruwe` while the ESA query does not fetch it. So one run
-    applied the RUWE cut and the other skipped it, removing 84 of 910
+    outputs. It was this: ESA TAP timed out and APEX fell back to VizieR. Both
+    serve the same Gaia DR3 (`gaiadr3.gaia_source` vs VizieR `I/355/gaiadr3`);
+    the difference is that APEX's VizieR query SELECTs `RUWE` and its ESA query
+    does not — the ESA table has the column, the query simply omits it. So one
+    run applied the RUWE cut and the other skipped it, removing 84 of 910
     calibrators (9.2 %) — matching the observed drop of 59-61 per band.
 
     Which cuts run must therefore be visible in the outputs, not inferred from

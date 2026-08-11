@@ -2529,7 +2529,7 @@ class ZeropointCalibrationWorker(QThread):
                 )
             # Say out loud which cuts ran. A skipped cut is not a warning-free
             # state: on M67 the RUWE cut ran in one run and not the next
-            # (ESA TAP timed out, the VizieR fallback carries `ruwe` and the
+            # (ESA TAP timed out; APEX's VizieR query SELECTs `ruwe` and its
             # ESA query does not), which moved the calibrator count by ~10 %
             # with no other visible symptom. Write it to disk so the number is
             # explainable from the outputs alone.

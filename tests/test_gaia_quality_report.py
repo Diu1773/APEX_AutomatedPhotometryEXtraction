@@ -5,8 +5,9 @@ a catalog fetched before Gaia published RUWE should still be usable. Doing it
 silently is what cost a night. On M67 the same code, same target and same
 night kept 564 calibrators in one run and 503 in the next, with the zero point
 moving only 7 mmag so nothing looked wrong. The cause: ESA TAP timed out, APEX
-fell back to VizieR, and the VizieR table carries `ruwe` while the ESA query
-does not fetch it. One run applied RUWE <= 1.4 and the other skipped it.
+fell back to VizieR. Both serve the same Gaia DR3; the difference is that
+APEX's VizieR query SELECTs `RUWE` and its ESA query does not. One run
+applied RUWE <= 1.4 and the other skipped it.
 
 Measured on the two real catalogs from those runs: ESA 1900/1900 pass (cut not
 applied), VizieR 1749/1900 (151 rejected). These tests pin the reporting so a

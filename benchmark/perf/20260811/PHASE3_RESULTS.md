@@ -117,8 +117,10 @@ M67 에서 `n_fit_calibrators` 가 g 564→503 · r 641→582 · i 692→633 이
 | clean run | `"gaia_source": "vizier_fallback"` |
 
 clean run 은 **ESA TAP 이 타임아웃해 VizieR 로 폴백**했다. 두 카탈로그는 별
-수가 1900 으로 같지만 **열 구성이 다르다 — VizieR 에는 `ruwe` 가 있고 APEX 의
-ESA 질의는 그 열을 가져오지 않는다.**
+수가 1900 으로 같다. **둘은 같은 Gaia DR3 이고**(ESA `gaiadr3.gaia_source` vs
+VizieR `I/355/gaiadr3`), 차이는 **APEX 의 질의가 요청하는 열**이다 — VizieR
+질의는 `RUWE` 를 SELECT 하고 ESA 질의는 하지 않는다. ESA 쪽 테이블에 열이
+없는 것이 아니라 질의가 빠뜨린 것이다.
 
 `gaia_quality_mask` 는 결측 열에 관대하도록 설계돼 있다(예전 카탈로그도 돌아야
 하므로 옳다). 그 결과 **baseline 은 RUWE ≤ 1.4 컷을 조용히 건너뛰었고 clean run
@@ -126,7 +128,7 @@ ESA 질의는 그 열을 가져오지 않는다.**
 
 | 카탈로그 | RUWE 컷 | 통과 |
 |---|---|---|
-| ESA | **미적용** (열 없음) | 1900/1900 |
+| ESA | **미적용** (질의가 `ruwe` 를 안 가져옴) | 1900/1900 |
 | VizieR | 적용 (임계 1.4) | 1749/1900 (151 제외) |
 
 보정성 910 개 중 RUWE > 1.4 가 **84 개(9.2 %)** 이고, 관측된 감소는 밴드당
