@@ -1,0 +1,108 @@
+{
+ "result_dir": "E:\\APEX_validation\\phase3\\NGC6811\\result",
+ "snr_cut": 20.0,
+ "runs": [
+  {
+   "label": "aperture",
+   "path": "E:\\APEX_validation\\phase3\\NGC6811\\result\\cmd_zeropoint_APERTURE\\gaia_sdss_calibrator_by_ID.csv",
+   "bands": {
+    "B": {
+     "photometry_source": "aperture",
+     "n_fit": 584,
+     "n_inliers": 556,
+     "zp": -3.886042997144689,
+     "scatter_mmag": 31.068031715082626,
+     "n_crowding": 584,
+     "spearman_r": -0.04513822098070341,
+     "spearman_p": 0.27613958540878075,
+     "q1_px": 29.58744934472182,
+     "q3_px": 58.179842745812394,
+     "crowded_mmag": 23.53586546449882,
+     "isolated_mmag": 20.207312456360647,
+     "ratio": 1.164720222707817
+    },
+    "V": {
+     "photometry_source": "aperture",
+     "n_fit": 905,
+     "n_inliers": 834,
+     "zp": -3.3994890264149054,
+     "scatter_mmag": 24.171137466071137,
+     "n_crowding": 905,
+     "spearman_r": -0.052826591471247034,
+     "spearman_p": 0.11226227801245964,
+     "q1_px": 29.12810340949842,
+     "q3_px": 58.145294386511786,
+     "crowded_mmag": 18.922891969190392,
+     "isolated_mmag": 18.050113271068646,
+     "ratio": 1.0483530870424322
+    },
+    "R": {
+     "photometry_source": "aperture",
+     "n_fit": 942,
+     "n_inliers": 875,
+     "zp": -3.8345541706515323,
+     "scatter_mmag": 33.534035234161344,
+     "n_crowding": 942,
+     "spearman_r": -0.10440609265283057,
+     "spearman_p": 0.0013321944819957745,
+     "q1_px": 29.304625020332416,
+     "q3_px": 58.10559587652806,
+     "crowded_mmag": 31.253401419184534,
+     "isolated_mmag": 25.02261218231583,
+     "ratio": 1.2490063463986456
+    }
+   }
+  },
+  {
+   "label": "psf",
+   "path": "E:\\APEX_validation\\phase3\\NGC6811\\result\\cmd_zeropoint\\gaia_sdss_calibrator_by_ID.csv",
+   "bands": {
+    "B": {
+     "photometry_source": "psf",
+     "n_fit": 628,
+     "n_inliers": 614,
+     "zp": -3.7978138132476476,
+     "scatter_mmag": 44.23506401659725,
+     "n_crowding": 628,
+     "spearman_r": 0.027241663501203075,
+     "spearman_p": 0.4955927856547918,
+     "q1_px": 28.88834204152576,
+     "q3_px": 58.053241992462844,
+     "crowded_mmag": 31.220378126985526,
+     "isolated_mmag": 32.32820584022633,
+     "ratio": 0.9657318528991076
+    },
+    "V": {
+     "photometry_source": "psf",
+     "n_fit": 1016,
+     "n_inliers": 990,
+     "zp": -3.3415669083505923,
+     "scatter_mmag": 50.66421387339923,
+     "n_crowding": 1016,
+     "spearman_r": 0.03672615389629047,
+     "spearman_p": 0.24216573687732396,
+     "q1_px": 29.28897756668507,
+     "q3_px": 58.12655417194988,
+     "crowded_mmag": 31.900486308988228,
+     "isolated_mmag": 33.448415086997805,
+     "ratio": 0.9537219095737874
+    },
+    "R": {
+     "photometry_source": "psf",
+     "n_fit": 1049,
+     "n_inliers": 1014,
+     "zp": -3.7642321336275204,
+     "scatter_mmag": 40.19952274716186,
+     "n_crowding": 1049,
+     "spearman_r": 0.047739732120478946,
+     "spearman_p": 0.12228703484967446,
+     "q1_px": 29.593766761493285,
+     "q3_px": 58.25602461289445,
+     "crowded_mmag": 28.12311749327323,
+     "isolated_mmag": 30.605365496839898,
+     "ratio": 0.9188950053929934
+    }
+   }
+  }
+ ]
+}
