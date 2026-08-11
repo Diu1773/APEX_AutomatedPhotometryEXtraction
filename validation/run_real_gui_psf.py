@@ -20,7 +20,7 @@ os.environ.setdefault("MKL_NUM_THREADS", "1")
 os.environ.setdefault("NUMEXPR_NUM_THREADS", "1")
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
-REPO = Path(__file__).resolve().parents[1]
+REPO = Path(__file__).absolute().parents[1]
 sys.path.insert(0, str(REPO))
 
 from PyQt5.QtCore import QCoreApplication  # noqa: E402

@@ -16,7 +16,7 @@ import pandas as pd
 from astropy.io import fits
 from astropy.stats import sigma_clipped_stats
 
-REPO = Path(__file__).resolve().parents[1]
+REPO = Path(__file__).absolute().parents[1]
 sys.path.insert(0, str(REPO))
 
 from apex.benchmark.psf_artificial_stars import (  # noqa: E402

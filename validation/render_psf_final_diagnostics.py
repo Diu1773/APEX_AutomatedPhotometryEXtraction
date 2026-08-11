@@ -12,7 +12,7 @@ from matplotlib.figure import Figure
 import numpy as np
 import pandas as pd
 
-REPO = Path(__file__).resolve().parents[1]
+REPO = Path(__file__).absolute().parents[1]
 sys.path.insert(0, str(REPO))
 
 from apex.analysis.psf_diagnostics import (

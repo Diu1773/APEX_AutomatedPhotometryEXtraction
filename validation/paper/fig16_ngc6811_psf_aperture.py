@@ -17,7 +17,7 @@ import numpy as np
 import pandas as pd
 from scipy.spatial import cKDTree
 
-REPO = Path(__file__).resolve().parents[2]
+REPO = Path(__file__).absolute().parents[2]
 sys.path.insert(0, str(REPO / "validation" / "paper"))
 
 from apex_paper_style import C, DOUBLE_COL, PALETTE, apply_paper_style, save_fig  # noqa: E402
