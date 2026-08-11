@@ -1,0 +1,29 @@
+{
+ "frame": "validation/real_gui_run/m13_psf_artificial_stars/trial_0001/data/pp_messier13-0005-B.fit",
+ "n_input_positions": 1599,
+ "n_allstar_rows": 1510,
+ "n_valid_mag": 1510,
+ "n_psf_stars": 60,
+ "elapsed_s": 534.782105600003,
+ "stage_seconds": {
+  "phot": 62.89760184288025,
+  "pstselect": 3.4072046279907227,
+  "psf": 449.361843585968,
+  "allstar": 13.61506962776184
+ },
+ "parameters": {
+  "fwhm_px": 7.052391,
+  "psfrad_px": 29.209564,
+  "fitrad_px": 7.052391,
+  "fitrad_fwhm": 1.0,
+  "function": "auto",
+  "varorder": 0,
+  "gain_e_per_adu": 0.68,
+  "readnoise_e": 2.35,
+  "datamin_adu": 0.1,
+  "datamax_adu": 55000.0,
+  "sky_sigma_adu": 29.292472891900253,
+  "zmag": 25.0
+ },
+ "output": "E:\\APEX_validation\\psf_engines\\m13_0005B_daophot.csv"
+}

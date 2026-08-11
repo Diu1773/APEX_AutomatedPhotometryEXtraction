@@ -1,0 +1,26 @@
+{
+ "truth": "validation/real_gui_run/m13_psf_artificial_stars/truth.csv",
+ "apex_recovery": "validation/real_gui_run/m13_psf_artificial_stars/recovery.csv",
+ "daophot": "E:/APEX_validation/psf_engines/m13_0005B_daophot.csv",
+ "zmag": 25.0,
+ "itime": 60.0,
+ "match_radius_px": 1.5,
+ "apex_mode": "gated",
+ "zeropoint": {
+  "APEX step8": {
+   "zeropoint_offset_mag": 0.0945292479910222,
+   "n_offset_stars": 5,
+   "offset_basis": "bright isolated"
+  },
+  "IRAF ALLSTAR": {
+   "zeropoint_offset_mag": 0.29599036018201264,
+   "n_offset_stars": 3,
+   "offset_basis": "bright isolated"
+  },
+  "min_snr": 50.0,
+  "isolated_bins": [
+   "3-6 FWHM",
+   "6-inf FWHM"
+  ]
+ }
+}
