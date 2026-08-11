@@ -79,7 +79,12 @@ from apex.utils.step_paths import (
 )
 from apex.utils.step_paths_cmd import step8_psf_dir, step9_selection_dir, step10_zp_dir
 from apex.utils.io_utils import parse_int64_series, read_ecsv_int64_source_id
-from apex.utils.gaia_quality import gaia_quality_mask, gaia_quality_report
+from apex.utils.gaia_quality import (
+    gaia_corrected_excess_factor,
+    gaia_cstar_sigma,
+    gaia_quality_mask,
+    gaia_quality_report,
+)
 from apex.utils.qc_utils import filter_frame_df_by_qc, should_use_frame_quality_qc
 from apex.utils.photometry_provenance import (
     build_photometry_provenance,
@@ -3434,6 +3439,51 @@ class CmdViewerWindow(QWidget):
         self.btn_reload_roi.setFixedWidth(self.btn_reload_roi.sizeHint().width())
         self.btn_reload_roi.setToolTip("Re-read cmd_roi.json from Step 9 output directory")
         controls2.addWidget(self.btn_reload_roi)
+        controls2.addSpacing(16)
+
+        # Gaia astrometric/photometric quality, as *display* filters. These are
+        # the same two cuts step10 can apply when choosing zero-point
+        # calibrators, offered here so the CMD can be inspected with and
+        # without them — in a globular the C* cut alone removes about half the
+        # Gaia-matched sources, and that is worth seeing rather than assuming.
+        # Filtering here never touches the calibration; it only changes what
+        # is drawn.
+        self.ruwe_check = QCheckBox("RUWE ≤")
+        self.ruwe_check.setChecked(False)
+        self.ruwe_check.setToolTip(
+            "Hide sources whose Gaia astrometric fit is poor (RUWE above the\n"
+            "threshold) — typically unresolved binaries and blends.\n"
+            "Display only; does not affect ZP calibration.")
+        controls2.addWidget(self.ruwe_check)
+        self.ruwe_spin = QDoubleSpinBox()
+        self.ruwe_spin.setRange(1.0, 10.0)
+        self.ruwe_spin.setDecimals(2)
+        self.ruwe_spin.setSingleStep(0.1)
+        self.ruwe_spin.setValue(1.4)
+        self.ruwe_spin.setFixedWidth(self.ruwe_spin.sizeHint().width())
+        controls2.addWidget(self.ruwe_spin)
+
+        self.cstar_check = QCheckBox("C* ≤")
+        self.cstar_check.setChecked(False)
+        self.cstar_check.setToolTip(
+            "Hide sources whose BP/RP flux excess is inconsistent with G by\n"
+            "more than N sigma (Riello+2021) — BP/RP window contamination in\n"
+            "crowded fields. Needs phot_bp_rp_excess_factor in the CMD table.\n"
+            "Display only; does not affect ZP calibration.")
+        controls2.addWidget(self.cstar_check)
+        self.cstar_spin = QDoubleSpinBox()
+        self.cstar_spin.setRange(1.0, 10.0)
+        self.cstar_spin.setDecimals(1)
+        self.cstar_spin.setSingleStep(0.5)
+        self.cstar_spin.setValue(3.0)
+        self.cstar_spin.setSuffix(" σ")
+        self.cstar_spin.setFixedWidth(self.cstar_spin.sizeHint().width())
+        controls2.addWidget(self.cstar_spin)
+
+        self.quality_info_label = QLabel("")
+        self.quality_info_label.setProperty("role", "caption")
+        controls2.addWidget(self.quality_info_label)
+
         controls2.addStretch()
         layout.addLayout(controls2)
 
@@ -3441,6 +3491,10 @@ class CmdViewerWindow(QWidget):
         self.plx_min_spin.valueChanged.connect(self._redraw)
         self.plx_max_spin.valueChanged.connect(self._redraw)
         self.roi_check.stateChanged.connect(self._redraw)
+        self.ruwe_check.stateChanged.connect(self._on_quality_filter_changed)
+        self.ruwe_spin.valueChanged.connect(self._redraw)
+        self.cstar_check.stateChanged.connect(self._on_quality_filter_changed)
+        self.cstar_spin.valueChanged.connect(self._redraw)
         self.btn_reload_roi.clicked.connect(self._on_reload_roi)
         install_parameter_wheel_guard(self)
 
@@ -3631,6 +3685,81 @@ class CmdViewerWindow(QWidget):
         if n_finite == 0:
             return None
         return mask
+
+    def _quality_column(self, name: str):
+        """A Gaia quality column from the CMD table, as floats, or None."""
+        df = getattr(self, "df", None)
+        if df is None or name not in df.columns:
+            return None
+        vals = pd.to_numeric(df[name], errors="coerce").to_numpy(dtype=float)
+        return vals if np.isfinite(vals).any() else None
+
+    def _quality_mask(self):
+        """Combined RUWE / C* display filter, or None when neither is on.
+
+        Missing values are KEPT, matching `gaia_quality_mask`: a star with no
+        RUWE has not failed the cut, it was never measured. Rejecting those
+        would quietly drop every non-Gaia source from the plot.
+        """
+        mask = None
+        n_before = None
+        parts: list[str] = []
+
+        if self.ruwe_check.isChecked():
+            ruwe = self._quality_column("ruwe")
+            if ruwe is not None:
+                thr = float(self.ruwe_spin.value())
+                keep = ~(np.isfinite(ruwe) & (ruwe > thr))
+                n_before = keep.size
+                mask = keep if mask is None else (mask & keep)
+                parts.append(f"RUWE −{int((~keep).sum())}")
+            else:
+                parts.append("RUWE n/a")
+
+        if self.cstar_check.isChecked():
+            excess = self._quality_column("phot_bp_rp_excess_factor")
+            bp_rp = self._quality_column("gaia_BP_RP")
+            if bp_rp is None:
+                bp = self._quality_column("gaia_BP")
+                rp = self._quality_column("gaia_RP")
+                bp_rp = (bp - rp) if (bp is not None and rp is not None) else None
+            gmag = self._quality_column("gaia_G")
+            if excess is not None and bp_rp is not None and gmag is not None:
+                cstar = gaia_corrected_excess_factor(bp_rp, excess)
+                sigma = gaia_cstar_sigma(gmag)
+                nsig = float(self.cstar_spin.value())
+                bad = (np.isfinite(cstar) & np.isfinite(sigma)
+                       & (np.abs(cstar) > nsig * sigma))
+                keep = ~bad
+                n_before = keep.size
+                mask = keep if mask is None else (mask & keep)
+                parts.append(f"C* −{int(bad.sum())}")
+            else:
+                parts.append("C* n/a (no excess factor)")
+
+        label = getattr(self, "quality_info_label", None)
+        if label is not None:
+            if mask is not None and n_before:
+                label.setText(f"({' · '.join(parts)} → {int(mask.sum())}/{n_before})")
+            else:
+                label.setText(f"({' · '.join(parts)})" if parts else "")
+        return mask
+
+    def _on_quality_filter_changed(self):
+        """Warn once when a cut is asked for but its column is not there."""
+        if self.cstar_check.isChecked() and \
+                self._quality_column("phot_bp_rp_excess_factor") is None:
+            self.cstar_check.blockSignals(True)
+            self.cstar_check.setChecked(False)
+            self.cstar_check.blockSignals(False)
+            from PyQt5.QtWidgets import QMessageBox
+            QMessageBox.information(
+                self, "C* Unavailable",
+                "phot_bp_rp_excess_factor is not in this CMD table.\n\n"
+                "Catalogues fetched before 2026-08-11 did not request it. "
+                "Re-run Step 5 (Gaia query) and Step 6 (Master Catalog Build) "
+                "to make the C* filter available.")
+        self._redraw()
 
     def _membership_mode_key(self) -> str:
         idx = int(self.member_mode_combo.currentIndex())
@@ -4245,6 +4374,13 @@ class CmdViewerWindow(QWidget):
             bg_mask = roi_mask
         else:
             bg_mask = None
+
+        # Gaia quality (RUWE / C*) filters the *drawn* sample, background
+        # included: the point of enabling them is to see the CMD without the
+        # contaminated stars, so leaving them in the grey layer would defeat it.
+        qual_mask = self._quality_mask()
+        if qual_mask is not None:
+            bg_mask = qual_mask if bg_mask is None else (bg_mask & qual_mask)
 
         # foreground mask: member & spatial filters combined
         spatial_mask = bg_mask  # reuse combined spatial pre-filter
