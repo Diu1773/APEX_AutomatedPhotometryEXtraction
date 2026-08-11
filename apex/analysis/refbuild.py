@@ -37,6 +37,7 @@ from apex.utils.step_paths import (
     crop_rect_path,
 )
 from apex.utils.common_helpers import normalize_filter_key, safe_float as _safe_float
+from apex.utils.gaia_columns import carry_through_columns
 from apex.utils.io_utils import coerce_int64_source_id
 from apex.utils.cache_utils import (
     norm_path_key,
@@ -54,16 +55,12 @@ from apex.utils.cache_utils import (
 
 _FILTER_RE = re.compile(r"[-_]([ugrizbvUGRIZBV])[-_.]", re.IGNORECASE)
 _DATE_RE = re.compile(r"(20\d{6})")
-_GAIA_REF_EXTRA_COLS = (
-    "pmra",
-    "pmdec",
-    "pmra_error",
-    "pmdec_error",
-    "parallax",
-    "parallax_error",
-    "ruwe",
-    "visibility_periods_used",
-)
+# Which Gaia columns survive into the master catalogue. Derived from the one
+# contract in apex.utils.gaia_columns rather than typed out again: this list
+# used to carry `visibility_periods_used`, which neither query fetched, and to
+# omit `phot_bp_rp_excess_factor`, which step10's C* cut needs — so the cut
+# could not run even once the column was queried.
+_GAIA_REF_EXTRA_COLS = carry_through_columns()
 
 
 def _get_filter_from_filename(filename: str) -> Optional[str]:

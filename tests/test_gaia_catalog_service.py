@@ -11,6 +11,33 @@ from apex.utils.gaia_catalog_service import GaiaCatalogService
 from apex.utils.step_paths import step5_wcs_dir
 
 
+def _contract_complete(df: pd.DataFrame) -> pd.DataFrame:
+    """Fill in every contract column the fixture does not care about.
+
+    A cached catalogue missing a contract column is deliberately treated as
+    stale (it would silently disable a step10 quality cut), so a fixture that
+    hard-codes a column list goes out of date the moment the contract grows.
+    Deriving it here means these tests exercise cache *reuse*, which is what
+    they are about, instead of failing on an unrelated schema change.
+    """
+    from apex.utils.gaia_columns import GAIA_COLUMNS
+
+    out = df.copy()
+    have = {str(c).strip().lower() for c in out.columns}
+    for col in GAIA_COLUMNS:
+        # Alias-aware: a fixture that deliberately uses a legacy spelling
+        # (ra_deg for ra) already supplies that column, and adding the
+        # canonical name alongside it would defeat the very test that checks
+        # the legacy spelling is understood.
+        spellings = {col.name.lower(), *(a.lower() for a in col.aliases)}
+        if col.vizier:
+            spellings.add(col.vizier.rsplit(".", 1)[-1].strip('"').lower())
+        if spellings & have:
+            continue
+        out[col.name] = "" if col.name == "phot_variable_flag" else 1.0
+    return out
+
+
 def _params():
     return SimpleNamespace(
         P=SimpleNamespace(
@@ -28,15 +55,16 @@ def test_gaia_catalog_service_uses_valid_cache_and_filters_mag(tmp_path):
     s5 = step5_wcs_dir(result_dir)
     s5.mkdir(parents=True)
     Table.from_pandas(
-        pd.DataFrame(
-            {
-                "source_id": [1, 2, 3],
-                "ra": [10.0, 10.001, 9.999],
-                "dec": [20.0, 20.001, 19.999],
-                "phot_g_mean_mag": [15.0, 18.5, 17.0],
-                "phot_variable_flag": ["", "", ""],
-                "ruwe": [1.0, 1.1, 0.9],
-            }
+        _contract_complete(
+            pd.DataFrame(
+                {
+                    "source_id": [1, 2, 3],
+                    "ra": [10.0, 10.001, 9.999],
+                    "dec": [20.0, 20.001, 19.999],
+                    "phot_g_mean_mag": [15.0, 18.5, 17.0],
+                    "ruwe": [1.0, 1.1, 0.9],
+                }
+            )
         )
     ).write(s5 / "gaia_fov.ecsv", format="ascii.ecsv")
     (s5 / "gaia_fov_meta.json").write_text(
@@ -66,15 +94,16 @@ def test_gaia_catalog_service_normalizes_legacy_ra_dec_cache(tmp_path):
     s5 = step5_wcs_dir(result_dir)
     s5.mkdir(parents=True)
     Table.from_pandas(
-        pd.DataFrame(
-            {
-                "source_id": [11, 12],
-                "ra_deg": [250.0, 250.002],
-                "dec_deg": [36.0, 35.998],
-                "phot_g_mean_mag": [13.0, 14.0],
-                "phot_variable_flag": ["", ""],
-                "ruwe": [1.0, 1.2],
-            }
+        _contract_complete(
+            pd.DataFrame(
+                {
+                    "source_id": [11, 12],
+                    "ra_deg": [250.0, 250.002],
+                    "dec_deg": [36.0, 35.998],
+                    "phot_g_mean_mag": [13.0, 14.0],
+                    "ruwe": [1.0, 1.2],
+                }
+            )
         )
     ).write(s5 / "gaia_fov.ecsv", format="ascii.ecsv")
     (s5 / "gaia_fov_meta.json").write_text(

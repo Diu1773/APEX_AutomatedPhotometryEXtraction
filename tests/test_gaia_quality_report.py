@@ -96,3 +96,30 @@ def test_report_counts_are_self_consistent():
     assert report["n_input"] == len(df)
     assert report["n_passed"] == int(mask.sum())
     assert report["n_passed"] + report["n_rejected"] == report["n_input"]
+
+
+def test_disabled_is_recorded_differently_from_unavailable():
+    """"We chose not to" and "we could not" are different facts.
+
+    The C* cut could not run at all until 2026-08-11 because no Gaia query
+    fetched `phot_bp_rp_excess_factor`. Now it can, and it is left off by
+    default because it rejects 3.6 % of references in M67 but 49.7 % in M13 —
+    real crowding, but a science decision with a large effect. A paper has to
+    be able to say which of the two states produced its numbers.
+    """
+    have = _catalog(ruwe=[1.0] * 4,
+                    phot_bp_rp_excess_factor=[1.2, 1.3, 1.25, 9.0])
+    mask_off, off = gaia_quality_report(have, cstar_nsigma=None)
+    assert off["cuts"]["bp_rp_excess"] == {
+        "applied": False, "reason": "disabled by configuration"}
+    assert mask_off.all(), "a disabled cut rejects nothing"
+
+    mask_on, on = gaia_quality_report(have, cstar_nsigma=3.0)
+    assert on["cuts"]["bp_rp_excess"]["applied"] is True
+    assert int((~mask_on).sum()) == on["cuts"]["bp_rp_excess"]["n_rejected"] >= 1
+
+    without = _catalog(ruwe=[1.0] * 4)
+    _m, unavailable = gaia_quality_report(without, cstar_nsigma=3.0)
+    reason = unavailable["cuts"]["bp_rp_excess"]["reason"]
+    assert "missing column" in reason, (
+        "an absent column must not be reported as a configuration choice")

@@ -226,6 +226,7 @@ TOML_KEY_MAP: list[tuple[Iterable[str], str]] = [
     (("gaia", "match_tol_arcsec"), "ref_wcs_match_radius_arcsec"),
     (("refbuild", "wcs_match_radius_arcsec"), "ref_wcs_match_radius_arcsec"),
     (("gaia", "snr_calib_min"), "gaia_snr_calib_min"),
+    (("gaia", "cstar_cut"), "gaia_cstar_cut"),
     (("gaia", "gi_min"), "gaia_gi_min"),
     (("gaia", "gi_max"), "gaia_gi_max"),
     (("gaia", "retry"), "gaia_retry"),
@@ -821,6 +822,10 @@ class Parameters:
             cmd_apply_extinction=_as_bool(raw.get("cmd_apply_extinction", "false"), False),
             cmd_extinction_mode=raw.get("cmd_extinction_mode", "absorb"),
             gaia_snr_calib_min=_getf(raw, "gaia_snr_calib_min", 20.0),
+            # Riello+2021 |C*| <= 3 sigma on Gaia calibrators. Off by default:
+            # it rejects 3.6 % of references in M67 but 49.7 % in M13, so
+            # enabling it changes every globular-cluster zero point.
+            gaia_cstar_cut=bool(raw.get("gaia_cstar_cut", False)),
             gaia_gi_min=_getf(raw, "gaia_gi_min", -0.5),
             gaia_gi_max=_getf(raw, "gaia_gi_max", 4.5),
             gaia_zp_slope_absmax=_getf(raw, "gaia_zp_slope_absmax", 1.0),

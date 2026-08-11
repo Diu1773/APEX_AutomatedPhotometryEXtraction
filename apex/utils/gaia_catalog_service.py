@@ -12,6 +12,12 @@ import pandas as pd
 from astropy.coordinates import SkyCoord
 from astropy.table import Table
 
+from apex.utils.gaia_columns import (
+    canonical_rename_map,
+    esa_select_clause,
+    missing_columns,
+    vizier_select_clause,
+)
 from apex.utils.io_utils import coerce_int64_source_id
 from apex.utils.ssl_certificates import configure_ssl_certificates, ssl_error_reason
 from apex.utils.step_paths import step5_wcs_dir
@@ -213,38 +219,15 @@ def coerce_source_id_int64(df: pd.DataFrame) -> pd.DataFrame:
 
 
 def _normalise_gaia_columns(df: pd.DataFrame) -> pd.DataFrame:
+    """Rename either service's column names to the canonical set.
+
+    The mapping is generated from apex.utils.gaia_columns, so a column added to
+    the contract is understood here without a second edit.
+    """
     out = df.copy()
-    rename: dict[str, str] = {}
-    for col in out.columns:
-        key = str(col).strip().lower()
-        if key in {"source", "source_id"}:
-            rename[col] = "source_id"
-        elif key in {"ra", "ra_deg", "ra_icrs"}:
-            rename[col] = "ra"
-        elif key in {"dec", "dec_deg", "de_icrs"}:
-            rename[col] = "dec"
-        elif key in {"gmag", "phot_g_mean_mag"}:
-            rename[col] = "phot_g_mean_mag"
-        elif key in {"bpmag", "phot_bp_mean_mag"}:
-            rename[col] = "phot_bp_mean_mag"
-        elif key in {"rpmag", "phot_rp_mean_mag"}:
-            rename[col] = "phot_rp_mean_mag"
-        elif key in {"ruwe"}:
-            rename[col] = "ruwe"
-        elif key in {"plx", "parallax"}:
-            rename[col] = "parallax"
-        elif key in {"e_plx", "parallax_error"}:
-            rename[col] = "parallax_error"
-        elif key in {"pmra"}:
-            rename[col] = "pmra"
-        elif key in {"e_pmra", "pmra_error"}:
-            rename[col] = "pmra_error"
-        elif key in {"pmde", "pmdec"}:
-            rename[col] = "pmdec"
-        elif key in {"e_pmde", "pmdec_error"}:
-            rename[col] = "pmdec_error"
-        elif key in {"phot_variable_flag"}:
-            rename[col] = "phot_variable_flag"
+    canonical = canonical_rename_map()
+    rename = {c: canonical[str(c).strip().lower()]
+              for c in out.columns if str(c).strip().lower() in canonical}
     out = out.rename(columns=rename)
     out.columns = [str(c).strip().lower() for c in out.columns]
     if "phot_variable_flag" not in out.columns:
@@ -291,20 +274,23 @@ class GaiaCatalogService:
             return None
         try:
             tab = Table.read(path, format="ascii.ecsv")
-            raw_cols = [str(c).strip().lower() for c in tab.colnames]
-            missing_var_flag = "phot_variable_flag" not in raw_cols
-            # A cache written before `ruwe` joined the ESA SELECT list would
-            # otherwise keep the old behaviour alive: step10's RUWE cut is
-            # skipped when the column is absent, so reusing such a cache makes
-            # the calibrator count depend on when the catalogue was fetched.
-            missing_ruwe = "ruwe" not in raw_cols
-            df = _normalise_gaia_columns(tab.to_pandas())
-            if not {"ra", "dec"} <= set(df.columns):
+            raw = _normalise_gaia_columns(tab.to_pandas())
+            if not {"ra", "dec"} <= set(raw.columns):
                 return None
-            if "source_id" not in df.columns and _HAS_GAIA:
+            if "source_id" not in raw.columns and _HAS_GAIA:
                 return None
-            df.attrs["missing_phot_variable_flag"] = bool(missing_var_flag)
-            df.attrs["missing_ruwe"] = bool(missing_ruwe)
+            # Which contract columns this cached catalogue is missing, judged
+            # BEFORE the normaliser fills in defaults. `only_used=True` skips
+            # ESA-only columns: a VizieR catalogue has no `phot_variable_flag`
+            # and never will, so re-querying cannot supply it. Treating that
+            # absence as staleness is what made every VizieR-written cache miss
+            # on every run — the catalogue was re-fetched each time, and each
+            # fetch paid the ESA timeout before falling back.
+            pre = pd.DataFrame(columns=[str(c) for c in tab.colnames])
+            pre = _normalise_gaia_columns(pre)
+            df = raw
+            df.attrs["missing_contract_columns"] = [
+                c.name for c in missing_columns(pre, only_used=True)]
             return df
         except Exception:
             return None
@@ -317,19 +303,7 @@ class GaiaCatalogService:
         mag_where = f'AND "I/355/gaiadr3".Gmag <= {mag_max:.4f}' if np.isfinite(mag_max) and mag_max > 0 else ""
         adql = f"""
 SELECT
-  "I/355/gaiadr3".Source AS source_id,
-  "I/355/gaiadr3".RA_ICRS AS ra,
-  "I/355/gaiadr3".DE_ICRS AS dec,
-  "I/355/gaiadr3".Gmag AS phot_g_mean_mag,
-  "I/355/gaiadr3".BPmag AS phot_bp_mean_mag,
-  "I/355/gaiadr3".RPmag AS phot_rp_mean_mag,
-  "I/355/gaiadr3".RUWE AS ruwe,
-  "I/355/gaiadr3".Plx AS parallax,
-  "I/355/gaiadr3".e_Plx AS parallax_error,
-  "I/355/gaiadr3".pmRA AS pmra,
-  "I/355/gaiadr3".e_pmRA AS pmra_error,
-  "I/355/gaiadr3".pmDE AS pmdec,
-  "I/355/gaiadr3".e_pmDE AS pmdec_error
+  {vizier_select_clause()}
 FROM "I/355/gaiadr3"
 WHERE 1=CONTAINS(
     POINT('ICRS', "I/355/gaiadr3".RA_ICRS, "I/355/gaiadr3".DE_ICRS),
@@ -359,21 +333,10 @@ WHERE 1=CONTAINS(
             raise RuntimeError("stopped")
         timeout_s = float(getattr(self.P, "gaia_timeout_s", 30.0))
         mag_where = f"AND phot_g_mean_mag <= {mag_max:.4f}" if np.isfinite(mag_max) and mag_max > 0 else ""
-        # `ruwe` must stay in this list to match the VizieR query (which has
-        # always selected it). While it was missing, which quality cuts step10
-        # applied depended on *which server answered*: the RUWE <= 1.4 cut ran
-        # on the VizieR path and was silently skipped on the ESA path, because
-        # gaia_quality_mask is permissive about absent columns. Measured on
-        # M67, that moved the calibrator count by ~10 % (g 564 vs 503) between
-        # two runs of identical code on identical data. The ESA table always
-        # had the column; only this SELECT omitted it.
+        # Both SELECT lists are generated from apex.utils.gaia_columns so they
+        # cannot drift apart again — see that module for what drifting cost.
         adql = f"""
-SELECT
-  source_id, ra, dec,
-  phot_g_mean_mag, phot_bp_mean_mag, phot_rp_mean_mag,
-  phot_variable_flag, ruwe,
-  pmra, pmdec, pmra_error, pmdec_error,
-  parallax, parallax_error
+SELECT {esa_select_clause()}
 FROM gaiadr3.gaia_source
 WHERE 1=CONTAINS(
     POINT('ICRS', ra, dec),
@@ -553,10 +516,7 @@ WHERE 1=CONTAINS(
         df_cache = self._load_gaia_cache_if_ok(cache_path)
         meta = None
         if df_cache is not None and _HAS_GAIA:
-            stale = [name for name, flag in (
-                ("phot_variable_flag", "missing_phot_variable_flag"),
-                ("ruwe", "missing_ruwe"),
-            ) if bool(df_cache.attrs.get(flag, False))]
+            stale = list(df_cache.attrs.get("missing_contract_columns") or ())
             if stale:
                 # Say why. Dropping a cache costs a network round trip, and a
                 # silent one is indistinguishable from a slow server.

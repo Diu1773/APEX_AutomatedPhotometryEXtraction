@@ -57,7 +57,7 @@ def gaia_quality_report(
     df: pd.DataFrame,
     *,
     ruwe_max: float = 1.4,
-    cstar_nsigma: float = 3.0,
+    cstar_nsigma: float | None = 3.0,
     bp_rp_col: str = "gaia_BP_RP",
     g_col: str = "gaia_G",
     excess_col: str = "phot_bp_rp_excess_factor",
@@ -99,7 +99,13 @@ def gaia_quality_report(
         report["cuts"]["ruwe"] = {
             "applied": False, "reason": f"column '{ruwe_col}' not in catalog"}
 
-    if excess_col in df.columns and bp_rp_col in df.columns and g_col in df.columns:
+    if cstar_nsigma is None:
+        # Disabled by the caller, not absent. Recorded distinctly: "we chose
+        # not to apply this" and "we could not apply this" are different facts
+        # and the paper has to be able to say which.
+        report["cuts"]["bp_rp_excess"] = {
+            "applied": False, "reason": "disabled by configuration"}
+    elif excess_col in df.columns and bp_rp_col in df.columns and g_col in df.columns:
         cstar = gaia_corrected_excess_factor(
             pd.to_numeric(df[bp_rp_col], errors="coerce"),
             pd.to_numeric(df[excess_col], errors="coerce"),

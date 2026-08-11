@@ -148,16 +148,23 @@ def _seed_inputs(tmp_path: Path, detected_xy, sky, gmag, fnames=("f1.fits", "f2.
     s5 = step5_wcs_dir(result_dir)
     s5.mkdir(parents=True, exist_ok=True)
     n = len(sky)
-    tab = Table({
+    from apex.utils.gaia_columns import GAIA_COLUMNS
+
+    cols = {
         "source_id": np.arange(1, n + 1, dtype=np.int64),
         "ra": sky.ra.deg,
         "dec": sky.dec.deg,
         "phot_g_mean_mag": gmag,
-        "phot_variable_flag": ["NOT_AVAILABLE"] * n,
-        "ruwe": np.ones(n),
-        "pmra": np.zeros(n),
-        "pmdec": np.zeros(n),
-    })
+    }
+    # Every other contract column, so the cache is not rejected as stale for a
+    # reason unrelated to what this test checks (a missing contract column
+    # would silently disable a step10 quality cut, so it is treated as stale).
+    for col in GAIA_COLUMNS:
+        if col.name not in cols:
+            cols[col.name] = (["NOT_AVAILABLE"] * n
+                              if col.name == "phot_variable_flag"
+                              else np.ones(n))
+    tab = Table(cols)
     tab.write(s5 / "gaia_fov.ecsv", format="ascii.ecsv", overwrite=True)
     (s5 / "gaia_fov_meta.json").write_text(json.dumps({
         "center_ra_deg": APPROX_RA,

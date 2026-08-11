@@ -2520,7 +2520,16 @@ class ZeropointCalibrationWorker(QThread):
             # (BP/RP contamination in crowded fields biases the transformed
             # reference mags of faint stars). Permissive when the columns are
             # absent (older master catalogs behave as before).
-            m_gaia_qual, qual_report = gaia_quality_report(out_cal)
+            # The C* cut (Riello+2021) could not run until 2026-08-11 because
+            # no query fetched `phot_bp_rp_excess_factor`. Now that it can, it
+            # is left OFF by default: measured on real catalogues it rejects
+            # 3.6 % of Gaia references in M67 but 49.7 % in M13, because that
+            # is exactly the crowding it detects. Turning it on is a science
+            # decision that changes every globular-cluster zero point, so it is
+            # the user's to make — set gaia.cstar_cut = true.
+            _cstar_on = bool(getattr(P, "gaia_cstar_cut", False))
+            m_gaia_qual, qual_report = gaia_quality_report(
+                out_cal, cstar_nsigma=3.0 if _cstar_on else None)
             n_qual_cut = int(len(out_cal) - int(m_gaia_qual.sum()))
             if n_qual_cut:
                 self._log(
