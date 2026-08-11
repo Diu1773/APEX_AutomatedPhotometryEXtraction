@@ -52,7 +52,7 @@ def gaia_cstar_sigma(g_mag) -> np.ndarray:
     return 0.0059898 + 8.817481e-12 * np.power(g, 7.618399)
 
 
-def gaia_quality_mask(
+def gaia_quality_report(
     df: pd.DataFrame,
     *,
     ruwe_max: float = 1.4,
@@ -61,19 +61,40 @@ def gaia_quality_mask(
     g_col: str = "gaia_G",
     excess_col: str = "phot_bp_rp_excess_factor",
     ruwe_col: str = "ruwe",
-) -> np.ndarray:
-    """Boolean mask of rows passing the Gaia quality cuts.
+) -> tuple[np.ndarray, dict]:
+    """Quality mask plus a record of which cuts were actually applied.
 
-    Permissive on missing data: a cut only rejects rows where the needed
-    columns are present and finite, so catalogs built before these columns
-    were fetched behave exactly as today.
+    Being permissive on missing columns is right — a catalog fetched before
+    these columns existed should still work — but doing it *silently* cost a
+    night of investigation. On M67 the same code, same target and same night
+    kept 564 calibrators in one run and 503 in the next; the zero point moved
+    only 7 mmag, so nothing looked broken, and the cause was invisible from the
+    outputs. It was this: ESA TAP timed out and APEX fell back to VizieR, whose
+    table carries `ruwe` while the ESA query does not fetch it. So one run
+    applied the RUWE cut and the other skipped it, removing 84 of 910
+    calibrators (9.2 %) — matching the observed drop of 59-61 per band.
+
+    Which cuts run must therefore be visible in the outputs, not inferred from
+    a catalog-provenance JSON three directories away. The returned dict says
+    for each cut whether it was applied, why not if it was skipped, and how
+    many rows it rejected.
     """
     n = len(df)
     mask = np.ones(n, dtype=bool)
+    report: dict = {"n_input": int(n), "cuts": {}}
 
     if ruwe_col in df.columns:
         ruwe = pd.to_numeric(df[ruwe_col], errors="coerce").to_numpy(float)
-        mask &= (~np.isfinite(ruwe)) | (ruwe <= float(ruwe_max))
+        rejected = np.isfinite(ruwe) & (ruwe > float(ruwe_max))
+        mask &= ~rejected
+        report["cuts"]["ruwe"] = {
+            "applied": True, "threshold": float(ruwe_max),
+            "n_rejected": int(rejected.sum()),
+            "n_finite": int(np.isfinite(ruwe).sum()),
+        }
+    else:
+        report["cuts"]["ruwe"] = {
+            "applied": False, "reason": f"column '{ruwe_col}' not in catalog"}
 
     if excess_col in df.columns and bp_rp_col in df.columns and g_col in df.columns:
         cstar = gaia_corrected_excess_factor(
@@ -87,4 +108,29 @@ def gaia_quality_mask(
             & (np.abs(cstar) > float(cstar_nsigma) * sigma)
         )
         mask &= ~bad
+        report["cuts"]["bp_rp_excess"] = {
+            "applied": True, "nsigma": float(cstar_nsigma),
+            "n_rejected": int(bad.sum()),
+        }
+    else:
+        missing = [c for c in (excess_col, bp_rp_col, g_col)
+                   if c not in df.columns]
+        report["cuts"]["bp_rp_excess"] = {
+            "applied": False, "reason": f"missing column(s): {missing}"}
+
+    report["n_passed"] = int(mask.sum())
+    report["n_rejected"] = int(n - mask.sum())
+    return mask, report
+
+
+def gaia_quality_mask(df: pd.DataFrame, **kwargs) -> np.ndarray:
+    """Boolean mask of rows passing the Gaia quality cuts.
+
+    Permissive on missing data: a cut only rejects rows where the needed
+    columns are present and finite, so catalogs built before these columns
+    were fetched behave exactly as today. Use :func:`gaia_quality_report` when
+    the caller should record *which* cuts ran — see its docstring for why that
+    matters.
+    """
+    mask, _ = gaia_quality_report(df, **kwargs)
     return mask

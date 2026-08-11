@@ -79,7 +79,7 @@ from apex.utils.step_paths import (
 )
 from apex.utils.step_paths_cmd import step8_psf_dir, step9_selection_dir, step10_zp_dir
 from apex.utils.io_utils import parse_int64_series, read_ecsv_int64_source_id
-from apex.utils.gaia_quality import gaia_quality_mask
+from apex.utils.gaia_quality import gaia_quality_mask, gaia_quality_report
 from apex.utils.qc_utils import filter_frame_df_by_qc, should_use_frame_quality_qc
 from apex.utils.photometry_provenance import (
     build_photometry_provenance,
@@ -2520,13 +2520,39 @@ class ZeropointCalibrationWorker(QThread):
             # (BP/RP contamination in crowded fields biases the transformed
             # reference mags of faint stars). Permissive when the columns are
             # absent (older master catalogs behave as before).
-            m_gaia_qual = gaia_quality_mask(out_cal)
+            m_gaia_qual, qual_report = gaia_quality_report(out_cal)
             n_qual_cut = int(len(out_cal) - int(m_gaia_qual.sum()))
             if n_qual_cut:
                 self._log(
                     f"[ZP] Gaia quality cut (RUWE<=1.4, |C*|<=3sig): removed "
                     f"{n_qual_cut}/{len(out_cal)} calibrator candidates"
                 )
+            # Say out loud which cuts ran. A skipped cut is not a warning-free
+            # state: on M67 the RUWE cut ran in one run and not the next
+            # (ESA TAP timed out, the VizieR fallback carries `ruwe` and the
+            # ESA query does not), which moved the calibrator count by ~10 %
+            # with no other visible symptom. Write it to disk so the number is
+            # explainable from the outputs alone.
+            for _cut, _info in qual_report["cuts"].items():
+                if not _info.get("applied"):
+                    self._log(
+                        f"[ZP] Gaia quality cut '{_cut}' NOT APPLIED — "
+                        f"{_info.get('reason')}. Calibrator counts are not "
+                        f"comparable with runs where it did apply."
+                    )
+            try:
+                # Which server answered decides which columns exist, so record
+                # it next to the cuts rather than leaving them to be correlated
+                # by hand with a file three directories away.
+                _meta = output_dir.parent / "step5_wcs" / "gaia_fov_meta.json"
+                qual_report["gaia_source"] = (
+                    json.loads(_meta.read_text(encoding="utf-8")).get(
+                        "gaia_source", "unknown")
+                    if _meta.exists() else "unknown")
+                (output_dir / "gaia_quality_report.json").write_text(
+                    json.dumps(qual_report, indent=1), encoding="utf-8")
+            except Exception as exc:      # diagnostics must never break the fit
+                self._log(f"[ZP] could not write gaia_quality_report.json: {exc}")
 
             for filt in data_filters:
                 if filt not in ref_col_map:
