@@ -1,0 +1,226 @@
+{
+ "M67 (open, g/r)": [
+  {
+   "band": "g",
+   "off": {
+    "n_before_fit": 534,
+    "n_inliers": 503,
+    "zp": -2.77705869956262,
+    "ct": 0.22808851749288414,
+    "ct2": -0.07386398891242847,
+    "scatter_mmag": 24.117433890221246,
+    "quality": {
+     "ruwe": {
+      "applied": true,
+      "threshold": 1.4,
+      "n_rejected": 85,
+      "n_finite": 905
+     },
+     "bp_rp_excess": {
+      "applied": false,
+      "reason": "disabled by configuration"
+     }
+    }
+   },
+   "on": {
+    "n_before_fit": 526,
+    "n_inliers": 508,
+    "zp": -2.77740353801151,
+    "ct": 0.23259464633676594,
+    "ct2": -0.07858335788965057,
+    "scatter_mmag": 24.370932624987642,
+    "quality": {
+     "ruwe": {
+      "applied": true,
+      "threshold": 1.4,
+      "n_rejected": 85,
+      "n_finite": 905
+     },
+     "bp_rp_excess": {
+      "applied": true,
+      "nsigma": 3.0,
+      "n_rejected": 31
+     }
+    }
+   }
+  },
+  {
+   "band": "r",
+   "off": {
+    "n_before_fit": 624,
+    "n_inliers": 582,
+    "zp": -3.389682827083052,
+    "ct": -0.00012190099830073824,
+    "ct2": 0.03674614208100906,
+    "scatter_mmag": 19.053540499467207,
+    "quality": {
+     "ruwe": {
+      "applied": true,
+      "threshold": 1.4,
+      "n_rejected": 85,
+      "n_finite": 905
+     },
+     "bp_rp_excess": {
+      "applied": false,
+      "reason": "disabled by configuration"
+     }
+    }
+   },
+   "on": {
+    "n_before_fit": 615,
+    "n_inliers": 584,
+    "zp": -3.3896821319755337,
+    "ct": -0.0001383824449946815,
+    "ct2": 0.036771798735541546,
+    "scatter_mmag": 19.24526065785841,
+    "quality": {
+     "ruwe": {
+      "applied": true,
+      "threshold": 1.4,
+      "n_rejected": 85,
+      "n_finite": 905
+     },
+     "bp_rp_excess": {
+      "applied": true,
+      "nsigma": 3.0,
+      "n_rejected": 31
+     }
+    }
+   }
+  }
+ ],
+ "M13 (globular, B/V/R)": [
+  {
+   "band": "B",
+   "off": {
+    "n_before_fit": 500,
+    "n_inliers": 433,
+    "zp": -4.006959893745333,
+    "ct": 0.22245625146070414,
+    "ct2": -0.08751027894264483,
+    "scatter_mmag": 40.76158652451412,
+    "quality": {
+     "ruwe": {
+      "applied": true,
+      "threshold": 1.4,
+      "n_rejected": 461,
+      "n_finite": 1438
+     },
+     "bp_rp_excess": {
+      "applied": false,
+      "reason": "disabled by configuration"
+     }
+    }
+   },
+   "on": {
+    "n_before_fit": 397,
+    "n_inliers": 365,
+    "zp": -4.010465311887023,
+    "ct": 0.23291589392778184,
+    "ct2": -0.09524930227245303,
+    "scatter_mmag": 36.224817623935515,
+    "quality": {
+     "ruwe": {
+      "applied": true,
+      "threshold": 1.4,
+      "n_rejected": 461,
+      "n_finite": 1438
+     },
+     "bp_rp_excess": {
+      "applied": true,
+      "nsigma": 3.0,
+      "n_rejected": 666
+     }
+    }
+   }
+  },
+  {
+   "band": "V",
+   "off": {
+    "n_before_fit": 666,
+    "n_inliers": 575,
+    "zp": -3.5151553808794516,
+    "ct": 0.052578549628425536,
+    "ct2": -0.014683014268914553,
+    "scatter_mmag": 37.8098100356479,
+    "quality": {
+     "ruwe": {
+      "applied": true,
+      "threshold": 1.4,
+      "n_rejected": 461,
+      "n_finite": 1438
+     },
+     "bp_rp_excess": {
+      "applied": false,
+      "reason": "disabled by configuration"
+     }
+    }
+   },
+   "on": {
+    "n_before_fit": 531,
+    "n_inliers": 479,
+    "zp": -3.5326060036838887,
+    "ct": 0.09471887672301434,
+    "ct2": -0.03743305021882644,
+    "scatter_mmag": 34.02331580434955,
+    "quality": {
+     "ruwe": {
+      "applied": true,
+      "threshold": 1.4,
+      "n_rejected": 461,
+      "n_finite": 1438
+     },
+     "bp_rp_excess": {
+      "applied": true,
+      "nsigma": 3.0,
+      "n_rejected": 666
+     }
+    }
+   }
+  },
+  {
+   "band": "R",
+   "off": {
+    "n_before_fit": 680,
+    "n_inliers": 593,
+    "zp": -3.931787314449127,
+    "ct": -0.13755862522704634,
+    "ct2": -0.0026770811944112644,
+    "scatter_mmag": 38.456782503127194,
+    "quality": {
+     "ruwe": {
+      "applied": true,
+      "threshold": 1.4,
+      "n_rejected": 461,
+      "n_finite": 1438
+     },
+     "bp_rp_excess": {
+      "applied": false,
+      "reason": "disabled by configuration"
+     }
+    }
+   },
+   "on": {
+    "n_before_fit": 541,
+    "n_inliers": 494,
+    "zp": -3.9541079199094766,
+    "ct": -0.02863025869677276,
+    "ct2": -0.12033271690033319,
+    "scatter_mmag": 35.32146684679014,
+    "quality": {
+     "ruwe": {
+      "applied": true,
+      "threshold": 1.4,
+      "n_rejected": 461,
+      "n_finite": 1438
+     },
+     "bp_rp_excess": {
+      "applied": true,
+      "nsigma": 3.0,
+      "n_rejected": 666
+     }
+    }
+   }
+  }
+ ]
+}
