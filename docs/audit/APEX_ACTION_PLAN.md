@@ -6,7 +6,8 @@ This plan is deliberately ordered before manuscript layout work. It separates ev
 
 | Action | Files/commands | Acceptance criterion |
 |---|---|---|
-| Rotate/revoke credential-like values | tracked HTML identified by a read-only scan; provider console | Credential is invalid/rotated; no value is copied into audit docs or commits. |
+| ~~Rotate/revoke credential-like values~~ **Cleared 2026-08-12 — false positive.** The only match sits inside the base64 JPEG of Fig. 8 in `validation/paper/STUDY_GUIDE.html`; history has 4 matches, all inside that image run, 0 outside base64. | see `APEX_SUBMISSION_READINESS.md` | Replaced by: strip embedded `data:` URIs from the published copy, or add a scanner-suppression note, so the same collision does not block release again. **Do not rewrite history on these grounds.** |
+| **Fix the "IRAF/DAOPHOT" wording** (new 2026-08-12) | abstract, §1, §3.11, Table 2 caption, §5, acknowledgements | The IRAF cross-check is IRAF's *aperture* task `phot`; the harness never calls `psf`/`allstar`. Wherever "DAOPHOT" stands alone a referee reads PSF-fitting photometry — and the paper has a separate PSF section. Say "IRAF's aperture task `phot`". |
 | Decide private research repo vs clean release repo | repository owner decision | A written boundary exists; no history rewrite or force-push is performed without approval. |
 | Correct WCS terminology and default | `apex/analysis/wcs_solve.py`, `parameters.example.toml`, `docs/manual/02-shared-steps.md`, paper §2/§3.6 | All surfaces agree: internal default; ASTAP/astrometry.net explicit; conditional fallback only. |
 | Correct ccdproc terminology | `validation/paper/IRAF_PREPROC_CROSSCHECK.md`, paper §3.2/figure 4 caption, references | Python Astropy `ccdproc` and IRAF/PyRAF task are identified as separate implementations with versions/runtime. |
@@ -44,6 +45,17 @@ This plan is deliberately ordered before manuscript layout work. It separates ev
 
 ## Immediate next three tasks
 
-1. User approves the private-vs-public repository boundary and rotates the credential-like values.
-2. Apply the WCS/ccdproc/headless wording corrections to the manual and manuscript, using `APEX_MANUSCRIPT_CLAIM_MATRIX.md` as the gate.
-3. Generate one machine-readable validation manifest for the existing paper figures before changing their layout.
+Revised 2026-08-12. The previous item 1 asked the user to rotate a credential
+that does not exist.
+
+1. **Finish the PSF A-axis comparison** — the harness runs
+   (`validation/psf_engines/`, IRAF ALLSTAR) but rests on 25 implanted stars.
+   Re-score at ~400 so each magnitude × crowding cell carries statistics, then
+   settle the remaining `varorder` confounder. Until this lands, the paper has
+   **no external comparison for its PSF engine at all**, while its abstract says
+   "IRAF/DAOPHOT".
+2. Apply the WCS / `ccdproc` / headless / **`phot`-not-DAOPHOT** wording
+   corrections to the manual and manuscript, using
+   `APEX_MANUSCRIPT_CLAIM_MATRIX.md` as the gate.
+3. User approves the private-vs-public repository boundary (the credential half
+   of that decision is now moot).
