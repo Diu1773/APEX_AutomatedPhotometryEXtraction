@@ -22,7 +22,7 @@ from scipy.spatial import cKDTree
 from scipy.stats import norm
 
 
-REPO = Path(__file__).resolve().parents[1]
+REPO = Path(__file__).absolute().parents[1]
 DEFAULT_OUTPUT = REPO / "validation" / "psf_archive" / "aperture_psf"
 
 SNR_EDGES = np.asarray([5.0, 10.0, 20.0, 50.0, 100.0, np.inf])

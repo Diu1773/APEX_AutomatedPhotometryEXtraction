@@ -10,7 +10,7 @@ import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 
-REPO = Path(__file__).resolve().parents[1]
+REPO = Path(__file__).absolute().parents[1]
 sys.path.insert(0, str(REPO))
 
 from validation.compare_m13_psf_variants import SNR_BINS, SNR_CUTS, _load_variant

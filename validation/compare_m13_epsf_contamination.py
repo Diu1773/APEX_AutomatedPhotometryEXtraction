@@ -13,7 +13,7 @@ import numpy as np
 import pandas as pd
 from scipy.stats import spearmanr
 
-REPO = Path(__file__).resolve().parents[1]
+REPO = Path(__file__).absolute().parents[1]
 sys.path.insert(0, str(REPO))
 
 from validation.compare_m13_psf_variants import _load_variant, _robust_scatter
