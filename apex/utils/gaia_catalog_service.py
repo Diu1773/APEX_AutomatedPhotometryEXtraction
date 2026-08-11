@@ -66,6 +66,34 @@ def _exc_brief(exc: Exception, limit: int = 260) -> str:
     return _tail_text(f"{type(exc).__name__}: {exc}", limit=limit, max_lines=4)
 
 
+# A transport-level fault that happens to contain the word "timeout". These
+# have to be recognised BEFORE a bare "timed out" test, or a host that cannot
+# be reached at all is filed as a slow server. That mislabel is not academic:
+# a Phase 3 run reported TIMEOUT eight times out of eight, and the label was
+# the only thing recorded, so "the ESA service is slow" and "this machine
+# could not reach it" stayed indistinguishable until ESA was re-queried by
+# hand the next morning and answered in 4.8 s.
+_CONNECTION_FAULT_PHRASES = (
+    "connection refused",
+    "connection reset",
+    "connection aborted",
+    "connection timed out",
+    "connection timeout",
+    "failed to establish a new connection",
+    "cannot connect",
+    "unreachable",
+    "getaddrinfo",
+    "name or service not known",
+    "nodename nor servname",
+    "temporary failure in name resolution",
+)
+
+# Text APEX itself puts in the exception it raises when its own wall-clock
+# deadline fires. That one is a timeout by construction, whatever else the
+# message says.
+_OWN_DEADLINE_MARKER = "hard deadline"
+
+
 def gaia_failure_reason(exc: Exception | None) -> str:
     if exc is None:
         return "unknown"
@@ -74,12 +102,16 @@ def gaia_failure_reason(exc: Exception | None) -> str:
         return ssl_reason
     text = _exc_brief(exc, limit=180)
     low = text.lower()
-    if "timeout" in low or "timed out" in low:
-        return "timeout"
-    if "connection" in low or "unreachable" in low or "refused" in low:
-        return "network_error"
     if "server_down" in low or "503" in low or "502" in low or "500" in low:
         return "server_down"
+    if _OWN_DEADLINE_MARKER in low:
+        return "timeout"
+    if any(p in low for p in _CONNECTION_FAULT_PHRASES):
+        return "network_error"
+    if "timeout" in low or "timed out" in low:
+        return "timeout"
+    if "connection" in low or "refused" in low:
+        return "network_error"
     if "vizier fallback" in low:
         return "vizier_fallback_failed"
     return text or "unknown"
@@ -405,19 +437,39 @@ WHERE 1=CONTAINS(
         return _normalise_gaia_columns(tab.to_pandas())
 
     def _classify_query_failure(self, exc: Exception) -> str:
+        """Label a query failure, most specific cause first.
+
+        Ordering is the whole content of this function, and two of the tests
+        it now passes used to fail:
+
+        * SSL was checked last, after the generic "connection" test. An expired
+          or untrusted certificate reports through a connection error, so a
+          fixable local trust-store problem was filed as NETWORK_ERROR — the
+          one label that suggests waiting rather than acting.
+        * A bare "timed out" was checked before any connection test, so
+          "Connection timed out" — a host that cannot be reached — read as a
+          slow server.
+
+        TIMEOUT and NETWORK_ERROR both fall through to the same VizieR
+        fallback, so this changes what gets written down, not what runs.
+        """
         err_str = str(exc).lower()
+        if ssl_error_reason(exc):
+            return "SSL_CERTIFICATE_VERIFY_FAILED"
         if "ip" in err_str and any(w in err_str for w in ("disabled", "blocked", "banned", "heavy")):
             return "IP_BANNED"
         if "404" in err_str or "job not found" in err_str:
             return "SERVER_JOB_LOST"
         if any(c in err_str for c in ("503", "502", "500")):
             return "SERVER_DOWN"
+        if _OWN_DEADLINE_MARKER in err_str:
+            return "TIMEOUT"
+        if any(p in err_str for p in _CONNECTION_FAULT_PHRASES):
+            return "NETWORK_ERROR"
         if "timeout" in err_str or "timed out" in err_str:
             return "TIMEOUT"
-        if any(w in err_str for w in ("connection", "refused", "unreachable")):
+        if any(w in err_str for w in ("connection", "refused")):
             return "NETWORK_ERROR"
-        if ssl_error_reason(exc):
-            return "SSL_CERTIFICATE_VERIFY_FAILED"
         return "UNKNOWN"
 
     def _cache_mag_max(self, df: pd.DataFrame, meta: dict | None) -> float:

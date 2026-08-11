@@ -11,10 +11,11 @@ morning, so the label was at best incomplete.)
 Two things make the label checkable, and these tests pin both:
 
 * the exception text, verbatim, so the actual failure can be read; and
-* the elapsed time, because `_classify_query_failure` matches "timeout" before
-  "connection" — "Connection timed out" is reported as TIMEOUT too. A hard
-  deadline fires at ~max(2*timeout_s, 60) s; a refused connection returns in
-  milliseconds. The duration separates them at a glance.
+* the elapsed time, because the label alone cannot say how long APEX waited.
+  A hard deadline fires at ~max(2*timeout_s, 60) s; a refused connection
+  returns in milliseconds. The duration separates a server that was slow from
+  one that was never reached, and it is also how the settings in force
+  (timeout_s, hard_deadline_s) get checked against reality.
 """
 
 from __future__ import annotations
@@ -93,9 +94,17 @@ def test_elapsed_time_and_settings_are_logged(service_and_log, monkeypatch):
     )
 
 
-def test_connection_timeout_is_labelled_timeout_but_readable(
+def test_connection_timeout_is_labelled_network_error(
         service_and_log, monkeypatch):
-    """The known mislabel: the text is what disambiguates it."""
+    """This assertion used to read `[TIMEOUT]`, and that was the bug.
+
+    When the raw text was first added to the log, the classifier still tested
+    a bare "timed out" before any connection test, so an unreachable host was
+    labelled TIMEOUT and only the text gave it away. The ordering has since
+    been fixed (see test_gaia_failure_classification.py), so the label now
+    agrees with the text instead of contradicting it — and the text is still
+    there, which is what makes the label checkable at all.
+    """
     svc, lines = service_and_log
     _fail_esa_with(monkeypatch, OSError("Connection timed out"))
     monkeypatch.setattr(
@@ -108,10 +117,8 @@ def test_connection_timeout_is_labelled_timeout_but_readable(
     svc._query_gaia(SkyCoord(10.0, 20.0, unit="deg"), 0.1, 18.0)
 
     blob = "\n".join(lines)
-    assert "[TIMEOUT]" in blob, "classifier behaviour is unchanged"
-    assert "Connection timed out" in blob, (
-        "and the text shows it was really a connection fault"
-    )
+    assert "[NETWORK_ERROR]" in blob, "an unreachable host is not a slow server"
+    assert "Connection timed out" in blob, "the text must still be verbatim"
 
 
 def test_fallback_failure_also_logs_its_own_exception(
