@@ -127,6 +127,48 @@ def test_robust_weighted_polyfit_recovers_quadratic_with_outliers():
     assert scatter < 0.02
 
 
+def test_quadratic_term_does_not_diverge_outside_the_calibrator_colors():
+    """A blue outlier must not run away through the quadratic color term.
+
+    These are M13's measured B/V coefficients from the PSF run. Their fixed
+    point contracts only for ``-2.1 < B-V < 3.8``; one star with instrumental
+    B-V = -1.32 started at -1.82, left the basin, and reached ``mag_std_B =
+    -844``. With the calibrator color range supplied the map is bounded, so
+    the star stays on the scale even though its color is an extrapolation.
+    """
+    fit = {
+        "B": {"zp": -3.934756, "ct": +0.307416, "ct2": -0.169956,
+              "color_col": "B_V", "color_min": -0.08, "color_max": 1.65},
+        "V": {"zp": -3.435029, "ct": +0.021165, "ct2": 0.0,
+              "color_col": "B_V", "color_min": -0.08, "color_max": 1.65},
+    }
+    inst = {"B": np.array([20.446648, 18.0]), "V": np.array([21.770832, 17.0])}
+
+    colors = solve_standard_colors(inst, fit)
+    assert np.all(np.isfinite(colors["B_V"]))
+    assert np.abs(colors["B_V"]).max() < 10.0
+
+    std_b = inst["B"] + fit["B"]["zp"] + (
+        fit["B"]["ct"] * np.clip(colors["B_V"], -0.08, 1.65)
+        + fit["B"]["ct2"] * np.clip(colors["B_V"], -0.08, 1.65) ** 2
+    )
+    assert np.all(std_b > 10.0) and np.all(std_b < 25.0)
+
+
+def test_diverging_solve_returns_nan_without_a_color_range():
+    """Without a fitted range the guard must NaN the star, not emit -844."""
+    fit = {
+        "B": {"zp": -3.934756, "ct": +0.307416, "ct2": -0.169956,
+              "color_col": "B_V"},
+        "V": {"zp": -3.435029, "ct": +0.021165, "ct2": 0.0, "color_col": "B_V"},
+    }
+    inst = {"B": np.array([20.446648, 18.0]), "V": np.array([21.770832, 17.0])}
+
+    colors = solve_standard_colors(inst, fit)
+    assert np.isnan(colors["B_V"][0])       # the runaway star
+    assert np.isfinite(colors["B_V"][1])    # a normal star is untouched
+
+
 def test_unfitted_band_pair_excluded():
     b, v, _ = _make_truth(50)
     bv_true = b - v

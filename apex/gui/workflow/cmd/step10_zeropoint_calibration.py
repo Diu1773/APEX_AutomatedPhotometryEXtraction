@@ -306,13 +306,32 @@ def solve_standard_colors(
     ----------
     inst_mags : mapping of filter name -> instrumental magnitude array.
     fit_params : mapping of filter name -> {"zp", "ct", "color_col"} as built
-        by the ZP fit ("color_col" like ``"B_V"`` or ``"none"``).
+        by the ZP fit ("color_col" like ``"B_V"`` or ``"none"``). Optional
+        ``"color_min"``/``"color_max"`` give the color range the coefficients
+        were fitted over; when present the applied color is clamped to it.
     iters : fixed-point iterations.
 
     Returns
     -------
     dict of color-column name (e.g. ``"B_V"``) -> standard-color array.
-    Stars lacking a needed instrumental magnitude get NaN for that color.
+    Stars lacking a needed instrumental magnitude get NaN for that color, as do
+    stars whose iteration did not converge.
+
+    Convergence
+    -----------
+    The contraction argument above holds for the *linear* model. Once the
+    quadratic term was added the per-pass factor became ``|ct + 2*ct2*C|``,
+    which depends on the star, so bounding the coefficients is not enough: a
+    star far outside the calibrator color range can leave the basin and run
+    away. M13 B (ct = +0.307, ct2 = -0.170, so the basin is
+    ``-2.1 < C < 3.8``) produced exactly that — one star started at C = -1.82
+    and reached C = -70 in six passes, for ``mag_std_B = -844``.
+
+    Two guards prevent it. Clamping C to the fitted color range makes the map
+    bounded, so the iteration cannot diverge and the quadratic is never
+    extrapolated beyond the calibrators that constrain it. Because callers may
+    supply no range, the iteration is also checked for convergence and
+    non-converged stars are returned as NaN rather than as a large number.
     """
     pairs: dict[str, tuple[str, str]] = {}
     for fp in fit_params.values():
@@ -345,17 +364,36 @@ def solve_standard_colors(
         for name, (fa, fb) in pairs.items()
     }
 
+    def _bounds(f: str) -> tuple[float, float]:
+        """Color range the filter's coefficients were fitted over."""
+        lo = _coef(f, "color_min") if "color_min" in fit_params.get(f, {}) else -np.inf
+        hi = _coef(f, "color_max") if "color_max" in fit_params.get(f, {}) else np.inf
+        return (lo, hi) if lo < hi else (-np.inf, np.inf)
+
     def _std_mag(f: str) -> np.ndarray:
         base = np.asarray(inst_mags[f], dtype=float) + _coef(f, "zp")
         ccol = str(fit_params.get(f, {}).get("color_col", "none"))
         if ccol in colors:
-            c = colors[ccol]
+            # Applying the color term outside the calibrator color range both
+            # extrapolates the quadratic and can break the fixed point.
+            c = np.clip(colors[ccol], *_bounds(f))
             # Optional quadratic color term (ct2 defaults to 0 for legacy fits).
             return base + _coef(f, "ct") * c + _coef(f, "ct2") * c * c
         return base
 
+    previous = dict(colors)
     for _ in range(max(1, int(iters))):
+        previous = colors
         colors = {name: _std_mag(fa) - _std_mag(fb) for name, (fa, fb) in pairs.items()}
+
+    # A converged star moves by ~1e-5 mag on the final pass; anything still
+    # moving by more than a milli-magnitude is diverging and has no calibration.
+    for name in colors:
+        step = np.abs(colors[name] - previous[name])
+        colors[name] = np.where(
+            np.isfinite(colors[name]) & np.isfinite(step) & (step <= 1e-3),
+            colors[name], np.nan,
+        )
     return colors
 
 
@@ -2691,7 +2729,14 @@ class ZeropointCalibrationWorker(QThread):
                                    "photometry_source": filter_provenance["source"],
                                    "mag_input_column": filter_provenance["mag_column"],
                                    "mag_error_input_column": filter_provenance["mag_error_column"]})
+                # The color support of the calibrators. solve_standard_colors
+                # clamps to it so the (quadratic) color term is never evaluated
+                # where no calibrator constrained it.
+                _cfit = color_x[m_fit]
+                _cfit = _cfit[np.isfinite(_cfit)]
                 fit_params[filt] = {"zp": zp_f, "ct": ct_f, "ct2": ct2_f, "scatter_rms": sc_f,
+                                    "color_min": float(_cfit.min()) if _cfit.size else float("nan"),
+                                    "color_max": float(_cfit.max()) if _cfit.size else float("nan"),
                                     "color_col": color_col_name,
                                     "color_axis": color_axis}
 
