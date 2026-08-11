@@ -1114,7 +1114,7 @@ JS = r"""
     var N=pages.length;
     pages.forEach(function(p,i){
       if (i>0) p.el.querySelector('.run').textContent=
-        'APEX — GUI 기반 구경·PSF 측광 파이프라인 (국문 원고)';
+        'APEX — raw 영상부터 CMD·광도 곡선까지의 통합 측광 파이프라인 (국문 원고)';
       var f=p.el.querySelector('.folio');
       f.className='folio '+((i+1)%2 ? 'r' : 'l');
       f.textContent='APEX, '+(i+1)+' / '+N+' 쪽';
@@ -1701,7 +1701,7 @@ JS = r"""
 """
 
 HTML = f"""<meta charset="utf-8">
-<title>APEX — GUI 기반 구경·PSF 측광 파이프라인 (국문 원고)</title>
+<title>APEX — raw 영상부터 CMD·광도 곡선까지의 통합 측광 파이프라인 (국문 원고)</title>
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <style>{CSS}</style>
 <div id="src">
