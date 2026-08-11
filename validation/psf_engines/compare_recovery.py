@@ -142,6 +142,9 @@ def main() -> int:
     ap.add_argument("--zmag", type=float, default=25.0)
     ap.add_argument("--itime", type=float, default=60.0)
     ap.add_argument("--match-radius-px", type=float, default=1.5)
+    ap.add_argument("--trial", type=int, default=None,
+                    help="여러 회차로 주입한 경우 이 회차만 채점한다. "
+                         "회차마다 프레임이 다르므로 DAOPHoT 결과도 같은 회차의 것을 줄 것")
     ap.add_argument("--apex-mode", default="gated", choices=("forced", "gated"),
                     help="forced = 적합한 모든 위치, gated = APEX 자체 품질정책을 "
                          "통과한 것만. ALLSTAR 는 버리는 엔진이므로 gated 가 대응된다")
@@ -157,6 +160,19 @@ def main() -> int:
     truth = pd.read_csv(args.truth)
     apex = pd.read_csv(args.apex_recovery)
     dao = pd.read_csv(args.daophot)
+
+    # Each trial implants a different set of stars into its own copy of the
+    # frame, so a DAOPHOT run belongs to exactly one trial. Matching across
+    # trials would pair a measurement with a star that was never in that image.
+    if args.trial is not None:
+        for name, frame in (("truth", truth), ("apex", apex)):
+            if "trial" not in frame.columns:
+                raise SystemExit(f"--trial 을 줬는데 {name} 표에 trial 열이 없다")
+        truth = truth[truth["trial"] == args.trial].reset_index(drop=True)
+        apex = apex[apex["trial"] == args.trial].reset_index(drop=True)
+        if truth.empty:
+            raise SystemExit(f"trial {args.trial} 의 주입별이 없다")
+        print(f"trial {args.trial}: 주입 {len(truth)}개\n")
 
     # APEX's benchmark already scored itself against this truth table; reusing
     # its delta_mag keeps the comparison on APEX's own definition rather than a
