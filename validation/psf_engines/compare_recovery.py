@@ -206,8 +206,25 @@ def main() -> int:
     dao_scored, dao_zp = remove_zeropoint(
         dao_scored, min_snr=args.offset_min_snr, isolated_bins=isolated)
 
+    # A rejecting engine measures its scatter on whatever it chose to keep. If
+    # ALLSTAR discards the blends it cannot fit and APEX keeps them, ALLSTAR's
+    # spread is computed on an easier sample and the comparison rewards it for
+    # being selective rather than for being accurate. Restricting both engines
+    # to the stars both kept removes that advantage; the difference in what
+    # each one keeps is already reported as completeness.
+    both = (np.isfinite(apex_scored["delta_mag"])
+            & np.isfinite(dao_scored["delta_mag"])).to_numpy()
+    apex_matched = apex_scored[both].copy()
+    dao_matched = dao_scored[both].copy()
+
     rows = (summarise(apex_scored, f"APEX step8 ({args.apex_mode})")
             + summarise(dao_scored, "IRAF ALLSTAR"))
+    for frame, engine in ((apex_matched, f"APEX step8 ({args.apex_mode})"),
+                          (dao_matched, "IRAF ALLSTAR")):
+        for row in summarise(frame, engine):
+            if row["scope"] == "overall":
+                row["scope"], row["label"] = "matched", "both kept"
+                rows.append(row)
     table = pd.DataFrame(rows)
 
     print(f"등급 영점 제거 — 기준: SNR >= {args.offset_min_snr:.0f} 이고 "
@@ -221,7 +238,7 @@ def main() -> int:
               f"{'compl':>8}{'bias':>9}{'scatter':>9}")
     print(header)
     print("-" * len(header))
-    for scope in ("overall", "crowding", "snr"):
+    for scope in ("overall", "matched", "crowding", "snr"):
         part = table[table["scope"] == scope].sort_values(["label", "engine"])
         for _, r in part.iterrows():
             print(f"{r['engine']:>13}{r['scope']:>10}{r['label']:>16}"
