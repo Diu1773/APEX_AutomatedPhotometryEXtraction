@@ -261,12 +261,18 @@ class GaiaCatalogService:
             tab = Table.read(path, format="ascii.ecsv")
             raw_cols = [str(c).strip().lower() for c in tab.colnames]
             missing_var_flag = "phot_variable_flag" not in raw_cols
+            # A cache written before `ruwe` joined the ESA SELECT list would
+            # otherwise keep the old behaviour alive: step10's RUWE cut is
+            # skipped when the column is absent, so reusing such a cache makes
+            # the calibrator count depend on when the catalogue was fetched.
+            missing_ruwe = "ruwe" not in raw_cols
             df = _normalise_gaia_columns(tab.to_pandas())
             if not {"ra", "dec"} <= set(df.columns):
                 return None
             if "source_id" not in df.columns and _HAS_GAIA:
                 return None
             df.attrs["missing_phot_variable_flag"] = bool(missing_var_flag)
+            df.attrs["missing_ruwe"] = bool(missing_ruwe)
             return df
         except Exception:
             return None
@@ -321,11 +327,19 @@ WHERE 1=CONTAINS(
             raise RuntimeError("stopped")
         timeout_s = float(getattr(self.P, "gaia_timeout_s", 30.0))
         mag_where = f"AND phot_g_mean_mag <= {mag_max:.4f}" if np.isfinite(mag_max) and mag_max > 0 else ""
+        # `ruwe` must stay in this list to match the VizieR query (which has
+        # always selected it). While it was missing, which quality cuts step10
+        # applied depended on *which server answered*: the RUWE <= 1.4 cut ran
+        # on the VizieR path and was silently skipped on the ESA path, because
+        # gaia_quality_mask is permissive about absent columns. Measured on
+        # M67, that moved the calibrator count by ~10 % (g 564 vs 503) between
+        # two runs of identical code on identical data. The ESA table always
+        # had the column; only this SELECT omitted it.
         adql = f"""
 SELECT
   source_id, ra, dec,
   phot_g_mean_mag, phot_bp_mean_mag, phot_rp_mean_mag,
-  phot_variable_flag,
+  phot_variable_flag, ruwe,
   pmra, pmdec, pmra_error, pmdec_error,
   parallax, parallax_error
 FROM gaiadr3.gaia_source
@@ -462,8 +476,19 @@ WHERE 1=CONTAINS(
 
         df_cache = self._load_gaia_cache_if_ok(cache_path)
         meta = None
-        if df_cache is not None and bool(df_cache.attrs.get("missing_phot_variable_flag", False)) and _HAS_GAIA:
-            df_cache = None
+        if df_cache is not None and _HAS_GAIA:
+            stale = [name for name, flag in (
+                ("phot_variable_flag", "missing_phot_variable_flag"),
+                ("ruwe", "missing_ruwe"),
+            ) if bool(df_cache.attrs.get(flag, False))]
+            if stale:
+                # Say why. Dropping a cache costs a network round trip, and a
+                # silent one is indistinguishable from a slow server.
+                self._log(
+                    f"[Gaia] cached catalog lacks {', '.join(stale)} — re-querying "
+                    f"so the same quality cuts apply as on a fresh catalog"
+                )
+                df_cache = None
         if df_cache is not None:
             if meta_path.exists():
                 try:

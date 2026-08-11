@@ -35,6 +35,7 @@ def test_gaia_catalog_service_uses_valid_cache_and_filters_mag(tmp_path):
                 "dec": [20.0, 20.001, 19.999],
                 "phot_g_mean_mag": [15.0, 18.5, 17.0],
                 "phot_variable_flag": ["", "", ""],
+                "ruwe": [1.0, 1.1, 0.9],
             }
         )
     ).write(s5 / "gaia_fov.ecsv", format="ascii.ecsv")
@@ -72,6 +73,7 @@ def test_gaia_catalog_service_normalizes_legacy_ra_dec_cache(tmp_path):
                 "dec_deg": [36.0, 35.998],
                 "phot_g_mean_mag": [13.0, 14.0],
                 "phot_variable_flag": ["", ""],
+                "ruwe": [1.0, 1.2],
             }
         )
     ).write(s5 / "gaia_fov.ecsv", format="ascii.ecsv")

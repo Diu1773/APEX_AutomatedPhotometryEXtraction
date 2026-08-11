@@ -154,6 +154,7 @@ def _seed_inputs(tmp_path: Path, detected_xy, sky, gmag, fnames=("f1.fits", "f2.
         "dec": sky.dec.deg,
         "phot_g_mean_mag": gmag,
         "phot_variable_flag": ["NOT_AVAILABLE"] * n,
+        "ruwe": np.ones(n),
         "pmra": np.zeros(n),
         "pmdec": np.zeros(n),
     })
