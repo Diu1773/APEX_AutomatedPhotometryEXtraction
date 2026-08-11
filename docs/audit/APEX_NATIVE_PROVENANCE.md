@@ -37,6 +37,7 @@ LC 후반(주기분석)은 사용자 이해가 선행되어야 하므로 마지�
 
 | 모듈 | 탄생 | 당시 커밋이 말하는 동기 | 유형 | 등급 |
 |---|---|---|---|---|
+| `psf_iteration.py` + `step8_psf_photometry.py` *(2026-08-12 추가 — 이 표에 없었다)* | 2026-07-15 `191fd03` **"optimize cpu psf photometry and qc"**, 19커밋 | "ePSF 참조별에 PSF 대칭 판정 + FWHM 하한"(`001ea94` 07-29) · "구경 vs PSF 비교가 항상 비어 있던 버그"(`cc2525d`) · "Step 8 QC 산출물을 헤드리스에서도"(`20a8de9`) | 커널은 photutils. 자작은 **기준성 선택·자동 적합창·잔차 패스·QC 정책** | **(b)** — 2026-08-12 에 IRAF ALLSTAR 와 처음 대조(`validation/psf_engines/`, 예비). **B 축은 네 성단 실측이 있으나 "PSF 가 낫다"는 성립하지 않는다** (`validation/PSF_VS_APERTURE_ALL_TARGETS.md`) |
 | `isochrone_mcmc.py` | 06-21 `ea32c63`, 8커밋 | "EEP interpolation — **fixes age recovery**"(`a5ebdd1`) · "full inter-color covariance"(`2fa1f3a`) · "Gaia parallax prior"(`ff480ad`) · "reproducible MCMC (seed)"(`556fbed`) | 과학적 필요 (축퇴·재현성) | **(a)** — 메모리 `project_isochrone_fit_flaw` 에 전체 서사 |
 | `standard_anchor.py` | 08-04 `45d6f0a` | U/B/V 영점을 한 표준계에 앵커해야 U−B 가 축퇴를 품 | 과학적 필요 | **(a)** — 소거실험 문서화 |
 | `isochrone_fitter_v2.py` | 04-28 벌크 | 없음 | — | (b) — MCMC 로 대체·검증됨 |
