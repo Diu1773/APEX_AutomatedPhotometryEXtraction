@@ -353,24 +353,48 @@ WHERE 1=CONTAINS(
         if self._stopped():
             raise RuntimeError("stopped")
         deadline_s = float(getattr(self.P, "gaia_hard_deadline_s", 0.0) or 0.0) or None
+        _t0 = time.time()
         try:
             tab = tap_query_with_deadline(
                 Gaia, adql, timeout_s=timeout_s, deadline_s=deadline_s, dump_to_file=False,
             )
         except Exception as exc:
             cause = self._classify_query_failure(exc)
+            # Log the exception verbatim, and how long it took to get it. The
+            # label alone is not enough to act on: `_classify_query_failure`
+            # tests for "timeout" before "connection", so "Connection timed
+            # out" — a network fault — is also reported as TIMEOUT. And when
+            # the VizieR fallback succeeds (the common case) the original
+            # exception was previously discarded entirely, so a run that fell
+            # back eight times left no evidence of why.
+            #
+            # The elapsed time separates the two cases on sight: a hard
+            # deadline fires at ~max(2*timeout_s, 60) s, while a refused or
+            # unreachable connection returns in well under a second.
+            _dt = time.time() - _t0
+            self._log(
+                f"[Gaia][WARN] ESA TAP failed [{cause}] after {_dt:.1f}s "
+                f"(timeout_s={timeout_s:.0f}, hard_deadline_s="
+                f"{deadline_s if deadline_s else max(timeout_s * 2.0, 60.0):.0f}): "
+                f"{_exc_brief(exc)}"
+            )
             if cause in {"IP_BANNED", "SERVER_JOB_LOST", "SERVER_DOWN", "TIMEOUT", "NETWORK_ERROR"}:
                 self._log(f"[Gaia][WARN] ESA TAP failed [{cause}], trying VizieR fallback.")
+                _t1 = time.time()
                 try:
                     df_viz = self._query_gaia_vizier(center, radius_deg, mag_max, timeout_s)
                     self._log(
                         f"[Gaia][WARN] ESA TAP failed [{cause}] -> VizieR fallback used "
-                        f"(N={len(df_viz)}, mag_max={mag_max:.2f})."
+                        f"(N={len(df_viz)}, mag_max={mag_max:.2f}, {time.time() - _t1:.1f}s)."
                     )
                     df_viz.attrs["gaia_source"] = "vizier_fallback"
                     return df_viz
                 except Exception as exc2:
-                    self._log(f"[Gaia][WARN] VizieR fallback failed: {gaia_failure_reason(exc2)}")
+                    self._log(
+                        f"[Gaia][WARN] VizieR fallback failed after "
+                        f"{time.time() - _t1:.1f}s [{gaia_failure_reason(exc2)}]: "
+                        f"{_exc_brief(exc2)}"
+                    )
                     raise RuntimeError(
                         f"Gaia TAP async query failed [{cause}]: {_exc_brief(exc)}; "
                         f"VizieR fallback also failed: {_exc_brief(exc2)}"
