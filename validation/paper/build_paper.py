@@ -11,8 +11,10 @@ three reproducible outputs:
 * ``build/review/build_status.json`` — the engine, source hash and page count.
 
 The bundled environment does not necessarily contain a TeX distribution.  In
-that case PyMuPDF's Story engine is used as a deterministic review fallback;
-the command never labels that fallback as an A&A submission PDF.  Installing
+that case a headless Chromium browser prints the already-validated paged HTML,
+so the HTML viewer and review PDF share one layout engine.  PyMuPDF's Story
+engine remains a last-resort fallback when neither TeX nor Chromium is present;
+the command never labels either fallback as an A&A submission PDF.  Installing
 TeX is deliberately left to the user because it is a machine-level dependency.
 """
 
@@ -20,14 +22,19 @@ from __future__ import annotations
 
 import argparse
 import base64
+import functools
 import hashlib
 import html
+import http.server
 import json
 import re
 import shutil
 import subprocess
 import sys
+import tempfile
+import threading
 from pathlib import Path
+from urllib.parse import quote
 
 try:
     import fitz  # PyMuPDF, bundled in .venv-deploy
@@ -666,6 +673,138 @@ def try_tex(tex_path: Path, output: Path, engine: str | None) -> tuple[str, str 
         return "pymupdf-fallback", f"{selected} failed: {exc}"
 
 
+class _QuietPreviewHandler(http.server.SimpleHTTPRequestHandler):
+    """Serve the local preview without writing request noise to the console."""
+
+    def log_message(self, _format: str, *_args: object) -> None:
+        return
+
+
+def _browser_candidates() -> list[tuple[str, Path]]:
+    candidates: list[tuple[str, Path]] = []
+    for label, command in (("chrome", "chrome"), ("edge", "msedge")):
+        resolved = shutil.which(command)
+        if resolved:
+            candidates.append((label, Path(resolved)))
+    candidates.extend(
+        [
+            ("chrome", Path("C:/Program Files/Google/Chrome/Application/chrome.exe")),
+            ("chrome", Path("C:/Program Files (x86)/Google/Chrome/Application/chrome.exe")),
+            ("edge", Path("C:/Program Files (x86)/Microsoft/Edge/Application/msedge.exe")),
+            ("edge", Path("C:/Program Files/Microsoft/Edge/Application/msedge.exe")),
+        ]
+    )
+    unique: list[tuple[str, Path]] = []
+    seen: set[str] = set()
+    for label, path in candidates:
+        key = str(path).casefold()
+        if key not in seen and path.is_file():
+            unique.append((label, path))
+            seen.add(key)
+    return unique
+
+
+def _page_has_content(page: "fitz.Page") -> bool:
+    """Return False only for a physically blank browser-added sheet."""
+
+    if page.get_text().strip() or page.get_images(full=True):
+        return True
+    # Chromium paints white page backgrounds and thin black page-edge strips
+    # even on a physically blank sheet.  Count vector art only when a
+    # non-white mark reaches the printable interior.
+    interior = fitz.Rect(page.rect.x0 + 24, page.rect.y0 + 30, page.rect.x1 - 24, page.rect.y1 - 30)
+    for drawing in page.get_drawings():
+        pigment = drawing.get("fill") or drawing.get("color")
+        rect = drawing.get("rect")
+        if pigment and rect and min(pigment) < 0.98 and (fitz.Rect(rect) & interior).get_area() > 4:
+            return True
+    return False
+
+
+def _remove_blank_sheets(source: Path, output: Path) -> tuple[int, int]:
+    """Strip browser-added blank sheets while preserving logical paper pages."""
+
+    if fitz is None:
+        raise RuntimeError("PyMuPDF is required to verify the browser PDF")
+    kept: list[int] = []
+    with fitz.open(source) as document:
+        kept = [index for index, page in enumerate(document) if _page_has_content(page)]
+        if not kept:
+            raise RuntimeError("browser PDF contained no visible paper pages")
+        cleaned = fitz.open()
+        try:
+            for index in kept:
+                cleaned.insert_pdf(document, from_page=index, to_page=index)
+            cleaned.save(output, garbage=4, deflate=True)
+        finally:
+            cleaned.close()
+        return len(kept), document.page_count - len(kept)
+
+
+def try_browser_print(preview: Path, output: Path) -> tuple[str | None, str | None, int | None]:
+    """Print the paged preview with Chromium, preserving the viewer layout."""
+
+    browsers = _browser_candidates()
+    if not browsers:
+        return None, "No Chrome or Edge executable found", None
+
+    handler = functools.partial(_QuietPreviewHandler, directory=str(preview.parent))
+    server = http.server.ThreadingHTTPServer(("127.0.0.1", 0), handler)
+    server_thread = threading.Thread(target=server.serve_forever, daemon=True)
+    server_thread.start()
+    url = f"http://127.0.0.1:{server.server_port}/{quote(preview.name)}?print=build"
+    failures: list[str] = []
+    try:
+        for label, executable in browsers:
+            with tempfile.TemporaryDirectory(prefix="apex-paper-", ignore_cleanup_errors=True) as tmp_name:
+                tmp = Path(tmp_name)
+                raw_pdf = tmp / "browser-print.pdf"
+                clean_pdf = tmp / "browser-clean.pdf"
+                profile = tmp / "profile"
+                command = [
+                    str(executable),
+                    "--headless=new",
+                    "--disable-gpu",
+                    "--disable-extensions",
+                    "--no-first-run",
+                    "--no-default-browser-check",
+                    "--no-pdf-header-footer",
+                    "--run-all-compositor-stages-before-draw",
+                    "--virtual-time-budget=15000",
+                    f"--user-data-dir={profile}",
+                    f"--print-to-pdf={raw_pdf}",
+                    url,
+                ]
+                try:
+                    process = subprocess.run(
+                        command,
+                        check=False,
+                        stdout=subprocess.PIPE,
+                        stderr=subprocess.STDOUT,
+                        text=True,
+                        encoding="utf-8",
+                        errors="replace",
+                        timeout=60,
+                    )
+                    if not raw_pdf.is_file() or raw_pdf.stat().st_size < 100_000:
+                        detail = process.stdout.strip().splitlines()[-1:] or [f"exit {process.returncode}"]
+                        failures.append(f"{label}: {detail[0]}")
+                        continue
+                    pages, removed = _remove_blank_sheets(raw_pdf, clean_pdf)
+                    output.parent.mkdir(parents=True, exist_ok=True)
+                    shutil.copy2(clean_pdf, output)
+                    engine = f"{label}-headless-print"
+                    detail = f"validated HTML preview; removed {removed} blank browser sheet(s)"
+                    return engine, detail, pages
+                except (OSError, RuntimeError, subprocess.TimeoutExpired) as exc:
+                    failures.append(f"{label}: {exc}")
+    finally:
+        server.shutdown()
+        server.server_close()
+        server_thread.join(timeout=5)
+    return None, "; ".join(failures) or "Chromium print failed", None
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--source", type=Path, default=SOURCE)
@@ -689,7 +828,14 @@ def main(argv: list[str] | None = None) -> int:
     pdf_path = args.out_dir / "APEX_review.pdf"
     engine, reason = try_tex(tex_path, pdf_path, args.engine)
     if engine == "pymupdf-fallback":
-        pages = build_review_pdf(fragments, title, pdf_path)
+        browser_engine, browser_reason, browser_pages = try_browser_print(preview, pdf_path)
+        if browser_engine:
+            engine = browser_engine
+            pages = browser_pages
+            reason = f"{reason}; {browser_reason}"
+        else:
+            pages = build_review_pdf(fragments, title, pdf_path)
+            reason = f"{reason}; {browser_reason}; used PyMuPDF Story fallback"
     else:
         pages = fitz.open(pdf_path).page_count if fitz else None
     status = {

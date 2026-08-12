@@ -263,8 +263,12 @@ mark.apexnote{cursor:pointer;}
   #stage{overflow:visible;height:auto!important;}
   #sizer{width:auto!important;height:auto!important;margin:0!important;}
   #book{transform:none!important;margin:0!important;}
-  .page{box-shadow:none;margin:0;break-after:page;page-break-after:always;
-    break-inside:avoid;page-break-inside:avoid;}
+  /* 794×1123 CSS px rounds slightly larger than physical A4 in Chromium.
+     Without the exact print override the browser fragments a bottom float
+     onto the following sheet even though it is inside the viewer page. */
+  .page{width:210mm!important;height:297mm!important;overflow:hidden!important;
+    box-shadow:none;margin:0;break-after:page;page-break-after:always;
+    break-inside:avoid-page;page-break-inside:avoid;}
   .page:last-child{break-after:auto;page-break-after:auto;}
 }
 </style>
@@ -551,9 +555,14 @@ mark.apexnote{cursor:pointer;}
       stage=document.getElementById('stage'), load=document.getElementById('loading'),
       ind=document.getElementById('pgind'), sizer=document.getElementById('sizer'),
       zind=document.getElementById('zoomind');
-  var pages=[], pending=[], scale=1;
+  var pages=[], pending=[], scale=1, sectionSerial=0;
 
   function el(t,c){ var e=document.createElement(t); if(c) e.className=c; return e; }
+  function carrySource(from,to){
+    if (from && from.dataset && from.dataset.srcBlock!==undefined)
+      to.dataset.srcBlock=from.dataset.srcBlock;
+    return to;
+  }
   function isHead(n){ return n && /^H[234]$/.test(n.tagName); }
   // Tables remain float-like because a wide table can consume the whole page.
   // Figures are page-level floats.  Keeping a figure inside a text column makes
@@ -611,7 +620,29 @@ mark.apexnote{cursor:pointer;}
   function contentBottom(c){
     var k=c.lastElementChild;
     if (!k) return 0;
-    return k.getBoundingClientRect().bottom - c.getBoundingClientRect().top;
+    // offset geometry is invariant under the viewer's CSS zoom transform;
+    // getBoundingClientRect mixed scaled pixels with unscaled clientHeight and
+    // produced false "empty column" warnings at 50–99% zoom.
+    return k.offsetTop-c.offsetTop+k.offsetHeight;
+  }
+  /* 넓은 float 직전에서 절이 끝나면 남은 본문이 왼쪽 단에만 몰린다.
+     다음 절을 그림 앞으로 끌어오지 말고, 같은 절의 블록 경계만 바꾸어 두
+     단의 높이 차가 가장 작은 지점을 고른다. */
+  function balanceColumns(P){
+    if (!P) return;
+    var left=P.cols[0], right=P.cols[1],
+        kids=[].slice.call(left.children).concat([].slice.call(right.children));
+    if (kids.length<2) return;
+    var best=kids.length, bestScore=Infinity;
+    for (var split=1;split<kids.length;split++){
+      kids.forEach(function(ch,i){ (i<split ? left : right).appendChild(ch); });
+      if (!fits(left) || !fits(right)) continue;
+      var lh=contentBottom(left), rh=contentBottom(right);
+      var orphan=isHead(left.lastElementChild) ? 500 : 0;
+      var score=Math.abs(lh-rh)+orphan;
+      if (score<bestScore){ bestScore=score; best=split; }
+    }
+    kids.forEach(function(ch,i){ (i<best ? left : right).appendChild(ch); });
   }
 
   /* 전폭 요소(그림·표)는 지면 머리와 발치의 두 자리에 앉힌다 (A&A 식 상·하 float).
@@ -649,6 +680,16 @@ mark.apexnote{cursor:pointer;}
     im.style.width='auto';
     return true;
   }
+  function resetFloatSize(node){
+    var im=node && node.querySelector && node.querySelector('img');
+    if (im){ im.style.maxHeight=''; im.style.width=''; }
+  }
+  function forceSizeTo(node, sp, cap){
+    var old=draining; draining=true;
+    var ok=sizeTo(node,sp,cap);
+    draining=old;
+    return ok;
+  }
   function flushOne(P, sp){
     while (pending.length){
       if (P._floatKind) return;
@@ -658,10 +699,18 @@ mark.apexnote{cursor:pointer;}
       if (sp.offsetHeight>cap){
         if (wasEmpty && sizeTo(f,sp,cap)){
           pending.shift(); P._floatKind=f.classList.contains('tw')?'table':'figure';
+          if (sp===P.span){
+            P._lockTopFloat=true;
+            P._topFloatSection=parseInt(f.dataset.sectionSerial||'-1',10);
+          }
         }
         else { sp.removeChild(f); break; }
       } else {
         pending.shift(); P._floatKind=f.classList.contains('tw')?'table':'figure';
+        if (sp===P.span){
+          P._lockTopFloat=true;
+          P._topFloatSection=parseInt(f.dataset.sectionSerial||'-1',10);
+        }
       }
     }
   }
@@ -673,7 +722,7 @@ mark.apexnote{cursor:pointer;}
   function advance(P){ if (P.ci===0){ P.ci=1; return P; } return fresh(); }
 
   function splitList(list, P){
-    var tag=list.tagName.toLowerCase(), box=el(tag,list.className);
+    var tag=list.tagName.toLowerCase(), box=carrySource(list,el(tag,list.className));
     P.cols[P.ci].appendChild(box);
     var kids=[].slice.call(list.children);
     for (var i=0;i<kids.length;i++){
@@ -681,7 +730,7 @@ mark.apexnote{cursor:pointer;}
       if (!fits(P.cols[P.ci])){
         box.removeChild(kids[i]);
         if (!box.children.length){ box.appendChild(kids[i]); continue; }
-        P=advance(P); box=el(tag,list.className);
+        P=advance(P); box=carrySource(list,el(tag,list.className));
         P.cols[P.ci].appendChild(box); box.appendChild(kids[i]);
       }
     }
@@ -738,6 +787,7 @@ mark.apexnote{cursor:pointer;}
     var frag=r.extractContents();
     var b=document.createElement('p');
     b.className=((node.className||'')+' pcont').trim();
+    carrySource(node,b);
     b.appendChild(frag);
     node.classList.add('psplit');                        // 앞토막: 마지막 줄도 양끝맞춤
     return b;
@@ -749,7 +799,10 @@ mark.apexnote{cursor:pointer;}
   function giveBackSpan(node, P, c){
     // 발치부터 되돌린다. 발치의 그림 번호가 머리보다 크므로, 발치를 먼저
     // unshift 하고 머리를 그 앞에 넣어야 pending 이 오름차순으로 남는다.
-    var sps=[P.spanB, P.span];
+    // An immediately placed top float is already in source order.  Returning
+    // it to the queue merely to fit a later paragraph recreates the original
+    // cross-section drift.  Bottom floats may still be yielded when needed.
+    var sps=P._lockTopFloat ? [P.spanB] : [P.spanB, P.span];
     for (var si=0; si<sps.length; si++){
       var sp=sps[si];
       while (sp.children.length){
@@ -783,63 +836,75 @@ mark.apexnote{cursor:pointer;}
   }
 
   function place(node, P){
-    // A wide table belongs after the preceding text, not after the next
-    // subsection.  Put it at the foot of the current sheet when there is room;
-    // otherwise flush it on a fresh sheet before continuing with the heading.
+    if (isHead(node)) sectionSerial++;
+    // Wide figures and tables are deterministic source-order floats.  First
+    // try the foot of the current sheet; if it does not fit, put it at the top
+    // of the next sheet immediately and let following prose continue below.
+    // An unbounded queue was the cause of Fig. 3 appearing above §3.6 and
+    // Figs. 14–17 being dumped after the manuscript.
     if (isSpanBlock(node)){
-      if (P._floatKind){ pending.push(node); return P; }
-      var bothColsUsed=P.ci===1 || P.cols[1].children.length>0;
-      // 짧은 절 뒤에 빈 공간이 남아도 두 단이 모두 찰 때까지 기다리면,
-      // 다음 그림·표가 새 쪽으로 밀려 지면 하단이 크게 비게 된다. 제목만
-      // 있는 단은 제외하고, 실제 본문이 한 단이라도 있으면 하단 float를
-      // 시도한다. 두 단이 찬 경우의 기존 동작도 그대로 유지한다.
-      var hasBody=P.cols.some(function(c){
-        return [].some.call(c.children,function(ch){ return !isHead(ch); });
-      });
-      /* A wide float may sit below a short first-column tail.  The next source
-         block is then carried into the empty second column by the _bottomUsed
-         branch below; waiting for a new page here is what used to leave a
-         whole column blank in the first place. */
-      var canBottom=bothColsUsed || hasBody;
-      if (node.classList.contains('tw') && !pending.length && !P._bottomUsed && canBottom){
-        var tsp=P.spanB;
-        tsp.appendChild(node);
-        if (tsp.offsetHeight<=spanCap(P,tsp) && P.cols.every(fits)){
-          P._bottomUsed=true; P._floatKind='table';
+      node.dataset.floatBlock='1';
+      node.dataset.sectionSerial=String(sectionSerial);
+      // Drain only legacy give-back entries.  Normal wide floats never wait:
+      // this bounds displacement to the immediately following sheet.
+      if (pending.length){
+        balanceColumns(P);
+        while (pending.length) P=fresh();
+      }
+      var hasText=P.cols.some(function(c){ return c.children.length>0; });
+      // A&A-style pages may carry one float at the head and a second at the
+      // foot with a short bridge of prose between them.  Requiring the head
+      // to be empty created four half-blank sheets before the next table or
+      // figure (Figs. 4, 9, 12 and 14 in the current manuscript).
+      var sameTopSection=!P.span.firstChild || P._topFloatSection===sectionSerial;
+      var mayUseBottom=hasText && !P.spanB.firstChild && sameTopSection;
+      if (mayUseBottom){
+        balanceColumns(P);
+        if (P.cols[1].children.length) P.ci=1;
+        var bsp=P.spanB, bcap=spanCap(P,bsp);
+        bsp.appendChild(node);
+        forceSizeTo(node,bsp,bcap);
+        if (bsp.offsetHeight<=bcap+1 && P.cols.every(fits)){
+          // A wide float may sit at the foot while later prose from the same
+          // subsection fills the columns above it.  Moving the active cursor
+          // to the right column after balancing preserves reading order.
+          P._bottomUsed=true;
           return P;
         }
-        tsp.removeChild(node);
+        bsp.removeChild(node);
+        resetFloatSize(node);
       }
-      if (node.tagName==='FIGURE' && !pending.length && !P._bottomUsed && canBottom){
-        var fsp=P.spanB;
-        fsp.appendChild(node);
-        var fcap=spanCap(P,fsp);
-        if ((fsp.offsetHeight<=fcap || sizeTo(node,fsp,fcap) && fsp.offsetHeight<=fcap) &&
-            P.cols.every(fits)){
-          P._bottomUsed=true; P._floatKind='figure';
-          return P;
-        }
-        fsp.removeChild(node);
+      var pageEmpty=!hasText && !P.span.firstChild && !P.spanB.firstChild;
+      if (pageEmpty){
+        P.span.appendChild(node);
+        var topCap=P.inner.clientHeight*(node.classList.contains('tw') ? 0.82 : 0.64);
+        forceSizeTo(node,P.span,topCap);
+        P._topFloat=true; P._lockTopFloat=true; P._topFloatSection=sectionSerial;
+        return P;
       }
-      pending.push(node); return P;
+      // Close and balance the prose already read, then place the evidence at
+      // the next sheet head.  Later prose uses the columns below this float,
+      // so a half-height figure no longer creates a mostly empty page.
+      balanceColumns(P);
+      P=newPage();
+      P.span.appendChild(node);
+      var cap=P.inner.clientHeight*(node.classList.contains('tw') ? 0.82 : 0.64);
+      forceSizeTo(node,P.span,cap);
+      P._topFloat=true; P._lockTopFloat=true; P._topFloatSection=sectionSerial;
+      return P;
     }
-    // A bottom float is a real float, not a hard page break.  If the first
-    // column is already in use, continue the following source blocks in the
-    // still-empty second column before opening a new sheet.  The old code
-    // always called fresh() here, which visibly skipped an entire column
-    // whenever a table/figure followed a short tail of prose.
-    if (P._bottomUsed){
-      if (P.ci===0 && !P.cols[1].children.length) P.ci=1;
-      else P=fresh();
+    // The next subsection must not begin visually above the previous
+    // subsection's foot float.
+    if (P._bottomUsed && isHead(node)){
+      balanceColumns(P);
+      P=newPage();
     }
-    // A pending wide float may be moved past a heading when the current page
-    // still has an unused second column.  Flushing it immediately used to
-    // leave the first column half full and the entire second column blank;
-    // treating the figure/table as a true float gives the heading somewhere
-    // to flow while preserving a readable two-column page.
     if (pending.length && isHead(node)){
-      if (P.ci===0 && P.cols[0].children.length && !P.cols[1].children.length) P.ci=1;
-      else P=fresh();
+      // Never allow a figure/table to cross a section boundary.  The previous
+      // renderer sometimes moved the heading into an empty right column and
+      // left the evidence figure several sections behind.
+      balanceColumns(P);
+      while (pending.length) P=fresh();
     }
     if (isInlineFigure(node)){
       // Finish any wide table that is waiting.  Prefer the bottom of the
@@ -984,7 +1049,7 @@ mark.apexnote{cursor:pointer;}
     // 진단 배너는 #book 밖에 붙으므로 여기서 직접 지운다. 안 지우면 그림이 실리기
     // 전 첫 조판에서 뜬 배너가 정상 재조판 뒤에도 남는다.
     var oldbn=document.getElementById('typoerr'); if (oldbn) oldbn.remove();
-    book.innerHTML=''; pages=[]; pending=[]; draining=false;
+    book.innerHTML=''; pages=[]; pending=[]; draining=false; sectionSerial=0;
     src.style.display='none';
     stage.style.cssText='overflow:hidden;';
     book.style.cssText='transform-origin:top left;width:'+GEO.PW+'px;'+
@@ -1010,7 +1075,15 @@ mark.apexnote{cursor:pointer;}
       P=newPage();
       if (abs) P.span.appendChild(abs.cloneNode(true));
     }
-    [].slice.call(flow.children).forEach(function(k){ P=place(k.cloneNode(true), P); });
+    [].slice.call(flow.children).forEach(function(k,sourceIndex){
+      var clone=k.cloneNode(true);
+      clone.dataset.srcBlock=String(sourceIndex);
+      P=place(clone, P);
+    });
+    // Rebalance after every float has settled.  A later caption or paragraph
+    // can otherwise make the active right column much taller than the split
+    // chosen when the foot float first arrived.
+    pages.forEach(balanceColumns);
     draining=true;                                              // 남은 그림 마무리
     while (pending.length){
       var n0=pending.length, Q=fresh();
@@ -1040,29 +1113,96 @@ mark.apexnote{cursor:pointer;}
     if (!reflowInit){ reflowInit=true; applyInitialReflow(); }  // 조판 뒤에 적용
     else if (wasReflow) setReflow(true);                        // 재조판이면 원래대로
     renderNotes(); markAll();
-    // 조판 자체 점검. 넘치는 단이 있으면 지면 높이가 안 먹은 것이다.
-    var over=0;
-    pages.forEach(function(p){
+    // 조판 자체 점검. 넘치는 단, 빈 왼쪽 단, 소스 순서 역전과 누락을
+    // 각각 센다. 문단 분할은 같은 srcBlock을 여러 번 만들 수 있으므로
+    // DOM 자식 수가 아니라 원본 인덱스의 유일 집합으로 검증한다.
+    var over=0, holes=0, orderErrors=0, figureOrderErrors=0, floatBoundaryErrors=0,
+        sourceOrder=[], seenSource={}, sourcePage={}, visualFigures=[];
+    pages.forEach(function(p,pageIndex){
       if(!p.cols) return;
       p.cols.forEach(function(c){
         if (c.offsetParent!==null && c.scrollHeight>c.clientHeight+2) over++;
       });
+      var leftUsed=contentBottom(p.cols[0]);
+      var rightUsed=contentBottom(p.cols[1]);
+      if (p.cols[1].children.length && p.cols[0].children.length &&
+          leftUsed < p.cols[0].clientHeight*0.62 &&
+          rightUsed>leftUsed+Math.max(120,p.cols[0].clientHeight*0.28)) holes++;
+      if (pageIndex>1 && pageIndex<pages.length-1 && p.cols[0].children.length &&
+          !p.cols[1].children.length && !p.spanB.firstChild &&
+          leftUsed < p.cols[0].clientHeight*0.82) holes++;
+      [p.span,p.cols[0],p.cols[1],p.spanB].forEach(function(region){
+        if (!region) return;
+        [].slice.call(region.children).forEach(function(ch){
+          var raw=ch.dataset && ch.dataset.srcBlock;
+          if (raw===undefined) return;
+          var idx=parseInt(raw,10);
+          if (!isFinite(idx)) return;
+          seenSource[idx]=true;
+          if (sourcePage[idx]===undefined) sourcePage[idx]=pageIndex;
+          if (ch.dataset && ch.dataset.floatBlock==='1') return;
+          if (!sourceOrder.length || sourceOrder[sourceOrder.length-1]!==idx)
+            sourceOrder.push(idx);
+        });
+      });
+      [].slice.call(p.el.querySelectorAll('figure img')).forEach(function(im){
+        var fm=/그림\s*(\d+)/.exec(im.alt||'');
+        if (fm) visualFigures.push(parseInt(fm[1],10));
+      });
     });
-    // 흘려보낸 블록이 다 앉았는지도 센다. 조판 함수가 다른 함수에 가려지면 쪽수만으로는
-    // 안 잡힌다(2026-07-30: 메모 말풍선의 place() 가 조판 place() 를 덮어 본문 0블록).
-    var want=flow.children.length, got=0;
-    pages.forEach(function(p){
-      if (p.cols) p.cols.forEach(function(c){ got+=c.children.length; });
-      got+=p.span.children.length;
-      if (p.spanB) got+=p.spanB.children.length;
+    for (var oi=1;oi<sourceOrder.length;oi++)
+      if (sourceOrder[oi]<sourceOrder[oi-1]) orderErrors++;
+    for (var fi=0;fi<visualFigures.length;fi++)
+      if (visualFigures[fi]!==fi+1) figureOrderErrors++;
+    // A legal float can move within its subsection, but it must never appear
+    // before that subsection's heading or after the next subsection starts.
+    var sourceKids=[].slice.call(flow.children);
+    sourceKids.forEach(function(ch,idx){
+      if (!isSpanBlock(ch)) return;
+      var before=-1, after=-1;
+      for (var bi=idx-1;bi>=0;bi--) if (isHead(sourceKids[bi])){ before=bi; break; }
+      for (var ai=idx+1;ai<sourceKids.length;ai++) if (isHead(sourceKids[ai])){ after=ai; break; }
+      var fp=sourcePage[idx], bp=before>=0 ? sourcePage[before] : -1,
+          ap=after>=0 ? sourcePage[after] : pages.length;
+      if (fp===undefined || fp<bp || fp>ap) floatBoundaryErrors++;
     });
-    if (over || pages.length<6 || got<want){
+    var want=flow.children.length, got=Object.keys(seenSource).length;
+    if (over || holes || orderErrors || figureOrderErrors || floatBoundaryErrors ||
+        pages.length<6 || got!==want){
       var m=document.createElement('div'); m.id='typoerr';
       m.style.cssText='position:fixed;left:8px;bottom:8px;z-index:30;background:#7a1010;'+
         'color:#fff;font:12px/1.4 sans-serif;padding:6px 9px;border-radius:3px;';
-      m.textContent='조판 오류: '+pages.length+'쪽 · 넘치는 단 '+over+'개 · 블록 '+got+'/'+want;
+      m.textContent='조판 오류: '+pages.length+'쪽 · 넘침 '+over+' · 빈 단 '+holes+
+        ' · 본문 역전 '+orderErrors+' · 그림 순서 '+figureOrderErrors+
+        ' · 절 경계 '+floatBoundaryErrors+
+        ' · 원본 블록 '+got+'/'+want;
       document.body.appendChild(m);
       if (window.console) console.warn('[APEX] 조판 오류 '+m.textContent);
+    }
+    /* Chromium's print fragmenter may detach a flex child's foot float and
+       prepend it to the next physical sheet.  The paged viewer has already
+       computed and audited exact geometry, so freeze the three vertical
+       regions only for the headless-PDF build.  This makes printed pages a
+       faithful copy of the viewer instead of asking a second layout pass to
+       reinterpret the flex boxes. */
+    if (/(?:^|[?&])print=build(?:&|$)/i.test(location.search||'')){
+      pages.forEach(function(p){
+        var cols=p.el.querySelector('.cols');
+        var frozen=[p.span,cols,p.spanB].map(function(region){
+          return {region:region,top:region.offsetTop,height:region.offsetHeight};
+        });
+        // Read every box before taking any flex child out of flow.  Measuring
+        // after the previous child became absolute collapses the next offset
+        // to zero and makes table, prose and figure overlap in the PDF.
+        frozen.forEach(function(box){
+          var region=box.region, top=box.top, height=box.height;
+          region.style.position='absolute';
+          region.style.left='0'; region.style.right='0';
+          region.style.top=top+'px'; region.style.height=height+'px';
+          region.style.flex='none'; region.style.boxSizing='border-box';
+          region.style.overflow='hidden';
+        });
+      });
     }
     setPaged(true);
     var hp=/[#&?]p=(\d+)/.exec(location.hash||'');     // #p=7 로 그 쪽을 바로 연다
