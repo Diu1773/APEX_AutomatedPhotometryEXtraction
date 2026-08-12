@@ -33,6 +33,17 @@
 
 ## 지금 (2026-08-12 ResearchCampaign 기반 국문 통합 초안)
 
+**2026-08-13 · ARS full 모의 심사 기록**
+
+- 국문 정본을 A&A Section 15 기준으로 다중 관점 심사한 결과는 **Major Revision**이다.
+  주제와 검증 폭은 충분한 잠재력이 있지만, GUI–headless end-to-end parity와 PSF 주입의
+  독립성, native 모듈별 비용·정확도 표가 재심 전 P1 보완사항으로 남았다.
+- 심사 기록과 절별 근거·수용 기준은
+  [`validation/paper/논문작업/ARS_REVIEW_20260813.md`](validation/paper/논문작업/ARS_REVIEW_20260813.md)에
+  보존했다. 이 심사는 국문 원고를 직접 수정하지 않았다.
+- 다음 심사는 parity 결과, 독립 PSF 주입 결과, native 비용 표를 입력으로 하는 ARS
+  `re-review`로 진행한다.
+
 **2026-08-12 · 국문 정본 문장·수치 갱신**
 
 - `논문작업/MANUSCRIPT_ko.md`의 초록·서론에 APEX의 실제 대상(소형·중형 망원경 자료를
