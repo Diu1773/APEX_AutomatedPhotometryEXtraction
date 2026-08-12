@@ -1,0 +1,342 @@
+{
+ "frame": "E:/APEX_validation/psf_engines/M13_ast2x200/trial_0001/data/pp_messier13-0005-B.fit",
+ "n_input_positions": 1701,
+ "n_allstar_rows": 1659,
+ "n_valid_mag": 1659,
+ "n_psf_stars": 60,
+ "elapsed_s": 554.0065648,
+ "stage_seconds": {
+  "phot": 72.40170574188232,
+  "pstselect": 3.88639235496521,
+  "psf": 456.6956534385681,
+  "allstar": 18.362613677978516
+ },
+ "parameters": {
+  "fwhm_px": 7.052391,
+  "psfrad_px": 29.209564,
+  "fitrad_px": 11.9890647,
+  "fitrad_fwhm": 1.7,
+  "function": "auto",
+  "varorder": 0,
+  "gain_e_per_adu": 0.68,
+  "readnoise_e": 2.35,
+  "datamin_adu": 0.1,
+  "datamax_adu": 55000.0,
+  "sky_sigma_adu": 29.111276215269335,
+  "zmag": 25.0,
+  "exptime": 60.0
+ },
+ "output": "E:\\APEX_validation\\psf_engines\\M13_ast2x200\\daophot_trial1.csv",
+ "iraf_parameters": {
+  "centerpars": {
+   "calgorithm": {
+    "description": "Centering algorithm",
+    "value": "\"none\""
+   },
+   "cbox": {
+    "description": "Centering box width in scale units",
+    "value": "14.104782"
+   },
+   "clean": {
+    "description": "Symmetry clean before centering",
+    "value": "no"
+   },
+   "cmaxiter": {
+    "description": "Maximum iterations for centering algorithm",
+    "value": "10"
+   },
+   "cthreshold": {
+    "description": "Centering threshold in sigma above background",
+    "value": "0.0"
+   },
+   "kclean": {
+    "description": "K-sigma rejection criterion in skysigma",
+    "value": "3.0"
+   },
+   "maxshift": {
+    "description": "Maximum center shift in scale units",
+    "value": "1.0"
+   },
+   "minsnratio": {
+    "description": "Minimum signal-to-noise ratio for centering algorithim",
+    "value": "1.0"
+   },
+   "mkcenter": {
+    "description": "Mark the computed center",
+    "value": "no"
+   },
+   "mode": {
+    "description": "",
+    "value": "\"ql\""
+   },
+   "rclean": {
+    "description": "Cleaning radius in scale units",
+    "value": "1.0"
+   },
+   "rclip": {
+    "description": "Clipping radius in scale units",
+    "value": "2.0"
+   }
+  },
+  "daopars": {
+   "clipexp": {
+    "description": "Bad data clipping exponent",
+    "value": "6"
+   },
+   "cliprange": {
+    "description": "Bad data clipping range in sigma",
+    "value": "2.5"
+   },
+   "critsnratio": {
+    "description": "Critical S/N ratio for group membership",
+    "value": "1.0"
+   },
+   "fitrad": {
+    "description": "Fitting radius in scale units",
+    "value": "11.9890647"
+   },
+   "fitsky": {
+    "description": "Recompute group sky value during fit?",
+    "value": "yes"
+   },
+   "flaterr": {
+    "description": "Flat field error in percent",
+    "value": "0.75"
+   },
+   "function": {
+    "description": "Form of analytic component of psf model",
+    "value": "\"auto\""
+   },
+   "groupsky": {
+    "description": "Use group rather than individual sky values?",
+    "value": "yes"
+   },
+   "matchrad": {
+    "description": "Object matching radius in scale units",
+    "value": "3.0"
+   },
+   "maxgroup": {
+    "description": "Maximum number of stars to fit per group",
+    "value": "60"
+   },
+   "maxiter": {
+    "description": "Maximum number of fitting iterations",
+    "value": "50"
+   },
+   "maxnstar": {
+    "description": "Maximum number of stars to fit",
+    "value": "20000"
+   },
+   "mergerad": {
+    "description": "Critical object merging radius in scale units",
+    "value": "INDEF"
+   },
+   "mode": {
+    "description": "",
+    "value": "\"ql\""
+   },
+   "nclean": {
+    "description": "Number of cleaning iterations for computing psf model",
+    "value": "0"
+   },
+   "proferr": {
+    "description": "Profile error in percent",
+    "value": "5.0"
+   },
+   "psfrad": {
+    "description": "Radius of psf model in scale units",
+    "value": "29.209564"
+   },
+   "recenter": {
+    "description": "Recenter stars during fit?",
+    "value": "yes"
+   },
+   "sannulus": {
+    "description": "Inner radius of sky fitting annulus in scale units",
+    "value": "28.209564"
+   },
+   "saturated": {
+    "description": "Use wings of saturated stars in psf model computation?",
+    "value": "no"
+   },
+   "varorder": {
+    "description": "Order of empirical component of psf model",
+    "value": "0"
+   },
+   "wsannulus": {
+    "description": "Width of sky fitting annulus in scale units",
+    "value": "14.104782"
+   }
+  },
+  "datapars": {
+   "airmass": {
+    "description": "Airmass image header keyword",
+    "value": "\"\""
+   },
+   "ccdread": {
+    "description": "CCD readout noise image header keyword",
+    "value": "\"\""
+   },
+   "datamax": {
+    "description": "Maximum good data value",
+    "value": "55000.0"
+   },
+   "datamin": {
+    "description": "Minimum good data value",
+    "value": "0.1"
+   },
+   "emission": {
+    "description": "Features are positive?",
+    "value": "yes"
+   },
+   "epadu": {
+    "description": "Gain in electrons per count",
+    "value": "0.68"
+   },
+   "exposure": {
+    "description": "Exposure time image header keyword",
+    "value": "\"\""
+   },
+   "filter": {
+    "description": "Filter image header keyword",
+    "value": "\"\""
+   },
+   "fwhmpsf": {
+    "description": "FWHM of the PSF in scale units",
+    "value": "7.052391"
+   },
+   "gain": {
+    "description": "CCD gain image header keyword",
+    "value": "\"\""
+   },
+   "ifilter": {
+    "description": "Filter",
+    "value": "\"INDEF\""
+   },
+   "itime": {
+    "description": "Exposure time",
+    "value": "60.0"
+   },
+   "mode": {
+    "description": "",
+    "value": "\"ql\""
+   },
+   "noise": {
+    "description": "Noise model",
+    "value": "\"poisson\""
+   },
+   "obstime": {
+    "description": "Time of observation image header keyword",
+    "value": "\"\""
+   },
+   "otime": {
+    "description": "Time of observation",
+    "value": "\"INDEF\""
+   },
+   "readnoise": {
+    "description": "CCD readout noise in electrons",
+    "value": "2.35"
+   },
+   "scale": {
+    "description": "Image scale in units per pixel",
+    "value": "1.0"
+   },
+   "sigma": {
+    "description": "Standard deviation of background in counts",
+    "value": "29.11127622"
+   },
+   "xairmass": {
+    "description": "Airmass",
+    "value": "INDEF"
+   }
+  },
+  "fitskypars": {
+   "annulus": {
+    "description": "Inner radius of sky annulus in scale units",
+    "value": "28.209564"
+   },
+   "binsize": {
+    "description": "Binsize of histogram in sky sigma",
+    "value": "0.1"
+   },
+   "dannulus": {
+    "description": "Width of sky annulus in scale units",
+    "value": "14.104782"
+   },
+   "khist": {
+    "description": "Half width of histogram in sky sigma",
+    "value": "3.0"
+   },
+   "mksky": {
+    "description": "Mark sky annuli on the display",
+    "value": "no"
+   },
+   "mode": {
+    "description": "",
+    "value": "\"al\""
+   },
+   "rgrow": {
+    "description": "Region growing radius in scale units",
+    "value": "0.0"
+   },
+   "salgorithm": {
+    "description": "Sky fitting algorithm",
+    "value": "\"mode\""
+   },
+   "shiclip": {
+    "description": "Upper clipping factor in percent",
+    "value": "0.0"
+   },
+   "shireject": {
+    "description": "Upper K-sigma rejection limit in sky sigma",
+    "value": "3.0"
+   },
+   "skyvalue": {
+    "description": "User sky value",
+    "value": "0.0"
+   },
+   "sloclip": {
+    "description": "Lower clipping factor in percent",
+    "value": "0.0"
+   },
+   "sloreject": {
+    "description": "Lower K-sigma rejection limit in sky sigma",
+    "value": "3.0"
+   },
+   "smaxiter": {
+    "description": "Maximum number of sky fitting iterations",
+    "value": "10"
+   },
+   "smooth": {
+    "description": "Boxcar smooth the histogram",
+    "value": "no"
+   },
+   "snreject": {
+    "description": "Maximum number of sky fitting rejection iterations",
+    "value": "50"
+   }
+  },
+  "photpars": {
+   "apertures": {
+    "description": "List of aperture radii in scale units",
+    "value": "\"7.0524\""
+   },
+   "mkapert": {
+    "description": "Draw apertures on the display",
+    "value": "no"
+   },
+   "mode": {
+    "description": "",
+    "value": "\"ql\""
+   },
+   "weighting": {
+    "description": "Photometric weighting scheme",
+    "value": "\"constant\""
+   },
+   "zmag": {
+    "description": "Zero point of magnitude scale",
+    "value": "25.0"
+   }
+  }
+ }
+}

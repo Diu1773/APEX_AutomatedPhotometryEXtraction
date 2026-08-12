@@ -113,6 +113,24 @@ iraf.daopars.maxnstar = 20000
 iraf.daopars.nclean = 0
 iraf.daopars.mergerad = "INDEF"
 
+# Every parameter the five tasks will actually use, dumped from IRAF itself
+# rather than from the assignments above. A default that `unlearn` restored, or
+# a value IRAF coerced, would otherwise never reach the published table — and a
+# comparison against another package is not usable in a paper without it.
+import re as _re
+_pars = {{}}
+_ROW = _re.compile(r"^\\s*\\(?([A-Za-z_][A-Za-z0-9_]*)\\s*=\\s*(.*?)\\)?\\s{{2,}}(.*)$")
+for _task in ("datapars", "daopars", "centerpars", "fitskypars", "photpars"):
+    _dump = "%s.par" % _task
+    iraf.lpar(_task, Stdout=_dump)
+    _pars[_task] = {{}}
+    for _line in open(_dump, encoding="utf-8", errors="replace"):
+        _m = _ROW.match(_line.rstrip("\\n"))
+        if _m:
+            _pars[_task][_m.group(1)] = {{"value": _m.group(2).strip(),
+                                         "description": _m.group(3).strip()}}
+json.dump(_pars, open("iraf_parameters.json", "w"), indent=1, sort_keys=True)
+
 IMAGE = "{image}"
 COORDS = "{coords}"
 stages = {{}}
@@ -252,6 +270,12 @@ def run(args: argparse.Namespace) -> dict:
     table.to_csv(output, index=False)
 
     timing = json.loads((work / "timing.json").read_text(encoding="utf-8"))
+    # The parameter table belongs next to the numbers it produced, not only in
+    # the scratch work directory that a later run overwrites.
+    iraf_parameters = json.loads(
+        (work / "iraf_parameters.json").read_text(encoding="utf-8"))
+    (output.parent / f"{output.stem}_iraf_parameters.json").write_text(
+        json.dumps(iraf_parameters, indent=1, sort_keys=True), encoding="utf-8")
     fitted = int(np.isfinite(pd.to_numeric(table["mag"], errors="coerce")).sum())
     summary = {
         "frame": str(args.frame),
@@ -268,8 +292,10 @@ def run(args: argparse.Namespace) -> dict:
             "gain_e_per_adu": args.gain, "readnoise_e": args.readnoise,
             "datamin_adu": args.datamin, "datamax_adu": args.datamax,
             "sky_sigma_adu": stats["sky_sigma"], "zmag": args.zmag,
+            "exptime": stats["exptime"],
         },
         "output": str(output),
+        "iraf_parameters": iraf_parameters,
     }
     (output.parent / f"{output.stem}_summary.json").write_text(
         json.dumps(summary, indent=1), encoding="utf-8")
