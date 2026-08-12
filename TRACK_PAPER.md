@@ -31,6 +31,18 @@
 
 ## 지금 (2026-08-12 ResearchCampaign 기반 국문 통합 초안)
 
+**2026-08-12 · PDF 빌드와 연속 판면 뷰어 구현**
+
+- `validation/paper/build_paper.py`를 추가했다. 국문 정본에서 XeLaTeX/LuaLaTeX용
+  `latex/review.tex`와 검토 PDF를 만들며, TeX가 없는 현재 환경에서는 PyMuPDF
+  fallback임을 `build_status.json`에 명시한다. 표지 1쪽, 목차 2쪽, 3쪽 초록+
+  2단 본문, 페이지 번호를 고정했다.
+- `paper_viewer.html`은 실제 PDF 뷰어와 판면 HTML을 전환한다. HTML은 페이지
+  경계를 보존한 연속 스크롤, Ctrl/Cmd+휠 확대, 좌우 패닝, 메모를 제공하고 P로
+  한 쪽 보기로 전환한다. 상세 계획은
+  `validation/paper/논문작업/PAPER_IMPLEMENTATION_PLAN.md`에 기록했다.
+- 현재 검토 PDF는 37쪽이며, PDF/HTML에서 목차의 본문 시작을 3쪽으로 확인했다.
+
 **2026-08-12 · 연구 질문과 PSF 검증을 국문 정본에 통합**
 
 - Main의 `ResearchCampaign` dry-run

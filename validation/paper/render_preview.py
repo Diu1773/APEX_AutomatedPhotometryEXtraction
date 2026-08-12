@@ -5,7 +5,9 @@ Math via sub/sup/unicode, citations from references.bib, figures embedded as bas
 import re, html, base64
 from pathlib import Path
 
-ROOT = Path(__file__).resolve().parent   # 워크트리에서도 자기 트리를 읽는다
+# ``validation/`` is a junction; absolute() preserves the worktree path used
+# in manifests and links while still resolving all files relative to this script.
+ROOT = Path(__file__).absolute().parent
 SRC = ROOT / "논문작업" / "MANUSCRIPT_ko.md"
 BIB = ROOT / "references.bib"
 FIGDIR = ROOT / "figures"
@@ -388,16 +390,18 @@ body{font-family:var(--serif);font-size:11.2px;line-height:1.32;color:var(--ink)
 
 /* ── 지면 ── */
 #src{display:none;}
-#stage{overflow:hidden;}
-/* 판면 모드: PDF 뷰어처럼 한 화면에 A4 한 쪽만 표시한다. 휠·PageUp/Down·
-   ‹› 버튼으로 쪽을 넘기며, 읽기 모드에서는 원고 전체를 연속으로 흘린다. */
+#stage{overflow:auto;}
+/* 판면 모드: PDF 뷰어처럼 A4 경계를 보존하되 모든 쪽을 한 흐름으로
+   배치한다. 확대 상태에서도 마지막 쪽까지 같은 스크롤 영역으로 이어진다. */
 body.paged{overflow:hidden;}
-body.paged #stage{display:flex;align-items:flex-start;justify-content:center;
-  overflow:auto;min-height:100vh;}
-body.paged #sizer{flex:0 0 auto;}
-body.paged #book{flex:0 0 auto;}
-body.paged .page{display:none;}
-body.paged .page.active{display:block;}
+body.paged #stage{display:block;overflow:auto;min-height:100vh;
+  padding:18px 0 32px;}
+body.paged #sizer{display:block;position:relative;}
+body.paged #book{margin:0 auto;}
+body.paged .page{display:block;}
+/* P 키로 PDF의 단일 쪽 보기로 잠시 전환할 수 있다. */
+body.paged.singlepage .page{display:none;}
+body.paged.singlepage .page.active{display:block;}
 body.paged.reflow{overflow:auto;}
 #sizer{position:relative;}
 #book{transform-origin:top left;width:var(--pw);}
@@ -1187,19 +1191,21 @@ JS = r"""
   /* 확대율. 1 = 창 높이와 폭에 맞는 판면. 사용자가 확대·축소할 수 있다.
      transform 은 레이아웃에 영향을 주지 않으므로, 실제 크기를 갖는 #sizer 로
      스크롤 영역을 만들고 그 안에서 #book 을 시각적으로만 확대한다. */
-  var zoom=1, currentPage=0;
+  var zoom=1, currentPage=0, singlePage=false;
   function applyPageVisibility(){
     if (!pages.length) return;
     pages.forEach(function(p,i){
-      p.el.classList.toggle('active', i===currentPage);
+      if (singlePage) p.el.classList.toggle('active', i===currentPage);
+      else p.el.classList.add('active');
     });
     if (ind) ind.textContent=(currentPage+1)+' / '+pages.length;
   }
   function setPaged(on){
     document.body.classList.toggle('paged', !!on);
     if (on){
+      document.body.classList.toggle('singlepage', singlePage);
       applyPageVisibility();
-      if (stage) stage.scrollTo(0,0);
+      if (stage && singlePage) stage.scrollTo(0,0);
       window.scrollTo(0,0);
     } else {
       pages.forEach(function(p){ p.el.classList.remove('active'); });
@@ -1219,15 +1225,16 @@ JS = r"""
       var h=window.innerHeight||GEO.PH;
       var pageScale=Math.min(1,(w-40)/PW,(h-38)/GEO.PH);
       scale=Math.max(0.5,pageScale*zoom);
-      /* 판면 모드도 모든 쪽을 같은 스크롤 영역에 둔다. 페이지를 숨겼다
-         다시 보이는 방식은 확대 페이지 끝에서 다음 쪽으로 이어지지 않는다. */
-      var pcw=Math.ceil(PW*scale), pch=Math.ceil(GEO.PH*scale);
+      /* 연속 판면은 실제 책 높이를 그대로 스크롤 영역으로 만든다. 단일
+         쪽 보기에서는 한 장만 보이도록 예전의 한 쪽 높이를 사용한다. */
+      var rawH=singlePage ? GEO.PH : Math.max(GEO.PH, book.scrollHeight);
+      var pcw=Math.ceil(PW*scale), pch=Math.ceil(rawH*scale);
       sizer.style.width=pcw+'px';
       sizer.style.height=pch+'px';
       sizer.style.margin='18px auto 28px';
       book.style.transform='scale('+scale+')';
       book.style.width=PW+'px';
-      book.style.height=GEO.PH+'px';
+      book.style.height=singlePage ? GEO.PH+'px' : 'auto';
       stage.style.height=Math.max(420,h)+'px';
       stage.style.minHeight='0';
       stage.style.overflowX='auto';
@@ -1255,7 +1262,10 @@ JS = r"""
       currentPage=i;
       fit();
       applyPageVisibility();
-      if (stage) stage.scrollTo({top:0,left:0, behavior:'smooth'});
+      if (stage){
+        if (singlePage) stage.scrollTo({top:0,left:0, behavior:'smooth'});
+        else stage.scrollTo({top:Math.max(0,p.el.offsetTop*scale-8),left:0, behavior:'smooth'});
+      }
       if (ind) ind.textContent=(currentPage+1)+' / '+pages.length;
       return;
     }
@@ -1264,6 +1274,14 @@ JS = r"""
   function onScroll(){
     if (!pages.length) return;
     if (document.body.classList.contains('paged')){
+      if (!singlePage){
+        var y=(stage.scrollTop||0)/scale + (stage.clientHeight/scale)*0.35;
+        var cur=0;
+        for (var j=0;j<pages.length;j++){
+          if (pages[j].el.offsetTop<=y) cur=j; else break;
+        }
+        currentPage=cur;
+      }
       if (ind) ind.textContent=(currentPage+1)+' / '+pages.length;
       return;
     }
@@ -1287,6 +1305,9 @@ JS = r"""
        쪽으로 넘긴다. 맞춤 배율에서는 휠 한 번이 곧 한 쪽 이동이다. */
     var inStage=stage && (ev.target===stage || stage.contains(ev.target));
     if (!inStage) return;
+    /* 연속 판면에서는 브라우저의 자연스러운 세로 스크롤을 그대로 둔다.
+       단일 쪽 보기에서만 끝 지점 페이지 넘김을 적용한다. */
+    if (!singlePage && !ev.ctrlKey && !ev.metaKey && !ev.shiftKey) return;
     /* PDF 뷰어 관례: Ctrl/Cmd+휠은 현재 쪽의 확대율을 바꾼다. 브라우저의
        기본 페이지 확대가 실행되지 않도록 먼저 이벤트를 소비한다. */
     if (ev.ctrlKey || ev.metaKey){
@@ -1346,6 +1367,15 @@ JS = r"""
       setReflow(!document.body.classList.contains('reflow'));
       return;
     }
+    if (k==='p' || k==='P'){
+      ev.preventDefault();
+      singlePage=!singlePage;
+      document.body.classList.toggle('singlepage', singlePage);
+      applyPageVisibility();
+      fit();
+      if (singlePage && stage) stage.scrollTo(0,0);
+      return;
+    }
     if (document.body.classList.contains('reflow')) return;
     if (ev.shiftKey && (k==='ArrowLeft' || k==='ArrowRight')){
       ev.preventDefault();
@@ -1403,7 +1433,17 @@ JS = r"""
   // 적용은 조판이 끝난 뒤에 한다(applyInitialReflow).
   function applyInitialReflow(){
     var saved = null;
-    try { saved = localStorage.getItem('apexPaperReflow'); } catch(e){}
+    try {
+      /* 조판 동작이 바뀐 뒤 예전의 한 쪽/읽기 설정이 새 뷰어를 다시
+         무한 스크롤 또는 빈 화면으로 되돌리지 않도록 한 번만 마이그레이션한다. */
+      var layoutVersion='continuous-pages-v1';
+      if (localStorage.getItem('apexPaperLayoutVersion')!==layoutVersion){
+        localStorage.removeItem('apexPaperReflow');
+        localStorage.setItem('apexPaperLayoutVersion', layoutVersion);
+      } else {
+        saved = localStorage.getItem('apexPaperReflow');
+      }
+    } catch(e){}
     setReflow(saved === null ? (window.innerWidth < 640) : saved === '1');
   }
   try {
@@ -1757,6 +1797,7 @@ HTML = f"""<meta charset="utf-8">
       <dt><kbd>Home</kbd> / <kbd>End</kbd></dt><dd>첫 페이지/마지막 페이지</dd>
       <dt><kbd>M</kbd></dt><dd>메모 목록 열기/닫기</dd>
       <dt><kbd>R</kbd></dt><dd>읽기 모드 전환</dd>
+      <dt><kbd>P</kbd></dt><dd>연속 판면/한 쪽 보기 전환</dd>
       <dt><kbd>Esc</kbd></dt><dd>현재 팝업 닫기</dd>
       <dt><kbd>?</kbd></dt><dd>이 단축키 안내</dd>
     </dl>

@@ -1,0 +1,61 @@
+<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>APEX 논문 뷰어</title>
+  <style>
+    :root{color-scheme:dark;font-family:system-ui,-apple-system,"Segoe UI","Malgun Gothic",sans-serif}
+    *{box-sizing:border-box}
+    html,body{height:100%;margin:0;background:#20242b;color:#eef2f6;overflow:hidden}
+    header{height:48px;display:flex;align-items:center;gap:8px;padding:7px 12px;
+      background:#171a20;border-bottom:1px solid #3b414b;box-shadow:0 2px 8px #0005;position:relative;z-index:2}
+    h1{font-size:14px;font-weight:600;margin:0 12px 0 0;white-space:nowrap}
+    button{font:inherit;color:inherit;background:#2b313b;border:1px solid #4c5562;border-radius:5px;
+      padding:6px 11px;cursor:pointer}
+    button:hover,button.on{background:#465467;border-color:#8194ad}
+    .spacer{flex:1}
+    #status{font-size:12px;color:#aeb8c4;white-space:nowrap}
+    #viewer{height:calc(100% - 48px);width:100%;border:0;background:#8f9298}
+    @media(max-width:640px){h1{display:none}#status{display:none}header{gap:5px;padding:6px}}
+  </style>
+</head>
+<body>
+  <header>
+    <h1>APEX — 논문 작업 뷰어</h1>
+    <button id="pdf" type="button">PDF</button>
+    <button id="html" type="button" class="on">판면 HTML</button>
+    <button id="reload" type="button" title="HTML을 다시 조판">새로고침</button>
+    <span class="spacer"></span>
+    <span id="status">PDF 확인 중…</span>
+  </header>
+  <iframe id="viewer" title="APEX 논문" src="MANUSCRIPT_ko_preview.html"></iframe>
+  <script>
+    (function(){
+      var frame=document.getElementById('viewer'), pdf=document.getElementById('pdf'),
+          html=document.getElementById('html'), reload=document.getElementById('reload'),
+          status=document.getElementById('status'), pdfPath='build/review/APEX_review.pdf';
+      function setMode(which){
+        var isPdf=which==='pdf';
+        frame.src=isPdf ? pdfPath : 'MANUSCRIPT_ko_preview.html?viewer='+Date.now();
+        pdf.classList.toggle('on',isPdf); html.classList.toggle('on',!isPdf);
+        status.textContent=isPdf ? '브라우저 PDF 뷰어' : '연속 판면 · 메모/단축키 사용 가능';
+      }
+      pdf.addEventListener('click',function(){setMode('pdf')});
+      html.addEventListener('click',function(){setMode('html')});
+      reload.addEventListener('click',function(){
+        frame.src='MANUSCRIPT_ko_preview.html?viewer='+Date.now();
+        pdf.classList.remove('on'); html.classList.add('on');
+        status.textContent='다시 조판하는 중…';
+      });
+      frame.addEventListener('load',function(){
+        if(frame.src.indexOf('APEX_review.pdf')<0)
+          status.textContent='연속 판면 · 메모/단축키 사용 가능';
+      });
+      fetch(pdfPath,{method:'HEAD',cache:'no-store'}).then(function(r){
+        status.textContent=r.ok ? 'PDF와 판면 HTML 준비됨' : '판면 HTML 준비됨 (PDF 먼저 빌드 필요)';
+      }).catch(function(){status.textContent='판면 HTML 준비됨 (로컬 파일 모드)'});
+    })();
+  </script>
+</body>
+</html>

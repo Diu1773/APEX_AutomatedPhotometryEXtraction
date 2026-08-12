@@ -1,0 +1,35 @@
+\paragraph*{}소형·중형 지상망원경의 raw CCD 자료에서 성단의 색-등급도(color-magnitude diagram,
+\paragraph*{}CMD)나 변광성의 광도 곡선을 얻으려면 검출기 보정, 프레임 품질 관리, 천체 검출,
+\paragraph*{}측성, 반복 측광과 최종 분석을 연속해서 수행해야 한다. 각 연산에는 여러 도구가
+\paragraph*{}있지만, 여러 도구를 연결한 결과가 어느 단계까지 재현되며 관측 조건이 바뀔 때 어디서
+\paragraph*{}성능이 무너지는지는 통합 소프트웨어 자체에 대해 확인해야 한다. APEX(Automated
+\paragraph*{}Photometry EXtraction)는 raw 입력부터 CMD 또는 다중야간 light-curve(LC)까지를 한
+\paragraph*{}데스크톱 GUI에서 처리하며, 이 연구는 그 경로의 단계별 수치 일치도와 실패 경계를
+\paragraph*{}검증하였다.
+\paragraph*{}APEX의 GUI는 bias·dark·flat 보정부터 프레임 QC, 천체 검출, WCS, 마스터 목록,
+\paragraph*{}강제 구경 또는 PSF 측광과 후속 CMD·LC 분석까지의 파라미터와 중간 산출물을 단계별로
+\paragraph*{}제시한다. 계산부는 Qt와 분리하였고, 입력·설정·산출물의 경로와 signature를 manifest에
+\paragraph*{}기록하여 같은 계산 모듈을 헤드리스 경로에서도 실행할 수 있게 하였다. SEP,
+\paragraph*{}photutils, Astropy와 SciPy의 표준 연산을 사용하되, 외부 인덱스가 필요 없는 내장 quad
+\paragraph*{}WCS와 처리 순서, 수용 기준 및 단계 사이의 자료 계약은 APEX에서 구현하였다.
+\paragraph*{}검증은 주입 참값, 독립 코드, 외부 파이프라인과의 비교로 구성하였다. Python
+\paragraph*{}\texttt{\detokenize{ccdproc}}, IRAF \texttt{\detokenize{ccdproc}}, BANZAI와 비교한 검출기 보정은 단계별 절대 통계에서
+\paragraph*{}일치하였다. M13 8개 프레임에서 내장 WCS의 Gaia 잔차 중앙값은 0.137 arcsec였고,
+\paragraph*{}ASTAP과 astrometry.net은 0.195 arcsec였으며, 프레임당 실행 시간은 각각 11.1 s와
+\paragraph*{}3.1 s였다. 주입 구경 측광의 pull 표준편차는 1.014였고, 독립 구경 측광과의 MAD는
+\paragraph*{}합성 자료에서 0.006 mag, NGC 6811 실측 자료에서 0.0097 mag였다. M13 영상에 주입한
+\paragraph*{}400개 별의 독립 PSF 비교에서는 APEX가 304개(0.76), IRAF/DAOPHOT ALLSTAR가
+\paragraph*{}260개(0.65)를 남겼으나, 두 엔진 모두 측정한 별에서는 ALLSTAR가 네 혼잡도 구간 중
+\paragraph*{}세 구간에서 더 작은 산포를 보였다. 또한 측정 S/N에 의존하는 APEX 품질 컷은 가장
+\paragraph*{}어두운 구간에 선택 편향을 만들었다. 따라서 회수율, 측정 정밀도와 품질 컷 뒤의 표본
+\paragraph*{}편향을 하나의 우열로 합치지 않고 각각 보고하였다. 다섯 성단의 구경–PSF 대조에서는
+\paragraph*{}열린 성단의 구경 측광 혼잡 벌점이 1.00–1.28로 작았고, 구상성단 세 개의 1.46–3.53배 벌점은
+\paragraph*{}PSF 측광에서 1.12–2.05배로 줄었다.
+\paragraph*{}최종 산출물에서는 NGC 6811 CMD의 외부 목록 ridgeline RMS가 18.7 mmag였고, YZ Boo의
+\paragraph*{}단일 밤 Lomb–Scargle 주기는 0.10464일로 문헌값 0.104092일과 47 s 차이였다. 이 결과는 APEX가 raw
+\paragraph*{}입력부터 CMD·LC까지 실행 가능한 한 경로를 제공하며, 각 단계의 일치도와 적용 경계를
+\paragraph*{}같은 처리 기록에서 추적할 수 있음을 보인다. 검증 범위는 사용한 검출기·배경·시상·천체
+\paragraph*{}밀도와 실행 조건에 한정되며, 강한 공간 배경, 분해 한계보다 작은 겹침, 기기 간 절대
+\paragraph*{}보정의 일반성과 외부 prior 없는 등시선 복원은 포함하지 않는다.
+\medskip
+\textbf{핵심어:} 측광 기법 · 자료 분석 방법 · 소프트웨어 · 산개성단: 개별(NGC 457, NGC 6811) · 구상성단 · 변광성: $\delta$ Scuti
