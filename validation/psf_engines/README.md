@@ -11,6 +11,15 @@
 - `daophot_allstar.py` — WSL PyRAF 로 `phot` → `pstselect` → `psf` → `allstar`
   를 돌리고 평평한 표를 낸다
 - `compare_recovery.py` — 같은 인공별 진리값에 두 엔진을 채점한다
+- `cmd_from_allstar.py` · `cmd_compare_engines.py` — 실제 M13 두 밴드를 각
+  엔진으로 측광해 CMD 를 그린다(정성 확인용)
+
+**이건 정확도(A 축) 대조다 — 성능(속도·CPU·RAM)은 여기서 재지 않는다.**
+`timing.json` 에 태스크별 시간은 남지만 CPU·RAM 은 일부러 안 잡았다. 이유:
+① ALLSTAR 는 WSL(리눅스 VM) 안에서 돌아 Windows 네이티브 APEX 와 자원을 같은
+자로 못 댄다(VM 오버헤드가 섞인다). ② 성능과 정확도는 다른 축이라 섞으면
+안 된다 — APEX 자체 성능은 `benchmark/perf/`(worker 훑기·peak RSS)에 별도로
+있고, IRAF 와의 자원 비교는 조건이 안 맞아 논문에서 주장하지 않는다.
 
 ## 이 실험이 답하는 두 번째 질문 (2026-08-12 추가)
 
