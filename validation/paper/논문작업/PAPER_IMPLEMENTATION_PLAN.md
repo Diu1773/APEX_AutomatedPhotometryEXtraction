@@ -1,7 +1,7 @@
 # APEX 논문·출판 뷰어 구현 계획
 
 이 문서는 국문 정본 `MANUSCRIPT_ko.md`를 기준으로 논문을 검증하고, A&A
-Section 15 (Astronomical instrumentation and methods) 제출본으로 수렴시키기
+Section 15 (Numerical methods and codes) 제출본으로 수렴시키기
 위한 작업 순서와 뷰어의 기준 동작을 고정한다. 원고의 과학적 주장은
 “중소형 지상망원경의 raw CCD 자료를 하나의 GUI 작업면에서 전처리·측성·측광·
 CMD 또는 광도곡선까지 재현 가능하게 연결한다”는 한 문장으로 시작한다.
