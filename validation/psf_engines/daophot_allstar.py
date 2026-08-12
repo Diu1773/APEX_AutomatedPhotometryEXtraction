@@ -110,7 +110,7 @@ iraf.daopars.sannulus = {annulus:.8f}
 iraf.daopars.wsannulus = {dannulus:.8f}
 iraf.daopars.maxiter = {maxiter}
 iraf.daopars.maxnstar = 20000
-iraf.daopars.nclean = 0
+iraf.daopars.nclean = {nclean}
 iraf.daopars.mergerad = "INDEF"
 
 # Every parameter the five tasks will actually use, dumped from IRAF itself
@@ -242,7 +242,7 @@ def run(args: argparse.Namespace) -> dict:
         varorder=args.varorder,
         psfrad=4.0 * fwhm + 1.0,
         fitrad=fitrad,
-        maxiter=args.maxiter,
+        maxiter=args.maxiter, nclean=args.nclean,
         maxnpsf=args.maxnpsf,
         image=f"{IMAGE_STEM}.fits",
         coords="stars.coo",
@@ -289,6 +289,7 @@ def run(args: argparse.Namespace) -> dict:
             "fwhm_px": fwhm, "psfrad_px": 4.0 * fwhm + 1.0,
             "fitrad_px": fitrad, "fitrad_fwhm": fitrad / fwhm,
             "function": args.function, "varorder": args.varorder,
+            "nclean": args.nclean,
             "gain_e_per_adu": args.gain, "readnoise_e": args.readnoise,
             "datamin_adu": args.datamin, "datamax_adu": args.datamax,
             "sky_sigma_adu": stats["sky_sigma"], "zmag": args.zmag,
@@ -340,6 +341,9 @@ def main() -> int:
                     help="0 = 시야 내 일정. APEX 는 프레임당 ePSF 하나이므로 "
                          "0 이 대응된다")
     ap.add_argument("--maxiter", type=int, default=50)
+    ap.add_argument("--nclean", type=int, default=0,
+                    help="psf 가 PSF 별을 정제하는 반복 횟수. 0 은 정제 없음이라 "
+                         "DAOPHOT 에 불리하다 — 사람이 눈으로 걸러내던 단계의 대체물")
     ap.add_argument("--maxnpsf", type=int, default=60)
     args = ap.parse_args()
     run(args)
