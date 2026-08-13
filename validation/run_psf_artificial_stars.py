@@ -76,6 +76,114 @@ def _baseline_step7(baseline_dir: Path, filename: str, explicit: Path | None) ->
     return paths[0] if len(paths) == 1 else None
 
 
+def fit_frame_moffat(
+    image: np.ndarray,
+    step7_table: Path,
+    fwhm_px: float,
+    *,
+    n_stars: int = 40,
+    min_snr: float = 50.0,
+) -> tuple[float, float, int]:
+    """Fit one Moffat profile to the frame's bright isolated real stars.
+
+    The injection experiment needs a truth shape that neither engine built.
+    The baseline ePSF is APEX's own model, so implanting it hands APEX a truth
+    drawn from its model family — the completeness numbers inherit that
+    favour. Fitting an analytic Moffat directly to the frame's real stars
+    (astropy fitter, no Step 8 or DAOPHOT machinery involved) gives a truth
+    that approximates the same real PSF while belonging to neither engine.
+
+    Returns (gamma, alpha, n_used) — the median of per-star fits. Stars are
+    the brightest isolated ones: SNR >= min_snr, nearest catalogue neighbour
+    beyond 6 FWHM, whole stamp inside the frame, no saturation flag.
+    """
+    from astropy.modeling import fitting, functional_models
+    from scipy.spatial import cKDTree
+
+    table = pd.read_csv(step7_table, sep="\t")
+    for column in ("x", "y", "snr"):
+        table[column] = pd.to_numeric(table.get(column), errors="coerce")
+    ok = np.isfinite(table["x"]) & np.isfinite(table["y"]) & np.isfinite(table["snr"])
+    if "is_saturated" in table.columns:
+        ok &= ~table["is_saturated"].astype(str).str.lower().isin({"true", "1"})
+    table = table[ok]
+
+    positions = table[["x", "y"]].to_numpy(float)
+    nn, _ = cKDTree(positions).query(positions, k=2)
+    isolated = nn[:, 1] >= 6.0 * fwhm_px
+    candidates = table[isolated & (table["snr"] >= min_snr)]
+    candidates = candidates.sort_values("snr", ascending=False).head(int(n_stars))
+
+    half = max(3, int(round(2.0 * fwhm_px)))
+    gamma_init = fwhm_px / (2.0 * float(np.sqrt(2.0 ** (1.0 / 2.5) - 1.0)))
+    fitter = fitting.TRFLSQFitter()
+    yy, xx = np.mgrid[-half:half + 1, -half:half + 1].astype(float)
+
+    gammas: list[float] = []
+    alphas: list[float] = []
+    for _, star in candidates.iterrows():
+        cx, cy = int(round(star["x"])), int(round(star["y"]))
+        if not (half <= cx < image.shape[1] - half and half <= cy < image.shape[0] - half):
+            continue
+        stamp = np.asarray(
+            image[cy - half:cy + half + 1, cx - half:cx + half + 1], dtype=float)
+        edge = np.concatenate([stamp[0], stamp[-1], stamp[1:-1, 0], stamp[1:-1, -1]])
+        stamp = stamp - float(np.median(edge))
+        peak = float(stamp.max())
+        if not np.isfinite(peak) or peak <= 0:
+            continue
+        model = functional_models.Moffat2D(
+            amplitude=peak, x_0=0.0, y_0=0.0, gamma=gamma_init, alpha=2.5,
+            bounds={"gamma": (0.5, 6.0 * fwhm_px), "alpha": (1.2, 10.0),
+                    "x_0": (-2.0, 2.0), "y_0": (-2.0, 2.0)},
+        )
+        try:
+            fit = fitter(model, xx, yy, stamp, maxiter=200)
+        except Exception:
+            continue
+        gamma, alpha = float(fit.gamma.value), float(fit.alpha.value)
+        # A fit pinned to a bound, or one that wandered off-centre, is a
+        # neighbour or a cosmetic defect, not the PSF.
+        if (np.hypot(float(fit.x_0.value), float(fit.y_0.value)) > 1.5
+                or not (0.5 < gamma < 5.9 * fwhm_px) or not (1.21 < alpha < 9.9)):
+            continue
+        gammas.append(gamma)
+        alphas.append(alpha)
+
+    if len(gammas) < 8:
+        raise RuntimeError(
+            f"Moffat 적합에 쓸 별이 부족하다: {len(gammas)}개 (최소 8)")
+    return float(np.median(gammas)), float(np.median(alphas)), len(gammas)
+
+
+def make_moffat_sampler(gamma: float, alpha: float, size: int):
+    """Return a kernel sampler evaluating the fitted Moffat analytically.
+
+    Same contract as the ePSF sampler: odd native grid, sub-pixel phases are
+    the source offset from the nearest pixel centre, kernel sums to one so the
+    requested flux is the flux actually implanted within the window.
+    """
+    from astropy.modeling import functional_models
+
+    if size % 2 == 0:
+        size += 1
+    half = size // 2
+    offsets = np.arange(-half, half + 1, dtype=float)
+    yy, xx = np.meshgrid(offsets, offsets, indexing="ij")
+    model = functional_models.Moffat2D(
+        amplitude=1.0, x_0=0.0, y_0=0.0, gamma=float(gamma), alpha=float(alpha))
+
+    def sampler(phase_x: float, phase_y: float) -> np.ndarray:
+        values = model(xx - float(phase_x), yy - float(phase_y))
+        values = np.where(np.isfinite(values), np.maximum(values, 0.0), 0.0)
+        total = float(values.sum())
+        if not np.isfinite(total) or total <= 0:
+            raise ValueError("Moffat kernel has no positive finite flux")
+        return (values / total).astype(np.float64)
+
+    return sampler
+
+
 def _baseline_residual(result_dir: Path, filename: str) -> Path | None:
     psf_dir = result_dir / "cmd_psf"
     for prefix in ("starsub_", "residual_"):
@@ -484,6 +592,15 @@ def main() -> int:
         ),
     )
     parser.add_argument("--force", action="store_true")
+    parser.add_argument(
+        "--inject-kernel", choices=("epsf", "moffat"), default="epsf",
+        help=(
+            "인공별의 참 모양. epsf = 기준선 ePSF (APEX 모형 계열이라 APEX 에 "
+            "유리한 상한). moffat = 프레임의 밝고 고립된 실제 별에 독립 적합한 "
+            "해석 Moffat — 두 엔진 어느 쪽 모형도 아니다."
+        ),
+    )
+    parser.add_argument("--moffat-stars", type=int, default=40)
     args = parser.parse_args()
     if args.trials <= 0 or args.injections <= 0:
         parser.error("--trials and --injections must be positive")
@@ -510,17 +627,38 @@ def main() -> int:
         args.background_rms_adu,
         image,
     )
-    epsf_path = _baseline_epsf(args.baseline_result_dir, args.epsf_model)
-    with fits.open(epsf_path, memmap=False) as hdul:
-        epsf_data = np.asarray(hdul[0].data, dtype=float).copy()
-        epsf_header = hdul[0].header.copy()
-    def kernel_sampler(phase_x: float, phase_y: float) -> np.ndarray:
-        return oversampled_epsf_to_native_kernel(
-            epsf_data,
-            header=epsf_header,
-            phase_x=phase_x,
-            phase_y=phase_y,
-        )
+    moffat_meta: dict = {}
+    if args.inject_kernel == "moffat":
+        step7_path = _baseline_step7(
+            args.baseline_result_dir, args.source_fits.name, args.baseline_step7)
+        if step7_path is None:
+            raise FileNotFoundError("moffat 주입에는 기준선 step7 표가 필요하다")
+        gamma, alpha, n_fit = fit_frame_moffat(
+            image, step7_path, fwhm_px, n_stars=args.moffat_stars)
+        implied_fwhm = 2.0 * gamma * float(np.sqrt(2.0 ** (1.0 / alpha) - 1.0))
+        size = int(round(4.0 * fwhm_px)) | 1
+        kernel_sampler = make_moffat_sampler(gamma, alpha, size)
+        moffat_meta = {
+            "inject_kernel": "moffat", "moffat_gamma": gamma,
+            "moffat_alpha": alpha, "moffat_fit_stars": n_fit,
+            "moffat_implied_fwhm_px": implied_fwhm,
+        }
+        print(
+            f"주입 커널 = 독립 Moffat: gamma={gamma:.3f} alpha={alpha:.3f} "
+            f"(별 {n_fit}개, 함의 FWHM {implied_fwhm:.2f}px vs 측정 {fwhm_px:.2f}px)")
+    else:
+        epsf_path = _baseline_epsf(args.baseline_result_dir, args.epsf_model)
+        with fits.open(epsf_path, memmap=False) as hdul:
+            epsf_data = np.asarray(hdul[0].data, dtype=float).copy()
+            epsf_header = hdul[0].header.copy()
+        def kernel_sampler(phase_x: float, phase_y: float) -> np.ndarray:
+            return oversampled_epsf_to_native_kernel(
+                epsf_data,
+                header=epsf_header,
+                phase_x=phase_x,
+                phase_y=phase_y,
+            )
+        moffat_meta = {"inject_kernel": "epsf"}
 
     kernel = kernel_sampler(0.0, 0.0)
     nea = psf_noise_equivalent_area(kernel)
@@ -540,7 +678,7 @@ def main() -> int:
     truth_all = pd.concat(truths, ignore_index=True)
     recovery_all = pd.concat(recoveries, ignore_index=True)
     summary = aggregate_recovery_metrics(recovery_all)
-    write_benchmark_outputs(truth_all, recovery_all, summary, args.output_dir, metadata={"source_fits": str(args.source_fits), "trials": args.trials, "injections_per_trial": args.injections, "seed": args.seed, "fwhm_px": fwhm_px, "gain_e_per_adu": gain, "background_rms_adu": background_rms, "psf_nea_px": nea, "flux_scale": args.flux_scale, "fit_shape_fwhm_mult": args.fit_shape_fwhm_mult, "fit_window_mode": args.fit_window_mode, "fit_encircled_energy": args.fit_encircled_energy, "postfit_qfit_noise_max": args.postfit_qfit_noise_max, "use_grouper": args.use_grouper, "grouper_max_size": args.grouper_max_size, "grouper_radius_fwhm": args.grouper_radius_fwhm, "forced_match_radius_fwhm": args.forced_match_radius_fwhm, "reused_baseline_detection": bool(args.reuse_baseline_detection), "baseline_residual": str(residual_path) if residual_path is not None else None})
+    write_benchmark_outputs(truth_all, recovery_all, summary, args.output_dir, metadata={"source_fits": str(args.source_fits), "trials": args.trials, "injections_per_trial": args.injections, "seed": args.seed, "fwhm_px": fwhm_px, "gain_e_per_adu": gain, "background_rms_adu": background_rms, "psf_nea_px": nea, "flux_scale": args.flux_scale, "fit_shape_fwhm_mult": args.fit_shape_fwhm_mult, "fit_window_mode": args.fit_window_mode, "fit_encircled_energy": args.fit_encircled_energy, "postfit_qfit_noise_max": args.postfit_qfit_noise_max, "use_grouper": args.use_grouper, "grouper_max_size": args.grouper_max_size, "grouper_radius_fwhm": args.grouper_radius_fwhm, "forced_match_radius_fwhm": args.forced_match_radius_fwhm, "reused_baseline_detection": bool(args.reuse_baseline_detection), "baseline_residual": str(residual_path) if residual_path is not None else None, **moffat_meta})
     return 0
 
 

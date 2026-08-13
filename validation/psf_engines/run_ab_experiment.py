@@ -58,20 +58,29 @@ def main() -> int:
     ap.add_argument("--fitrad-fwhm", type=float, default=1.7,
                     help="APEX 의 포위에너지 90 %% 창에 맞춘 값. 이 교란요인은 "
                          "2026-08-12 에 결론을 안 바꾼다고 확인됐다")
+    ap.add_argument("--inject-kernel", choices=("epsf", "moffat"), default="epsf",
+                    help="인공별의 참 모양. epsf = APEX 모형 계열(APEX 에 유리한 "
+                         "상한) · moffat = 프레임 실별에 독립 적합, 두 엔진 어느 "
+                         "쪽 모형도 아님")
     ap.add_argument("--phase3", default=r"E:\APEX_validation\phase3")
     ap.add_argument("--work", default=r"E:\APEX_validation\psf_engines")
     args = ap.parse_args()
 
     target = Path(args.phase3) / args.target
-    work = Path(args.work) / f"{args.target}_ast{args.trials}x{args.injections}"
+    # The ePSF- and Moffat-injection runs must not share a directory or a
+    # pooled CSV; the second would silently replace the first's numbers.
+    tag = "" if args.inject_kernel == "epsf" else f"_{args.inject_kernel}"
+    work = Path(args.work) / f"{args.target}_ast{args.trials}x{args.injections}{tag}"
+    pooled_csv = HERE / f"recovery_comparison_pooled{tag or ''}.csv"
     log(f"{args.target} · {args.frame} · {args.trials}회 x {args.injections}개 "
-        f"· 산출 {work}")
+        f"· 주입 커널 {args.inject_kernel} · 산출 {work}")
 
     run([str(VENV), "-X", "utf8", "validation/run_psf_artificial_stars.py",
          "--source-fits", str(target / "sci" / args.frame),
          "--baseline-result-dir", str(target / "result"),
          "--parameter-file", str(target / "apex_config.json"),
          "--output-dir", str(work),
+         "--inject-kernel", args.inject_kernel,
          "--trials", str(args.trials), "--injections", str(args.injections)],
         "APEX 주입 + step4 + step8")
 
@@ -121,7 +130,7 @@ def main() -> int:
     pooled["completeness"] = pooled["n_recovered"] / pooled["n_truth"]
 
     combined.to_csv(work / "comparison_all_trials.csv", index=False)
-    pooled.to_csv(HERE / "recovery_comparison_pooled.csv", index=False)
+    pooled.to_csv(pooled_csv, index=False)
 
     header = (f"{'engine':>20}{'scope':>10}{'label':>16}{'N':>6}{'rec':>6}"
               f"{'compl':>8}{'bias':>9}{'scatter':>9}")
@@ -136,7 +145,7 @@ def main() -> int:
                   f"{r['completeness']:>8.2f}{r['bias_mag']:>9.3f}"
                   f"{r['scatter_mag']:>9.3f}")
         print()
-    log(f"saved -> {HERE / 'recovery_comparison_pooled.csv'}")
+    log(f"saved -> {pooled_csv}")
     return 0
 
 
