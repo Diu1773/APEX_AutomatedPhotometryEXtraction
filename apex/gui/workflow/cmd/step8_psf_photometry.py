@@ -361,6 +361,10 @@ def load_psf_qc_inputs(psf_dir: Path) -> tuple[pd.DataFrame, pd.DataFrame, pd.Da
         base_meta = {
             "file": m.get("file", mf.name.replace("residual_meta_", "", 1).replace(".json", "")),
             "filter": m.get("filter", "?"),
+            # Older products predate this field; "?" marks them as unknown
+            # rather than silently claiming the current default.
+            "psf_build_mode": m.get("psf_build_mode", "?"),
+            "psf_fit_engine": m.get("psf_fit_engine", "?"),
             "core_cut_enabled": bool(core.get("enabled", False)),
             "core_cut_x_px": core.get("center_x", np.nan),
             "core_cut_y_px": core.get("center_y", np.nan),
@@ -707,6 +711,11 @@ def _build_psf_frame_qc_table(idx: pd.DataFrame, meta_df: pd.DataFrame | None = 
 
         filt = _first_value(frame_sub, "filter", _first_value(meta_sub, "filter", ""))
         filt = normalize_filter_name(filt)
+        # Which PSF model produced this frame's magnitudes. The per-frame QC
+        # table is where a reader compares frames, so a mixed-mode result set
+        # has to be visible here rather than only inside each residual JSON.
+        build_mode = _first_value(meta_sub, "psf_build_mode", "?")
+        fit_engine = _first_value(meta_sub, "psf_fit_engine", "?")
 
         if "iter" in meta_sub.columns:
             meta_sub["iter"] = pd.to_numeric(meta_sub["iter"], errors="coerce")
@@ -742,6 +751,8 @@ def _build_psf_frame_qc_table(idx: pd.DataFrame, meta_df: pd.DataFrame | None = 
         rows.append({
             "file": fname,
             "filter": filt,
+            "psf_build_mode": build_mode,
+            "psf_fit_engine": fit_engine,
             "frame_fwhm_px": _first_value(frame_sub, "frame_fwhm_px", np.nan),
             "frame_fwhm_arcsec": _first_value(frame_sub, "frame_fwhm_arcsec", np.nan),
             "psf_qc_status": _first_value(frame_sub, "psf_qc_status", ""),
@@ -2490,11 +2501,22 @@ class Step6PSFWorker(QThread):
             if psf_fit_engine_cfg not in ("photutils", "apex_iterative"):
                 psf_fit_engine_cfg = "apex_iterative"
             psf_build_mode_cfg = str(getattr(P, "psf_build_mode", "epsf")).strip().lower()
-            if psf_build_mode_cfg != "epsf":
+            if psf_build_mode_cfg not in ("epsf", "moffat"):
                 self._log(
-                    f"PSF build mode '{psf_build_mode_cfg}' is experimental/disabled; forcing epsf"
+                    f"PSF build mode '{psf_build_mode_cfg}' is unknown; using epsf"
                 )
                 psf_build_mode_cfg = "epsf"
+            if psf_build_mode_cfg == "moffat":
+                # An analytic Moffat is smooth by construction, so it does not
+                # carry the reference stars' pixel noise into every fit the way
+                # the empirical grid does. It is also circular: astropy's
+                # Moffat2D has no axis ratio, and this frame's bright stars run
+                # 8-12 % elongated (p90 ~1.45), which the empirical ePSF
+                # reproduces and this model cannot.
+                self._log(
+                    "PSF build mode 'moffat': analytic model, no empirical "
+                    "residual grid. Circular by construction — check elongation."
+                )
             self._log(
                 f"PSF engine={psf_fit_engine_cfg} | build={psf_build_mode_cfg}"
             )
@@ -5351,6 +5373,12 @@ class Step6PSFWorker(QThread):
                     residual_meta = {
                         "file": fname,
                         "filter": this_filter,
+                        # Which PSF model produced these magnitudes. Without it
+                        # an ePSF product and a Moffat product are
+                        # indistinguishable after the fact, and the two differ
+                        # by a median 8 mmag on the same frame.
+                        "psf_build_mode": str(psf_type_built),
+                        "psf_fit_engine": str(psf_fit_engine_cfg),
                         "bkg_med": float(bkg_med),
                         "timing": {
                             "total_s": float(_t_total),
@@ -7997,7 +8025,13 @@ class PSFPhotometryWindow(StepWindowBase):
 
         self.p_build_mode = QComboBox()
         self.p_build_mode.addItem("epsf  —  EPSFBuilder 경험적 PSF", "epsf")
-        self.p_build_mode.setToolTip("Moffat build mode is currently disabled; EPSF is used for Step 8.")
+        self.p_build_mode.addItem("moffat  —  해석 Moffat (γ·β 적합)", "moffat")
+        self.p_build_mode.setToolTip(
+            "epsf: 별 이미지를 그대로 평균낸 경험적 모형. 어떤 모양이든 담지만"
+            " 기준별의 픽셀 잡음도 함께 담는다.\n"
+            "moffat: γ·β 를 적합한 해석 모형. 매끄러워 잡음에 강하지만"
+            " 원형이라 늘어난 별은 못 맞춘다."
+        )
         _bm = str(getattr(self.params.P, "psf_build_mode", "epsf")).strip().lower()
         _bi = self.p_build_mode.findData(_bm)
         self.p_build_mode.setCurrentIndex(_bi if _bi >= 0 else 0)
