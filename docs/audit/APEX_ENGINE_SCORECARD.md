@@ -100,20 +100,19 @@ C 축은 여전히 자료가 없으면 어떤 작업으로도 못 메운다.
    Moffat 으로 다시 심어도 APEX 완전도 불변(0.76→0.76)·DAOPHOT 정밀 우위
    유지(4/4 구간) — **두 결론 모두 주입 편향의 산물이 아니다.** PSF A 축의
    교란요인은 전부 닫혔고, 남은 한계는 1 기기·1 프레임뿐이다.
-2. **PSF 모형 방식 다이얼 — 잠금 해제 + 검증 (B축 강화, 제품 백로그).**
-   A축 대조가 밝힌 것: APEX 의 산포가 큰 원인은 기준별 선정이 아니라 **모형 방식**
-   (경험적 ePSF 가 유연한 대가로 기준별 잡음을 흡수, DAOPHOT 의 Moffat 은 매끄러움으로
-   걸러냄). **다이얼은 이미 있다** — `psf_build_mode`(epsf/moffat) · `_build_moffat_psf()`
-   (γ·β 자유 적합) · moffat 평가기·실행경로가 다 구현돼 있고 **두 곳에서 잠겨만**
-   있다: GUI 콤보박스가 epsf 하나만 노출(line 7999, 툴팁 `currently disabled`)하고,
-   런타임 `step8_psf_photometry.py:2493–2497` 이 moffat 이어도 epsf 로 되돌린다.
-   단 해석함수 종류는 DAOPHOT 보다 좁다 — APEX 는 {epsf, moffat}, DAOPHOT 은
-   gauss·moffat15·moffat25·lorentz·penny 중 자동 선택. 잠금을 풀고 APEX-Moffat vs APEX-ePSF vs
-   DAOPHOT 3자 재실험(같은 인공별 400 개)으로 Moffat 이 산포를 줄이는지 확인한다.
-   줄이면 **APEX 가 "정밀도까지 사용자가 다이얼로 고르는" B축 강점을 얻는다** —
-   사용자 지목 방향(*"트레이드오프를 파라미터로 조절, 그게 apex 의 의미"*).
-   상세는 메모리 `project_psf_model_dial`. (`varorder` 교란은 2026-08-12 해소 — 시야
-   변화를 줘도 결론 안 바뀜, 즉 "프레임당 ePSF 하나"는 한계가 아니다.)
+2. ~~PSF 모형 방식 다이얼 — 잠금 해제 + 검증~~ → **2026-08-14 완료.**
+   잠금 두 곳(GUI 콤보박스·런타임 강제 되돌림)을 풀고 3 자 재실험을 돌렸다.
+   같은 주입 자료·같은 별(n=187)에서 **APEX-Moffat 이 산포 0.051 → 0.041 로
+   ALLSTAR(0.029)와의 격차를 절반 메우고, 완전도는 0.76 → 0.70 으로 내준다.**
+   즉 모형 방식이 원인의 절반이고, 나머지 절반은 혼잡 처리다 — 가장 혼잡한
+   칸에서 Moffat 은 전혀 도움이 안 되고(0.082) ALLSTAR 만 0.039 로 앞선다.
+   **정밀도↔완전도 다이얼이 수치로 실증됐다.** 산출물에 `psf_build_mode` 를
+   기록하도록 했다(그전에는 ePSF 판과 Moffat 판이 사후 구분 불가였다).
+   `validation/psf_engines/README.md` · `recovery_three_engines.csv`.
+   남은 후속은 **혼잡 처리** — ALLSTAR 의 동시 그룹 적합이 APEX 의 국소
+   그룹화와 무엇이 다른지. 그리고 Moffat 은 원형이라(astropy Moffat2D 에
+   축비 없음) 이 프레임의 타원율 중앙 1.085·p90 1.44 를 못 담는다.
+
 3. **LCO fa05 103 장의 보정 프레임 공개 여부** — C 축의 유일한 실행 경로.
    없으면 RLEVEL 91 에서 Step 1 부터 시작해야 하고, 그러면 "raw→science 통합"이
    아니라 "측광 사슬만"의 다기기 근거가 된다.
