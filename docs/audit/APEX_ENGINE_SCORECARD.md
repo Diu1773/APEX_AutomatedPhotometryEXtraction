@@ -104,8 +104,11 @@ C 축은 여전히 자료가 없으면 어떤 작업으로도 못 메운다.
    A축 대조가 밝힌 것: APEX 의 산포가 큰 원인은 기준별 선정이 아니라 **모형 방식**
    (경험적 ePSF 가 유연한 대가로 기준별 잡음을 흡수, DAOPHOT 의 Moffat 은 매끄러움으로
    걸러냄). **다이얼은 이미 있다** — `psf_build_mode`(epsf/moffat) · `_build_moffat_psf()`
-   · GUI 콤보박스가 다 구현돼 있고 `step8_psf_photometry.py:2493–2497` 에서
-   `experimental/disabled` 로 잠겨만 있다. 잠금을 풀고 APEX-Moffat vs APEX-ePSF vs
+   (γ·β 자유 적합) · moffat 평가기·실행경로가 다 구현돼 있고 **두 곳에서 잠겨만**
+   있다: GUI 콤보박스가 epsf 하나만 노출(line 7999, 툴팁 `currently disabled`)하고,
+   런타임 `step8_psf_photometry.py:2493–2497` 이 moffat 이어도 epsf 로 되돌린다.
+   단 해석함수 종류는 DAOPHOT 보다 좁다 — APEX 는 {epsf, moffat}, DAOPHOT 은
+   gauss·moffat15·moffat25·lorentz·penny 중 자동 선택. 잠금을 풀고 APEX-Moffat vs APEX-ePSF vs
    DAOPHOT 3자 재실험(같은 인공별 400 개)으로 Moffat 이 산포를 줄이는지 확인한다.
    줄이면 **APEX 가 "정밀도까지 사용자가 다이얼로 고르는" B축 강점을 얻는다** —
    사용자 지목 방향(*"트레이드오프를 파라미터로 조절, 그게 apex 의 의미"*).
