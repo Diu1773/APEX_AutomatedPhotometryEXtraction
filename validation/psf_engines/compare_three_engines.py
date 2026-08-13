@@ -147,6 +147,13 @@ def main() -> int:
             "IRAF ALLSTAR": allstar_scored(truth, dao_csv, args.zmag,
                                            args.itime, args.match_radius_px),
         }
+        cubic_tsv = (work / f"apexcubic_trial{trial}" / "result" / "cmd_psf"
+                     / f"photometry_{args.frame}.tsv")
+        if cubic_tsv.exists():
+            # Same ePSF model, cubic instead of linear grid sampling — the
+            # control that isolates interpolation error from model choice.
+            engines["APEX ePSF cubic"] = apex_moffat_scored(
+                truth, cubic_tsv, gates, args.match_radius_px)
         hybrid_tsv = (work / f"apexhybrid_trial{trial}" / "result" / "cmd_psf"
                       / f"photometry_{args.frame}.tsv")
         if hybrid_tsv.exists():
@@ -192,7 +199,8 @@ def main() -> int:
     pooled["completeness"] = pooled["n_recovered"] / pooled["n_truth"]
     pooled.to_csv(args.output, index=False)
 
-    order = ["APEX ePSF", "APEX Moffat", "APEX Moffat+res", "IRAF ALLSTAR"]
+    order = ["APEX ePSF", "APEX ePSF cubic", "APEX Moffat",
+             "APEX Moffat+res", "IRAF ALLSTAR"]
     head = (f"\n{'engine':>14}{'scope':>18}{'label':>16}{'N':>6}{'rec':>6}"
             f"{'compl':>8}{'bias':>9}{'scatter':>9}")
     print(head)

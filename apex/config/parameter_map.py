@@ -347,6 +347,7 @@ CMD_ONLY_TOML_KEY_MAP: tuple[tuple[tuple[str, ...], str], ...] = (
 
 PSF_TOML_KEY_MAP: tuple[tuple[tuple[str, ...], str], ...] = (
     (('psf', 'epsf_oversampling'), 'psf_epsf_oversampling'),
+    (('psf', 'interp_order'), 'psf_interp_order'),
     (('psf', 'epsf_maxiters'), 'psf_epsf_maxiters'),
     (('psf', 'epsf_size_px'), 'psf_epsf_size_px'),
     (('psf', 'epsf_size_fwhm_mult'), 'psf_epsf_size_fwhm_mult'),

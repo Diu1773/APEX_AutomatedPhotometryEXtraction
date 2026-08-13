@@ -843,6 +843,7 @@ class Parameters:
             psf_model_mode="per_frame",
             psf_parallel_workers=_geti(raw, "psf_parallel_workers", 0),
             psf_epsf_oversampling=_geti(raw, "psf_epsf_oversampling", 2),
+            psf_interp_order=_geti(raw, "psf_interp_order", 1),
             psf_epsf_maxiters=_geti(raw, "psf_epsf_maxiters", 5),
             psf_epsf_size_px=_geti(raw, "psf_epsf_size_px", 25),
             psf_epsf_size_fwhm_mult=_getf(raw, "psf_epsf_size_fwhm_mult", 4.0),

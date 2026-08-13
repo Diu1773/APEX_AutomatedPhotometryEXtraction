@@ -1495,10 +1495,21 @@ def build_moffat_hybrid_psf(epsf_model, analytic, oversampling: int) -> MoffatHy
 
 # ── Unified PSF evaluator (EPSF, Moffat, or the hybrid) ──────────────────────
 
-def _make_psf_evaluator(psf_model, psf_type: str, oversampling: int = 2):
+def _make_psf_evaluator(psf_model, psf_type: str, oversampling: int = 2,
+                        interp_order: int = 1):
     """Return eval_fn(dx_2d, dy_2d) -> normalized PSF values.
+
     dx, dy are pixel offsets from star centre.  Output sums to ≈ 1 / pixel².
+
+    ``interp_order`` is the spline order used to sample the oversampled grid.
+    It is a knob rather than a constant because the grid is what a sub-pixel
+    fit interpolates, and on a core that falls by roughly a factor of two per
+    pixel the interpolation is itself a source of error — the same error the
+    hybrid model avoids by evaluating its analytic part in closed form. Raising
+    the order is the cheap control that separates "the hybrid helped because it
+    is analytic" from "it helped because linear interpolation was the problem".
     """
+    order = int(np.clip(int(interp_order), 1, 5))
     if psf_type == 'moffat_hybrid':
         from scipy.ndimage import map_coordinates as _mc
         res = psf_model.residual
@@ -1513,7 +1524,7 @@ def _make_psf_evaluator(psf_model, psf_type: str, oversampling: int = 2):
             # Leftover: small and smooth, so linear interpolation is cheap here.
             # Already on the evaluator's normalisation — no os**2 factor.
             vals = _mc(res, [dy_a.ravel() * os + cy, dx_a.ravel() * os + cx],
-                       order=1, mode='constant', cval=0.0)
+                       order=order, mode='constant', cval=0.0)
             return core + vals.reshape(dx_a.shape)
         return _eval_hybrid
 
@@ -1538,7 +1549,7 @@ def _make_psf_evaluator(psf_model, psf_type: str, oversampling: int = 2):
         dy_a = np.asarray(dy, dtype=float)
         coords_y = dy_a.ravel() * os + cy
         coords_x = dx_a.ravel() * os + cx
-        vals = _mc(psf_data, [coords_y, coords_x], order=1, mode='constant', cval=0.0)
+        vals = _mc(psf_data, [coords_y, coords_x], order=order, mode='constant', cval=0.0)
         return (vals / norm).reshape(dx_a.shape)
 
     return _eval_epsf
@@ -2592,6 +2603,13 @@ class Step6PSFWorker(QThread):
                     f"PSF build mode '{psf_build_mode_cfg}' is unknown; using epsf"
                 )
                 psf_build_mode_cfg = "epsf"
+            # How the oversampled grid is sampled at sub-pixel offsets. Linear
+            # has been the only behaviour; higher orders are the control for
+            # whether interpolation error was costing accuracy.
+            psf_interp_order = int(np.clip(
+                _to_int(getattr(P, "psf_interp_order", 1), 1), 1, 5))
+            if psf_interp_order != 1:
+                self._log(f"PSF grid interpolation order = {psf_interp_order}")
             if psf_build_mode_cfg == "moffat_hybrid":
                 self._log(
                     "PSF build mode 'moffat_hybrid': analytic Moffat evaluated in "
@@ -3413,7 +3431,8 @@ class Step6PSFWorker(QThread):
                                 for _si in range(n_substar_iters):
                                     # Full source model (all detected)
                                     _rough_eval = _make_psf_evaluator(
-                                        _rough_epsf, psf_type_built, oversampling
+                                        _rough_epsf, psf_type_built, oversampling,
+                                        psf_interp_order
                                     )
 
                                     # PSF-star-only model (add back after subtraction)
@@ -3558,7 +3577,8 @@ class Step6PSFWorker(QThread):
 
                     try:
                         _policy_evaluator = _make_psf_evaluator(
-                            epsf_model, psf_type_built, oversampling
+                            epsf_model, psf_type_built, oversampling,
+                            psf_interp_order
                         )
                         _native_psf_policy = _sample_native_psf(
                             _policy_evaluator, epsf_size_frame
@@ -4067,7 +4087,8 @@ class Step6PSFWorker(QThread):
 
                     if psf_fit_engine_cfg == 'apex_iterative':
                         self.worker_status.emit(wid, fname, "APEX iterative fit", 70)
-                        _psf_evaluator = _make_psf_evaluator(epsf_model, psf_type_built, oversampling)
+                        _psf_evaluator = _make_psf_evaluator(
+                            epsf_model, psf_type_built, oversampling, psf_interp_order)
 
                         # Outer loop: ALLSTAR fit → residual → re-detect → add → repeat
                         # max_iter controls number of find+fit cycles (DAOPHOT style)
