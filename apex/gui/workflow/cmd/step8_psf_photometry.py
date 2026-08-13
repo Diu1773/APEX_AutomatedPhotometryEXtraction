@@ -1425,12 +1425,98 @@ def _build_moffat_psf(img_sub: np.ndarray, xy_stars: np.ndarray,
     return model, n_good
 
 
-# ── Unified PSF evaluator (EPSF or Moffat) ───────────────────────────────────
+class MoffatHybridPSF:
+    """An analytic Moffat plus the grid of what it missed — DAOPHOT's shape.
+
+    The empirical ePSF and the analytic Moffat are the two extremes APEX
+    already had, and DAOPHOT beats both by sitting between them: five fitted
+    numbers carry the bulk of the light, and a look-up table carries only the
+    leftover (0.4 % of the model's flux on the M13 frame measured 2026-08-14).
+
+    Decomposing does not by itself reduce noise — averaging N stars gives the
+    same σ/√N either way. What it removes is *interpolation* error. A star's
+    fit samples the model at sub-pixel offsets, and APEX interpolates its ePSF
+    linearly; on a core that falls by roughly a factor of two per pixel that
+    interpolation is itself a source of error. Here the steep part is evaluated
+    from the closed-form Moffat at the exact offset, and only the small, smooth
+    residual is interpolated.
+
+    ``residual`` is stored on the same oversampled grid as the ePSF it came
+    from, already normalised the same way, so the two pieces add directly.
+    """
+
+    def __init__(self, analytic, residual: np.ndarray, oversampling: int):
+        self.analytic = analytic
+        self.residual = np.asarray(residual, dtype=float)
+        self.oversampling = max(1, int(oversampling))
+
+    def _grid_offsets(self) -> tuple[np.ndarray, np.ndarray]:
+        ny, nx = self.residual.shape
+        yy, xx = np.mgrid[:ny, :nx].astype(float)
+        os = self.oversampling
+        return ((xx - (nx - 1) / 2.0) / os, (yy - (ny - 1) / 2.0) / os)
+
+    @property
+    def data(self) -> np.ndarray:
+        """Rendered model on the oversampled grid, for QC and file output.
+
+        Both pieces live on the evaluator's normalisation (values that sum to
+        ~1 when sampled at native spacing), so they add with no extra factor.
+        """
+        dx, dy = self._grid_offsets()
+        return np.asarray(self.analytic(dx, dy), dtype=float) + self.residual
+
+
+def build_moffat_hybrid_psf(epsf_model, analytic, oversampling: int) -> MoffatHybridPSF:
+    """Split an ePSF into an analytic core and the residual it leaves behind.
+
+    The ePSF is the empirical average of the reference stars, so subtracting
+    the analytic evaluated on the same grid gives exactly "what the analytic
+    missed", averaged over the same stars — no separate stacking pass and no
+    new star-selection policy.
+    """
+    grid = np.asarray(epsf_model.data, dtype=float)
+    os = max(1, int(oversampling))
+    ny, nx = grid.shape
+    yy, xx = np.mgrid[:ny, :nx].astype(float)
+    dx = (xx - (nx - 1) / 2.0) / os
+    dy = (yy - (ny - 1) / 2.0) / os
+
+    # Put the ePSF on the evaluator's normalisation — the same `sum()/os**2`
+    # the ePSF evaluator divides by — so that sampling it at native spacing
+    # sums to 1. The analytic already integrates to 1 per native pixel, so the
+    # two are directly comparable and the residual is their difference.
+    norm = grid.sum() / os ** 2
+    if not np.isfinite(norm) or norm <= 0:
+        norm = 1.0
+    residual = grid / norm - np.asarray(analytic(dx, dy), dtype=float)
+    return MoffatHybridPSF(analytic, residual, os)
+
+
+# ── Unified PSF evaluator (EPSF, Moffat, or the hybrid) ──────────────────────
 
 def _make_psf_evaluator(psf_model, psf_type: str, oversampling: int = 2):
     """Return eval_fn(dx_2d, dy_2d) -> normalized PSF values.
     dx, dy are pixel offsets from star centre.  Output sums to ≈ 1 / pixel².
     """
+    if psf_type == 'moffat_hybrid':
+        from scipy.ndimage import map_coordinates as _mc
+        res = psf_model.residual
+        os = max(1, int(psf_model.oversampling))
+        cy, cx = res.shape[0] // 2, res.shape[1] // 2
+
+        def _eval_hybrid(dx, dy):
+            dx_a = np.asarray(dx, dtype=float)
+            dy_a = np.asarray(dy, dtype=float)
+            # Steep part: closed form at the exact offset, no interpolation.
+            core = np.asarray(psf_model.analytic(dx_a, dy_a), dtype=float)
+            # Leftover: small and smooth, so linear interpolation is cheap here.
+            # Already on the evaluator's normalisation — no os**2 factor.
+            vals = _mc(res, [dy_a.ravel() * os + cy, dx_a.ravel() * os + cx],
+                       order=1, mode='constant', cval=0.0)
+            return core + vals.reshape(dx_a.shape)
+        return _eval_hybrid
+
     if psf_type == 'moffat':
         def _eval_moffat(dx, dy):
             return np.asarray(psf_model(np.asarray(dx, dtype=float),
@@ -2501,11 +2587,17 @@ class Step6PSFWorker(QThread):
             if psf_fit_engine_cfg not in ("photutils", "apex_iterative"):
                 psf_fit_engine_cfg = "apex_iterative"
             psf_build_mode_cfg = str(getattr(P, "psf_build_mode", "epsf")).strip().lower()
-            if psf_build_mode_cfg not in ("epsf", "moffat"):
+            if psf_build_mode_cfg not in ("epsf", "moffat", "moffat_hybrid"):
                 self._log(
                     f"PSF build mode '{psf_build_mode_cfg}' is unknown; using epsf"
                 )
                 psf_build_mode_cfg = "epsf"
+            if psf_build_mode_cfg == "moffat_hybrid":
+                self._log(
+                    "PSF build mode 'moffat_hybrid': analytic Moffat evaluated in "
+                    "closed form plus an interpolated residual grid — the steep "
+                    "core avoids interpolation error, the leftover keeps the shape."
+                )
             if psf_build_mode_cfg == "moffat":
                 # An analytic Moffat is smooth by construction, so it does not
                 # carry the reference stars' pixel noise into every fit the way
@@ -3188,6 +3280,26 @@ class Step6PSFWorker(QThread):
                                 f"[PSF] Moffat build | filter={this_filter} "
                                 f"n_stars={n_moffat_good} fwhm_guess={fwhm_safe:.2f}px"
                             )
+                        elif psf_build_mode_cfg == 'moffat_hybrid':
+                            # Both pieces come from the same reference stars: the
+                            # ePSF is their empirical average, the Moffat is fitted
+                            # to the same cutouts, and the residual is the
+                            # difference. No extra star-selection policy enters.
+                            _epsf_emp, _ = builder(stars_extracted)
+                            _analytic, n_moffat_good = _build_moffat_psf(
+                                img_sub, xy_iso, fwhm_safe, epsf_size_frame, self._log)
+                            epsf = build_moffat_hybrid_psf(
+                                _epsf_emp, _analytic, oversampling)
+                            psf_type_built = 'moffat_hybrid'
+                            _res_frac = (
+                                np.abs(epsf.residual).sum()
+                                / max(np.abs(epsf.data).sum(), 1e-30)
+                            )
+                            self._log(
+                                f"[PSF] Moffat+residual build | filter={this_filter} "
+                                f"n_stars={n_moffat_good} residual={_res_frac * 100:.1f}% "
+                                f"of model"
+                            )
                         else:
                             epsf, _ = builder(stars_extracted)
                             psf_type_built = 'epsf'
@@ -3348,6 +3460,16 @@ class Step6PSFWorker(QThread):
                                         )
                                         break
                                     _rough_epsf, _ = builder(_stars_clean)
+                                    if psf_type_built == 'moffat_hybrid':
+                                        # The rebuild produces a plain ePSF; keep
+                                        # the model the chosen mode promised by
+                                        # re-splitting it against the analytic.
+                                        _rough_epsf = build_moffat_hybrid_psf(
+                                            _rough_epsf, epsf.analytic, oversampling)
+                                    elif psf_type_built == 'moffat':
+                                        # Pure-analytic mode has nothing to refine
+                                        # from a re-stack; keep the fitted Moffat.
+                                        _rough_epsf = epsf
                                     self._log(
                                         f"[EPSF] substar {_si+1}/{n_substar_iters}"
                                         f" | n_psf={len(_stars_clean)}"
@@ -8026,11 +8148,14 @@ class PSFPhotometryWindow(StepWindowBase):
         self.p_build_mode = QComboBox()
         self.p_build_mode.addItem("epsf  —  EPSFBuilder 경험적 PSF", "epsf")
         self.p_build_mode.addItem("moffat  —  해석 Moffat (γ·β 적합)", "moffat")
+        self.p_build_mode.addItem("moffat+residual  —  해석 + 잔차격자", "moffat_hybrid")
         self.p_build_mode.setToolTip(
             "epsf: 별 이미지를 그대로 평균낸 경험적 모형. 어떤 모양이든 담지만"
-            " 기준별의 픽셀 잡음도 함께 담는다.\n"
-            "moffat: γ·β 를 적합한 해석 모형. 매끄러워 잡음에 강하지만"
-            " 원형이라 늘어난 별은 못 맞춘다."
+            " 가파른 핵심까지 보간해야 한다.\n"
+            "moffat: γ·β 를 적합한 해석 모형. 핵심을 정확히 계산하지만"
+            " 원형이라 늘어난 별은 못 맞춘다.\n"
+            "moffat+residual: 핵심은 해석식으로 정확히, 남은 모양은 격자로."
+            " DAOPHOT 과 같은 구성."
         )
         _bm = str(getattr(self.params.P, "psf_build_mode", "epsf")).strip().lower()
         _bi = self.p_build_mode.findData(_bm)

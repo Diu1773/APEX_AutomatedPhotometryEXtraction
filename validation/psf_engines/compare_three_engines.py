@@ -147,6 +147,13 @@ def main() -> int:
             "IRAF ALLSTAR": allstar_scored(truth, dao_csv, args.zmag,
                                            args.itime, args.match_radius_px),
         }
+        hybrid_tsv = (work / f"apexhybrid_trial{trial}" / "result" / "cmd_psf"
+                      / f"photometry_{args.frame}.tsv")
+        if hybrid_tsv.exists():
+            # Scored exactly like the pure-Moffat run: same gates, same
+            # position matching, same instrumental magnitude convention.
+            engines["APEX Moffat+res"] = apex_moffat_scored(
+                truth, hybrid_tsv, gates, args.match_radius_px)
         scored = {}
         for name, frame in engines.items():
             frame, zp = remove_zeropoint(frame, min_snr=args.offset_min_snr,
@@ -185,7 +192,7 @@ def main() -> int:
     pooled["completeness"] = pooled["n_recovered"] / pooled["n_truth"]
     pooled.to_csv(args.output, index=False)
 
-    order = ["APEX ePSF", "APEX Moffat", "IRAF ALLSTAR"]
+    order = ["APEX ePSF", "APEX Moffat", "APEX Moffat+res", "IRAF ALLSTAR"]
     head = (f"\n{'engine':>14}{'scope':>18}{'label':>16}{'N':>6}{'rec':>6}"
             f"{'compl':>8}{'bias':>9}{'scatter':>9}")
     print(head)
@@ -198,7 +205,7 @@ def main() -> int:
                 if r.empty:
                     continue
                 r = r.iloc[0]
-                print(f"{name:>14}{scope:>18}{label:>16}{r['n_truth']:>6}"
+                print(f"{name:>17}{scope:>18}{label:>16}{r['n_truth']:>6}"
                       f"{r['n_recovered']:>6}{r['completeness']:>8.2f}"
                       f"{r['bias_mag']:>9.3f}{r['scatter_mag']:>9.3f}")
         print()
