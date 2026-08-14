@@ -134,18 +134,27 @@ def fit_frame_moffat(
             continue
         model = functional_models.Moffat2D(
             amplitude=peak, x_0=0.0, y_0=0.0, gamma=gamma_init, alpha=2.5,
-            bounds={"gamma": (0.5, 6.0 * fwhm_px), "alpha": (1.2, 10.0),
+            bounds={"gamma": (0.5, 12.0 * fwhm_px), "alpha": (1.2, 60.0),
                     "x_0": (-2.0, 2.0), "y_0": (-2.0, 2.0)},
         )
         try:
-            fit = fitter(model, xx, yy, stamp, maxiter=200)
+            fit = fitter(model, xx, yy, stamp, maxiter=300)
         except Exception:
             continue
         gamma, alpha = float(fit.gamma.value), float(fit.alpha.value)
-        # A fit pinned to a bound, or one that wandered off-centre, is a
-        # neighbour or a cosmetic defect, not the PSF.
+        # Judge the profile, not the parameters. gamma and alpha are degenerate
+        # for a PSF without measurable wings: as alpha grows the Moffat becomes
+        # a Gaussian and gamma grows with it, so both run to whatever bound is
+        # set while the *shape* stays put. Rejecting on `alpha < 9.9` therefore
+        # threw away every star on the LCO 0.4 m frame — 39 of 40 — even though
+        # each fit reproduced the measured FWHM to 2 % (2026-08-14). What the
+        # injection needs is the shape, so that is what is checked; a fit that
+        # wandered off-centre or that does not reproduce the frame's FWHM is a
+        # neighbour or a defect and still goes.
+        implied_fwhm = 2.0 * gamma * float(np.sqrt(2.0 ** (1.0 / alpha) - 1.0))
         if (np.hypot(float(fit.x_0.value), float(fit.y_0.value)) > 1.5
-                or not (0.5 < gamma < 5.9 * fwhm_px) or not (1.21 < alpha < 9.9)):
+                or not np.isfinite(implied_fwhm)
+                or not (0.70 * fwhm_px < implied_fwhm < 1.40 * fwhm_px)):
             continue
         gammas.append(gamma)
         alphas.append(alpha)
