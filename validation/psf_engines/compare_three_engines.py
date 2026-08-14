@@ -154,6 +154,14 @@ def main() -> int:
             # control that isolates interpolation error from model choice.
             engines["APEX ePSF cubic"] = apex_moffat_scored(
                 truth, cubic_tsv, gates, args.match_radius_px)
+        group_tsv = (work / f"apexgroup_trial{trial}" / "result" / "cmd_psf"
+                     / f"photometry_{args.frame}.tsv")
+        if group_tsv.exists():
+            # Same hybrid model and same linear interpolation as "Moffat+res";
+            # the only change is the grouper, enlarged to solve neighbours
+            # jointly the way ALLSTAR does. Isolates simultaneous fitting.
+            engines["APEX hybrid+group"] = apex_moffat_scored(
+                truth, group_tsv, gates, args.match_radius_px)
         hybrid_tsv = (work / f"apexhybrid_trial{trial}" / "result" / "cmd_psf"
                       / f"photometry_{args.frame}.tsv")
         if hybrid_tsv.exists():
@@ -200,7 +208,7 @@ def main() -> int:
     pooled.to_csv(args.output, index=False)
 
     order = ["APEX ePSF", "APEX ePSF cubic", "APEX Moffat",
-             "APEX Moffat+res", "IRAF ALLSTAR"]
+             "APEX Moffat+res", "APEX hybrid+group", "IRAF ALLSTAR"]
     head = (f"\n{'engine':>14}{'scope':>18}{'label':>16}{'N':>6}{'rec':>6}"
             f"{'compl':>8}{'bias':>9}{'scatter':>9}")
     print(head)

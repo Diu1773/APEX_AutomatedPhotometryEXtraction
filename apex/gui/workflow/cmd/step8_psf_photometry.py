@@ -2566,7 +2566,28 @@ class Step6PSFWorker(QThread):
             use_error_image = bool(getattr(P, "psf_use_error_image", True))
             use_grouper = bool(getattr(P, "psf_use_grouper", True))
             grouper_max_size = _to_int(getattr(P, "psf_grouper_max_size", 3), 3)
-            grouper_max_size = min(25, max(1, grouper_max_size))
+            # The ceiling exists because a group is solved as one linear system,
+            # so cost grows faster than the star count; 25 was chosen for a
+            # laptop. It is a resource limit, not a science one, and clamping a
+            # requested 60 down to 25 silently made a grouping experiment
+            # unrunnable (2026-08-14). Keep a bound, but a generous one, and say
+            # so when the request is cut.
+            _requested_group_size = grouper_max_size
+            grouper_max_size = min(200, max(1, grouper_max_size))
+            if grouper_max_size != _requested_group_size:
+                self._log(
+                    f"[APEX] grouper max_size {_requested_group_size} -> "
+                    f"{grouper_max_size} (bound 1-200)"
+                )
+            # How much of a frame may be solved as joint groups. 0.10 keeps the
+            # old default; 1.0 is the ALLSTAR-like setting where every star is
+            # eligible. Cost grows with it, so it stays a user dial.
+            grouper_budget_frac = min(
+                1.0, max(0.0, _to_float(getattr(P, "psf_grouper_budget_frac", 0.10), 0.10))
+            )
+            grouper_budget_cap = max(
+                0, _to_int(getattr(P, "psf_grouper_budget_cap", 200), 200)
+            )
             grouper_radius_fwhm = min(
                 5.0,
                 max(0.5, _to_float(getattr(P, "psf_grouper_radius_fwhm", 1.5), 1.5)),
@@ -4097,9 +4118,15 @@ class Step6PSFWorker(QThread):
                             len(init_params),
                             enabled=use_grouper,
                             requested_max_size=grouper_max_size,
-                            hard_max_size=25,
-                            max_fraction=0.10,
-                            absolute_cap=200,
+                            # Both bounds used to be written here as literals, so
+                            # a configured max_size of 60 silently became 25 and
+                            # only a tenth of the frame was ever solved jointly.
+                            # ALLSTAR groups every star it fits; leaving the
+                            # fraction unreachable made that comparison
+                            # impossible to set up (2026-08-14).
+                            hard_max_size=grouper_max_size,
+                            max_fraction=grouper_budget_frac,
+                            absolute_cap=grouper_budget_cap,
                         )
                         # Respect the shared grouper switch for the APEX engine too.
                         # With the core excluded, single-star neighbour subtraction is
@@ -8536,7 +8563,7 @@ class PSFPhotometryWindow(StepWindowBase):
         fit_form.addRow("", self.p_use_grouper)
 
         self.p_grouper_max_size = QSpinBox()
-        self.p_grouper_max_size.setRange(1, 25)
+        self.p_grouper_max_size.setRange(1, 200)
         self.p_grouper_max_size.setValue(_to_int(getattr(self.params.P, "psf_grouper_max_size", 3), 3))
         self.p_grouper_max_size.setToolTip(
             "1 disables grouping; 2-3 is the CPU default. Groups above 4 use sparse LSQR."
@@ -8554,6 +8581,37 @@ class PSFPhotometryWindow(StepWindowBase):
             "Neighbours inside this separation are fit simultaneously. Larger values cost more CPU."
         )
         fit_form.addRow("Group radius:", self.p_grouper_radius)
+
+        # How much of a frame may be solved jointly. This was a literal 0.10 in
+        # the fitting code, so only a tenth of each frame was ever grouped and
+        # no setting could say otherwise — which made an ALLSTAR-style
+        # comparison impossible to arrange (2026-08-14). 100 % is the
+        # ALLSTAR-like end of the dial.
+        self.p_grouper_budget_frac = QDoubleSpinBox()
+        self.p_grouper_budget_frac.setRange(0.0, 100.0)
+        self.p_grouper_budget_frac.setSingleStep(5.0)
+        self.p_grouper_budget_frac.setSuffix(" %")
+        self.p_grouper_budget_frac.setValue(
+            _to_float(getattr(self.params.P, "psf_grouper_budget_frac", 0.10), 0.10) * 100.0
+        )
+        self.p_grouper_budget_frac.setToolTip(
+            "Share of a frame's sources eligible for simultaneous fitting. "
+            "100 % fits every crowded star jointly, as ALLSTAR does; the "
+            "default 10 % keeps the cost of a dense field bounded."
+        )
+        fit_form.addRow("Group budget:", self.p_grouper_budget_frac)
+
+        self.p_grouper_budget_cap = QSpinBox()
+        self.p_grouper_budget_cap.setRange(0, 100000)
+        self.p_grouper_budget_cap.setSpecialValueText("no cap")
+        self.p_grouper_budget_cap.setValue(
+            _to_int(getattr(self.params.P, "psf_grouper_budget_cap", 200), 200)
+        )
+        self.p_grouper_budget_cap.setToolTip(
+            "Hard ceiling on grouped sources per frame, applied after the "
+            "share above. 0 removes the ceiling."
+        )
+        fit_form.addRow("Group budget cap:", self.p_grouper_budget_cap)
 
         self.p_forced_match_radius = QDoubleSpinBox()
         self.p_forced_match_radius.setRange(0.1, 3.0)
@@ -8645,6 +8703,7 @@ class PSFPhotometryWindow(StepWindowBase):
             self.p_substar_iters, self.p_substar_nei_mult, self.p_substar_max_src,
             self.p_conv_new, self.p_conv_flux, self.p_use_grouper,
             self.p_grouper_max_size, self.p_grouper_radius,
+            self.p_grouper_budget_frac, self.p_grouper_budget_cap,
             self.p_forced_match_radius,
             self.p_sharp_lo, self.p_sharp_hi, self.p_round_max,
         ]
@@ -8690,6 +8749,8 @@ class PSFPhotometryWindow(StepWindowBase):
             self.p_conv_flux.setValue(p["psf_flux_conv_threshold"])
             self.p_use_grouper.setChecked(p["psf_use_grouper"])
             self.p_grouper_radius.setValue(p["psf_grouper_radius_fwhm"])
+            self.p_grouper_budget_frac.setValue(p["psf_grouper_budget_frac"] * 100.0)
+            self.p_grouper_budget_cap.setValue(p["psf_grouper_budget_cap"])
             self.p_forced_match_radius.setValue(p["psf_forced_match_radius_fwhm"])
             self.p_sharp_lo.setValue(p["psf_redetect_sharp_lo"])
             self.p_sharp_hi.setValue(p["psf_redetect_sharp_hi"])
@@ -8710,6 +8771,8 @@ class PSFPhotometryWindow(StepWindowBase):
             self.p_use_error_img.setEnabled(engine == "photutils")
             self.p_grouper_max_size.setEnabled(self.p_use_grouper.isChecked())
             self.p_grouper_radius.setEnabled(self.p_use_grouper.isChecked())
+            self.p_grouper_budget_frac.setEnabled(self.p_use_grouper.isChecked())
+            self.p_grouper_budget_cap.setEnabled(self.p_use_grouper.isChecked())
             scale_enabled = self.p_flux_scale_correction.isChecked()
             for widget in (
                 self.p_flux_scale_min_snr,
@@ -8787,6 +8850,8 @@ class PSFPhotometryWindow(StepWindowBase):
                 (self.p_use_grouper, False),
                 (self.p_grouper_max_size, 3),
                 (self.p_grouper_radius, 1.5),
+                (self.p_grouper_budget_frac, 10.0),
+                (self.p_grouper_budget_cap, 200),
                 (self.p_forced_match_radius, 1.25),
                 (self.p_use_error_img, False),
                 (self.p_shared_filter_epsf, False),
@@ -8859,6 +8924,8 @@ class PSFPhotometryWindow(StepWindowBase):
         self.params.P.psf_use_grouper = self.p_use_grouper.isChecked()
         self.params.P.psf_grouper_max_size = self.p_grouper_max_size.value()
         self.params.P.psf_grouper_radius_fwhm = self.p_grouper_radius.value()
+        self.params.P.psf_grouper_budget_frac = self.p_grouper_budget_frac.value() / 100.0
+        self.params.P.psf_grouper_budget_cap = self.p_grouper_budget_cap.value()
         self.params.P.psf_forced_match_radius_fwhm = self.p_forced_match_radius.value()
         self.params.P.psf_use_error_image = self.p_use_error_img.isChecked()
         self.params.P.psf_shared_filter_epsf = self.p_shared_filter_epsf.isChecked()

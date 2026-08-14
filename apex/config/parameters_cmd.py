@@ -920,6 +920,8 @@ class Parameters:
             psf_shared_filter_epsf=_as_bool(raw.get("psf_shared_filter_epsf", "false"), False),
             psf_grouper_max_size=_geti(raw, "psf_grouper_max_size", 3),
             psf_grouper_radius_fwhm=_getf(raw, "psf_grouper_radius_fwhm", 1.5),
+            psf_grouper_budget_frac=_getf(raw, "psf_grouper_budget_frac", 0.10),
+            psf_grouper_budget_cap=_geti(raw, "psf_grouper_budget_cap", 200),
             psf_forced_match_radius_fwhm=_getf(raw, "psf_forced_match_radius_fwhm", 1.25),
             psf_save_all_iter_residuals=_as_bool(raw.get("psf_save_all_iter_residuals", "false"), False),
             psf_min_epsf_stars=_geti(raw, "psf_min_epsf_stars", 10),
