@@ -82,8 +82,16 @@ def main() -> int:
 
     work = Path(args.work)
     for trial in range(1, args.trials + 1):
-        cmd_dir = work / f"{args.apex_run}_trial{trial}" / "result" / "cmd_psf"
-        psf_files = sorted(cmd_dir.glob("epsf_model_*.fits"))
+        # Two layouts exist: the engine-variant runs are `<run>_trial<N>`, while
+        # the injector writes `trial_000N`. Accept either so a benchmark built
+        # on a new target does not need its own runner.
+        candidates = [work / f"{args.apex_run}_trial{trial}" / "result" / "cmd_psf",
+                      work / f"trial_{trial:04d}" / "result" / "cmd_psf"]
+        psf_files: list[Path] = []
+        for cmd_dir in candidates:
+            psf_files = sorted(cmd_dir.glob("epsf_model_*.fits"))
+            if psf_files:
+                break
         frame_path = work / f"trial_{trial:04d}" / "data" / args.frame
         seeds = (work / f"trial_{trial:04d}" / "result" / "step7_forced_phot"
                  / f"photometry_{args.frame}.tsv")

@@ -185,16 +185,18 @@ def sample_stratified_injections(
     rejected.  A global rejection check also enforces hard separation between
     injected stars, independent of their assigned stratum.
 
-    ``pair_fraction`` adds deliberate blends. Crowding is otherwise inherited
-    from the field: a star lands in a tight-crowding bin only if a *real* star
-    happens to sit nearby, so a sparse field cannot populate those bins at all
-    and the benchmark silently becomes an isolated-star test. Measured on the
-    LCO 1 m frame used for the optics cross-check (2026-08-14): median nearest
-    neighbour 13.0 FWHM, and **zero** sources within 1.5 FWHM, against 3.6 % on
-    the M13 frame where every blend result in this directory was obtained.
-    Injecting companions at chosen separations makes the blend regime
-    reproducible on any field, which is what lets an optics- or
-    sampling-generality claim cover it.
+    ``pair_fraction`` puts the blend regime under the experimenter's control
+    rather than the field's. Note what it is *not* needed for: a field whose
+    stars are far apart on average can still host tight blends, because an
+    injection only has to sit beside *one* real star and the stratified sampler
+    goes looking for such spots. The LCO 1 m frame has a median nearest
+    neighbour of 13 FWHM and nothing inside 1.5 FWHM, yet 400 injections filled
+    the tightest bin with 102 stars — more than the M13 frame's 86 (2026-08-14).
+    A predicted failure that did not happen.
+
+    What it does buy is control and reach: a chosen separation instead of
+    whatever the field offers, blends in frames with too few stars to sit beside,
+    and separations closer than ``min_real_sep_fwhm`` allows against real stars.
 
     With ``pair_fraction`` at 0 the behaviour is unchanged, including the
     meaning of ``crowding_bin``; companions are only created when it is

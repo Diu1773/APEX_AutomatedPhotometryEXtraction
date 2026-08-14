@@ -1,16 +1,19 @@
 """Deliberate blends, so the crowded regime is not a property of the field.
 
-Every blend result in `validation/psf_engines/` comes from one M13 frame,
-because M13 is the only field on hand where stars actually sit within a couple
-of FWHM of each other. The LCO 1 m frame used to cross-check optics has a
-median nearest neighbour of 13 FWHM and *nothing* inside 1.5 FWHM, so running
-the artificial-star benchmark there tests isolated stars and quietly says
-nothing about blends — while still producing a full-looking table.
-
 `pair_fraction` places a companion at a chosen separation from a share of the
-injections, which puts the blend regime under the experimenter's control
-instead of the target's. These tests pin both halves of that: the new mode
-produces blends, and the old mode is untouched.
+injections. Worth recording why it is *not* needed: the prediction that a
+sparse field could not populate the tight-crowding bins was wrong. An injection
+only has to sit beside one real star, and the stratified sampler seeks such
+spots — the LCO 1 m frame (median nearest neighbour 13 FWHM, nothing inside
+1.5 FWHM) filled the tightest bin with 102 of 400 injections, against 86 on
+M13 (2026-08-14).
+
+What pairs buy is control and reach: a separation chosen rather than whatever
+the field offers, blends in frames with too few stars to sit beside, and
+separations closer than `min_real_sep_fwhm` permits against real stars.
+
+These tests pin both halves: the new mode produces blends, and the old mode is
+untouched.
 """
 
 from __future__ import annotations
