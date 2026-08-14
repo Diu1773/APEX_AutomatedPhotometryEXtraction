@@ -53,12 +53,14 @@ def apex_epsf_scored(truth: pd.DataFrame, recovery: pd.DataFrame,
     carry = key + ["delta_mag"] + [c for c in QUALITY if c in recovery.columns]
     out = truth[key + ["target_snr", "crowding_bin"]].merge(
         recovery[carry].drop_duplicates(subset=key), on=key, how="left")
-    kept = (
-        (pd.to_numeric(out["flags_psf"], errors="coerce") == 0)
-        & (pd.to_numeric(out["snr_psf"], errors="coerce") >= gates["snr"])
-        & (pd.to_numeric(out["qfit"], errors="coerce") <= gates["qfit"])
-        & (pd.to_numeric(out["reduced_chi2"], errors="coerce") <= gates["chi2"])
-    )
+    kept = np.isfinite(pd.to_numeric(out["delta_mag"], errors="coerce"))
+    if gates.get("use_flags", True):
+        kept = kept & (
+            (pd.to_numeric(out["flags_psf"], errors="coerce") == 0)
+            & (pd.to_numeric(out["snr_psf"], errors="coerce") >= gates["snr"])
+            & (pd.to_numeric(out["qfit"], errors="coerce") <= gates["qfit"])
+            & (pd.to_numeric(out["reduced_chi2"], errors="coerce") <= gates["chi2"])
+        )
     out.loc[~kept, "delta_mag"] = np.nan
     return out
 
@@ -74,11 +76,13 @@ def apex_moffat_scored(truth: pd.DataFrame, tsv: Path, gates: dict,
     for c in ("x_fit", "y_fit", "mag_psf", "mag_psf_err", *QUALITY):
         if c in d.columns:
             d[c] = pd.to_numeric(d[c], errors="coerce")
-    keep = (
-        (d["flags_psf"] == 0) & np.isfinite(d["mag_psf"])
-        & (d["snr_psf"] >= gates["snr"]) & (d["qfit"] <= gates["qfit"])
-        & (d["reduced_chi2"] <= gates["chi2"])
-    )
+    keep = np.isfinite(d["mag_psf"])
+    if gates.get("use_flags", True):
+        keep = keep & (
+            (d["flags_psf"] == 0)
+            & (d["snr_psf"] >= gates["snr"]) & (d["qfit"] <= gates["qfit"])
+            & (d["reduced_chi2"] <= gates["chi2"])
+        )
     d = d[keep]
     table = pd.DataFrame({"x": d["x_fit"], "y": d["y_fit"],
                           "mag": d["mag_psf"], "merr": d["mag_psf_err"]})
@@ -120,12 +124,19 @@ def main() -> int:
     ap.add_argument("--postfit-chi2-max", type=float, default=25.0)
     ap.add_argument("--offset-min-snr", type=float, default=50.0)
     ap.add_argument("--isolated-bins", default="3-6 FWHM|6-inf FWHM")
+    ap.add_argument("--no-gates", action="store_true",
+                    help="score every engine on everything it measured. "
+                         "ALLSTAR has no post-fit quality gate, so comparing "
+                         "its raw output against APEX's gated output compares "
+                         "two different policies as if they were two engines.")
     ap.add_argument("--output", default=str(HERE / "recovery_three_engines.csv"))
     args = ap.parse_args()
 
     work = Path(args.work)
     gates = {"snr": args.postfit_snr_min, "qfit": args.postfit_qfit_max,
-             "chi2": args.postfit_chi2_max}
+             "chi2": args.postfit_chi2_max, "use_flags": not args.no_gates}
+    if args.no_gates:
+        print("[게이트 없음] 각 엔진이 측정한 것 전부로 채점한다")
     isolated = tuple(args.isolated_bins.split("|"))
     truth_all = pd.read_csv(work / "truth.csv")
     recovery_all = pd.read_csv(work / "recovery.csv")
