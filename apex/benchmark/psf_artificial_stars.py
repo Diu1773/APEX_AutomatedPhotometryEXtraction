@@ -176,12 +176,30 @@ def sample_stratified_injections(
     min_injected_sep_fwhm: float = 3.0,
     psf_size: int = 25,
     max_attempts: int | None = None,
+    pair_fraction: float = 0.0,
+    pair_separations_fwhm: tuple[float, ...] = (0.8, 1.2, 2.0, 3.0),
 ) -> pd.DataFrame:
     """Sample sparse positions across normalized radius and crowding bins.
 
     Candidate positions below ``min_real_sep_fwhm`` from any real source are
     rejected.  A global rejection check also enforces hard separation between
     injected stars, independent of their assigned stratum.
+
+    ``pair_fraction`` adds deliberate blends. Crowding is otherwise inherited
+    from the field: a star lands in a tight-crowding bin only if a *real* star
+    happens to sit nearby, so a sparse field cannot populate those bins at all
+    and the benchmark silently becomes an isolated-star test. Measured on the
+    LCO 1 m frame used for the optics cross-check (2026-08-14): median nearest
+    neighbour 13.0 FWHM, and **zero** sources within 1.5 FWHM, against 3.6 % on
+    the M13 frame where every blend result in this directory was obtained.
+    Injecting companions at chosen separations makes the blend regime
+    reproducible on any field, which is what lets an optics- or
+    sampling-generality claim cover it.
+
+    With ``pair_fraction`` at 0 the behaviour is unchanged, including the
+    meaning of ``crowding_bin``; companions are only created when it is
+    positive, and only then does the bin come from the nearest neighbour of
+    *either* kind rather than from real stars alone.
     """
     if count <= 0 or not np.isfinite(fwhm_px) or fwhm_px <= 0:
         raise ValueError("count and fwhm_px must be positive")
@@ -265,11 +283,69 @@ def sample_stratified_injections(
     for injection_id, index in enumerate(chosen, start=1):
         row = dict(candidates[index])
         row["injection_id"] = injection_id
+        row["pair_id"] = 0
+        row["is_pair_companion"] = False
+        rows.append(row)
+
+    fraction = min(1.0, max(0.0, float(pair_fraction)))
+    if fraction > 0.0 and rows:
+        separations = [s for s in pair_separations_fwhm
+                       if np.isfinite(s) and float(s) > 0.0]
+        if not separations:
+            raise ValueError("pair_separations_fwhm must contain a positive value")
+        # Companions replace primaries rather than adding to the total, so the
+        # requested count stays the count.
+        n_pairs = int(round(len(rows) * fraction / 2.0))
+        n_pairs = max(0, min(n_pairs, len(rows) // 2))
+        for pair_index in range(n_pairs):
+            primary = rows[pair_index]
+            companion = rows[len(rows) - 1 - pair_index]
+            separation = float(rng.choice(separations)) * float(fwhm_px)
+            for _ in range(200):
+                angle = float(rng.uniform(0.0, 2.0 * math.pi))
+                cx_new = primary["x_true"] + separation * math.cos(angle)
+                cy_new = primary["y_true"] + separation * math.sin(angle)
+                if not (half + 1 <= cx_new <= w - half - 1
+                        and half + 1 <= cy_new <= h - half - 1):
+                    continue
+                if tree is not None and float(tree.query([cx_new, cy_new], k=1)[0]) < min_real_sep:
+                    continue
+                companion["x_true"], companion["y_true"] = cx_new, cy_new
+                companion["radius_px"] = float(math.hypot(cx_new - cx, cy_new - cy))
+                companion["radius_fraction"] = min(1.0, companion["radius_px"] / max_radius)
+                companion["radius_bin"] = _bin_label(companion["radius_fraction"], radius_edges)
+                real_sep_new = (float(tree.query([cx_new, cy_new], k=1)[0])
+                                if tree is not None else math.inf)
+                companion["nearest_real_sep_px"] = real_sep_new
+                companion["nearest_real_sep_fwhm"] = real_sep_new / float(fwhm_px)
+                companion["is_pair_companion"] = True
+                companion["pair_id"] = pair_index + 1
+                primary["pair_id"] = pair_index + 1
+                break
+
+        # With companions present the field's own crowding no longer describes
+        # what each star sees, so the bin comes from the nearest neighbour of
+        # either kind.
+        injected = np.array([[r["x_true"], r["y_true"]] for r in rows], dtype=float)
+        combined = np.vstack([real, injected]) if len(real) else injected
+        combined_tree = cKDTree(combined)
+        for row in rows:
+            distances, _ = combined_tree.query([row["x_true"], row["y_true"]], k=2)
+            nearest = float(distances[1])
+            row["nearest_any_sep_px"] = nearest
+            row["nearest_any_sep_fwhm"] = nearest / float(fwhm_px)
+            row["crowding_bin"] = _bin_label(
+                row["nearest_any_sep_fwhm"], crowding_edges_fwhm, suffix=" FWHM")
+    else:
+        for row in rows:
+            row["nearest_any_sep_px"] = row["nearest_real_sep_px"]
+            row["nearest_any_sep_fwhm"] = row["nearest_real_sep_fwhm"]
+
+    for row in rows:
         if pixel_scale_arcsec is not None and np.isfinite(pixel_scale_arcsec):
             row["radius_arcmin"] = row["radius_px"] * float(pixel_scale_arcsec) / 60.0
         else:
             row["radius_arcmin"] = np.nan
-        rows.append(row)
     return pd.DataFrame(rows)
 
 

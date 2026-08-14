@@ -460,6 +460,8 @@ def _run_one_trial(args: argparse.Namespace, trial_number: int, image: np.ndarra
         center_xy=(args.center_x, args.center_y) if args.center_x is not None and args.center_y is not None else None,
         pixel_scale_arcsec=args.pixel_scale_arcsec, psf_size=kernel.shape[0],
         min_real_sep_fwhm=args.min_real_sep_fwhm, min_injected_sep_fwhm=args.min_injected_sep_fwhm,
+        pair_fraction=args.pair_fraction,
+        pair_separations_fwhm=tuple(args.pair_separations_fwhm),
     )
     truth = _build_truth(
         positions,
@@ -567,6 +569,15 @@ def main() -> int:
     parser.add_argument("--center-y", type=float)
     parser.add_argument("--min-real-sep-fwhm", type=float, default=0.75)
     parser.add_argument("--min-injected-sep-fwhm", type=float, default=3.0)
+    # A sparse field cannot populate the tight-crowding bins on its own, so
+    # without deliberate companions the benchmark quietly becomes an
+    # isolated-star test on anything but a globular cluster.
+    parser.add_argument("--pair-fraction", type=float, default=0.0,
+                        help="fraction of injections placed as close pairs "
+                             "(0 keeps the previous field-driven behaviour)")
+    parser.add_argument("--pair-separations-fwhm", type=float, nargs="+",
+                        default=[0.8, 1.2, 2.0, 3.0],
+                        help="companion separations sampled for each pair")
     parser.add_argument("--match-radius-px", type=float, default=1.5)
     parser.add_argument("--use-grouper", choices=("on", "off"), default="off")
     parser.add_argument("--grouper-max-size", type=int, default=3)
