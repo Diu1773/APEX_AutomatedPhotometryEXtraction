@@ -155,6 +155,29 @@ def main() -> int:
             # control that isolates interpolation error from model choice.
             engines["APEX ePSF cubic"] = apex_moffat_scored(
                 truth, cubic_tsv, gates, args.match_radius_px)
+        pu_csv = work / f"photutils_trial{trial}.csv"
+        if pu_csv.exists():
+            # photutils' own PSF photometry, given APEX's ePSF, APEX's seeds and
+            # APEX's fit window — a third lineage, so the comparison is not two
+            # descendants of DAOPHOT checking each other.
+            pu = pd.read_csv(pu_csv)
+            pu = pu.rename(columns={"flags": "flags_psf"})
+            pu["snr_psf"] = pu["flux_fit"] / pu["flux_err"].replace(0, np.nan)
+            pu["qfit"] = 0.0
+            pu["reduced_chi2"] = 1.0
+            pu["mag_psf_err"] = 1.0857 / pu["snr_psf"].replace(0, np.nan)
+            tmp = work / f"photutils_scored_trial{trial}.tsv"
+            pu.to_csv(tmp, sep="	", index=False)
+            engines["photutils"] = apex_moffat_scored(
+                truth, tmp, gates, args.match_radius_px)
+        prof_tsv = (work / f"apexprof_trial{trial}" / "result" / "cmd_psf"
+                    / f"photometry_{args.frame}.tsv")
+        if prof_tsv.exists():
+            # Seed fix plus DAOPHOT's profile-error term in the fit weights:
+            # the core stops carrying most of the weight, so a slightly wrong
+            # PSF costs less exactly where two blended stars overlap.
+            engines["APEX hybrid+prof"] = apex_moffat_scored(
+                truth, prof_tsv, gates, args.match_radius_px)
         free_tsv = (work / f"apexfree_trial{trial}" / "result" / "cmd_psf"
                     / f"photometry_{args.frame}.tsv")
         if free_tsv.exists():
@@ -234,7 +257,7 @@ def main() -> int:
     pooled.to_csv(args.output, index=False)
 
     order = ["APEX ePSF", "APEX ePSF cubic", "APEX Moffat",
-             "APEX Moffat+res", "APEX hybrid+group", "APEX hybrid+iter", "APEX hybrid+fix", "APEX hybrid+free", "IRAF ALLSTAR"]
+             "APEX Moffat+res", "APEX hybrid+group", "APEX hybrid+iter", "APEX hybrid+fix", "APEX hybrid+free", "APEX hybrid+prof", "photutils", "IRAF ALLSTAR"]
     head = (f"\n{'engine':>14}{'scope':>18}{'label':>16}{'N':>6}{'rec':>6}"
             f"{'compl':>8}{'bias':>9}{'scatter':>9}")
     print(head)
