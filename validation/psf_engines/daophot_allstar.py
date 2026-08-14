@@ -186,6 +186,10 @@ def frame_statistics(path: Path) -> dict:
     }
 
 
+# IRAF numbers the first pixel 1, everything else here numbers it 0.
+IRAF_ORIGIN_OFFSET = 1.0
+
+
 def read_positions(path: Path) -> pd.DataFrame:
     """Star positions to measure. Accepts an APEX step-7 TSV or a plain CSV."""
     sep = "\t" if path.suffix.lower() in {".tsv", ".txt"} else ","
@@ -216,8 +220,16 @@ def run(args: argparse.Namespace) -> dict:
     stats = frame_statistics(image)
     positions = read_positions(Path(args.positions))
     coords = work / "stars.coo"
-    positions.to_csv(coords, sep=" ", header=False, index=False,
-                     float_format="%.4f")
+    # IRAF counts the first pixel as 1; APEX, numpy and the artificial-star
+    # truth table all count it as 0. Handing 0-based coordinates to IRAF asks it
+    # to measure a spot one pixel down and to the left of every star, and
+    # reading its answers back without the reverse shift puts every position
+    # 1.41 px from where the star is — right at the 1.5 px radius the
+    # comparison scripts match on. Both ends must be converted, and both were
+    # missing until 2026-08-14.
+    iraf_positions = positions[["x", "y"]] + IRAF_ORIGIN_OFFSET
+    iraf_positions.to_csv(coords, sep=" ", header=False, index=False,
+                          float_format="%.4f")
     print(f"프레임 {image.name} · 좌표 {len(positions)}개 · "
           f"sky {stats['sky_median']:.1f} ± {stats['sky_sigma']:.2f} ADU")
 
@@ -265,6 +277,9 @@ def run(args: argparse.Namespace) -> dict:
 
     table = pd.read_csv(work / "allstar.txt", sep=r"\s+", header=None,
                         names=ALLSTAR_COLUMNS, na_values=["INDEF"])
+    # Back to the convention every other file in this comparison uses.
+    table[["x", "y"]] = table[["x", "y"]] - IRAF_ORIGIN_OFFSET
+    table["coord_origin"] = 0
     output = Path(args.output)
     output.parent.mkdir(parents=True, exist_ok=True)
     table.to_csv(output, index=False)

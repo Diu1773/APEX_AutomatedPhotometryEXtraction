@@ -76,6 +76,32 @@ def match_to_truth(truth: pd.DataFrame, table: pd.DataFrame,
     return np.where(distance <= radius_px, index, -1)
 
 
+def load_daophot(path) -> pd.DataFrame:
+    """Read an ALLSTAR table, refusing one written in IRAF's pixel numbering.
+
+    IRAF calls the first pixel 1 and APEX calls it 0, so a table dumped straight
+    out of `txdump` sits 1.41 px from the truth positions it will be matched
+    against — almost exactly the 1.5 px matching radius used here. That went
+    unnoticed through a whole comparison (2026-08-14): ALLSTAR looked as if it
+    had lost a third of the implanted stars, and the ones it kept were whichever
+    happened to fall inside the radius regardless.
+
+    `daophot_allstar.py` now converts on the way out and stamps `coord_origin`.
+    A file without that stamp predates the fix; it is refused rather than read,
+    because the failure it causes is silent.
+    """
+    table = pd.read_csv(path)
+    if "coord_origin" not in table.columns:
+        raise SystemExit(
+            f"{path}: IRAF 픽셀 번호 규약(1부터)으로 쓰인 낡은 표다. "
+            "daophot_allstar.py 를 다시 돌려 0부터 세는 좌표로 만들 것."
+        )
+    origin = int(pd.to_numeric(table["coord_origin"], errors="coerce").iloc[0])
+    if origin != 0:
+        raise SystemExit(f"{path}: coord_origin={origin}, 0 이어야 한다")
+    return table
+
+
 def robust_scatter(values: np.ndarray) -> float:
     values = values[np.isfinite(values)]
     if values.size < 3:
@@ -159,7 +185,7 @@ def main() -> int:
 
     truth = pd.read_csv(args.truth)
     apex = pd.read_csv(args.apex_recovery)
-    dao = pd.read_csv(args.daophot)
+    dao = load_daophot(args.daophot)
 
     # Each trial implants a different set of stars into its own copy of the
     # frame, so a DAOPHOT run belongs to exactly one trial. Matching across

@@ -46,6 +46,7 @@ HERE = Path(__file__).absolute().parent
 sys.path.insert(0, str(HERE))
 
 from compare_recovery import (  # noqa: E402
+    load_daophot,
     daophot_flux_adu, match_to_truth, remove_zeropoint, robust_scatter,
 )
 from compare_three_engines import QUALITY  # noqa: E402
@@ -81,7 +82,7 @@ def apex_rows(truth: pd.DataFrame, tsv: Path, gates: dict,
 
 def allstar_rows(truth: pd.DataFrame, csv: Path, zmag: float, itime: float,
                  radius_px: float) -> pd.DataFrame:
-    dao = pd.read_csv(csv)
+    dao = load_daophot(csv)
     for c in ("mag", "merr", "msky", "chi", "sharpness"):
         if c in dao.columns:
             dao[c] = pd.to_numeric(dao[c], errors="coerce")

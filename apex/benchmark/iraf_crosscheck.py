@@ -410,13 +410,31 @@ def select_fixed_coordinate_sources(
     return selected
 
 
+# IRAF numbers the first pixel 1; APEX, numpy and photutils number it 0.
+IRAF_ORIGIN_OFFSET = 1.0
+
+
 def write_iraf_coords(reference: pd.DataFrame, path: str | Path) -> Path:
-    """Write an IRAF coordinate file in the same order as ``iraf_id``."""
+    """Write an IRAF coordinate file in the same order as ``iraf_id``.
+
+    APEX counts the first pixel 0, like numpy and photutils; IRAF counts it 1.
+    Writing APEX's numbers unchanged asks IRAF to measure one pixel down and to
+    the left of every star — 1.41 px away — which was the state of this file
+    until 2026-08-14. Verified against the pixels: centroids of 60 bright stars
+    land 0.13 px from APEX's coordinates and 1.40 px from those coordinates
+    read as 1-based.
+
+    With `recenter` off (the default) IRAF cannot walk back onto the star, so
+    the aperture stays off-centre. In a sparse field that is close to a pure
+    zero-point — every star loses the same fraction — which is why the earlier
+    cross-checks still agreed to a few mmag; in a crowded field it is not.
+    """
     out = Path(path)
     out.parent.mkdir(parents=True, exist_ok=True)
     with out.open("w", encoding="ascii", newline="\n") as handle:
         for _, row in reference.sort_values("iraf_id").iterrows():
-            handle.write(f"{float(row['x']):.6f} {float(row['y']):.6f}\n")
+            handle.write(f"{float(row['x']) + IRAF_ORIGIN_OFFSET:.6f} "
+                         f"{float(row['y']) + IRAF_ORIGIN_OFFSET:.6f}\n")
     return out
 
 
@@ -449,6 +467,11 @@ def parse_txdump(path: str | Path) -> pd.DataFrame:
     table["iraf_id"] = pd.to_numeric(table["iraf_id"], errors="coerce").astype("Int64")
     for col in names[1:]:
         table[col] = pd.to_numeric(table[col].replace("INDEF", np.nan), errors="coerce")
+    # Back into APEX's 0-based frame, so `iraf_x - x` is a real disagreement
+    # about where the star is rather than a constant one-pixel bookkeeping
+    # difference. See `write_iraf_coords` for the other half.
+    table["iraf_x"] = table["iraf_x"] - IRAF_ORIGIN_OFFSET
+    table["iraf_y"] = table["iraf_y"] - IRAF_ORIGIN_OFFSET
     return table[np.isfinite(table["iraf_x"]) & np.isfinite(table["iraf_y"])].reset_index(drop=True)
 
 

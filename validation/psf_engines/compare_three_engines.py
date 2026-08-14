@@ -39,6 +39,7 @@ REPO = HERE.parents[1]
 sys.path.insert(0, str(HERE))
 
 from compare_recovery import (  # noqa: E402
+    load_daophot,
     daophot_flux_adu, match_to_truth, remove_zeropoint, summarise,
 )
 
@@ -93,7 +94,7 @@ def apex_moffat_scored(truth: pd.DataFrame, tsv: Path, gates: dict,
 
 def allstar_scored(truth: pd.DataFrame, csv: Path, zmag: float, itime: float,
                    radius_px: float) -> pd.DataFrame:
-    dao = pd.read_csv(csv)
+    dao = load_daophot(csv)
     dao["mag"] = pd.to_numeric(dao["mag"], errors="coerce")
     dao = dao[np.isfinite(dao["mag"])]
     idx = match_to_truth(truth, dao, radius_px)
