@@ -155,6 +155,14 @@ def main() -> int:
             # control that isolates interpolation error from model choice.
             engines["APEX ePSF cubic"] = apex_moffat_scored(
                 truth, cubic_tsv, gates, args.match_radius_px)
+        free_tsv = (work / f"apexfree_trial{trial}" / "result" / "cmd_psf"
+                    / f"photometry_{args.frame}.tsv")
+        if free_tsv.exists():
+            # Seed fix plus symmetric position freedom: a catalog star in a
+            # blend is no longer the only member of the pair that cannot move,
+            # so the free neighbour stops absorbing the pair's misfit.
+            engines["APEX hybrid+free"] = apex_moffat_scored(
+                truth, free_tsv, gates, args.match_radius_px)
         fix_tsv = (work / f"apexfix_trial{trial}" / "result" / "cmd_psf"
                    / f"photometry_{args.frame}.tsv")
         if fix_tsv.exists():
@@ -226,7 +234,7 @@ def main() -> int:
     pooled.to_csv(args.output, index=False)
 
     order = ["APEX ePSF", "APEX ePSF cubic", "APEX Moffat",
-             "APEX Moffat+res", "APEX hybrid+group", "APEX hybrid+iter", "APEX hybrid+fix", "IRAF ALLSTAR"]
+             "APEX Moffat+res", "APEX hybrid+group", "APEX hybrid+iter", "APEX hybrid+fix", "APEX hybrid+free", "IRAF ALLSTAR"]
     head = (f"\n{'engine':>14}{'scope':>18}{'label':>16}{'N':>6}{'rec':>6}"
             f"{'compl':>8}{'bias':>9}{'scatter':>9}")
     print(head)

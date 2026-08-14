@@ -410,6 +410,7 @@ PSF_TOML_KEY_MAP: tuple[tuple[tuple[str, ...], str], ...] = (
     (('psf', 'grouper_budget_frac'), 'psf_grouper_budget_frac'),
     (('psf', 'grouper_budget_cap'), 'psf_grouper_budget_cap'),
     (('psf', 'final_pass_max_iter'), 'psf_final_pass_max_iter'),
+    (('psf', 'forced_position_lock'), 'psf_forced_position_lock'),
     (('psf', 'forced_match_radius_fwhm'), 'psf_forced_match_radius_fwhm'),
     (('psf', 'redetect_sharp_lo'), 'psf_redetect_sharp_lo'),
     (('psf', 'redetect_sharp_hi'), 'psf_redetect_sharp_hi'),

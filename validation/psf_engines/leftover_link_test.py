@@ -207,7 +207,8 @@ def main() -> int:
     # ── 3. Variant sweep ─────────────────────────────────────────────────
     print("\n■ 변형 실행의 같은 잔차 — 예산·반복수가 픽셀에서도 무죄인지")
     variants = [("hybrid (기준)", args.apex_run), ("group (전부 동시적합)", "apexgroup"),
-                ("iter (반복 30)", "apexiter"), ("fix (씨앗 문맥 수정)", "apexfix")]
+                ("iter (반복 30)", "apexiter"), ("fix (씨앗 문맥 수정)", "apexfix"),
+                ("free (위치잠금 해제)", "apexfree")]
     tight_truth = []
     for trial in range(1, args.trials + 1):
         t = truth_all[truth_all["trial"] == trial].reset_index(drop=True)

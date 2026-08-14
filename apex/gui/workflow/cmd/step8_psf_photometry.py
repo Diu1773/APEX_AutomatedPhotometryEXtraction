@@ -4204,6 +4204,32 @@ class Step6PSFWorker(QThread):
                             )
                         _cur_idet  = np.ones(len(_cur_xy), dtype=int)  # iter_detected
                         _cur_forced = np.asarray(init_forced_positions, dtype=bool).copy()
+                        # Locking catalog positions is right for an isolated
+                        # star — the catalog knows better than one frame. In a
+                        # blend it is not symmetric: the free neighbour carries
+                        # an extra degree of freedom the locked star does not,
+                        # so it absorbs whatever the pair's model cannot
+                        # explain. Measured on the M13 blends (2026-08-14): the
+                        # pair's summed flux is right (1.063) while the locked
+                        # star gets 1.036 — 2.6 %, or 25 mmag, handed to the
+                        # neighbour; and the neighbour's drift direction swings
+                        # the locked star by +18 / -30 mmag either way.
+                        # `psf_forced_position_lock` releases the lock so both
+                        # members of a blend are fitted on equal terms.
+                        _forced_lock = str(
+                            getattr(P, "psf_forced_position_lock", "always")
+                        ).strip().lower()
+                        if _forced_lock not in ("always", "never"):
+                            self._log(
+                                f"  [APEX] unknown psf_forced_position_lock "
+                                f"'{_forced_lock}'; using 'always'"
+                            )
+                            _forced_lock = "always"
+                        if _forced_lock != "always":
+                            self._log(
+                                f"  [APEX] forced position lock: {_forced_lock} "
+                                f"({int(np.sum(_cur_forced))} sources released)"
+                            )
                         _cur_anchor = _cur_xy.copy()
                         _cur_position_flags = np.zeros(len(_cur_xy), dtype=np.int32)
                         _cur_fit_valid = np.zeros(len(_cur_xy), dtype=bool)
@@ -4394,7 +4420,10 @@ class Step6PSFWorker(QThread):
                                 initial_positions=_cur_anchor,
                                 initial_fit_valid=_cur_fit_valid,
                                 position_bound=float(fit_shape_frame // 2),
-                                position_fixed_mask=_cur_forced,
+                                position_fixed_mask=(
+                                    _cur_forced if _forced_lock == "always"
+                                    else np.zeros(len(_cur_forced), dtype=bool)
+                                ),
                                 allow_negative_flux_mask=_cur_forced,
                                 fit_active_mask=_outer_active_mask,
                                 log_fn=self._log,
@@ -4500,7 +4529,29 @@ class Step6PSFWorker(QThread):
                                     _cur_forced = _cur_forced[_keep_fit]
                                     _cur_anchor = _cur_anchor[_keep_fit]
                                     _cur_position_flags = _cur_position_flags[_keep_fit]
-                                    _cur_fit_valid = _cur_fit_valid[_keep_fit]
+                                    # `_cur_fit_valid` is the one array here not
+                                    # rebuilt from the fit result each pass, so a
+                                    # generation that adds sources can leave it a
+                                    # step behind. Locked catalog positions hid
+                                    # this: freeing them (2026-08-14) made the
+                                    # residual pass accept enough new sources to
+                                    # expose it as an IndexError. Rebuild from the
+                                    # arrays that are authoritative rather than
+                                    # index with a stale length.
+                                    if len(_cur_fit_valid) == len(_keep_fit):
+                                        _cur_fit_valid = _cur_fit_valid[_keep_fit]
+                                    else:
+                                        self._log(
+                                            "  [APEX] fit_valid out of step "
+                                            f"({len(_cur_fit_valid)} vs {len(_keep_fit)}); rebuilt"
+                                        )
+                                        _cur_fit_valid = (
+                                            np.isfinite(_cur_xy[:, 0])
+                                            & np.isfinite(_cur_xy[:, 1])
+                                            & np.isfinite(_cur_flux)
+                                            & ((_cur_flux > 0) | _cur_forced)
+                                            & ((_cur_position_flags & _fit_invalid_mask) == 0)
+                                        )
 
                             # Build residual image
                             _model_temp = _allstar_build_model(
@@ -8411,6 +8462,21 @@ class PSFPhotometryWindow(StepWindowBase):
         )
         fit_form.addRow("Final pass updates:", self.p_final_pass_max_iter)
 
+        # Catalog positions are worth trusting for an isolated star. In a blend
+        # they make the fit asymmetric: only the neighbour can move, so it
+        # absorbs the pair's misfit and the catalog star comes out faint.
+        self.p_forced_position_lock = QComboBox()
+        self.p_forced_position_lock.addItem("Always (catalog positions fixed)", "always")
+        self.p_forced_position_lock.addItem("Never (fit every position)", "never")
+        _lock_now = str(getattr(self.params.P, "psf_forced_position_lock", "always"))
+        _lock_idx = self.p_forced_position_lock.findData(_lock_now)
+        self.p_forced_position_lock.setCurrentIndex(max(0, _lock_idx))
+        self.p_forced_position_lock.setToolTip(
+            "Whether catalog (forced) sources keep their positions during the "
+            "fit. Releasing them puts both members of a blend on equal terms."
+        )
+        fit_form.addRow("Catalog position lock:", self.p_forced_position_lock)
+
         self.p_redetect = QDoubleSpinBox()
         self.p_redetect.setRange(1.0, 10.0)
         self.p_redetect.setSingleStep(0.5)
@@ -8756,7 +8822,7 @@ class PSFPhotometryWindow(StepWindowBase):
             self.p_conv_new, self.p_conv_flux, self.p_use_grouper,
             self.p_grouper_max_size, self.p_grouper_radius,
             self.p_grouper_budget_frac, self.p_grouper_budget_cap,
-            self.p_final_pass_max_iter,
+            self.p_final_pass_max_iter, self.p_forced_position_lock,
             self.p_forced_match_radius,
             self.p_sharp_lo, self.p_sharp_hi, self.p_round_max,
         ]
@@ -8805,6 +8871,8 @@ class PSFPhotometryWindow(StepWindowBase):
             self.p_grouper_budget_frac.setValue(p["psf_grouper_budget_frac"] * 100.0)
             self.p_grouper_budget_cap.setValue(p["psf_grouper_budget_cap"])
             self.p_final_pass_max_iter.setValue(p["psf_final_pass_max_iter"])
+            _li = self.p_forced_position_lock.findData(p["psf_forced_position_lock"])
+            self.p_forced_position_lock.setCurrentIndex(max(0, _li))
             self.p_forced_match_radius.setValue(p["psf_forced_match_radius_fwhm"])
             self.p_sharp_lo.setValue(p["psf_redetect_sharp_lo"])
             self.p_sharp_hi.setValue(p["psf_redetect_sharp_hi"])
@@ -8982,6 +9050,7 @@ class PSFPhotometryWindow(StepWindowBase):
         self.params.P.psf_grouper_budget_frac = self.p_grouper_budget_frac.value() / 100.0
         self.params.P.psf_grouper_budget_cap = self.p_grouper_budget_cap.value()
         self.params.P.psf_final_pass_max_iter = self.p_final_pass_max_iter.value()
+        self.params.P.psf_forced_position_lock = self.p_forced_position_lock.currentData()
         self.params.P.psf_forced_match_radius_fwhm = self.p_forced_match_radius.value()
         self.params.P.psf_use_error_image = self.p_use_error_img.isChecked()
         self.params.P.psf_shared_filter_epsf = self.p_shared_filter_epsf.isChecked()

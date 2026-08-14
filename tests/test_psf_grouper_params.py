@@ -28,6 +28,7 @@ from apex.config.parameters_cmd import read_params
 
 GROUPER_KEYS = {
     "psf_final_pass_max_iter",
+    "psf_forced_position_lock",
     "psf_use_grouper",
     "psf_grouper_max_size",
     "psf_grouper_radius_fwhm",
@@ -56,6 +57,9 @@ def _workspace(tmp_path, psf: dict) -> object:
     # The pass that sets every published flux was pinned at two Newton steps
     # by a literal, which solves an isolated star and not a blended group.
     ("final_pass_max_iter", 30),
+    # Only the neighbour of a blend could move while the catalog star could
+    # not; "never" puts both on equal terms.
+    ("forced_position_lock", "never"),
 ])
 def test_configured_value_survives_the_round_trip(tmp_path, key, value):
     params = _workspace(tmp_path, {key: value})
@@ -68,6 +72,7 @@ def test_defaults_preserve_the_previous_behaviour(tmp_path):
     assert params.psf_grouper_budget_frac == pytest.approx(0.10)
     assert params.psf_grouper_budget_cap == 200
     assert params.psf_final_pass_max_iter == 2
+    assert params.psf_forced_position_lock == "always"
 
 
 def test_policy_honours_a_raised_ceiling():
