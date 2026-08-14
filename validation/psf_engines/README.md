@@ -935,6 +935,72 @@ python validation/psf_engines/daophot_allstar.py --fwhm 5.0 --fitrad-fwhm 1.7 ..
 python validation/psf_engines/photutils_engine.py --work <work> --apex-run trial   --frame pp_ngc5985-0001-rp.fit --fit-shape 13 --gain 1.0   --background-rms 18.08 --grouper-fwhm 1.5 --fwhm-px 5.0
 ```
 
+## 세 번째 기기에서 패턴이 깨진다 — QHY600 (2026-08-14 밤)
+
+M13(CDK)과 NGC 5985(LCO 1m)에서 "APEX ≈ ALLSTAR" 가 두 번 나왔다. 세 번째로
+LCO 0.4m + QHY600 CMOS(Proxima field, V, 0.744″/px)를 돌렸고 **결론이 안 선다.**
+
+**먼저 두 가지 결함을 고쳐야 실행 자체가 됐다.**
+
+1. **주입 커널 가드가 틀렸다** — 첫 실행이 "Moffat 적합에 쓸 별 0개" 로 즉사했다.
+   후보 40 개 중 39 개가 `alpha` 상한(10.0)에 붙어 탈락. 원인은 자료가 아니라
+   가드다: 날개가 없는 PSF 에서 gamma 와 alpha 는 축퇴하고, 상한을 10→20→50→200
+   으로 올려도 둘 다 따라 올라가는데 **함의 FWHM 은 5.21/5.30/5.35/5.36 px 로
+   실측 5.25 에 붙어 있다.** 모양은 잘 결정되고 개별 모수만 결정 불가다.
+   판정을 모수에서 프로파일로 바꿨다(중심 이탈 + 함의 FWHM 이 프레임의
+   0.70~1.40 배). 회귀: M13 gamma 7.01 alpha 3.16 으로 기존 값 그대로.
+   Sinistro 는 alpha 3.87 로 상한과 무관하게 수렴해 이 결함이 안 보였을 뿐이다.
+
+2. **비교가 불공정했다** — 교차기기 작업본의 `parameters.toml` 에
+   `fit_init_max_sources = 3000` 이 있다. 이 시야는 step7 별이 3847 개라
+   **APEX 만 밝은 3000 개로 잘린 채** DAOPHOT·photutils 는 전부 받았다.
+   손실이 SNR 5 에서 99% · 10 에서 98% · 20 이상에서 0% 로 정확히 잘린 꼬리다.
+   Sinistro 는 별이 1044 개라 안 걸려서 드러나지 않았다. 상한을 풀고 재실행했다.
+
+**상한 해제 후 결과 (게이트 없음, 400 개)**
+
+| 엔진 | 완전도 | 공통 별 산포 (326) | 최혼잡 산포 |
+|---|---|---|---|
+| **APEX** | **0.94** | 0.0930 | 0.1073 |
+| photutils | 0.84 | 0.0967 | 0.1060 |
+| **IRAF ALLSTAR** | 0.90 | **0.0493** | **0.0517** |
+
+짝지은: vs ALLSTAR **+24.1 mmag [+19.3, +28.2] p < 1e−4**, vs photutils
++2.5 [−4.4, +9.2] p = 0.12.
+
+**완전도는 APEX 가 최고인데 산포는 ALLSTAR 가 1.9 배 앞선다.** photutils 와는
+구분되지 않는다. 앞의 두 기기에서 나온 "APEX ≈ ALLSTAR" 가 **여기서는 성립하지
+않는다.**
+
+**어디서 갈리는지: 밝을수록 벌어진다.**
+
+| 주입 SNR | N | APEX | photutils | ALLSTAR | APEX/ALLSTAR |
+|---|---|---|---|---|---|
+| 5 | 34 | 0.2565 | 0.3271 | 0.2927 | **0.88** |
+| 10 | 61 | 0.1555 | 0.2446 | 0.1508 | 1.03 |
+| 20 | 72 | 0.1193 | 0.1109 | 0.0697 | 1.71 |
+| 50 | 79 | 0.0764 | 0.0424 | 0.0334 | 2.29 |
+| 100 | 80 | 0.0550 | 0.0296 | 0.0124 | **4.45** |
+
+어두운 쪽에서는 APEX 가 오히려 앞서고 밝은 쪽으로 갈수록 4.45 배까지 벌어진다.
+**광자잡음 부족이 아니라 계통오차의 서명이다** — 밝은 별에서 남는 것은 모형
+불일치·가중치·배경뿐이다. 이 프레임의 PSF 가 날개 없는 거의 가우시안이라는
+점(위 1 번)과 하늘 배경이 4.67 ADU 로 M13 의 1/6 이라는 점이 후보다. **미규명.**
+
+**따라서 C 축 문장을 바꿔야 한다.** "두 광학계에서 재현" 은 맞지만 "세 번째에서
+깨진다" 도 같이 적어야 한다. 지금 근거로 말할 수 있는 것은
+**"APEX 는 CDK 0.5m·LCO 1m 급에서 ALLSTAR 와 대등하고, LCO 0.4m QHY600 에서는
+밝은 별 계통오차로 뒤진다"** 이고, 그 경계가 무엇인지는 아직 모른다.
+
+**부수**: photutils 적합창 민감도 11/13/17 → 산포 0.0642/0.0558/0.0601 로 13 이
+최적. Sinistro 에서 13 을 쓴 것이 불리했다는 주의사항은 근거가 약해졌다.
+
+재현:
+```bash
+python validation/psf_engines/run_cross_instrument.py --name <이름>   --source-fits <sci> --baseline-result-dir <result> --parameter-file <toml>   --frame <basename> --fwhm-px 5.25 --gain 1.0 --background-rms 4.67   --pixel-scale-arcsec 0.744 --exptime 20 --trials 2 --injections 200
+python validation/psf_engines/score_cross_instrument.py --work <work>   --frame <basename> --exptime 20
+```
+
 ## 재현
 
 ```bash
