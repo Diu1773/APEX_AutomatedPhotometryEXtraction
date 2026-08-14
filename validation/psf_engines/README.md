@@ -884,6 +884,57 @@ APEX 가 가진 지표를 전부 시험해도 마찬가지다(공통 356 개, 50
 **그래서 남은 과제는 적합이 아니라 오차·품질 추정이다.** 오늘 닫은 후보들
 (모형·보간·그룹·반복수·위치·가중치)은 전부 적합 쪽이었다. 남은 것은 그 뒤다.
 
+## 두 번째 광학계에서 재현된다 (2026-08-14)
+
+여기까지의 모든 결론은 M13 한 프레임에서 나왔고, 그건 한 망원경·한 검출기·한
+밴드다. **PSF 는 검출기보다 광학이 더 크게 좌우하므로** 일반화 시험의 축은
+카메라가 아니라 광학이어야 한다. 헤더에서 확인한 두 계통:
+
+| | 망원경 | 화소축척 | 광학 | 읽기잡음 | 밴드 | 시야 |
+|---|---|---|---|---|---|---|
+| M13 (기준) | 508 mm f/7.8 | 0.393″/px | **CDK**(보정 Dall-Kirkham) | 2.1 e⁻ | B | 구상성단 |
+| NGC 5985 | LCO 1m0-08 | **0.390″/px** | 1 m급 RC 계열 | 8.4 e⁻ | rp | 은하 시야 |
+
+**표본추출이 0.390 vs 0.393 으로 거의 같고 광학만 다르다** — 변수 하나짜리
+대조다. 같은 인공별 절차(400 개·2 회차·독립 Moffat 주입)를 그대로 돌렸고,
+혼잡 분포도 우연히 잘 맞았다(최혼잡 구간 Sinistro 102 · M13 86).
+
+**결과 (게이트 모든 엔진에서 끔)**
+
+| 엔진 | 완전도 | 공통 별 산포 | 최혼잡 산포 |
+|---|---|---|---|
+| **APEX** | **0.96** | **0.0535** | **0.0692** |
+| IRAF ALLSTAR | 0.92 | 0.0549 | 0.0846 |
+| photutils (grouper 1.5 FWHM) | 0.90 | 0.1213 | 0.1419 |
+
+짝지은 검정(공통 349 개): **vs ALLSTAR +1.9 mmag [−1.4, +5.7] p = 0.60**,
+**vs photutils −39.3 mmag [−55.0, −28.2] p < 1e−4**.
+
+**M13 의 세 결론이 모두 선다.**
+
+| 결론 | M13 | NGC 5985 (다른 광학) |
+|---|---|---|
+| 완전도 APEX 최고 | 0.98 vs 0.90 vs 0.85 | **0.96 vs 0.92 vs 0.90** |
+| APEX ≈ ALLSTAR | +0.8 [−3.0, +4.1] | **+1.9 [−1.4, +5.7] p=0.60** |
+| APEX > photutils | −10.9 (p=1e−7) | **−39.3 (p<1e−4)** |
+| 최혼잡에서 APEX 최고 | 0.073 vs 0.083 vs 0.091 | **0.0692 vs 0.0846 vs 0.1419** |
+
+**따라서 A 축 결론은 더 이상 한 광학계의 성질이 아니다.** 구경(0.5 → 1 m),
+광학(CDK → RC 계열), 검출기(Moravian → Sinistro), 읽기잡음(2.1 → 8.4 e⁻),
+밴드(B → rp), 시야(구상성단 → 은하)를 모두 바꿔도 순위와 유의성이 유지된다.
+
+**주의**: 이 APEX 실행은 씨앗 수정이 들어간 기본 설정이고
+`profile_error_frac` 은 0(종전 동작)이다. photutils 는 `fit_shape` 를 FWHM 에
+비례해 13 으로 줬다(M13 은 19) — 그 값이 photutils 에 불리하게 작용했을
+가능성은 배제하지 못했다. APEX↔ALLSTAR 비교는 그 설정과 무관하다.
+
+재현:
+```bash
+python validation/run_psf_artificial_stars.py   --source-fits <sinistro>/sci/pp_ngc5985-0001-rp.fit   --baseline-result-dir <sinistro>/result --output-dir <work>   --parameter-file <sinistro>/parameters.toml --trials 2 --injections 200   --fwhm-px 5.0 --gain-e-per-adu 1.0 --background-rms-adu 18.08   --pixel-scale-arcsec 0.390 --inject-kernel moffat
+python validation/psf_engines/daophot_allstar.py --fwhm 5.0 --fitrad-fwhm 1.7 ...
+python validation/psf_engines/photutils_engine.py --work <work> --apex-run trial   --frame pp_ngc5985-0001-rp.fit --fit-shape 13 --gain 1.0   --background-rms 18.08 --grouper-fwhm 1.5 --fwhm-px 5.0
+```
+
 ## 재현
 
 ```bash
