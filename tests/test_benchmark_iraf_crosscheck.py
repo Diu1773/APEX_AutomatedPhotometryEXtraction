@@ -67,9 +67,12 @@ def test_write_iraf_coords_preserves_iraf_id_order(tmp_path):
     ref = pd.DataFrame({"iraf_id": [2, 1], "x": [20.0, 10.0], "y": [21.0, 11.0]})
     path = write_iraf_coords(ref, tmp_path / "coords.coo")
 
+    # Written values carry IRAF's 1-based pixel origin (+1 on both axes);
+    # ordering by iraf_id is what this test pins. The origin conversion itself
+    # is covered by tests/test_iraf_pixel_origin.py.
     assert path.read_text(encoding="ascii").splitlines() == [
-        "10.000000 11.000000",
-        "20.000000 21.000000",
+        "11.000000 12.000000",
+        "21.000000 22.000000",
     ]
 
 

@@ -155,6 +155,14 @@ def main() -> int:
             # control that isolates interpolation error from model choice.
             engines["APEX ePSF cubic"] = apex_moffat_scored(
                 truth, cubic_tsv, gates, args.match_radius_px)
+        fix_tsv = (work / f"apexfix_trial{trial}" / "result" / "cmd_psf"
+                   / f"photometry_{args.frame}.tsv")
+        if fix_tsv.exists():
+            # Hybrid model with the seed-merge context fix: a detected star can
+            # no longer lose its detection to a forced blend partner, so both
+            # members of a tight pair are fitted and subtracted.
+            engines["APEX hybrid+fix"] = apex_moffat_scored(
+                truth, fix_tsv, gates, args.match_radius_px)
         iter_tsv = (work / f"apexiter_trial{trial}" / "result" / "cmd_psf"
                     / f"photometry_{args.frame}.tsv")
         if iter_tsv.exists():
@@ -218,7 +226,7 @@ def main() -> int:
     pooled.to_csv(args.output, index=False)
 
     order = ["APEX ePSF", "APEX ePSF cubic", "APEX Moffat",
-             "APEX Moffat+res", "APEX hybrid+group", "APEX hybrid+iter", "IRAF ALLSTAR"]
+             "APEX Moffat+res", "APEX hybrid+group", "APEX hybrid+iter", "APEX hybrid+fix", "IRAF ALLSTAR"]
     head = (f"\n{'engine':>14}{'scope':>18}{'label':>16}{'N':>6}{'rec':>6}"
             f"{'compl':>8}{'bias':>9}{'scatter':>9}")
     print(head)

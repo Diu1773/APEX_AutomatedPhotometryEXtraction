@@ -194,6 +194,7 @@ def merge_forced_catalog_seeds(
     forced_master_ids: np.ndarray,
     *,
     match_radius_px: float,
+    context_xy: np.ndarray | None = None,
 ) -> ForcedSeedMerge:
     """Anchor matched detections and retain every unmatched catalog source.
 
@@ -201,6 +202,25 @@ def merge_forced_catalog_seeds(
     prevents a displaced blend centroid from coexisting with a duplicate
     catalog seed while preserving multiple close catalog stars as separate
     fixed-position sources.
+
+    ``context_xy`` closes a failure the one-to-one rule alone cannot see. The
+    caller passes only the forced/undetected subset of the catalog as
+    ``forced_xy``, so when a forced star sits within the match radius of a
+    *different, detected* star — a blend — the detected star is not in the
+    candidate list to defend its own detection. The forced star then claims
+    that detection and the snap relocates it, deleting the detected star's
+    only seed: its light is never modelled, the forced star's fit absorbs it,
+    and nothing is flagged because the fit converges happily. Measured on the
+    M13 artificial-star frames (2026-08-14): in 26 of 28 tight blends the real
+    neighbour vanished from the seed list this way, leaving a median 24 % of
+    the implanted star's flux unsubtracted where ALLSTAR, fitting both stars,
+    left 1.5 %.
+
+    Rows in ``context_xy`` — the catalog stars that *were* detected — take
+    part in the same greedy one-to-one assignment but are never snapped,
+    seeded, or appended. Being closer to their own detections, they claim them
+    first, and a forced star whose detection is thus taken falls through to
+    the append path and gets its own seed. Both stars of the blend survive.
     """
 
     xy = np.asarray(detection_xy, dtype=float)
@@ -222,13 +242,25 @@ def merge_forced_catalog_seeds(
     uids = uids.copy()
     forced_mask = forced_mask.copy()
     radius = max(0.0, float(match_radius_px))
+    context = (np.asarray(context_xy, dtype=float)
+               if context_xy is not None else np.zeros((0, 2), dtype=float))
+    if context.size and (context.ndim != 2 or context.shape[1] != 2):
+        raise ValueError("context_xy must have shape (K, 2)")
+
+    # Candidate pairs from both populations, competing in one pool. A negative
+    # catalog index marks a context row: it may claim a detection but produces
+    # no snap, no seed flux, and no appended source.
     pairs: list[tuple[float, int, int]] = []
-    if len(xy) and len(catalog_xy) and radius > 0:
+    if len(xy) and radius > 0:
         tree = cKDTree(xy)
         for catalog_index, point in enumerate(catalog_xy):
             for detection_index in tree.query_ball_point(point, r=radius):
                 distance = float(np.hypot(*(xy[detection_index] - point)))
                 pairs.append((distance, catalog_index, int(detection_index)))
+        for context_index, point in enumerate(context):
+            for detection_index in tree.query_ball_point(point, r=radius):
+                distance = float(np.hypot(*(xy[detection_index] - point)))
+                pairs.append((distance, -1 - context_index, int(detection_index)))
 
     matched_catalog: set[int] = set()
     matched_detection: set[int] = set()
@@ -236,11 +268,13 @@ def merge_forced_catalog_seeds(
     for _, catalog_index, detection_index in sorted(pairs):
         if catalog_index in matched_catalog or detection_index in matched_detection:
             continue
+        matched_catalog.add(catalog_index)
+        matched_detection.add(detection_index)
+        if catalog_index < 0:
+            continue  # a detected star kept its own detection; nothing moves
         xy[detection_index] = catalog_xy[catalog_index]
         forced_mask[detection_index] = True
         flux_by_uid[int(uids[detection_index])] = float(catalog_flux[catalog_index])
-        matched_catalog.add(catalog_index)
-        matched_detection.add(detection_index)
 
     appended_xy: list[list[float]] = []
     appended_uids: list[int] = []
@@ -273,7 +307,9 @@ def merge_forced_catalog_seeds(
         det_uids=uids,
         forced_mask=forced_mask,
         flux_by_uid=flux_by_uid,
-        n_matched=len(matched_catalog),
+        # Context claims live in the same set as negative indices; only real
+        # catalog matches belong in the count.
+        n_matched=sum(1 for k in matched_catalog if k >= 0),
         n_added=len(appended_xy),
     )
 

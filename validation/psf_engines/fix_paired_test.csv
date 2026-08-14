@@ -1,0 +1,2 @@
+crowding_bin,n_pairs,scatter_baseline,scatter_variant,n_better,n_worse,sign_test_p,median_abs_change,ci_lo,ci_hi
+전체,4,0.027349940016437948,0.03436397334102221,2,2,1.0,-0.0001495693017883326,-0.008760601853428085,0.0008896172465000518

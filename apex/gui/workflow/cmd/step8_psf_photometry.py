@@ -3767,6 +3767,28 @@ class Step6PSFWorker(QThread):
                                     & (_seed_y >= _edge)
                                     & (_seed_y < (h - _edge))
                                 )
+                                # Detected catalog stars, as context for the merge.
+                                # Without them a forced star inside the match
+                                # radius of a *different, detected* star claims
+                                # that star's detection and the snap deletes its
+                                # seed — the tight-blend under-subtraction found
+                                # 2026-08-14. They join the one-to-one matching
+                                # so each detected star defends its own
+                                # detection, but they are never snapped or added.
+                                _ctx_ok = (
+                                    (~_forced_like)
+                                    & _phot_ok
+                                    & _seed_x.notna()
+                                    & _seed_y.notna()
+                                    & (_seed_x >= _edge)
+                                    & (_seed_x < (w - _edge))
+                                    & (_seed_y >= _edge)
+                                    & (_seed_y < (h - _edge))
+                                )
+                                _ctx_xy = np.column_stack([
+                                    _seed_x.loc[_ctx_ok].to_numpy(dtype=float, copy=False),
+                                    _seed_y.loc[_ctx_ok].to_numpy(dtype=float, copy=False),
+                                ]) if _ctx_ok.any() else np.zeros((0, 2), dtype=float)
                                 if _seed_ok.any():
                                     _sx = _seed_x.loc[_seed_ok].to_numpy(dtype=float, copy=False)
                                     _sy = _seed_y.loc[_seed_ok].to_numpy(dtype=float, copy=False)
@@ -3794,6 +3816,7 @@ class Step6PSFWorker(QThread):
                                         _sf,
                                         _smid,
                                         match_radius_px=_forced_match_radius_px,
+                                        context_xy=_ctx_xy,
                                     )
                                     xy_det = _merge.xy
                                     det_uids = _merge.det_uids
@@ -3802,6 +3825,7 @@ class Step6PSFWorker(QThread):
                                     self._log(
                                         "  [INIT] Step7 forced catalog | "
                                         f"matched={_merge.n_matched} added={_merge.n_added} "
+                                        f"ctx={len(_ctx_xy)} "
                                         f"radius={_forced_match_radius_px:.2f}px "
                                         f"({forced_match_radius_fwhm:.2f}xFWHM)"
                                     )

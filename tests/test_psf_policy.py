@@ -249,6 +249,57 @@ def test_forced_catalog_matching_anchors_detections_and_keeps_close_catalog_star
     assert sorted(merged.flux_by_uid.values()) == [50.0, 100.0, 200.0]
 
 
+def test_forced_star_cannot_steal_a_detected_neighbours_detection():
+    """The tight-blend seed loss, reproduced at function level.
+
+    One detection sits at a real, detected star R = (10, 10). A forced catalog
+    star S = (17, 10) — a blend partner 7 px away, inside the 8.7 px match
+    radius — has no detection of its own. Without context, S claims R's
+    detection and the snap moves the seed to S: R's light is never modelled
+    and nobody is told (measured on M13, 2026-08-14: 26 of 28 tight blends).
+    With R passed as context it wins its own detection at distance zero, S
+    falls through to the append path, and both stars get seeds.
+    """
+    detections = np.array([[10.0, 10.0]])
+    forced = np.array([[17.0, 10.0]])
+
+    broken = merge_forced_catalog_seeds(
+        detections, np.array([1]), np.array([False]),
+        forced, np.array([500.0]), np.array([np.nan]),
+        match_radius_px=8.7,
+    )
+    # The failure mode this fix removes: one seed, relocated onto S.
+    assert len(broken.xy) == 1 and np.allclose(broken.xy[0], [17.0, 10.0])
+
+    fixed = merge_forced_catalog_seeds(
+        detections, np.array([1]), np.array([False]),
+        forced, np.array([500.0]), np.array([np.nan]),
+        match_radius_px=8.7,
+        context_xy=np.array([[10.0, 10.0]]),
+    )
+    assert len(fixed.xy) == 2
+    assert np.allclose(fixed.xy[0], [10.0, 10.0]), "검출별이 제 검출을 지켜야 한다"
+    assert np.allclose(fixed.xy[1], [17.0, 10.0]), "forced 별은 자기 씨앗을 새로 받아야 한다"
+    assert fixed.n_matched == 0 and fixed.n_added == 1
+
+
+def test_context_does_not_change_the_isolated_forced_case():
+    """A forced star with its own detection must snap exactly as before."""
+    merged = merge_forced_catalog_seeds(
+        np.array([[10.0, 10.0], [40.0, 40.0]]),
+        np.array([1, 2]),
+        np.array([False, False]),
+        np.array([[11.0, 10.0]]),
+        np.array([300.0]),
+        np.array([7.0]),
+        match_radius_px=2.0,
+        context_xy=np.array([[40.0, 40.0]]),
+    )
+    assert merged.n_matched == 1 and merged.n_added == 0
+    assert np.allclose(merged.xy[0], [11.0, 10.0])
+    assert merged.flux_by_uid[1] == 300.0
+
+
 def test_matched_psf_flux_seed_recovers_total_flux():
     yy, xx = np.mgrid[-4:5, -4:5]
     kernel = np.exp(-(xx**2 + yy**2) / (2.0 * 1.2**2))
