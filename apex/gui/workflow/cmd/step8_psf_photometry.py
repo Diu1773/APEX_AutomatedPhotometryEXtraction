@@ -2518,6 +2518,11 @@ class Step6PSFWorker(QThread):
             )
             max_iter = _to_int(getattr(P, "psf_max_iter", 2), 2)
             fitter_max_iter = max(1, _to_int(getattr(P, "psf_fitter_max_iter", 6), 6))
+            # Ceiling for the final fixed-position pass; 2 was the hard-coded
+            # value. ALLSTAR's equivalent is 50.
+            final_pass_max_iter = max(
+                1, _to_int(getattr(P, "psf_final_pass_max_iter", 2), 2)
+            )
             redetect_sigma = _to_float(getattr(P, "psf_redetect_sigma", 3.5), 3.5)
             # EPSF star selection quality cuts (tighter than re-detection cuts)
             epsf_sharp_lo       = _to_float(getattr(P, "psf_epsf_sharp_lo",      0.3), 0.3)
@@ -4618,6 +4623,14 @@ class Step6PSFWorker(QThread):
                             del _model_temp, _resid_temp
 
                         # Final fixed-position pass stabilizes flux after source discovery.
+                        # This pass sets every published flux, and it was capped at two
+                        # Newton steps regardless of the configured iteration count. An
+                        # isolated star converges in one; a blended group is a coupled
+                        # system that does not, and ALLSTAR gives the same solve up to
+                        # 50. That is the shape of the measured deficit — APEX wins on
+                        # the most isolated stars (0.033 vs 0.041) and loses on the most
+                        # blended ones (2026-08-14). `flux_conv` still exits early, so a
+                        # larger ceiling costs nothing where two steps were enough.
                         _final_started = time.perf_counter()
                         phot_result = _allstar_fit(
                             img_sub,
@@ -4626,7 +4639,7 @@ class Step6PSFWorker(QThread):
                             _psf_evaluator,
                             fit_shape=fit_shape_frame,
                             stamp_size=render_shape_frame,
-                            max_iter=max(1, min(2, _INNER_ITERS)),
+                            max_iter=final_pass_max_iter,
                             flux_conv=flux_conv_threshold,
                             max_shift=float(fit_shape_frame // 2),
                             group_radius=_group_radius,
@@ -8359,6 +8372,21 @@ class PSFPhotometryWindow(StepWindowBase):
         )
         fit_form.addRow("Fitter updates/pass:", self.p_fitter_max_iter)
 
+        # The pass that sets every published flux. Two steps solve an isolated
+        # star and do not solve a blended group; ALLSTAR allows 50 for the same
+        # solve. Convergence still exits early, so a high ceiling only costs
+        # time where it is actually used.
+        self.p_final_pass_max_iter = QSpinBox()
+        self.p_final_pass_max_iter.setRange(1, 100)
+        self.p_final_pass_max_iter.setValue(
+            _to_int(getattr(self.params.P, "psf_final_pass_max_iter", 2), 2)
+        )
+        self.p_final_pass_max_iter.setToolTip(
+            "Newton updates allowed in the final fixed-position pass. Blended "
+            "stars need more than a couple; isolated stars stop early anyway."
+        )
+        fit_form.addRow("Final pass updates:", self.p_final_pass_max_iter)
+
         self.p_redetect = QDoubleSpinBox()
         self.p_redetect.setRange(1.0, 10.0)
         self.p_redetect.setSingleStep(0.5)
@@ -8704,6 +8732,7 @@ class PSFPhotometryWindow(StepWindowBase):
             self.p_conv_new, self.p_conv_flux, self.p_use_grouper,
             self.p_grouper_max_size, self.p_grouper_radius,
             self.p_grouper_budget_frac, self.p_grouper_budget_cap,
+            self.p_final_pass_max_iter,
             self.p_forced_match_radius,
             self.p_sharp_lo, self.p_sharp_hi, self.p_round_max,
         ]
@@ -8751,6 +8780,7 @@ class PSFPhotometryWindow(StepWindowBase):
             self.p_grouper_radius.setValue(p["psf_grouper_radius_fwhm"])
             self.p_grouper_budget_frac.setValue(p["psf_grouper_budget_frac"] * 100.0)
             self.p_grouper_budget_cap.setValue(p["psf_grouper_budget_cap"])
+            self.p_final_pass_max_iter.setValue(p["psf_final_pass_max_iter"])
             self.p_forced_match_radius.setValue(p["psf_forced_match_radius_fwhm"])
             self.p_sharp_lo.setValue(p["psf_redetect_sharp_lo"])
             self.p_sharp_hi.setValue(p["psf_redetect_sharp_hi"])
@@ -8852,6 +8882,7 @@ class PSFPhotometryWindow(StepWindowBase):
                 (self.p_grouper_radius, 1.5),
                 (self.p_grouper_budget_frac, 10.0),
                 (self.p_grouper_budget_cap, 200),
+                (self.p_final_pass_max_iter, 2),
                 (self.p_forced_match_radius, 1.25),
                 (self.p_use_error_img, False),
                 (self.p_shared_filter_epsf, False),
@@ -8926,6 +8957,7 @@ class PSFPhotometryWindow(StepWindowBase):
         self.params.P.psf_grouper_radius_fwhm = self.p_grouper_radius.value()
         self.params.P.psf_grouper_budget_frac = self.p_grouper_budget_frac.value() / 100.0
         self.params.P.psf_grouper_budget_cap = self.p_grouper_budget_cap.value()
+        self.params.P.psf_final_pass_max_iter = self.p_final_pass_max_iter.value()
         self.params.P.psf_forced_match_radius_fwhm = self.p_forced_match_radius.value()
         self.params.P.psf_use_error_image = self.p_use_error_img.isChecked()
         self.params.P.psf_shared_filter_epsf = self.p_shared_filter_epsf.isChecked()
