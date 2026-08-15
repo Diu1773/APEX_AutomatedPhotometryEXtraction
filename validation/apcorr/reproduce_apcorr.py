@@ -134,8 +134,12 @@ def apcorr_from_curve(flux: np.ndarray, radii: np.ndarray, r_ap: float,
     if int(good.sum()) < min_n:
         return float("nan"), np.full(len(radii), np.nan), int(good.sum())
     curve = np.nanmedian(flux[:, good] / outer[good], axis=1)
-    at_r_ap = int(np.argmin(np.abs(radii - r_ap)))
-    enclosed = float(curve[at_r_ap])
+    # Interpolated at r_ap, mirroring the engine since 2026-08-16. It used to
+    # read the nearest grid point, and any arm that kept doing so would carry
+    # the same 0.1 mag bias — two engines sharing a bias look like agreement.
+    finite = np.isfinite(curve)
+    enclosed = (float(np.interp(r_ap, radii[finite], curve[finite]))
+                if finite.sum() >= 2 else 0.0)
     value = float(1.0 / enclosed) if enclosed > 0.05 else 1.0
     return value, curve, int(good.sum())
 
