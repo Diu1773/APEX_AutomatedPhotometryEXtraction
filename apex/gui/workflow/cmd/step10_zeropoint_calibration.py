@@ -1565,14 +1565,40 @@ class ZeropointCalibrationWorker(QThread):
         return output
 
     @staticmethod
-    def _robust_median_and_err(arr):
+    def _robust_median_and_err(arr, per_measurement_err=None):
+        """Median plus its uncertainty, from the scatter between measurements.
+
+        ``per_measurement_err`` is the fallback for when that scatter cannot be
+        measured. One frame has no scatter, so ``MAD_TO_SIGMA * 0 / 1`` is
+        exactly zero — and a reported error of zero claims the magnitude is
+        known perfectly. Across the five Phase-3 clusters that was 0.4-1.0 % of
+        entries (12-42 stars each), every one of them reporting 0.000. A star
+        that dropped from five frames to one after the Step 8 seed fix then
+        carried a 2.7 mag outlier at zero uncertainty (M5 ID 986, 2026-08-15).
+        Identical values across frames give MAD = 0 the same way.
+
+        Falling back to the star's own photometric error says what is actually
+        known. With nothing to fall back on, NaN — unknown, not perfect.
+        """
         x = np.asarray(arr, float)
-        x = x[np.isfinite(x)]
+        finite = np.isfinite(x)
+        x = x[finite]
         if len(x) == 0:
             return (np.nan, np.nan, 0)
         med = float(np.median(x))
         mad = float(np.median(np.abs(x - med)))
         err = float(MAD_TO_SIGMA * mad / np.sqrt(max(len(x), 1)))
+        if not (err > 0):
+            err = np.nan
+            if per_measurement_err is not None:
+                own = np.asarray(per_measurement_err, float)
+                if own.shape == finite.shape:
+                    own = own[finite]
+                own = own[np.isfinite(own) & (own > 0)]
+                if own.size:
+                    # Median of the frames that went in, divided the same way,
+                    # so the one-frame case reads on the same scale as the rest.
+                    err = float(np.median(own) / np.sqrt(len(x)))
         return (med, err, int(len(x)))
 
     @staticmethod
@@ -2310,7 +2336,8 @@ class ZeropointCalibrationWorker(QThread):
             # the CMD entirely (apcorr_candidate requires flux_pct >= 60%).
 
             def _combine_group_raw(g):
-                med, med_err, n_med = self._robust_median_and_err(g["mag_inst"])
+                med, med_err, n_med = self._robust_median_and_err(
+                    g["mag_inst"], g["mag_err"])
                 wmean, werr, _ = self._weighted_mean_mag(g["mag_inst"], g["mag_err"])
                 # snr_psf (PSF photometry) or snr (aperture photometry)
                 _snr_col = "snr" if "snr" in g.columns else ("snr_psf" if "snr_psf" in g.columns else None)
@@ -2972,7 +2999,8 @@ class ZeropointCalibrationWorker(QThread):
                 obs["mag_cal"] = obs["mag_cal"] + obs["k_term"]
 
             def _combine_group_cal(g):
-                med, med_err, n_med = self._robust_median_and_err(g["mag_cal"])
+                med, med_err, n_med = self._robust_median_and_err(
+                    g["mag_cal"], g["mag_err"])
                 wmean, werr, _ = self._weighted_mean_mag(g["mag_cal"], g["mag_err"])
                 _snr_col = "snr" if "snr" in g.columns else ("snr_psf" if "snr_psf" in g.columns else None)
                 snr_vals = np.asarray(g[_snr_col], float) if _snr_col else np.array([np.nan])
