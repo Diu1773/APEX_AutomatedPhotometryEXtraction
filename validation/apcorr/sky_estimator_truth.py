@@ -93,34 +93,16 @@ def annulus_pixels(image: np.ndarray, x: float, y: float,
     return patch[inside]
 
 
-def main() -> int:
-    ap = argparse.ArgumentParser(description=__doc__,
-                                 formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument("--workspace", required=True, type=Path)
-    ap.add_argument("--frame", default=None,
-                    help="프레임 이름 (기본: apcorr_summary.csv 첫 줄)")
-    ap.add_argument("--n-inject", type=int, default=400)
-    ap.add_argument("--snr", type=float, default=60.0,
-                    help="주입 별의 목표 SNR — 하늘 오차가 등급에 미치는 크기를 "
-                         "밝기와 분리하려고 한 값으로 고정한다")
-    ap.add_argument("--seed", type=int, default=20260816)
-    ap.add_argument("--output", type=Path)
-    args = ap.parse_args()
-
-    from apex.config.parameters_cmd import read_params
+def measure_frame(args, params, frame, verbose=True):
     from apex.analysis.forced_photometry import _to_float
     from photutils.aperture import CircularAperture, aperture_photometry
 
-    params = read_params(args.workspace / "apex_config.json")
     P = params.P
     step7 = Path(P.result_dir) / "step7_forced_phot"
-    recorded = pd.read_csv(step7 / "apcorr_summary.csv")
-    frame = args.frame or str(recorded.iloc[0]["file"])
     stats = pd.read_csv(step7 / "frame_stats.csv")
     row = stats[stats["file"].astype(str) == frame]
     if row.empty:
-        print(f"[error] frame_stats 에 {frame} 없음")
-        return 1
+        return None
 
     fwhm = float(pd.to_numeric(row.iloc[0]["fwhm_px"], errors="coerce"))
     r_ap = max(_to_float(getattr(P, "min_r_ap_px", 4.0), 4.0),
@@ -208,39 +190,100 @@ def main() -> int:
     frame_table = pd.DataFrame(rows)
     bins = [(0.0, 2.0, "0-2 FWHM"), (2.0, 4.0, "2-4"), (4.0, 8.0, "4-8"),
             (8.0, np.inf, "8+")]
-    print(f"{frame} · FWHM {fwhm:.2f} px · 하늘 {sky_level:.1f}±{sky_noise:.2f} ADU · "
-          f"주입 {args.n_inject} · 목표 SNR {args.snr:.0f}")
-    print(f"고리 {r_in:.1f}~{r_out:.1f} px · r_ap {r_ap:.2f}\n")
-    print(f'{"최근접 이웃":<12}{"n":>5}' + "".join(f"{name:>26}" for name in ESTIMATORS))
-    print("-" * (17 + 26 * len(ESTIMATORS)))
-    summary = []
-    for lo, hi, label in bins:
-        mask = (frame_table["sep_fwhm"] >= lo) & (frame_table["sep_fwhm"] < hi)
+    if verbose:
+        print(f"{frame} · FWHM {fwhm:.2f} px · 하늘 {sky_level:.1f}±{sky_noise:.2f} ADU · "
+              f"주입 {args.n_inject} · 목표 SNR {args.snr:.0f} · "
+              f"진리 apcorr {truth_apcorr:.6f}", flush=True)
+    frame_table["frame"] = frame
+    frame_table["fwhm_px"] = fwhm
+    return frame_table
+
+
+BINS = [(0.0, 2.0, "0-2 FWHM"), (2.0, 4.0, "2-4"), (4.0, 8.0, "4-8"), (8.0, np.inf, "8+")]
+
+
+def report(table: pd.DataFrame) -> list:
+    """Bias and scatter per crowding bin, with the standard error on the bias.
+
+    The scatter is per-star noise; what the verdict rests on is the *bias*, so
+    its uncertainty (scatter / sqrt(n)) is what decides whether two estimators
+    are really different.
+    """
+    rows = []
+    print(f'{"최근접 이웃":<12}{"n":>6}' + "".join(f"{name:>28}" for name in ESTIMATORS))
+    print("-" * (18 + 28 * len(ESTIMATORS)))
+    for lo, hi, label in BINS:
+        mask = (table["sep_fwhm"] >= lo) & (table["sep_fwhm"] < hi)
         if mask.sum() < 5:
             continue
         cells = []
         for name in ESTIMATORS:
-            values = frame_table.loc[mask, name].to_numpy(float)
+            values = table.loc[mask, name].to_numpy(float)
             values = values[np.isfinite(values)]
-            median = np.median(values) * 1000 if values.size else np.nan
-            scatter = MAD_TO_SIGMA * np.median(np.abs(values - np.median(values))) * 1000
-            cells.append(f"{median:+8.1f} ± {scatter:5.1f} mmag")
-            summary.append({"bin": label, "estimator": name, "n": int(mask.sum()),
-                            "bias_mmag": median, "scatter_mmag": scatter})
-        print(f'{label:<12}{int(mask.sum()):>5}' + "".join(f"{c:>26}" for c in cells))
+            if values.size == 0:
+                cells.append(f"{'-':>28}")
+                continue
+            median = float(np.median(values)) * 1000
+            scatter = MAD_TO_SIGMA * float(np.median(np.abs(values - np.median(values)))) * 1000
+            stderr = scatter / np.sqrt(values.size)
+            cells.append(f"{median:+8.1f} ± {stderr:4.1f} mmag")
+            rows.append({"bin": label, "estimator": name, "n": int(values.size),
+                         "bias_mmag": median, "scatter_mmag": scatter,
+                         "stderr_mmag": stderr})
+        print(f'{label:<12}{int(mask.sum()):>6}' + "".join(f"{c:>28}" for c in cells))
+    return rows
 
-    print("\n편향이 0 에 가까운 쪽이 진리값에 가깝다 (양수 = 어둡게 잼).")
+
+def main() -> int:
+    ap = argparse.ArgumentParser(description=__doc__,
+                                 formatter_class=argparse.RawDescriptionHelpFormatter)
+    ap.add_argument("--workspace", required=True, type=Path)
+    ap.add_argument("--frame", default=None)
+    ap.add_argument("--all-frames", action="store_true",
+                    help="워크스페이스의 모든 프레임을 돌아 결과를 쌓는다 — "
+                         "한 프레임의 하늘 구조가 답을 정하지 않게")
+    ap.add_argument("--n-inject", type=int, default=400)
+    ap.add_argument("--snr", type=float, default=60.0)
+    ap.add_argument("--seed", type=int, default=20260816)
+    ap.add_argument("--output", type=Path)
+    args = ap.parse_args()
+
+    from apex.config.parameters_cmd import read_params
+
+    params = read_params(args.workspace / "apex_config.json")
+    step7 = Path(params.P.result_dir) / "step7_forced_phot"
+    recorded = pd.read_csv(step7 / "apcorr_summary.csv")
+    frames = ([str(f) for f in recorded["file"]] if args.all_frames
+              else [args.frame or str(recorded.iloc[0]["file"])])
+
+    tables = []
+    for index, frame in enumerate(frames):
+        # A different seed per frame, so the injected positions are not the
+        # same pattern every time and one unlucky layout cannot set the answer.
+        per_frame = argparse.Namespace(**vars(args))
+        per_frame.seed = args.seed + 1000 * index
+        table = measure_frame(per_frame, params, frame, verbose=True)
+        if table is not None:
+            tables.append(table)
+    if not tables:
+        print("[error] 처리한 프레임이 없다")
+        return 1
+
+    combined = pd.concat(tables, ignore_index=True)
+    print(f"\n=== 합계 {len(tables)} 프레임 · 주입 {len(combined)} ===\n")
+    rows = report(combined)
+    print("\n편향이 0 에 가까운 쪽이 옳다 (± 는 편향의 표준오차).")
+
     if args.output:
-        pd.DataFrame(summary).to_csv(args.output, index=False)
+        pd.DataFrame(rows).to_csv(args.output, index=False)
+        combined.to_csv(args.output.with_name(args.output.stem + "_stars.csv"), index=False)
         args.output.with_suffix(".inputs.json").write_text(json.dumps({
-            "workspace": str(args.workspace), "frame": frame, "fwhm_px": fwhm,
-            "n_inject": args.n_inject, "target_snr": args.snr, "seed": args.seed,
-            "r_ap_px": r_ap, "r_in_px": r_in, "r_out_px": r_out,
-            "sky_adu": sky_level, "sky_noise_adu": sky_noise, "gain": gain,
-            "injected_profile": "Gaussian at the frame's own FWHM",
-            "measured_quantity": "apcorr = F(r_outer)/F(r_ap), the aperture correction",
+            "workspace": str(args.workspace), "frames": frames,
+            "n_inject_per_frame": args.n_inject, "target_snr": args.snr,
+            "seed_base": args.seed, "seed_per_frame": "seed + 1000*index",
+            "measured_quantity": "apcorr = F(r_outer)/F(r_ap)",
             "truth": "ratio of Gaussian enclosed fractions, known analytically",
-            "r_outer_px": float(r_ref * 1.15),
+            "injected_profile": "Gaussian at each frame's own FWHM",
         }, indent=2, ensure_ascii=False), encoding="utf-8")
         print(f"표 -> {args.output}")
     return 0
