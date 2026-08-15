@@ -1199,9 +1199,27 @@ def run_forced_photometry(
                 )
                 med_mag_err = np.nanmedian(mag_err_matrix, axis=1)           # (N_radii,)
 
-                # apcorr = 1 / enclosed_fraction at r_ap
-                r_ap_idx = int(np.argmin(np.abs(gc_radii - r_ap)))
-                enc_frac = float(gc_curve[r_ap_idx]) if np.isfinite(gc_curve[r_ap_idx]) else 0.0
+                # apcorr = 1 / enclosed_fraction at r_ap.
+                #
+                # Interpolated, not read off the nearest grid point. The grid
+                # is 14 points spanning 0.4*r_ap to 1.15*r_ref, so its spacing
+                # grows with FWHM and the nearest point lands up to ~0.09 FWHM
+                # away from r_ap — and, at the FWHM this instrument actually
+                # delivers, almost always on the far side. Measured across 45
+                # frames of M67 and M13 (2026-08-16): reading the curve at the
+                # nearest point instead of at r_ap made apcorr 0.08-0.10 mag
+                # too small, consistently. r_ap sits on the steep part of the
+                # growth curve, so a fraction of a pixel is not a rounding
+                # detail there. See validation/apcorr/.
+                # Fewer than two usable points is not a curve, and one point
+                # extrapolated across every radius would be worse than saying
+                # nothing: 0 here means "no correction" (apcorr = 1) below.
+                finite_curve = np.isfinite(gc_curve)
+                enc_frac = (
+                    float(np.interp(r_ap, gc_radii[finite_curve],
+                                    gc_curve[finite_curve]))
+                    if finite_curve.sum() >= 2 else 0.0
+                )
                 apcorr = float(1.0 / enc_frac) if enc_frac > 0.05 else 1.0
 
                 # Optimal aperture radius = minimum of mag_err U-curve
