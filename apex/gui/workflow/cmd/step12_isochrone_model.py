@@ -2121,8 +2121,17 @@ class IsochroneModelWindow(StepWindowBase):
         self.mag_combo.addItems(bands)
 
         idx_c = self.color_combo.findText(prev_color)
-        idx_m = self.mag_combo.findText(prev_mag)
         self.color_combo.setCurrentIndex(max(idx_c, 0))
+
+        # Falling back to bands[0] gave "B vs B−V" on Johnson data. A CMD is
+        # conventionally plotted against the redder half of its own colour —
+        # V for B−V, r for g−r — so start there when the user has no saved
+        # choice, instead of whichever band happens to sort first.
+        idx_m = self.mag_combo.findText(prev_mag)
+        if idx_m < 0:
+            current = self.color_combo.currentText()
+            redder = current.split("-")[-1] if "-" in current else ""
+            idx_m = self.mag_combo.findText(redder)
         self.mag_combo.setCurrentIndex(max(idx_m, 0))
         self.color_combo.blockSignals(False)
         self.mag_combo.blockSignals(False)
