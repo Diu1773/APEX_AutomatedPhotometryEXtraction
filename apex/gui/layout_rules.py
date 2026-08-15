@@ -26,9 +26,10 @@ windows follow.
 
 from __future__ import annotations
 
-from PyQt5.QtCore import QSize, Qt
+from PyQt5.QtCore import QRect, QSize, Qt
 from PyQt5.QtWidgets import (
-    QApplication, QDialog, QFrame, QScrollArea, QSizePolicy, QSplitter, QWidget,
+    QApplication, QComboBox, QDialog, QFrame, QScrollArea, QSizePolicy,
+    QSplitter, QStyle, QStyleOptionComboBox, QWidget,
 )
 
 # ── Tunables (the whole policy in one place) ─────────────────────────────────
@@ -257,3 +258,38 @@ def prevent_collapse(splitter: QSplitter, *, min_panes: int | None = None) -> QS
             if w is not None and w.minimumWidth() < min_panes:
                 w.setMinimumWidth(int(min_panes))
     return splitter
+
+
+def fit_combo(box: QComboBox, *, extra: int = 4) -> QComboBox:
+    r"""Widen a combo until its widest entry actually fits (root cause #5).
+
+    Qt's ``sizeHint()`` for a stylesheet-painted ``QComboBox`` under-reserves
+    the native drop-down arrow. Step 12's colour combo asked for 52 px, was
+    given exactly 52 px by the layout, and still painted ``B-\`` — the text
+    field was 18 px for a 20 px string. Nothing reports an error; the widget
+    just silently shows the wrong band name, which is worse than a clipped
+    button because it reads as a *value*.
+
+    Rather than guess a padding, measure the shortfall through the style that
+    will do the painting, and raise the minimum width by exactly that much.
+    ``extra`` is breathing room so a one-pixel rounding difference between
+    measuring and painting does not put it back on the edge.
+    """
+    if box.count() == 0:
+        return box
+    metrics = box.fontMetrics()
+    widest = max(metrics.horizontalAdvance(box.itemText(i))
+                 for i in range(box.count()))
+    hint = box.sizeHint()
+    option = QStyleOptionComboBox()
+    option.initFrom(box)
+    option.rect = QRect(0, 0, hint.width(), hint.height())
+    field = box.style().subControlRect(QStyle.CC_ComboBox, option,
+                                       QStyle.SC_ComboBoxEditField, box)
+    shortfall = widest + extra - field.width()
+    if shortfall > 0:
+        # Never shrink: a caller that already asked for a wider combo
+        # meant it, and this helper only ever removes a shortfall.
+        box.setMinimumWidth(max(box.minimumWidth(),
+                                hint.width() + shortfall))
+    return box

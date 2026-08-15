@@ -82,6 +82,42 @@ class IsochroneFitOutput:
     warnings: List[str] = field(default_factory=list)
 
 
+def _railed_parameters(summary: Dict[str, Any], config) -> list:
+    """Name any parameter whose posterior is sitting on its own bound.
+
+    A median pressed against a bound is not a measurement, it is the edge of
+    the box the sampler was given — the M67 [M/H] rail and NGC 6811's age
+    floor both looked like results until someone checked where the walls were.
+    The GUI's default age window is 0.2-6 Gyr, which cannot reach a globular
+    at all, so a user fitting M13 with the defaults gets 6 Gyr and no hint
+    that the number means "at least".
+
+    Reported as a fraction of the box width so it does not depend on units:
+    within 2 % of either wall counts as railed.
+    """
+    import math
+
+    edge = 0.02
+    messages = []
+    checks = (("나이 (log age)", "log_age", tuple(config.age_bounds)),
+              ("[M/H]", "metallicity", tuple(config.mh_bounds)))
+    for label, key, (low, high) in checks:
+        triple = summary.get(key)
+        if not triple or high <= low:
+            continue
+        median = float(triple[1])
+        if not math.isfinite(median):
+            continue
+        span = high - low
+        if median - low <= edge * span:
+            messages.append(f"{label} 사후 중앙값이 하한 {low:g} 에 붙었다 — "
+                            f"측정이 아니라 하한이다. 범위를 넓히거나 사전분포를 줄 것")
+        elif high - median <= edge * span:
+            messages.append(f"{label} 사후 중앙값이 상한 {high:g} 에 붙었다 — "
+                            f"측정이 아니라 상한이다. 범위를 넓히거나 사전분포를 줄 것")
+    return messages
+
+
 def _summary_dict(result, e_color_to_ebv: float) -> Dict[str, Any]:
     def trip(p):
         return [float(p[0]), float(p[1]), float(p[2])] if p is not None else None
@@ -284,6 +320,8 @@ def fit_cluster_isochrone(
             f" (acceptance {result.acceptance_fraction:.2f}); "
             "treat the posterior with caution — see methodology §10."
         )
+
+    warnings.extend(_railed_parameters(summary, config))
 
     out = IsochroneFitOutput(
         result=result, summary=summary, member_meta=member_meta, n_stars=n_stars,

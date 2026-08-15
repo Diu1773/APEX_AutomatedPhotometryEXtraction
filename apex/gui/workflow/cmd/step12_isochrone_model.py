@@ -32,7 +32,7 @@ from PyQt5.QtWidgets import (
 from PyQt5.QtCore import Qt, QThread, pyqtSignal, QTimer
 
 from apex.gui.workflow.step_window_base import StepWindowBase
-from apex.gui.layout_rules import clamp_to_screen, scroll_wrap
+from apex.gui.layout_rules import clamp_to_screen, fit_combo, scroll_wrap
 from apex.gui.theme import ICON, Tokens, refresh, style_button
 from apex.utils.step_paths_cmd import step9_selection_dir, step10_zp_dir, step12_iso_dir
 from apex.utils.common_helpers import format_cmd_title, target_display_name
@@ -832,12 +832,16 @@ class IsochroneModelWindow(StepWindowBase):
         self.color_combo.addItems([f"{a}-{b}" for a, b in _DEFAULT_COLOR_PAIRS[:3]])
         self.color_combo.setCurrentIndex(0)
         self.color_combo.currentIndexChanged.connect(self._on_band_changed)
+        # These two say which bands the whole fit is about, so a clipped entry
+        # is a wrong value on screen rather than a cosmetic squeeze.
+        fit_combo(self.color_combo)
         filter_layout.addWidget(self.color_combo)
         filter_layout.addWidget(QLabel("Mag (Y):"))
         self.mag_combo = QComboBox()
         self.mag_combo.addItems(_DEFAULT_MAG_BANDS[:3])
         self.mag_combo.setCurrentIndex(0)
         self.mag_combo.currentIndexChanged.connect(self._on_band_changed)
+        fit_combo(self.mag_combo)
         filter_layout.addWidget(self.mag_combo)
         filter_layout.addStretch()
         setup_col.addLayout(filter_layout)

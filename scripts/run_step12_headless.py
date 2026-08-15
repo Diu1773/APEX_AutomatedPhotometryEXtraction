@@ -208,6 +208,11 @@ def main() -> int:
             "iso_file": str(iso_file),
             "mh_prior": args.mh_prior,
             "ebv_prior": args.ebv_prior,
+            # Both of these change the answer and neither was written down —
+            # an M13 fit run with `--dm-prior 14.40 0.15` produced a file whose
+            # settings block was indistinguishable from an unconstrained run.
+            "dm_prior": args.dm_prior,
+            "mh_bounds": args.mh_bounds,
             "parallax_prior": bool(args.parallax_prior),
             "membership": cfg.use_membership,
             "mag_max": args.mag_max,
