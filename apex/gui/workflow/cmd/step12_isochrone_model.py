@@ -558,7 +558,11 @@ class IsochroneViewerWindow(QWidget):
         ax_cmd.set_xlabel(f"{obs_system} ({self.color_label})")
         ax_cmd.set_ylabel(f"{obs_system} {bm}")
         ax_cmd.grid(True, linestyle=":", alpha=0.35)
-        ax_cmd.legend(loc="upper right")
+        # Placed in the update function instead, where the data exists — see
+        # the `legend(loc="best")` call there. A fixed corner cannot work: the
+        # y axis is inverted, so upper right is the giant branch, and lower
+        # left is the blue horizontal branch of a globular. Both are data.
+        self._legend_placed = False
 
         res_scat = ax_res.scatter([], [], s=3, alpha=0.75, linewidths=0, color="cyan")
         ax_res.axhline(0, color="white", lw=1, ls="--", alpha=0.6)
@@ -734,6 +738,15 @@ class IsochroneViewerWindow(QWidget):
                 pad=10,
                 fontsize=10,
             )
+            # Placed once, the first time the artists actually carry data.
+            # "best" is meaningless against the empty artists the legend used
+            # to be built from, and re-running it every redraw costs 28 ms of
+            # a 35 ms draw — the sliders update live, so that is felt. The
+            # observed stars do not move, and the isochrone stays inside their
+            # envelope, so one placement holds for the whole session.
+            if not self._legend_placed and len(obs_mag):
+                ax_cmd.legend(loc="best", framealpha=0.75, fontsize=9)
+                self._legend_placed = True
             self.canvas.draw_idle()
 
         def reset(_=None):
