@@ -1145,6 +1145,11 @@ _PSF_MODE_PRESETS = {
         "psf_flux_conv_threshold": 0.01,
         "psf_use_grouper": False,
         "psf_grouper_radius_fwhm": 1.5,
+        "psf_grouper_budget_frac": 0.10,
+        "psf_grouper_budget_cap": 200,
+        "psf_profile_error_frac": 0.0,
+        "psf_final_pass_max_iter": 2,
+        "psf_forced_position_lock": "always",
         "psf_forced_match_radius_fwhm": 1.25,
         "psf_redetect_sharp_lo": 0.15,
         "psf_redetect_sharp_hi": 0.95,
@@ -1180,6 +1185,11 @@ _PSF_MODE_PRESETS = {
         "psf_flux_conv_threshold": 0.01,
         "psf_use_grouper": False,
         "psf_grouper_radius_fwhm": 1.5,
+        "psf_grouper_budget_frac": 0.10,
+        "psf_grouper_budget_cap": 200,
+        "psf_profile_error_frac": 0.0,
+        "psf_final_pass_max_iter": 2,
+        "psf_forced_position_lock": "always",
         "psf_forced_match_radius_fwhm": 1.25,
         "psf_redetect_sharp_lo": 0.2,
         "psf_redetect_sharp_hi": 0.9,
@@ -1215,6 +1225,11 @@ _PSF_MODE_PRESETS = {
         "psf_flux_conv_threshold": 0.01,
         "psf_use_grouper": False,
         "psf_grouper_radius_fwhm": 1.5,
+        "psf_grouper_budget_frac": 0.10,
+        "psf_grouper_budget_cap": 200,
+        "psf_profile_error_frac": 0.0,
+        "psf_final_pass_max_iter": 2,
+        "psf_forced_position_lock": "always",
         "psf_forced_match_radius_fwhm": 1.25,
         "psf_redetect_sharp_lo": 0.1,
         "psf_redetect_sharp_hi": 0.95,
@@ -8764,6 +8779,26 @@ class PSFPhotometryWindow(StepWindowBase):
         )
         fit_form.addRow("Group budget cap:", self.p_grouper_budget_cap)
 
+        # DAOPHOT's `proferr`. Off by default and staying that way: measured
+        # across three instruments on 2026-08-15 it bought 2-4 mmag in the most
+        # blended bin on two of them and cost 8.5 mmag everywhere on the third,
+        # where everything fainter than the bright anchor came back too bright.
+        self.p_profile_error_frac = QDoubleSpinBox()
+        self.p_profile_error_frac.setRange(0.0, 50.0)
+        self.p_profile_error_frac.setSingleStep(0.5)
+        self.p_profile_error_frac.setSuffix(" %")
+        self.p_profile_error_frac.setSpecialValueText("off")
+        self.p_profile_error_frac.setValue(
+            _to_float(getattr(self.params.P, "psf_profile_error_frac", 0.0), 0.0) * 100.0
+        )
+        self.p_profile_error_frac.setToolTip(
+            "Assumed PSF model error, added to the fit variance so a bright "
+            "core stops dominating — DAOPHOT uses 5 %. Off by default: it "
+            "helps blended stars on some instruments and reports faint stars "
+            "too bright on others. Check the faint end before adopting it."
+        )
+        fit_form.addRow("Profile error:", self.p_profile_error_frac)
+
         self.p_forced_match_radius = QDoubleSpinBox()
         self.p_forced_match_radius.setRange(0.1, 3.0)
         self.p_forced_match_radius.setSingleStep(0.05)
@@ -8903,6 +8938,7 @@ class PSFPhotometryWindow(StepWindowBase):
             self.p_grouper_radius.setValue(p["psf_grouper_radius_fwhm"])
             self.p_grouper_budget_frac.setValue(p["psf_grouper_budget_frac"] * 100.0)
             self.p_grouper_budget_cap.setValue(p["psf_grouper_budget_cap"])
+            self.p_profile_error_frac.setValue(p["psf_profile_error_frac"] * 100.0)
             self.p_final_pass_max_iter.setValue(p["psf_final_pass_max_iter"])
             _li = self.p_forced_position_lock.findData(p["psf_forced_position_lock"])
             self.p_forced_position_lock.setCurrentIndex(max(0, _li))
@@ -9082,6 +9118,7 @@ class PSFPhotometryWindow(StepWindowBase):
         self.params.P.psf_grouper_radius_fwhm = self.p_grouper_radius.value()
         self.params.P.psf_grouper_budget_frac = self.p_grouper_budget_frac.value() / 100.0
         self.params.P.psf_grouper_budget_cap = self.p_grouper_budget_cap.value()
+        self.params.P.psf_profile_error_frac = self.p_profile_error_frac.value() / 100.0
         self.params.P.psf_final_pass_max_iter = self.p_final_pass_max_iter.value()
         self.params.P.psf_forced_position_lock = self.p_forced_position_lock.currentData()
         self.params.P.psf_forced_match_radius_fwhm = self.p_forced_match_radius.value()
