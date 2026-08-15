@@ -280,7 +280,7 @@ def _setup_pipeline_logger():
 
 
 def _cmd_run(args: argparse.Namespace) -> int:
-    """Run the shared headless pipeline (Steps 1-7)."""
+    """Run the headless pipeline: shared Steps 1-7, plus CMD 8 and 10."""
     try:
         from apex.pipeline import RunContext, PipelineRunner, get_steps, parse_step_range
     except Exception as exc:  # noqa: BLE001
@@ -513,7 +513,9 @@ def build_parser() -> argparse.ArgumentParser:
         help="init: copy the example; path: print location; show: print contents.",
     )
 
-    p_run = sub.add_parser("run", help="Run the shared headless pipeline (Steps 1-7).")
+    p_run = sub.add_parser(
+        "run",
+        help="Run the headless pipeline (shared 1-7; CMD also 8 and 10).")
     p_run.add_argument("--mode", choices=["cmd", "lc"], required=True,
                        help="Pipeline mode.")
     p_run.add_argument("--config", default=None,

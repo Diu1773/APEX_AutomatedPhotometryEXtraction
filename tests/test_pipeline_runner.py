@@ -160,7 +160,10 @@ def test_project_state_marked_on_ok(tmp_path):
 # ── registry wiring ──────────────────────────────────────────────────────────
 
 def test_registry_shared_steps_shape():
+    """Steps 1-7 are shared; CMD then continues into its own 8-12."""
     for mode in ("cmd", "lc"):
         steps = get_steps(mode)
-        assert [s.index for s in steps] == [1, 2, 3, 4, 5, 6, 7]
-        assert steps[0].key == "scan"  # the one ported step
+        assert [s.index for s in steps][:7] == [1, 2, 3, 4, 5, 6, 7]
+        assert steps[0].key == "scan"
+    assert [s.index for s in get_steps("lc")] == [1, 2, 3, 4, 5, 6, 7]
+    assert [s.index for s in get_steps("cmd")] == list(range(1, 13))
