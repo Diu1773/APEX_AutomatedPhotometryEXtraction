@@ -314,11 +314,20 @@ def fit_cluster_isochrone(
 
     summary = _summary_dict(result, 1.0 / R_color if R_color else 1.0)
     if not result.convergence_ok:
+        # Says what to do, not just that something is wrong. Running longer is
+        # usually the wrong move here: on this posterior the autocorrelation
+        # time grows with the chain (44 at 400 steps, 202 at 4,000 on one
+        # cluster), so the rule can recede as fast as you chase it. Measured on
+        # M13 (2026-08-15): 2,000 steps failed the rule, 6,000 passed it, and
+        # every median agreed to three decimals. Seed-to-seed agreement is the
+        # check that answers whether the numbers can be trusted.
         warnings.append(
             f"MCMC not converged — "
             f"{getattr(result, 'convergence_detail', '') or 'reason unavailable'}"
-            f" (acceptance {result.acceptance_fraction:.2f}); "
-            "treat the posterior with caution — see methodology §10."
+            f" (acceptance {result.acceptance_fraction:.2f}). "
+            "이 사후분포에서는 체인을 늘려도 자기상관시간이 같이 커져 기준이 "
+            "따라 물러날 수 있다. 중앙값을 믿어도 되는지는 씨앗을 바꿔 다시 "
+            "적합해 보는 쪽이 답한다 (헤드리스 러너의 --seed-check N)."
         )
 
     warnings.extend(_railed_parameters(summary, config))
