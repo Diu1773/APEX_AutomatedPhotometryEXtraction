@@ -848,8 +848,17 @@ def run_forced_photometry(
         }
         sat_adu      = _to_float(getattr(P, "saturation_adu",     65000.0), 65000.0)
         datamax_adu  = _to_float(getattr(P, "datamax_adu",        55000.0), 55000.0)
-        sigma_clip   = _to_float(getattr(P, "phot_sigma_clip",        3.0), 3.0)
-        max_iter     = _to_int(  getattr(P, "phot_max_iter",            5), 5)
+        # `annulus_sigma_clip` / `fitsky_max_iter`, not `phot_*`. Those two names
+        # were read here and set nowhere, so `photometry.radii.sigma_clip` and
+        # `.max_iter` reached Step 4's detection but never Step 7's sky — the
+        # annulus always clipped at a hardcoded 3.0 / 5 no matter what the
+        # workspace said. Same shape as the grouper knobs (2026-08-15): the
+        # config accepts the value, the run succeeds, and the setting does
+        # nothing. Found 2026-08-16 while asking whether clipping is worth its
+        # cost; every current workspace happens to hold 3.0 / 5, so nothing
+        # measured to date changes.
+        sigma_clip   = _to_float(getattr(P, "annulus_sigma_clip", 3.0), 3.0)
+        max_iter     = _to_int(  getattr(P, "fitsky_max_iter",     5), 5)
         sky_mode     = str(getattr(P, "sky_sigma_mode", "local") or "local").strip().lower()
         sky_incl_rn  = bool(getattr(P, "sky_sigma_includes_rn", True))
         min_n_sky    = _to_int(getattr(P, "sky_sigma_min_n_sky", 50), 50)

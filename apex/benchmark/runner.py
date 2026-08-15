@@ -241,8 +241,9 @@ def _measure_positions(
         min_n_sky_for_local=int(getattr(p, "sky_sigma_min_n_sky", 50)),
         sat_adu=float(getattr(p, "saturation_adu", 60000.0)),
         datamax_adu=float(getattr(p, "datamax_adu", 55000.0)),
-        sigma_clip_val=float(getattr(p, "phot_sigma_clip", 3.0)),
-        maxiters=int(getattr(p, "phot_max_iter", 5)),
+        # Same orphaned names as forced_photometry.py carried until 2026-08-16.
+        sigma_clip_val=float(getattr(p, "annulus_sigma_clip", 3.0)),
+        maxiters=int(getattr(p, "fitsky_max_iter", 5)),
     )
     return np.asarray(flux_e, dtype=float)
 

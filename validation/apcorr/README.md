@@ -219,3 +219,36 @@ M67 은 30 프레임에서 **−2.0 mmag**(강건σ 1.0)로 훨씬 작다.
 ```bash
 python validation/apcorr/reproduce_apcorr.py --workspace <phase3/M67> --frames 0
 ```
+
+
+## 곁가지 — 하늘 설정이 코드에 못 닿고 있었다 (2026-08-16)
+
+"시그마클립을 끄면 어떻게 되나" 를 실험하려고 설정 경로를 따라가다 나왔다.
+**Step 7 이 존재하지 않는 이름을 읽고 있었다.**
+
+| 코드가 읽던 이름 | 실제 설정 | 결과 |
+|---|---|---|
+| `phot_sigma_clip` | `photometry.radii.sigma_clip` → `annulus_sigma_clip` | 하드코딩 3.0 고정 |
+| `phot_max_iter` | `photometry.radii.max_iter` → `fitsky_max_iter` | 하드코딩 5 고정 |
+
+같은 설정 키가 **Step 4 검출에는 닿고 Step 7 하늘에는 안 닿았다** — 한 값을
+바꾸면 파이프라인의 절반만 바뀌고 로그에는 아무 말이 없다. 어제 그룹 조절값
+(`c0ddf95`)·모드 프리셋과 같은 모양이고, 이번이 세 번째다.
+**연결했다.** 현재 다섯 워크스페이스가 전부 3.0 / 5 라 계산 결과는 안 바뀐다.
+
+### 아직 안 고친 것 둘 — 결정이 필요하다
+
+**① 조리개 배율이 양쪽에서 끊겨 있다.** 코드는 `forced_r_ap_scale` ·
+`forced_ref_ap_scale` 을 읽는데 **아무것도 안 세우고**, config 는
+`photometry.apcorr.small_scale` · `.large_scale` 을 받는데 **아무도 안 읽는다**.
+즉 **사용자가 조리개 배율을 설정해도 아무 일도 안 일어난다.** 연결하면 동작이
+바뀐다 — `apcorr_large_scale` 은 다섯 워크스페이스 전부 **3.0** 인데 Step 7 은
+**2.4** 를 쓰므로, 이으면 r_ref 가 2.4→3.0 FWHM 이 되어 모든 성장곡선이 움직인다.
+**조용히 고칠 일이 아니다.**
+
+**② 참조 카탈로그 형상 컷이 모드마다 다르다.** `ref_cat_max_elong` ·
+`ref_cat_max_abs_round` · `ref_cat_sharp_min/max` 는 `parameters_lc` 에는
+있고 `parameters_cmd` 에는 없다. LC 에서는 설정이고 CMD 에서는 하드코딩이다.
+
+`tests/test_sky_clip_settings_reach_step7.py` 가 셋을 구분해 박아 뒀다 —
+고친 것, 아직 아닌 것 둘, 그리고 **새 고아가 생기면 실패하는 일반 가드**.
