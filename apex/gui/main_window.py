@@ -14,12 +14,22 @@ from PyQt5.QtWidgets import (
 )
 from PyQt5.QtCore import Qt, pyqtSignal, QObject, QEvent, QEventLoop
 from PyQt5.QtGui import QFont, QIcon, QPixmap, QPainter
+import shutil
 from pathlib import Path
 from typing import Optional, List
 
 from apex.gui.layout_rules import AutoFitMixin, FittedDialog
 from apex.gui.theme import Tokens, style_button
 from apex.gui.tools.registry import iter_tools_for_mode
+from apex.config.config_io import (
+    check_workspace_identity, load_config_data, save_config_data,
+)
+from apex.config.recent_workspaces import (
+    display_label as recent_label,
+    forget as forget_workspace,
+    load_recent as load_recent_workspaces,
+    remember as remember_workspace,
+)
 
 _RESOURCES = Path(__file__).resolve().parent.parent / "resources"
 
@@ -248,13 +258,17 @@ class MainWindowWorkflow(AutoFitMixin, QMainWindow):
             self.instrument = InstrumentConfig(self.params)
             self.file_manager = FileManager(self.params)
 
-            project_root = Path(__file__).parent.parent
-            state_dir = project_root / ".state" / mode
-            state_dir.mkdir(parents=True, exist_ok=True)
-            self.project_state = ProjectState(state_dir)
+            self.project_state = self._make_project_state(migrate_legacy=True)
             self._register_state_mirror()
 
             self._bootstrap_file_selection_state(respect_explicit_param=True)
+            # Without this the workspace opened at launch is missing from
+            # Recent, so switching away from a `--params` workspace leaves no
+            # way back to it.
+            try:
+                remember_workspace(self.params.param_file)
+            except Exception:
+                pass
 
         except Exception as e:
             QMessageBox.critical(self, "Initialization Error",
@@ -370,6 +384,41 @@ class MainWindowWorkflow(AutoFitMixin, QMainWindow):
             self.file_manager.clear_multi_night_dirs()
         self._register_state_mirror()
 
+    def _make_project_state(self, migrate_legacy: bool = False):
+        """Progress state belonging to the workspace, not to the application.
+
+        It used to live in one shared ``apex/.state/<mode>/`` regardless of
+        which target was open, which was invisible while changing target meant
+        relaunching. With a workspace menu it is not: opening an untouched
+        cluster showed "9/12 steps finished" inherited from the previous one.
+        The per-workspace copy that ``_register_state_mirror`` has been writing
+        into ``result_dir`` all along is the right home, so that copy becomes
+        the state itself.
+
+        ``migrate_legacy`` seeds a workspace that has no copy yet from the old
+        shared file — at launch that file belongs to the last workspace used,
+        which is the one being opened.
+        """
+        from apex.core import ProjectState
+
+        result_dir = getattr(self.params.P, "result_dir", None)
+        if not result_dir:
+            legacy = Path(__file__).parent.parent / ".state" / self.mode
+            legacy.mkdir(parents=True, exist_ok=True)
+            return ProjectState(legacy)
+
+        state_dir = Path(result_dir)
+        state_dir.mkdir(parents=True, exist_ok=True)
+        if migrate_legacy and not (state_dir / "project_state.json").exists():
+            legacy_file = (Path(__file__).parent.parent / ".state" / self.mode
+                           / "project_state.json")
+            if legacy_file.is_file():
+                try:
+                    shutil.copy2(legacy_file, state_dir / "project_state.json")
+                except OSError:
+                    pass
+        return ProjectState(state_dir)
+
     def _register_state_mirror(self) -> None:
         """Mirror project_state.json into the current result_dir so previous
         sessions are discoverable by Load Previous Session."""
@@ -388,7 +437,10 @@ class MainWindowWorkflow(AutoFitMixin, QMainWindow):
 
     def setup_ui(self):
         mode_title = "CMD Cluster Photometry" if self.mode == "cmd" else "Light Curve Analysis"
-        self.setWindowTitle(f"APEX — {mode_title}")
+        # Same title format the switch produces, so a workspace opened at
+        # launch is labelled like one opened from the menu.
+        self.setWindowTitle(
+            self._workspace_title(getattr(self.params, "param_file", "")))
         icon = _load_icon(self.mode)
         self.setWindowIcon(icon)
         QApplication.instance().setWindowIcon(icon)
@@ -523,12 +575,196 @@ class MainWindowWorkflow(AutoFitMixin, QMainWindow):
         self.status_bar = self.statusBar()
         self.status_bar.showMessage("Ready")
 
+    # ── Workspace switching ──────────────────────────────────────────────────
+
+    def _close_child_windows(self) -> None:
+        """Close every step/tool window before the parameters change under them.
+
+        Child windows receive ``params``, ``file_manager`` and ``project_state``
+        when they open and keep their own references, so one left open across a
+        switch would go on reading and writing the previous target's paths —
+        the quiet kind of wrong. They are found by attribute name rather than
+        from a hand-written list, so a tool added later is covered without
+        anyone remembering to update this.
+        """
+        for name in [n for n in vars(self) if n.endswith("_window")]:
+            window = getattr(self, name, None)
+            if window is self or not isinstance(window, QWidget):
+                continue
+            try:
+                window.close()
+            except Exception:
+                pass
+            setattr(self, name, None)
+
+    def _workspace_title(self, config_path) -> str:
+        """Title that names the open workspace, not just the mode.
+
+        The accident this helps with: two workspaces open on two days look
+        identical in the title bar, and the one being edited is not the one the
+        user thinks.
+        """
+        mode_title = ("CMD Cluster Photometry" if self.mode == "cmd"
+                      else "Light Curve Analysis")
+        target = ""
+        try:
+            data, _ = load_config_data(config_path)
+            target = str((data.get("target") or {}).get("name") or "").strip()
+        except Exception:
+            pass
+        workspace = Path(config_path).parent.name
+        label = " · ".join(x for x in (target, workspace) if x)
+        return f"APEX — {mode_title}" + (f" — {label}" if label else "")
+
+    def switch_workspace(self, config_path) -> bool:
+        """Load a different workspace without restarting the app."""
+        config_path = Path(config_path)
+        if not config_path.is_file():
+            QMessageBox.warning(self, "워크스페이스",
+                                f"파일이 없습니다:\n{config_path}")
+            forget_workspace(config_path)
+            return False
+
+        if self.mode == "cmd":
+            from apex.config.parameters_cmd import Parameters
+        else:
+            from apex.config.parameters_lc import Parameters
+        from apex.core import InstrumentConfig, FileManager
+
+        try:
+            params = Parameters(config_path)
+        except Exception as exc:
+            QMessageBox.critical(self, "워크스페이스",
+                                 f"파라미터를 읽지 못했습니다:\n{exc}")
+            return False
+
+        self._close_child_windows()
+        self.current_step_window = None
+        self.params = params
+        self.instrument = InstrumentConfig(params)
+        self.file_manager = FileManager(params)
+        # Progress belongs to the workspace; without this the new target
+        # inherits the previous one's completed steps.
+        self.project_state = self._make_project_state()
+        self._register_state_mirror()
+        # The workspace names its own directories, so the remembered
+        # file-selection folder from the previous target must not win.
+        self._explicit_param_file = True
+        try:
+            self._bootstrap_file_selection_state(respect_explicit_param=True)
+        except Exception as exc:
+            self.append_log(f"[WARN] file_selection 복원 실패: {exc}")
+
+        self.setWindowTitle(self._workspace_title(config_path))
+        try:
+            self.update_step_buttons()
+        except Exception as exc:
+            self.append_log(f"[WARN] 스텝 목록 갱신 실패: {exc}")
+        remember_workspace(config_path)
+        self.append_log(f"워크스페이스 전환: {config_path}")
+
+        # The historical accident this guards: io paths pointing at one cluster
+        # while [target] name still says another. Warn-only by design.
+        try:
+            data, resolved = load_config_data(config_path)
+            issues = check_workspace_identity(data, resolved)
+        except Exception:
+            issues = []
+        if issues:
+            QMessageBox.warning(
+                self, "워크스페이스 확인",
+                "이 워크스페이스의 설정이 서로 어긋나 보입니다:\n\n• "
+                + "\n• ".join(issues)
+                + "\n\n실행은 막지 않습니다. 설정을 확인하세요.")
+        return True
+
+    def open_workspace_dialog(self) -> None:
+        start = str(Path(getattr(self.params, "param_file", ".")).parent)
+        path, _ = QFileDialog.getOpenFileName(
+            self, "워크스페이스 열기", start,
+            "APEX 설정 (apex_config*.json);;JSON (*.json);;모든 파일 (*)")
+        if path:
+            self.switch_workspace(path)
+
+    def new_workspace_dialog(self) -> None:
+        """Create a workspace from the current one's settings.
+
+        Instrument, detection and fitting settings are what a user tunes once
+        and reuses; the paths are what changes per target. So a new workspace
+        inherits the former and clears the latter, rather than starting from a
+        template that has neither.
+        """
+        directory = QFileDialog.getExistingDirectory(
+            self, "새 워크스페이스 폴더 선택",
+            str(Path(getattr(self.params, "param_file", ".")).parent.parent))
+        if not directory:
+            return
+        target_dir = Path(directory)
+        config_path = target_dir / "apex_config.json"
+        if config_path.exists():
+            answer = QMessageBox.question(
+                self, "새 워크스페이스",
+                f"이미 설정이 있습니다:\n{config_path}\n\n그것을 열까요?",
+                QMessageBox.Yes | QMessageBox.No)
+            if answer == QMessageBox.Yes:
+                self.switch_workspace(config_path)
+            return
+        try:
+            data, _ = load_config_data(getattr(self.params, "param_file", ""))
+            data = dict(data)
+            io_block = dict(data.get("io") or {})
+            io_block["data_dir"] = ""
+            io_block["result_dir"] = str(target_dir / "result")
+            data["io"] = io_block
+            data["target"] = dict(data.get("target") or {}, name=target_dir.name)
+            save_config_data(config_path, data)
+        except Exception as exc:
+            QMessageBox.critical(self, "새 워크스페이스",
+                                 f"설정을 만들지 못했습니다:\n{exc}")
+            return
+        if self.switch_workspace(config_path):
+            QMessageBox.information(
+                self, "새 워크스페이스",
+                f"만들었습니다:\n{config_path}\n\n"
+                "Step 1 에서 데이터 폴더를 지정하세요.")
+
+    def _rebuild_recent_menu(self) -> None:
+        self._recent_menu.clear()
+        entries = load_recent_workspaces()
+        if not entries:
+            action = QAction("(없음)", self)
+            action.setEnabled(False)
+            self._recent_menu.addAction(action)
+            return
+        current = str(Path(getattr(self.params, "param_file", "")).absolute()).lower()
+        for path in entries:
+            action = QAction(recent_label(path), self)
+            if str(path).lower() == current:
+                action.setEnabled(False)      # already open
+            action.triggered.connect(
+                lambda _checked=False, p=str(path): self.switch_workspace(p))
+            self._recent_menu.addAction(action)
+
     # ── Menu setup ───────────────────────────────────────────────────────────
 
     def setup_menu(self):
         menubar = self.menuBar()
 
         file_menu = menubar.addMenu("&File")
+        # Changing target used to mean editing a config by hand or relaunching
+        # with --params; these three make it a menu action.
+        action_open_ws = QAction("&Open Workspace...", self)
+        action_open_ws.setShortcut("Ctrl+O")
+        action_open_ws.triggered.connect(self.open_workspace_dialog)
+        file_menu.addAction(action_open_ws)
+        action_new_ws = QAction("&New Workspace...", self)
+        action_new_ws.triggered.connect(self.new_workspace_dialog)
+        file_menu.addAction(action_new_ws)
+        self._recent_menu = file_menu.addMenu("Open &Recent")
+        # Rebuilt on open so a workspace that vanished since launch is not
+        # offered, and the one already open is greyed out.
+        self._recent_menu.aboutToShow.connect(self._rebuild_recent_menu)
+        file_menu.addSeparator()
         action_save = QAction("&Save Project State", self)
         action_save.setShortcut("Ctrl+S")
         action_save.triggered.connect(self.save_project_state)
