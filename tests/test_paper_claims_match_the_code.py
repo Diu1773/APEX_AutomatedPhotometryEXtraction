@@ -30,10 +30,10 @@ PAPER = REPO / "paper/paper.md"
 # What the Summary paragraph names as running without a GUI toolkit.
 CLAIMED_HEADLESS = {
     "scan", "crop", "sky", "detect", "wcs", "refbuild",
-    "forcedphot", "psf", "zeropoint",
+    "forcedphot", "psf", "zeropoint", "isochrone",
 }
 # What it names as desktop-only.
-CLAIMED_DESKTOP_ONLY = {"masterid", "cmdplot", "isochrone"}
+CLAIMED_DESKTOP_ONLY = {"masterid", "cmdplot"}
 
 
 def test_the_steps_the_paper_calls_scriptable_are_implemented():
@@ -62,7 +62,8 @@ def test_the_paper_says_which_half_needs_a_desktop():
     """The sentence a referee would test on a base install."""
     text = PAPER.read_text(encoding="utf-8")
     assert "needs no GUI toolkit installed" in text
-    assert "currently desktop-only" in text
+    assert "remain desktop-only" in text
+    assert "declines to run until the settings" in text
 
 
 def test_a_base_install_really_gets_the_pipeline_without_qt():

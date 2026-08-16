@@ -476,6 +476,36 @@ CMD_ONLY_TOML_KEY_MAP: tuple[tuple, ...] = (
     (('site', 'alt_m'), 'site_alt_m', 'float', 0.0),
     (('site', 'tz_offset_hours'), 'site_tz_offset_hours', 'float', 0.0),
     (('cmd', 'psf_match_radius_px'), 'psf_cmd_match_radius_px', 'float', 1.0),
+    # --- Isochrone fit (Step 12). `colors` has no default on purpose: the step
+    # refuses to run without it, because a default age window cannot reach a
+    # globular and a missing reddening prior rails an open cluster at the floor.
+    (('isochrone', 'colors'), 'iso_colors', 'str', ""),
+    (('isochrone', 'mag_band'), 'iso_mag_band', 'str', "g"),
+    (('isochrone', 'age_min'), 'iso_age_min', 'float', 8.5),
+    (('isochrone', 'age_max'), 'iso_age_max', 'float', 10.2),
+    (('isochrone', 'mh_min'), 'iso_mh_min', 'float', -1.0),
+    (('isochrone', 'mh_max'), 'iso_mh_max', 'float', 0.5),
+    (('isochrone', 'dm_min'), 'iso_dm_min', 'float', 5.0),
+    (('isochrone', 'dm_max'), 'iso_dm_max', 'float', 18.0),
+    (('isochrone', 'ecolor_min'), 'iso_ecolor_min', 'float', 0.0),
+    (('isochrone', 'ecolor_max'), 'iso_ecolor_max', 'float', 0.5),
+    (('isochrone', 'mh_prior'), 'iso_mh_prior', 'str', ""),
+    (('isochrone', 'ecolor_prior'), 'iso_ecolor_prior', 'str', ""),
+    (('isochrone', 'dm_prior'), 'iso_dm_prior', 'str', ""),
+    (('isochrone', 'parallax_distance_prior'), 'iso_parallax_distance_prior', 'bool', False),
+    (('isochrone', 'parallax_dm_sigma'), 'iso_parallax_dm_sigma', 'float', 0.05),
+    (('isochrone', 'parallax_dm_window'), 'iso_parallax_dm_window', 'float', 0.06),
+    (('isochrone', 'use_membership'), 'iso_use_membership', 'bool', True),
+    (('isochrone', 'data_snr_min'), 'iso_data_snr_min', 'float', 20.0),
+    (('isochrone', 'fit_snr_min'), 'iso_fit_snr_min', 'float', 5.0),
+    (('isochrone', 'max_stars'), 'iso_max_stars', 'int', 500),
+    (('isochrone', 'n_walkers'), 'iso_n_walkers', 'int', 32),
+    (('isochrone', 'n_burn'), 'iso_n_burn', 'int', 600),
+    (('isochrone', 'n_steps'), 'iso_n_steps', 'int', 2000),
+    (('isochrone', 'f_bin'), 'iso_f_bin', 'float', 0.3),
+    (('isochrone', 'f_field'), 'iso_f_field', 'float', 0.1),
+    (('isochrone', 'err_floor'), 'iso_err_floor', 'float', 0.02),
+    (('isochrone', 'seed'), 'iso_seed', 'int', 2024),
 )
 
 PSF_TOML_KEY_MAP: tuple[tuple, ...] = (

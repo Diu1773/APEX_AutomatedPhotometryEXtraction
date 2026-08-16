@@ -51,7 +51,10 @@ def test_the_two_that_execute_are_psf_and_zeropoint():
     assert isinstance(_step("cmd", 10), ZeropointStep)
 
 
-@pytest.mark.parametrize("index", [9, 11, 12])
+# 12 left this list on 2026-08-17: the isochrone fit became a real step once its
+# settings could be written in the config. 9 is interactive by nature and 11 is
+# a viewer with nothing to port, so both stay.
+@pytest.mark.parametrize("index", [9, 11])
 def test_the_rest_are_deferred_but_still_recognise_finished_work(index, tmp_path):
     """A deferred step must still see a GUI-produced result as complete."""
     step = _step("cmd", index)

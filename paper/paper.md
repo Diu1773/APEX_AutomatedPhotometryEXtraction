@@ -27,11 +27,14 @@ forced aperture photometry, and then branches into two science modes: cluster
 color-magnitude diagrams (CMD) with PARSEC isochrone fitting, and multi-night
 differential light curves with detrending and period analysis (Lomb–Scargle,
 PDM, BLS). It runs as a PyQt5 desktop application, and as a scriptable
-command-line pipeline that needs no GUI toolkit installed: the calibration,
-detection, astrometry, catalog, aperture-photometry, PSF-photometry and
-zero-point steps live in `apex.analysis`, and the desktop windows drive those
-same objects rather than copies of them. Isochrone fitting, the CMD viewer and
-the light-curve branch are currently desktop-only.
+command-line pipeline that needs no GUI toolkit installed: calibration,
+detection, astrometry, catalog construction, aperture and PSF photometry,
+zero-point calibration and the isochrone fit all live in `apex.analysis`, and
+the desktop windows drive those same objects rather than copies of them. The
+batch isochrone fit declines to run until the settings that decide the answer —
+the colours, the age window, any prior — are written in the configuration, since
+library defaults yield a confidently wrong age. The interactive master-ID
+editor, the CMD viewer and the light-curve branch remain desktop-only.
 
 `APEX` is built on the Astropy ecosystem [@astropy2022], using `photutils` for
 detection and aperture/PSF photometry, `astroquery` for Gaia/SIMBAD access, and

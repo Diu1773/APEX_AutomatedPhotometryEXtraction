@@ -42,6 +42,9 @@ dependencies = [
     "astroscrappy>=1.1,<2",
     "astroquery>=0.4.7,<0.5",
     "pydantic>=2.5,<3",
+    # Step 12 (isochrone MCMC) runs headless, so its sampler is core, not a
+    # desktop extra. `corner` stays optional: the plots fall back without it.
+    "emcee>=3.1",
     "tomli>=2.0; python_version < '3.11'",
     "tomli-w>=1.0,<2",
     "requests>=2.31,<3",
@@ -57,12 +60,11 @@ gui = [
     "PyOpenGL>=3.1.7",
     "PyOpenGL-accelerate>=3.1.7",
     "batman-package>=2.4",
-    "emcee>=3.1",
 ]
 build = ["pyinstaller>=6.5,<7"]
 # Benchmark instrumentation: peak RSS incl. child processes (apex bench).
 bench = ["psutil>=5.9"]
-test = ["pytest>=8,<9", "emcee>=3.1"]
+test = ["pytest>=8,<9"]
 docs = ["mkdocs-material>=9.5", "mkdocstrings[python]>=0.24"]
 # Cross-check benchmarks against independent reductions (validation figures only).
 validation = ["ccdproc>=2.4,<3"]
@@ -74,7 +76,6 @@ dev = [
     "PyOpenGL>=3.1.7",
     "PyOpenGL-accelerate>=3.1.7",
     "batman-package>=2.4",
-    "emcee>=3.1",
     "pyinstaller>=6.5,<7",
     "pytest>=8,<9",
     "mkdocs-material>=9.5",
@@ -89,7 +90,6 @@ all = [
     "PyOpenGL>=3.1.7",
     "PyOpenGL-accelerate>=3.1.7",
     "batman-package>=2.4",
-    "emcee>=3.1",
 ]
 
 [project.scripts]
