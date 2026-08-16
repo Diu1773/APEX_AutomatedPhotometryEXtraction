@@ -142,12 +142,50 @@ class PipelineRunner:
         return report
 
     @staticmethod
+    def _environment() -> dict:
+        """The versions that produced this run.
+
+        Added 2026-08-17 after a measured surprise: the same code on the same
+        input gave a different answer for five of 22,305 crowded measurements
+        (<=5e-5 mag) purely because one machine had a newer scipy. The run had
+        recorded nothing about its own environment, so the difference took a
+        control run and a package-by-package diff to explain. Now every run says
+        what it was made with.
+        """
+        import platform
+        import sys
+
+        versions = {}
+        for name in ("numpy", "scipy", "astropy", "photutils", "pandas",
+                     "sep", "bottleneck", "astroquery", "emcee", "matplotlib"):
+            try:
+                import importlib.metadata as md
+
+                versions[name] = md.version(name)
+            except Exception:                                    # noqa: BLE001
+                versions[name] = None
+        try:
+            import apex
+
+            apex_version = getattr(apex, "__version__", None)
+        except Exception:                                        # noqa: BLE001
+            apex_version = None
+        return {
+            "apex": apex_version,
+            "python": sys.version.split()[0],
+            "platform": platform.platform(),
+            "packages": versions,
+        }
+
+    @staticmethod
     def _write_manifest(ctx: RunContext, report: RunReport) -> Optional[Path]:
         try:
             ctx.result_dir.mkdir(parents=True, exist_ok=True)
             manifest = ctx.result_dir / "pipeline_run.json"
+            payload = report.to_dict()
+            payload["environment"] = PipelineRunner._environment()
             manifest.write_text(
-                json.dumps(report.to_dict(), indent=2, ensure_ascii=False),
+                json.dumps(payload, indent=2, ensure_ascii=False),
                 encoding="utf-8",
             )
             ctx.logger.info("Run manifest written: %s", manifest)
