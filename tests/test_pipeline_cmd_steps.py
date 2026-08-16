@@ -234,3 +234,52 @@ def test_the_photometry_source_is_read_back_not_assumed(tmp_path, body, expected
 
 def test_an_absent_coefficients_file_is_unknown_not_a_guess(tmp_path):
     assert _photometry_source(tmp_path) == "unknown"
+
+
+def test_nothing_still_reaches_for_a_qt_signal_on_the_runners():
+    """The move renamed the announcements; every caller had to follow.
+
+    Step 8 failed on its first Qt-free run with
+    `'PsfPhotometryRunner' object has no attribute 'error'` — the pipeline was
+    still doing `worker.error.connect(...)`, which only existed while the
+    worker was a QThread subclass. The headless scripts had the same shape, and
+    both also replaced `worker._log` wholesale instead of subscribing.
+    """
+    import re
+
+    repo = Path(__file__).absolute().parents[1]
+    watched = [
+        "apex/pipeline/steps/psf.py",
+        "apex/pipeline/steps/zeropoint.py",
+        "scripts/run_step8_headless.py",
+        "scripts/run_step10_headless.py",
+    ]
+    def code_only(text: str) -> str:
+        """Drop docstrings and comments — the history is written there on
+        purpose and naming Qt in it is not the same as importing it."""
+        import io
+        import tokenize
+
+        kept = []
+        for tok in tokenize.generate_tokens(io.StringIO(text).readline):
+            if tok.type in (tokenize.COMMENT, tokenize.STRING):
+                continue
+            kept.append(tok.string)
+        return " ".join(kept)
+
+    offenders = []
+    for name in watched:
+        source = code_only((repo / name).read_text(encoding="utf-8"))
+        for pattern, why in (
+            (r"worker\.(progress|log|finished|error|worker_status|frame_done"
+             r"|epsf_ready|residual_ready)\.connect\(", "Qt 신호에 connect"),
+            (r"worker\._log\s*=", "메서드를 갈아끼움"),
+            (r"\bPyQt5\b", "Qt 임포트"),
+            (r"QCoreApplication", "Qt 앱 생성"),
+        ):
+            if re.search(pattern, source):
+                offenders.append(f"{name}: {why}")
+    assert not offenders, (
+        "헤드리스 경로가 다시 Qt 를 붙들고 있다 — 채널을 subscribe 할 것: "
+        + ", ".join(offenders)
+    )

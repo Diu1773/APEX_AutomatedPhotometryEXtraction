@@ -31,13 +31,9 @@ def main() -> int:
     parser.add_argument("--params", default=str(REPO / "parameters.toml"))
     args = parser.parse_args()
 
-    from PyQt5.QtCore import QCoreApplication
-
-    app = QCoreApplication.instance() or QCoreApplication(sys.argv)
-
     from apex.config.parameters_cmd import read_params
-    from apex.gui.workflow.cmd.step8_psf_photometry import (
-        Step6PSFWorker,
+    from apex.analysis.cmd.psf_photometry_runner import (
+        PsfPhotometryRunner,
         build_psf_output_signature,
         export_psf_qc_products,
         write_psf_output_signature,
@@ -51,7 +47,7 @@ def main() -> int:
     file_list = [Path(t).name[len("photometry_"):-len(".tsv")] for t in tsvs]
     print(f"frames: {len(file_list)}")
 
-    worker = Step6PSFWorker(
+    worker = PsfPhotometryRunner(
         file_list=file_list,
         params=params,
         data_dir=Path(P.data_dir),
@@ -59,12 +55,16 @@ def main() -> int:
         cache_dir=Path(P.cache_dir) if Path(P.cache_dir).is_absolute() else result_dir / P.cache_dir,
         use_cropped=False,
     )
-    worker._log = lambda m: print(f"[LOG] {_console_text(m)}", flush=True) if any(
-        k in str(m).lower() for k in ("error", "fail", "complete", "saved", "[")
-    ) else None
-    worker.error.connect(lambda m: print(f"[ERROR] {_console_text(m)}", flush=True))
+    def _print_interesting(message):
+        if any(k in str(message).lower()
+               for k in ("error", "fail", "complete", "saved", "[")):
+            print(f"[LOG] {_console_text(message)}", flush=True)
+
+    worker.on_log.subscribe(_print_interesting)
+    worker.on_error.subscribe(
+        lambda stage, m: print(f"[ERROR] {stage}: {_console_text(m)}", flush=True))
     done: dict = {}
-    worker.finished.connect(lambda d: done.update(d if isinstance(d, dict) else {"_": d}))
+    worker.on_finished.subscribe(lambda d: done.update(d if isinstance(d, dict) else {"_": d}))
 
     t0 = time.perf_counter()
     worker.run()

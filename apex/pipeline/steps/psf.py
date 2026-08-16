@@ -87,11 +87,14 @@ class PsfPhotometryStep(PipelineStep):
             use_cropped=False,
         )
         if ctx.logger is not None:
-            worker._log = lambda message: ctx.logger.info("%s", message)
-            worker.error.connect(lambda message: ctx.logger.error("%s", message))
+            # Subscribe rather than replace a method: the run announces on its
+            # channels and the caller decides where each line lands.
+            worker.on_log.subscribe(lambda message: ctx.logger.info("%s", message))
+            worker.on_error.subscribe(
+                lambda stage, message: ctx.logger.error("%s: %s", stage, message))
 
         done: dict = {}
-        worker.finished.connect(
+        worker.on_finished.subscribe(
             lambda payload: done.update(payload if isinstance(payload, dict) else {}))
 
         started = time.perf_counter()

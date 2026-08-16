@@ -44,14 +44,8 @@ def main() -> int:
     parser.add_argument("--no-backup", action="store_true")
     args = parser.parse_args()
 
-    from PyQt5.QtCore import QCoreApplication
-
-    app = QCoreApplication.instance() or QCoreApplication(sys.argv)
-
     from apex.config.parameters_cmd import read_params
-    from apex.gui.workflow.cmd.step10_zeropoint_calibration import (
-        ZeropointCalibrationWorker,
-    )
+    from apex.analysis.cmd.zeropoint_runner import ZeropointCalibrationRunner
 
     params = read_params(args.params)
     P = params.P
@@ -66,11 +60,9 @@ def main() -> int:
                 shutil.copyfile(src, bak / name)
         print(f"[backup] {bak}")
 
-    worker = ZeropointCalibrationWorker(params, P.data_dir, P.result_dir, P.cache_dir)
-    worker._log = lambda message: print(
-        f"[LOG] {_console_text(message)}",
-        flush=True,
-    )
+    worker = ZeropointCalibrationRunner(params, P.data_dir, P.result_dir, P.cache_dir)
+    worker.on_log.subscribe(
+        lambda message: print(f"[LOG] {_console_text(message)}", flush=True))
     t0 = time.perf_counter()
     worker.run()  # synchronous
     ok = dict(worker.last_summary)
