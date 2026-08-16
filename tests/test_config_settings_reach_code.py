@@ -52,30 +52,39 @@ CMD_DROPPED = {
     # Legacy duplicates of keys that do arrive: target.ra_deg lands on
     # `target_ra_deg`, which is what the code reads.
     "ra_deg", "dec_deg",
+    # Named nowhere but the map and the unused pydantic schema — dead keys, not
+    # disconnected ones. Removing them is a separate decision.
+    "clip_max_adu", "clip_min_adu",
     # Miscellaneous vestiges.
-    "clip_max_adu", "clip_min_adu", "cmd_max_sources", "night_gap_hours",
-    "save_src2ref_tforms", "ui_canvas_px", "wcs_match_radius_arcsec",
+    "cmd_max_sources", "save_src2ref_tforms", "ui_canvas_px",
+    "wcs_match_radius_arcsec",
 }
 
 LC_DROPPED = {
-    "N_master", "apcorr_scale_max", "apcorr_scale_min", "bkg2d_downsample",
-    "bkg2d_enable", "clip_max_adu", "clip_min_adu", "dec_deg",
-    "detect_keep_max", "gate_nsrc_min", "gate_sky_sigma_max_e",
+    # Shared with CMD.
+    "N_master", "clip_max_adu", "clip_min_adu", "dec_deg", "gate_nsrc_min",
+    "gate_sky_sigma_max_e", "keep_positions_if_qc_fail", "master_filter_keep",
+    "master_flux_quantile", "master_iso_min_sep_pix", "master_keep_max",
+    "ra_deg", "save_src2ref_tforms", "ui_canvas_px", "wcs_match_radius_arcsec",
+    "apcorr_scale_max", "apcorr_scale_min", "bkg2d_enable",
+    "phot_use_original_frames",
+    # LC-only gap: CMD reads these and LC does not, so the shared WCS solver
+    # and Step 8 run to different numbers depending on which mode opened the
+    # workspace. Every config on disk asks for values the LC literals do not
+    # match — min_match_n 50 vs 20, min_match_rate 0.05 vs 0.20, max_p99_px
+    # 5.2 vs 5.0, match_radius 2.5 vs 2.0 — so wiring them changes which frames
+    # pass LC's QC. That is a science decision, not a plumbing fix.
+    "wcs_qc_match_radius_arcsec", "wcs_qc_max_p99_px", "wcs_qc_min_match_n",
+    "wcs_qc_min_match_rate",
     "idmatch_use_qc_pass_only", "idmatch_use_wcs_qc_gate",
     "idmatch_wcs_qc_max_p99_px", "idmatch_wcs_qc_max_rms_px",
     "idmatch_wcs_qc_min_inlier_rate", "idmatch_wcs_qc_min_match_n",
-    "idmatch_wcs_qc_min_match_rate", "keep_positions_if_qc_fail",
-    "master_filter_keep", "master_flux_quantile", "master_iso_min_sep_pix",
-    "master_keep_max", "night_gap_hours", "phot_use_original_frames",
+    "idmatch_wcs_qc_min_match_rate",
+    # Same shape for Step 8: the knobs whose defaults were settled on 2026-08-16
+    # reach CMD and not LC.
     "psf_final_pass_max_iter", "psf_forced_position_lock",
     "psf_grouper_budget_cap", "psf_grouper_budget_frac", "psf_interp_order",
-    "psf_profile_error_frac", "ra_deg", "ref_master_union",
-    "ref_union_min_frames", "save_src2ref_tforms", "ui_canvas_px",
-    "wcs_match_radius_arcsec", "wcs_qc_clip_sigma",
-    "wcs_qc_match_radius_arcsec", "wcs_qc_max_center_offset_arcsec",
-    "wcs_qc_max_edge_ratio", "wcs_qc_max_p99_px", "wcs_qc_max_rms_px",
-    "wcs_qc_min_inlier_rate", "wcs_qc_min_match_n", "wcs_qc_min_match_rate",
-    "wcs_qc_require_wcs_ok",
+    "psf_profile_error_frac",
 }
 
 # A workspace with the sections a real cluster run touches, written out rather
@@ -240,19 +249,23 @@ def test_a_four_part_row_arrives_with_its_type_and_default(tmp_path):
     assert not missing, f"맵이 세운다고 한 설정이 도착하지 않았다: {missing}"
 
 
-def test_the_default_in_the_row_is_the_value_when_the_file_is_silent(tmp_path):
-    from apex.config.parameter_map import CMD_TOML_KEY_MAP
+def test_the_default_in_the_row_is_the_value_when_the_file_is_silent():
+    """A silent file has to give back exactly what the row says.
 
-    config = tmp_path / "apex_config.json"
-    config.write_text(json.dumps({"io": {"result_dir": ".", "data_dir": "."}}),
-                      encoding="utf-8")
-    P = read_params(config).P
+    Checked against `build_settings` rather than the finished namespace: a
+    loader may override a shared row on purpose — CMD asks for
+    `wcs_qc_max_rms_px` 3.5 where the row carries LC's 2.5 — and that override
+    is the documented way to say "this one differs per mode".
+    """
     import math
 
+    from apex.config.parameter_map import CMD_TOML_KEY_MAP, build_settings
+
+    values = build_settings({}, CMD_TOML_KEY_MAP)
     for row in CMD_TOML_KEY_MAP:
-        if len(row) < 4 or row[1] in ("data_dir", "result_dir", "cache_dir"):
-            continue                               # the loader turns these into Paths
-        got, want = getattr(P, row[1]), row[3]
+        if len(row) < 4:
+            continue
+        got, want = values[row[1]], row[3]
         if isinstance(want, float) and math.isnan(want):
             assert isinstance(got, float) and math.isnan(got), row[1]
             continue

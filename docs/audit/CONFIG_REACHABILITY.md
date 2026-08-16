@@ -123,8 +123,45 @@ Step 7 은 `flux_corr = flux_arr * apcorr` 를 무조건 실행했으므로
 전부 비교해 차이 0**. 맵만 바꾼 시점, 로더를 바꾼 시점, 주석을 정리한 시점,
 화석을 지운 시점 네 번 모두 확인했다.
 
-**남은 것:** `schema.py` 1762 줄은 여전히 아무도 안 쓴다. 죽은 정의가 남아
-있는 것이 이 사고가 생긴 방식 자체이므로 지우거나 되살릴 판단이 필요하다.
+**`schema.py` 정정.** 앞서 "아무도 안 쓴다"고 적었는데 `apex/`·`scripts/` 만
+보고 내린 판정이라 틀렸다 — `tests/test_parameters_foundation.py:318` 이
+`Parameters.from_toml` 을 부른다. 제품 코드 경로에는 없지만 테스트 하나가
+붙들고 있다. 또 그건 타입 변환이 아니라 **검증**(범위·열거형) 계층이라 키 맵이
+대체하지 못한다. 지우지 않았다 — 채택할지 버릴지는 사람 판단.
+
+## 배선한 12 개 — 동작은 그대로 (2026-08-16)
+
+설정 파일이 적어 둔 값이 **코드가 이미 쓰던 상수와 같은** 것들만 골라
+배선했다. 그래서 오늘 산출물은 안 바뀌고 설정만 실재하게 된다.
+
+| 모드 | 설정 | 값 |
+|---|---|---|
+| CMD·LC | `io.night_gap_hours` | 8.0 |
+| LC | `detection.keep_max` · `background.downsample` | 6000 · 4 |
+| LC | `wcs_qc.clip_sigma` · `require_wcs_ok` · `max_rms_px` | 3.0 · true · 2.5 |
+| LC | `wcs_qc.min_inlier_rate` · `max_edge_ratio` · `max_center_offset_arcsec` | 0.5 · 0.0 · 0.0 |
+| LC | `refbuild.master_union` · `union_min_frames` | true · 1 |
+
+확인: 51 개 워크스페이스 재측정에서 **기존 값 변화 0 · 새로 도착 12 개**,
+도착값은 전부 코드 상수와 동일.
+
+## LC 가 설정을 무시하는 자리 — 배선하면 결과가 바뀐다
+
+CMD 는 읽고 LC 는 안 읽는 설정들이 있다. Step 7·8 과 WCS 해는 두 모드가
+**같은 코드**를 쓰므로, 어느 모드로 열었느냐에 따라 다른 숫자로 돈다.
+
+| 설정 | 설정 파일 요구 | LC 가 실제로 쓰는 값 |
+|---|---|---|
+| `wcs_qc.min_match_n` | 50 | **20** |
+| `wcs_qc.min_match_rate` | 0.05 | **0.20** |
+| `wcs_qc.max_p99_px` | 5.2 | **5.0** |
+| `wcs_qc.match_radius_arcsec` | 2.5 | **2.0** |
+| `idmatch.wcs_qc_*` 7 개 | 값 있음 | 전부 미도달 |
+| `psf.profile_error_frac` 등 6 개 | 값 있음 | 전부 미도달 |
+
+`wcs_qc` 는 **프레임 합격/불합격 기준**이라 배선하면 LC 광도곡선에 들어가는
+프레임이 달라진다. 배관 수리가 아니라 과학 결정이므로 손대지 않고 못박아 뒀다
+(`LC_DROPPED`). AE UMa·YZ Boo 재현 작업과 직결된다.
 
 ## 세 번째 범주 — P 까지 갔는데 아무도 안 읽는 것
 
