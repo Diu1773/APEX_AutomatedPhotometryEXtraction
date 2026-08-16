@@ -2209,7 +2209,7 @@ class IRAFPhotometryWindow(AutoFitMixin, QMainWindow):
                     setattr(p, f"threshold_{key}", val)
 
         for attr, target in (
-            ("forced_r_ap_scale", "aperture_mult"),
+            ("apcorr_small_scale", "aperture_mult"),
             ("fitsky_annulus_scale", "annulus_mult"),
             ("fitsky_dannulus_scale", "dannulus_mult"),
             ("center_cbox_scale", "cbox_mult"),

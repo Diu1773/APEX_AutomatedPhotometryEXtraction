@@ -818,8 +818,18 @@ def run_forced_photometry(
         h, w = img.shape
 
         # Photometry parameters
-        r_ap_scale   = _to_float(getattr(P, "forced_r_ap_scale",     0.8), 0.8)
-        ref_ap_scale = _to_float(getattr(P, "forced_ref_ap_scale",   2.4), 2.4)
+        # `apcorr_small_scale` / `apcorr_large_scale`, not `forced_*_scale`.
+        # Those two names were read here and set nowhere, while the config's
+        # [photometry.apcorr] small_scale / large_scale loaded into the
+        # parameters and were read nowhere — the two halves never met. Until
+        # 2026-08-16 every config on disk asked for 1.0 / 3.0 and every run used
+        # 0.8 / 2.4, the *lower bounds* of the optimiser range the same block
+        # declares, so the apertures sat at the floor of their own range. The
+        # files now state 0.8 / 2.4, the radii the stored products were measured
+        # with; raising them is a real change and needs a reprocess.
+        apcorr_apply = bool(getattr(P, "apcorr_apply", True))
+        r_ap_scale   = _to_float(getattr(P, "apcorr_small_scale", 0.8), 0.8)
+        ref_ap_scale = _to_float(getattr(P, "apcorr_large_scale", 2.4), 2.4)
         min_r_ap     = _to_float(getattr(P, "min_r_ap_px",           4.0), 4.0)
         ann_scale    = _to_float(getattr(P, "fitsky_annulus_scale",   4.0), 4.0)
         dann_scale   = _to_float(getattr(P, "fitsky_dannulus_scale",  2.0), 2.0)
@@ -1178,7 +1188,11 @@ def run_forced_photometry(
         apcorr = 1.0
         growth_curve_data: dict = {"noise": dict(noise_info)}
 
-        if n_gc_stars >= apcorr_min_n:
+        # `photometry.apcorr.apply` reached `P` and nothing read it, so turning
+        # the correction off in the config did nothing and Step 7 multiplied by
+        # apcorr unconditionally. Every workspace on disk has it true, so wiring
+        # it changes no stored product (2026-08-16).
+        if apcorr_apply and n_gc_stars >= apcorr_min_n:
             gc_radii = np.linspace(max(2.0, r_ap * 0.4), r_ref * 1.15, _GC_N_STEPS)
             gc_flux_matrix, gc_ferr_matrix = _growth_curve_fixed_sky(
                 img, gc_positions, gc_radii, r_in, r_out, phot_kw,

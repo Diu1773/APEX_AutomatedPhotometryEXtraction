@@ -174,8 +174,13 @@ neighbor_mask_scale = 1.3
 
 [photometry.apcorr]
 apply = true
-small_scale = 1.0
-large_scale = 3.0
+# Aperture radii in FWHM units: measure at small_scale, correct out to
+# large_scale. These are the radii Step 7 uses. Until 2026-08-16 the code read
+# them under names nothing set and silently used 0.8 / 2.4 instead; the values
+# here now are those radii, so every stored product matches its own config.
+# Raising them is a real change and needs a reprocess, not just an edit.
+small_scale = 0.8
+large_scale = 2.4
 min_n = 12
 scatter_max = 0.2
 min_snr = 40.0

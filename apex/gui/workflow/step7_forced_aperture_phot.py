@@ -84,7 +84,7 @@ _GC_N_STEPS = 14   # number of radii in the growth curve
 _FORCED_SIGNATURE_FILE = "forced_phot_signature.json"
 # v2: mag_inst redefined as IRAF-style count-rate magnitude
 # (INSTRUMENTAL_ZMAG - 2.5*log10(flux_e/exptime)); invalidates v1 caches.
-_FORCED_SIGNATURE_VERSION = 2
+_FORCED_SIGNATURE_VERSION = 3
 _FORCED_SIGNATURE_PARAMS = (
     "phot_use_qc_pass_only",
     "fwhm_pix_guess",
@@ -93,8 +93,13 @@ _FORCED_SIGNATURE_PARAMS = (
     "centroid_outlier_px",
     "registration_match_radius_px",
     "registration_min_anchors",
-    "forced_r_ap_scale",
-    "forced_ref_ap_scale",
+    # These four were names nothing set, so `getattr(P, k, None)` put None in
+    # the signature every time and the cache did not notice when the aperture
+    # or the sky clipping changed. Now that the settings exist, the signature
+    # has to read them under the names that carry the values (2026-08-16).
+    "apcorr_apply",
+    "apcorr_small_scale",
+    "apcorr_large_scale",
     "min_r_ap_px",
     "fitsky_annulus_scale",
     "fitsky_dannulus_scale",
@@ -106,8 +111,8 @@ _FORCED_SIGNATURE_PARAMS = (
     "noise_scale_by_binning",
     "saturation_adu",
     "datamax_adu",
-    "phot_sigma_clip",
-    "phot_max_iter",
+    "annulus_sigma_clip",
+    "fitsky_max_iter",
     "sky_sigma_mode",
     "sky_sigma_includes_rn",
     "sky_sigma_min_n_sky",
@@ -821,7 +826,7 @@ class ForcedPhotWindow(StepWindowBase):
             "Step4 apcorr_candidate=false라서 aperture correction reference에서 제외된 source 수",
             "centroid_outlier_px보다 중심 오차가 커서 apcorr reference에서 제외된 source 수",
             "Optimal aperture 반지름 (px): U-shape mag_err 곡선의 최저점 = SNR 최대 구경.",
-            "최적 구경 배수 = r_opt / FWHM. 현재 r_ap/FWHM과 다르면 forced_r_ap_scale 튜닝 고려.",
+            "최적 구경 배수 = r_opt / FWHM. 현재 r_ap/FWHM과 다르면 photometry.apcorr.small_scale 튜닝 고려.",
             "최저점 median mag_err.",
         ]
         for col, tip in enumerate(_ap_tooltips):
@@ -860,8 +865,8 @@ class ForcedPhotWindow(StepWindowBase):
             "처리 상태 (ok / no_image / error)",
             "WCS solve 성공 여부",
             "프레임 FWHM (px) — step4 detection에서",
-            "측광 aperture 반지름 (px). forced_r_ap_scale × FWHM",
-            "Reference aperture 반지름 (px). forced_ref_ap_scale × FWHM",
+            "측광 aperture 반지름 (px). photometry.apcorr.small_scale × FWHM",
+            "Reference aperture 반지름 (px). photometry.apcorr.large_scale × FWHM",
             "Aperture correction = 1 / enclosed_fraction(at r_ap)",
             "Master catalog source 수",
             "프레임에서 검출된 source 수 (recenter용)",

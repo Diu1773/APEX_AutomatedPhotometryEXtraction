@@ -35,9 +35,8 @@ WATCHED = [
 ]
 
 # Names Step 7 reads off `P` that `parameters_cmd` does not define. Each one is
-# a real disconnect, but of three different kinds, and only the first was safe
-# to fix without changing what the pipeline computes. Adding to this list must
-# be a deliberate act with the reason written down.
+# a real disconnect. Adding to this list must be a deliberate act with the
+# reason written down.
 KNOWN_ABSENT = {
     # Set by the headless runner at run time, never by the config.
     "force_redetect": "runtime",
@@ -47,15 +46,6 @@ KNOWN_ABSENT = {
     "ref_cat_max_abs_round": "lc-only",
     "ref_cat_sharp_min": "lc-only",
     "ref_cat_sharp_max": "lc-only",
-    # A two-sided disconnect: the code reads `forced_*_scale`, which nothing
-    # sets, while the config offers `photometry.apcorr.small_scale` /
-    # `.large_scale` (-> apcorr_small_scale / apcorr_large_scale), which nothing
-    # reads. So the aperture radii are settable in the config and the setting
-    # does nothing. Wiring them is not behaviour-neutral — apcorr_large_scale is
-    # 3.0 in every workspace while Step 7 uses 2.4 — so it needs a decision, not
-    # a quiet fix (2026-08-16).
-    "forced_r_ap_scale": "two-sided",
-    "forced_ref_ap_scale": "two-sided",
 }
 
 
@@ -95,21 +85,54 @@ def test_the_same_config_key_reaches_detection_and_forced_photometry(tmp_path):
     assert P.fitsky_max_iter == 9
 
 
-def test_the_aperture_scale_disconnect_is_still_there_and_still_two_sided():
-    """Pinned, not fixed. If someone wires it, this fails and they must say so.
+def test_the_aperture_scales_come_from_the_config_now(parameters):
+    """Was a two-sided break: the code read `forced_*_scale`, which nothing set,
+    while the config's `photometry.apcorr.small_scale` / `.large_scale` reached
+    `raw` and were dropped by the namespace constructor. Both halves worked and
+    were never connected, so fifty config files on disk carried an aperture
+    radius no run had used.
 
-    The config offers the aperture scales and nothing reads them; the code has
-    knobs for the aperture scales and nothing sets them. Connecting the two
-    changes r_ref from 2.4 to 3.0 x FWHM, which moves every growth curve.
+    Wiring it was made behaviour-neutral on purpose: the defaults here and the
+    values written into every workspace are 0.8 / 2.4, the radii every stored
+    product was measured with. Raising them to the 1.0 / 3.0 the template used
+    to claim is a real change and needs a reprocess.
     """
+    assert parameters.apcorr_small_scale == pytest.approx(0.8)
+    assert parameters.apcorr_large_scale == pytest.approx(2.4)
+
     source = (REPO / "apex/analysis/forced_photometry.py").read_text(encoding="utf-8")
-    assert 'getattr(P, "forced_r_ap_scale"' in source
-    config_source = (REPO / "apex/config/parameters_cmd.py").read_text(encoding="utf-8")
-    assert "apcorr_small_scale" in config_source
-    reading = [path for path in (REPO / "apex").rglob("*.py")
-               if "config" not in path.parts
-               and "apcorr_small_scale" in path.read_text(encoding="utf-8", errors="replace")]
-    assert not reading, f"이제 읽는 곳이 있다 — 연결했으면 문서를 고칠 것: {reading}"
+    assert 'getattr(P, "apcorr_small_scale"' in source
+    assert 'getattr(P, "apcorr_large_scale"' in source
+    assert "forced_r_ap_scale" not in source
+    assert "forced_ref_ap_scale" not in source
+
+
+def test_both_modes_share_one_aperture(tmp_path):
+    """Step 7 is shared, so CMD and LC must not disagree about its radii.
+
+    `parameters_lc` declared 1.0 / 3.0 while `parameters_cmd` had no field at
+    all — the moment the read was wired up, the same engine would have measured
+    two different apertures depending on which mode opened the workspace.
+    """
+    from apex.config.parameters_lc import read_params as read_lc
+
+    config = tmp_path / "apex_config.json"
+    config.write_text(json.dumps({"io": {"result_dir": ".", "data_dir": "."}}),
+                      encoding="utf-8")
+    cmd_P, lc_P = read_params(config).P, read_lc(config).P
+    assert cmd_P.apcorr_small_scale == lc_P.apcorr_small_scale
+    assert cmd_P.apcorr_large_scale == lc_P.apcorr_large_scale
+
+
+def test_a_configured_aperture_actually_arrives(tmp_path):
+    config = tmp_path / "apex_config.json"
+    config.write_text(json.dumps({
+        "io": {"result_dir": ".", "data_dir": "."},
+        "photometry": {"apcorr": {"small_scale": 1.1, "large_scale": 3.3}},
+    }), encoding="utf-8")
+    P = read_params(config).P
+    assert P.apcorr_small_scale == pytest.approx(1.1)
+    assert P.apcorr_large_scale == pytest.approx(3.3)
 
 
 @pytest.mark.parametrize("module", WATCHED)

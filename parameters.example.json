@@ -155,8 +155,8 @@
     },
     "apcorr": {
       "apply": true,
-      "small_scale": 1.0,
-      "large_scale": 3.0,
+      "small_scale": 0.8,
+      "large_scale": 2.4,
       "min_n": 12,
       "scatter_max": 0.2,
       "min_snr": 40.0,

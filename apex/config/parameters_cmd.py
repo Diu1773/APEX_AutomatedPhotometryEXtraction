@@ -609,6 +609,17 @@ class Parameters:
             noise_scale_by_binning=_as_bool(raw.get("noise_scale_by_binning", "false"), False),
             zp_initial=_getf(raw, "zp_initial", 25.0),
             binning_default=_geti(raw, "binning_default", 2),
+            # `InstrumentConfig` reads these to derive the pixel scale. They were
+            # mapped but never named here, so the namespace had no such attribute
+            # and the getattr fallbacks — 3947 mm and 3.76 um, the CDK500 with a
+            # C3-61000 — won for every instrument. Harmless for the five clusters,
+            # which are that instrument, and wrong by 3.8x for the QHY600 and 2.0x
+            # for the Sinistro. Headless runs took `match.pixel_scale_arcsec`
+            # straight from the file and were never affected; the GUI built an
+            # InstrumentConfig and overwrote the right value with the default one.
+            telescope_focal_mm=_getf(raw, "telescope_focal_mm", 3947.0),
+            camera_pixel_um=_getf(raw, "camera_pixel_um", 3.76),
+            camera_binning=_geti(raw, "camera_binning", 0) or None,
             site_lat_deg=_getf(raw, "site_lat_deg", 0.0),
             site_lon_deg=_getf(raw, "site_lon_deg", 0.0),
             site_alt_m=_getf(raw, "site_alt_m", 0.0),
@@ -678,8 +689,13 @@ class Parameters:
             apcorr_scale_min=_getf(raw, "apcorr_scale_min", 0.5),
             apcorr_scale_max=_getf(raw, "apcorr_scale_max", 5.0),
             apcorr_scale_step=_getf(raw, "apcorr_scale_step", 0.25),
-            apcorr_large_scale=_getf(raw, "apcorr_large_scale", _getf(raw, "apcorr_large_ref_scale", 5.0)),
-            apcorr_large_ref_scale=_getf(raw, "apcorr_large_scale", _getf(raw, "apcorr_large_ref_scale", 5.0)),
+            # 0.8 / 2.4 are the radii every run to date has used: Step 7 read
+            # them as literals off `forced_*_scale`, names nothing ever set.
+            # `apcorr_small_scale` had no field here at all, so the config key
+            # loaded into `raw` and was dropped on the way into the namespace.
+            apcorr_small_scale=_getf(raw, "apcorr_small_scale", 0.8),
+            apcorr_large_scale=_getf(raw, "apcorr_large_scale", _getf(raw, "apcorr_large_ref_scale", 2.4)),
+            apcorr_large_ref_scale=_getf(raw, "apcorr_large_scale", _getf(raw, "apcorr_large_ref_scale", 2.4)),
             apcorr_isolation_factor=_getf(raw, "apcorr_isolation_factor", 2.5),
             depth_qc_tolerance_mag=_getf(raw, "depth_qc_tolerance_mag", DEPTH_QC_TOLERANCE_MAG),
             depth_qc_min_snr=_getf(raw, "depth_qc_min_snr", 40.0),

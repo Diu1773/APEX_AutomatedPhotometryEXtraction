@@ -170,8 +170,11 @@ def main() -> int:
     master_path = step7 / "master_sources.csv"
     master = pd.read_csv(master_path) if master_path.exists() else None
 
-    r_ap_scale = _to_float(getattr(P, "forced_r_ap_scale", 0.8), 0.8)
-    ref_scale = _to_float(getattr(P, "forced_ref_ap_scale", 2.4), 2.4)
+    # Mirror the engine's names, not the orphans it used to read. Both resolve
+    # to 0.8 / 2.4 today, which is the point: the wiring changed where the
+    # numbers come from, not what they are.
+    r_ap_scale = _to_float(getattr(P, "apcorr_small_scale", 0.8), 0.8)
+    ref_scale = _to_float(getattr(P, "apcorr_large_scale", 2.4), 2.4)
     min_r_ap = _to_float(getattr(P, "min_r_ap_px", 4.0), 4.0)
 
     fwhm_column = next((c for c in ("fwhm_px", "fwhm", "fwhm_median_px")

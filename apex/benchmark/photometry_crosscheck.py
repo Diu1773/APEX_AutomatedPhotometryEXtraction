@@ -51,8 +51,8 @@ import pandas as pd
 # the production defaults from apex.config.schema.ApertureScalesConfig /
 # ApertureRadiiConfig and apex.analysis.forced_photometry._phot_frame. They are
 # overridden at runtime by the actual params.P attributes when available.
-DEFAULT_APERTURE_SCALE = 0.8     # forced_r_ap_scale
-DEFAULT_REF_AP_SCALE = 2.4       # forced_ref_ap_scale
+DEFAULT_APERTURE_SCALE = 0.8     # photometry.apcorr.small_scale
+DEFAULT_REF_AP_SCALE = 2.4       # photometry.apcorr.large_scale
 DEFAULT_ANN_IN_SCALE = 4.0       # fitsky_annulus_scale
 DEFAULT_DANN_SCALE = 2.0         # fitsky_dannulus_scale
 DEFAULT_MIN_R_AP_PX = 4.0        # min_r_ap_px
@@ -126,8 +126,8 @@ def _attr(params: Any, name: str, default: float) -> float:
 def _resolve_scales(params: Any) -> dict[str, float]:
     """Resolve APEX aperture/sky scales from params.P, matching _phot_frame."""
     return {
-        "aperture_scale": _attr(params, "forced_r_ap_scale", DEFAULT_APERTURE_SCALE),
-        "ref_ap_scale": _attr(params, "forced_ref_ap_scale", DEFAULT_REF_AP_SCALE),
+        "aperture_scale": _attr(params, "apcorr_small_scale", DEFAULT_APERTURE_SCALE),
+        "ref_ap_scale": _attr(params, "apcorr_large_scale", DEFAULT_REF_AP_SCALE),
         "ann_in_scale": _attr(params, "fitsky_annulus_scale", DEFAULT_ANN_IN_SCALE),
         "dann_scale": _attr(params, "fitsky_dannulus_scale", DEFAULT_DANN_SCALE),
         "min_r_ap_px": _attr(params, "min_r_ap_px", DEFAULT_MIN_R_AP_PX),
