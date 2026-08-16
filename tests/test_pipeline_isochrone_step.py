@@ -264,3 +264,42 @@ def test_the_desktop_dialog_no_longer_decides_the_boxes_itself():
     from apex.pipeline.steps import isochrone as step
     assert step.build_fit_config is isochrone_config.build_fit_config
     assert inspect.getmodule(step.build_fit_config) is isochrone_config
+
+
+def test_the_result_survives_its_own_output_directory_vanishing(tmp_path, monkeypatch):
+    """A 40-minute posterior must not be lost to a missing folder.
+
+    Measured 2026-08-17: a 32 x 6000 M13 chain ran to completion and then died
+    with FileNotFoundError writing the summary. The directory was created before
+    the fit and was gone by the end — an empty folder under a temp root does not
+    reliably survive three quarters of an hour. Create it again at write time.
+    """
+    import logging
+    import shutil
+    from types import SimpleNamespace
+
+    from apex.pipeline.context import RunContext
+
+    params = _params(tmp_path, {"colors": "B-V", "file_path": "grid.dat"})
+    zp_dir = tmp_path / "result" / "cmd_zeropoint"
+    zp_dir.mkdir(parents=True)
+    (zp_dir / "median_by_ID_filter_wide_cmd.csv").write_text("ID\n1\n", encoding="utf-8")
+
+    out_dir = Path(params.P.result_dir) / "cmd_isochrone"
+
+    def fit_then_lose_the_folder(df, config, make_figures=True, progress_cb=None):
+        # Whatever the fit was doing, the folder is gone when it returns.
+        shutil.rmtree(out_dir, ignore_errors=True)
+        return SimpleNamespace(summary={"convergence_ok": True}, n_stars=7,
+                               member_meta={}, warnings=[])
+
+    import apex.analysis.cmd.isochrone_fit_service as service
+    monkeypatch.setattr(service, "fit_cluster_isochrone", fit_then_lose_the_folder)
+
+    ctx = RunContext(mode="cmd", params=params,
+                     result_dir=Path(params.P.result_dir),
+                     data_dir=Path(params.P.data_dir),
+                     logger=logging.getLogger("test"))
+    result = IsochroneStep().run(ctx)
+    assert result.status == StepStatus.OK
+    assert (out_dir / "isochrone_fit_summary.json").exists(), "결과를 잃었다"

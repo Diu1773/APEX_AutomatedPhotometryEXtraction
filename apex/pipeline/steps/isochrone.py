@@ -115,6 +115,12 @@ class IsochroneStep(PipelineStep):
             "elapsed_s": elapsed,
             "wide_table": str(table),
         }
+        # Make the directory again, here. It was created before the fit, but the
+        # fit can run for the better part of an hour and an empty directory under
+        # a temp root does not necessarily survive that — one 40-minute M13 chain
+        # (32 x 6000) finished and then died with FileNotFoundError on this very
+        # write, throwing away the whole posterior. Re-creating costs nothing.
+        out_dir.mkdir(parents=True, exist_ok=True)
         (out_dir / "isochrone_fit_summary.json").write_text(
             json.dumps(record, indent=1, default=str), encoding="utf-8")
 
