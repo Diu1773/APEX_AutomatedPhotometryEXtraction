@@ -27,9 +27,18 @@ classifiers = [
 
 # Core = the HEADLESS scientific + CLI runtime. Deliberately excludes PyQt5 so
 # `pip install apex-photometry` works on servers/CI without a display. Desktop
-# users install `apex-photometry[gui]`. requirements.txt remains the pinned set
-# the Windows PyInstaller build consumes; this table is the source of truth for
-# pip/conda installs and should be kept consistent with it.
+# users install `apex-photometry[gui]`. requirements.txt is the list the Windows
+# PyInstaller build consumes; this table is the source of truth for pip/conda
+# installs and should be kept consistent with it.
+#
+# Neither file pins. Both give ranges, so a fresh install takes whatever is
+# newest inside them — and that is not free: on 2026-08-17 a new install picked
+# scipy 1.18.0 where the validated environment had 1.17.1, and five of 22,305
+# crowded PSF measurements moved by <=5e-5 mag. Pinning it back reproduced the
+# stored tables exactly (docs/audit/HEADLESS_WITHOUT_QT.md). Ranges stay for now
+# because pinning a library floor onto every downstream install is its own cost;
+# what closed the gap instead is that each run records the versions that made it
+# (`environment` in pipeline_run.json), so a result can always name its stack.
 dependencies = [
     "numpy>=1.24,<3",
     "bottleneck>=1.3.8,<2",

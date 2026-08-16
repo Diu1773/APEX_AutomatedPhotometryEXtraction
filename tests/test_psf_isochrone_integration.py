@@ -19,8 +19,8 @@ from apex.analysis.cmd.isochrone_fitter_v2 import (
     FitBounds,
     IsochroneFitterV2,
 )
+from apex.analysis.cmd.zeropoint_runner import ZeropointCalibrationRunner
 from apex.gui.workflow.cmd.step10_zeropoint_calibration import (
-    ZeropointCalibrationWorker,
     resolve_cmd_photometry_input,
 )
 from apex.gui.workflow.cmd.step8_psf_photometry import (
@@ -151,13 +151,19 @@ def _run_step10(root: Path) -> dict:
         gaia_gi_min=-0.5,
         gaia_gi_max=3.5,
     )
-    worker = ZeropointCalibrationWorker(
+    # Drive the calculation, not the window. `ZeropointCalibrationWorker.run is
+    # ZeropointCalibrationRunner.run` (pinned in test_gui_workers_construct.py),
+    # so this covers the same code — and it does not leave a live `QThread` in a
+    # process that never built a `QApplication`, which crashed the full suite
+    # with a Windows access violation once the worker became constructible
+    # again (2026-08-17).
+    worker = ZeropointCalibrationRunner(
         SimpleNamespace(P=p), p.data_dir, p.result_dir, p.cache_dir
     )
     summaries: list[dict] = []
     errors: list[str] = []
-    worker.finished.connect(summaries.append)
-    worker.error.connect(errors.append)
+    worker.on_finished.subscribe(summaries.append)
+    worker.on_error.subscribe(errors.append)
     worker.run()
     assert not errors, errors[0] if errors else ""
     assert summaries and summaries[-1].get("ok") is True
