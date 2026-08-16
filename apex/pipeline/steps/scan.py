@@ -44,7 +44,7 @@ class ScanStep(PipelineStep):
 
     def run(self, ctx: RunContext) -> StepResult:
         from apex.core.file_manager import FileManager
-        from apex.gui.workflow.step1_header_target import select_header_target
+        from apex.analysis.header_target import select_header_target
 
         fm = FileManager(ctx.params)
         filenames = fm.scan_files()  # raises RuntimeError if none found

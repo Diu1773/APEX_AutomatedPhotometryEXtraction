@@ -68,12 +68,44 @@ def test_the_master_id_editor_is_marked_interactive():
     assert _step("cmd", 9).interactive is True
 
 
-def test_missing_pyqt_says_what_to_install_rather_than_raising(tmp_path, monkeypatch):
-    step = PsfPhotometryStep()
-    monkeypatch.setattr("apex.pipeline.steps.psf._qt_available", lambda: False)
-    result = step.run(_ctx(tmp_path))
-    assert result.status == StepStatus.NOT_IMPLEMENTED
-    assert "gui" in result.message and "PyQt5" in result.message
+def test_psf_needs_no_qt_at_all():
+    """Step 8 used to report NOT_IMPLEMENTED without PyQt5 because it reached
+    into the GUI module for its worker — so a script could not do PSF photometry
+    at all. The calculation now lives in `apex.analysis.cmd.psf_photometry_runner`
+    (2026-08-16). Probed in a fresh interpreter so an already-imported Qt from
+    another test cannot mask the answer."""
+    import subprocess
+    import sys
+
+    import apex.pipeline.steps.psf as step_module
+
+    assert not hasattr(step_module, "_qt_available")
+
+    probe = (
+        "import sys;"
+        "import apex.pipeline.registry;"
+        "import apex.analysis.cmd.psf_photometry_runner;"
+        "print([m for m in sys.modules if m.startswith(('PyQt5', 'apex.gui'))])"
+    )
+    out = subprocess.run([sys.executable, "-X", "utf8", "-c", probe],
+                         cwd=Path(__file__).absolute().parents[1],
+                         capture_output=True, text=True, timeout=180)
+    assert out.returncode == 0, out.stderr
+    assert out.stdout.strip() == "[]", f"Qt/GUI 가 딸려 들어온다: {out.stdout}"
+
+
+def test_the_window_and_the_script_run_the_same_psf_code():
+    """The same function object, not a copy kept in agreement."""
+    pytest.importorskip("PyQt5")
+    from apex.analysis.cmd.psf_photometry_runner import PsfPhotometryRunner
+    from apex.gui.workflow.cmd.step8_psf_photometry import Step6PSFWorker
+
+    assert Step6PSFWorker.run is PsfPhotometryRunner.run
+    differing = [name for name in dir(PsfPhotometryRunner)
+                 if not name.startswith("__")
+                 and getattr(Step6PSFWorker, name, None)
+                 is not getattr(PsfPhotometryRunner, name, None)]
+    assert not differing, f"GUI 가 코어와 다른 구현을 갖는다: {differing}"
 
 
 def test_zeropoint_needs_no_qt_at_all():
@@ -163,8 +195,7 @@ def test_psf_completeness_is_the_signature_not_the_directory(tmp_path):
     assert step.is_complete(ctx)
 
 
-def test_psf_is_blocked_without_step7_tables(tmp_path, monkeypatch):
-    monkeypatch.setattr("apex.pipeline.steps.psf._qt_available", lambda: True)
+def test_psf_is_blocked_without_step7_tables(tmp_path):
     (tmp_path / "step7_forced_phot").mkdir(parents=True)
     result = PsfPhotometryStep().run(_ctx(tmp_path))
     assert result.status == StepStatus.BLOCKED

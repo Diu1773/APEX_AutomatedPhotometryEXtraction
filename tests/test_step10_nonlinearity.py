@@ -11,10 +11,10 @@ import numpy as np
 import pandas as pd
 import pytest
 
-pytest.importorskip("PyQt5")
 
-from apex.gui.workflow.cmd.step10_zeropoint_calibration import (
-    ZeropointCalibrationWorker,
+# Moved out of the GUI module on 2026-08-16 so Step 10 runs without PyQt5.
+from apex.analysis.cmd.zeropoint_runner import (
+    ZeropointCalibrationRunner as ZeropointCalibrationWorker,
     build_zp_qc_summary,
     build_cmd_qc_summary,
     build_gaia_cmd_comparison,

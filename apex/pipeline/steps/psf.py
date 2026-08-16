@@ -1,17 +1,12 @@
 """CMD Step 8 (headless): PSF photometry.
 
-Unlike Steps 1-7, the compute for this one still lives inside the GUI module
-(``apex.gui.workflow.cmd.step8_psf_photometry``) as a ``QThread`` subclass. It
-does not need a display or an event loop — driving ``run()`` synchronously is
-what every validated PSF result to date was produced by — but it does need
-PyQt5 importable, and PyQt5 is an *optional* dependency (the ``gui`` extra).
-
-So this step asks first. With PyQt5 present it runs the same code path the GUI
-and ``scripts/run_step8_headless.py`` use, byte for byte. Without it, the step
-reports what to install rather than dying on an ImportError halfway through a
-pipeline. Lifting the engine out into ``apex.analysis`` would remove the
-condition entirely; that is a separate job on an 8,900-line file and is not
-worth risking on the most heavily validated module in the tree.
+The compute lives in ``apex.analysis.cmd.psf_photometry_runner`` and needs no
+Qt at all (2026-08-16). It used to sit inside the GUI module as a ``QThread``
+subclass, so this step had to check for PyQt5 — an *optional* dependency — and
+report NOT_IMPLEMENTED without it, which meant a script could not do PSF
+photometry. The GUI now subclasses the same runner to add the thread and its
+signals, so the window and this step drive the same object rather than two
+copies that have to be kept in agreement.
 """
 
 from __future__ import annotations
@@ -26,14 +21,6 @@ from apex.utils.step_paths import step7_forced_phot_dir
 from apex.utils.step_paths_cmd import step8_psf_dir
 
 SIGNATURE_NAME = "psf_output_signature.json"
-
-
-def _qt_available() -> bool:
-    try:
-        import PyQt5.QtCore  # noqa: F401
-    except Exception:  # noqa: BLE001 - any import failure means "not usable"
-        return False
-    return True
 
 
 def _frames_from_step7(result_dir: Path) -> List[str]:
@@ -71,14 +58,6 @@ class PsfPhotometryStep(PipelineStep):
         return (step8_psf_dir(ctx.result_dir) / SIGNATURE_NAME).exists()
 
     def run(self, ctx: RunContext) -> StepResult:
-        if not _qt_available():
-            return StepResult(
-                index=self.index, key=self.key, status=StepStatus.NOT_IMPLEMENTED,
-                message=("PSF photometry still runs through the GUI module's "
-                         "worker, which needs PyQt5. Install the extra "
-                         "(pip install 'apex[gui]') or run this step in the app."),
-            )
-
         frames = _frames_from_step7(ctx.result_dir)
         if not frames:
             return StepResult(
@@ -87,13 +66,8 @@ class PsfPhotometryStep(PipelineStep):
                          f"{step7_forced_phot_dir(ctx.result_dir)}"),
             )
 
-        from PyQt5.QtCore import QCoreApplication
-
-        # A QObject needs an application instance to exist, not to be running.
-        QCoreApplication.instance() or QCoreApplication([])
-
-        from apex.gui.workflow.cmd.step8_psf_photometry import (
-            Step6PSFWorker,
+        from apex.analysis.cmd.psf_photometry_runner import (
+            PsfPhotometryRunner,
             build_psf_output_signature,
             export_psf_qc_products,
             write_psf_output_signature,
@@ -104,7 +78,7 @@ class PsfPhotometryStep(PipelineStep):
         if not cache_dir.is_absolute():
             cache_dir = ctx.result_dir / params.P.cache_dir
 
-        worker = Step6PSFWorker(
+        worker = PsfPhotometryRunner(
             file_list=frames,
             params=params,
             data_dir=ctx.data_dir,

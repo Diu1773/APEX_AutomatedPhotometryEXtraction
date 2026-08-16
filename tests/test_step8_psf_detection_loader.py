@@ -4,10 +4,14 @@ import numpy as np
 import pandas as pd
 import pytest
 
-pytest.importorskip("PyQt5")
-import apex.gui.workflow.cmd.step8_psf_photometry as psf_module
+# The calculation moved to `apex.analysis.cmd.psf_photometry_runner` on
+# 2026-08-16 so a script can run Step 8 without PyQt5. Patch it there: the GUI
+# module re-exports these names, but a function looks its callees up in its own
+# module's globals, so replacing the re-export would leave the real call alone
+# — which is exactly how this test started passing while patching nothing.
+import apex.analysis.cmd.psf_photometry_runner as psf_module
 from apex.analysis.psf_iteration import PSFFitFlag
-from apex.gui.workflow.cmd.step8_psf_photometry import (
+from apex.analysis.cmd.psf_photometry_runner import (
     _allstar_newton_group,
     _allstar_newton_one,
     _allstar_apply_model_inplace,

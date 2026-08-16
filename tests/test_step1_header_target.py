@@ -1,6 +1,6 @@
 import pandas as pd
 
-from apex.gui.workflow.step1_header_target import select_header_target
+from apex.analysis.header_target import select_header_target
 
 
 def test_select_header_target_prefers_selected_eligible_frame():

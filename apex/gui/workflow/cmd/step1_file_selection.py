@@ -14,7 +14,7 @@ from pathlib import Path
 from urllib.parse import quote_plus
 
 from apex.gui.workflow.step_window_base import StepWindowBase
-from apex.gui.workflow.step1_header_target import select_header_target
+from apex.analysis.header_target import select_header_target
 from apex.gui.workflow.target_resolver import TargetResolveWorker, target_failure_message
 
 

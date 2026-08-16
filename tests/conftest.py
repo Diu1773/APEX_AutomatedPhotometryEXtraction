@@ -18,15 +18,16 @@ _HAS_PYQT5 = importlib.util.find_spec("PyQt5") is not None
 
 # Test modules whose MODULE-LEVEL imports pull in real GUI classes (which import
 # PyQt5). Verified individually: these fail to import without PyQt5; all other
-# test modules — including those importing the Qt-free apex.gui.tools.registry
-# and apex.gui.workflow.step1_header_target helpers — import cleanly headless.
+# test modules import cleanly headless.
+#
+# Two left this list on 2026-08-16 when Steps 8 and 10 moved their calculation
+# to apex.analysis: those tests exercise the photometry itself, which is the
+# part that should never have needed a widget toolkit.
 _GUI_DEPENDENT_TESTS = [
     "test_iso_cache_worker.py",
     "test_isochrone_fitter_v2.py",
     "test_lc_night_classification.py",
-    "test_step10_nonlinearity.py",
     "test_step6_union_master.py",
-    "test_step8_psf_detection_loader.py",
     "test_variable_star_phase_plot.py",
 ]
 
