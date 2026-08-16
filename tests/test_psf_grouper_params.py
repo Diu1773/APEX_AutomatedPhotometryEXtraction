@@ -39,7 +39,7 @@ GROUPER_KEYS = {
 
 def test_grouper_keys_are_in_the_live_map():
     """All five knobs sit in the map step 8 actually reads."""
-    mapped = {flat for _, flat in PSF_TOML_KEY_MAP}
+    mapped = {row[1] for row in PSF_TOML_KEY_MAP}
     assert GROUPER_KEYS <= mapped, GROUPER_KEYS - mapped
 
 

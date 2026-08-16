@@ -25,7 +25,9 @@ from apex.gui.workflow.cmd.step8_psf_photometry import _fit_variance
 
 
 def test_the_key_reaches_the_runtime_parameters(tmp_path):
-    assert ("psf", "profile_error_frac") in dict(PSF_TOML_KEY_MAP)
+    # A map row is (path, attr) or (path, attr, kind, default) since
+    # 2026-08-16, so it no longer converts to a dict.
+    assert any(row[0] == ("psf", "profile_error_frac") for row in PSF_TOML_KEY_MAP)
     config = tmp_path / "apex_config.json"
     config.write_text(json.dumps({"psf": {"profile_error_frac": 0.05}}),
                       encoding="utf-8")

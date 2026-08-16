@@ -62,10 +62,10 @@ def dropped_settings(P: Any) -> list[str]:
     )
 
 
-def unmapped_keys(config_path: str | Path, key_map: Iterable[tuple[Iterable[str], str]]) -> list[str]:
+def unmapped_keys(config_path: str | Path, key_map: Iterable[tuple]) -> list[str]:
     """Dotted keys present in the file that the key map does not know."""
     data = json.loads(Path(config_path).read_text(encoding="utf-8"))
-    known = {".".join(path) for path, _ in key_map}
+    known = {".".join(row[0]) for row in key_map}
     return sorted(
         dotted for dotted in _flatten(data, known)
         if not dotted.startswith(_STRUCTURAL)

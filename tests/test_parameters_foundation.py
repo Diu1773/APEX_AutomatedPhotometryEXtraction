@@ -142,7 +142,8 @@ def test_mode_toml_maps_are_centralized():
     assert len(COMMON_TOML_KEY_MAP) > len(CMD_ONLY_TOML_KEY_MAP)
     assert len(COMMON_TOML_KEY_MAP) > len(LC_ONLY_TOML_KEY_MAP)
     assert PSF_TOML_KEY_MAP
-    assert (("psf", "fit_engine"), "psf_fit_engine") in PSF_TOML_KEY_MAP
+    assert any(row[0] == ("psf", "fit_engine") and row[1] == "psf_fit_engine"
+               for row in PSF_TOML_KEY_MAP)
 
 
 def test_parameter_maps_have_no_duplicate_toml_paths_and_known_attr_aliases():

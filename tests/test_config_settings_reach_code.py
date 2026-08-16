@@ -99,8 +99,8 @@ WORKSPACE = {
 def _config_setting_every_mapped_key(key_map) -> dict:
     """A config that names every key the map knows, so nothing hides."""
     cfg = {"io": {"result_dir": ".", "data_dir": "."}}
-    for path, _ in key_map:
-        path = tuple(path)
+    for row in key_map:
+        path = tuple(row[0])
         node = cfg
         for part in path[:-1]:
             node = node.setdefault(part, {})
@@ -214,3 +214,74 @@ def test_turning_the_aperture_correction_off_does_something(workspace):
                  / "apex/gui/workflow/step7_forced_aperture_phot.py").read_text(encoding="utf-8")
     block = signature[signature.index("_FORCED_SIGNATURE_PARAMS = ("):]
     assert '"apcorr_apply"' in block[:block.index("\n)")]
+
+
+# ---------------------------------------------------------------------------
+# The map row is the whole definition of a setting (2026-08-16).
+#
+# Before, a setting was written twice: a row in `parameter_map` saying where it
+# comes from and what it is called, and a keyword in a 452-line
+# `SimpleNamespace(...)` call saying what type it is and what it defaults to.
+# Nothing checked that the two lists agreed, and for 74 settings they did not.
+# Now a four-part row carries all four facts and the namespace is built from the
+# rows, so a setting cannot be half-added.
+
+
+def test_a_four_part_row_arrives_with_its_type_and_default(tmp_path):
+    from apex.config.parameter_map import CMD_TOML_KEY_MAP
+
+    config = tmp_path / "apex_config.json"
+    config.write_text(json.dumps({"io": {"result_dir": ".", "data_dir": "."}}),
+                      encoding="utf-8")
+    P = read_params(config).P
+    built = [row for row in CMD_TOML_KEY_MAP if len(row) >= 4]
+    assert len(built) > 250, "맵이 대부분의 설정을 직접 세워야 한다"
+    missing = [row[1] for row in built if not hasattr(P, row[1])]
+    assert not missing, f"맵이 세운다고 한 설정이 도착하지 않았다: {missing}"
+
+
+def test_the_default_in_the_row_is_the_value_when_the_file_is_silent(tmp_path):
+    from apex.config.parameter_map import CMD_TOML_KEY_MAP
+
+    config = tmp_path / "apex_config.json"
+    config.write_text(json.dumps({"io": {"result_dir": ".", "data_dir": "."}}),
+                      encoding="utf-8")
+    P = read_params(config).P
+    import math
+
+    for row in CMD_TOML_KEY_MAP:
+        if len(row) < 4 or row[1] in ("data_dir", "result_dir", "cache_dir"):
+            continue                               # the loader turns these into Paths
+        got, want = getattr(P, row[1]), row[3]
+        if isinstance(want, float) and math.isnan(want):
+            assert isinstance(got, float) and math.isnan(got), row[1]
+            continue
+        assert got == want, row[1]
+
+
+def test_the_type_survives_a_string_the_way_the_old_helpers_did():
+    """Legacy TOML wrote numbers and booleans as text and migrated workspaces
+    still carry them, so the coercion has to keep accepting strings — and has
+    to keep rejecting a boolean in a numeric field rather than reading it as 1."""
+    from apex.config.parameter_map import coerce_setting
+
+    assert coerce_setting("float", "2.5", 0.0) == 2.5
+    assert coerce_setting("int", "7.9", 0) == 7
+    assert coerce_setting("bool", "yes", False) is True
+    assert coerce_setting("bool", "nonsense", True) is False   # _as_bool, not default
+    assert coerce_setting("float", True, 3947.0) == 3947.0     # str(True) is not a float
+    assert coerce_setting("float", None, 3947.0) == 3947.0
+    assert coerce_setting("float_or_none", "", 1.0) is None
+    assert coerce_setting("str", None, "cache") == "cache"
+
+
+def test_the_key_map_is_not_copied_anywhere():
+    """Both loaders used to define a second `TOML_KEY_MAP` and overwrite it on
+    the next line. Editing that copy did nothing, and by the time it went it was
+    missing 81 rows in CMD and 123 in LC."""
+    from pathlib import Path
+
+    repo = Path(__file__).absolute().parents[1]
+    for module in ("apex/config/parameters_cmd.py", "apex/config/parameters_lc.py"):
+        source = (repo / module).read_text(encoding="utf-8")
+        assert "TOML_KEY_MAP: list[" not in source, f"{module} 이 맵을 다시 정의한다"
