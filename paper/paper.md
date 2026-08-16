@@ -21,13 +21,17 @@ bibliography: paper.bib
 # Summary
 
 `APEX` (Automated Photometry EXtraction) is an open-source Python application for
-end-to-end astronomical aperture and PSF photometry. It runs both as a PyQt5
-desktop application and as a scriptable, headless command-line pipeline, taking
-raw FITS frames through source detection, WCS plate solving, master-catalog
-construction, and forced aperture photometry, and then branching into two
-science modes: cluster color-magnitude diagrams (CMD) with PARSEC isochrone
-fitting, and multi-night differential light curves with detrending and period
-analysis (Lomb–Scargle, PDM, BLS).
+end-to-end astronomical aperture and PSF photometry. It takes raw FITS frames
+through source detection, WCS plate solving, master-catalog construction, and
+forced aperture photometry, and then branches into two science modes: cluster
+color-magnitude diagrams (CMD) with PARSEC isochrone fitting, and multi-night
+differential light curves with detrending and period analysis (Lomb–Scargle,
+PDM, BLS). It runs as a PyQt5 desktop application, and as a scriptable
+command-line pipeline that needs no GUI toolkit installed: the calibration,
+detection, astrometry, catalog, aperture-photometry, PSF-photometry and
+zero-point steps live in `apex.analysis`, and the desktop windows drive those
+same objects rather than copies of them. Isochrone fitting, the CMD viewer and
+the light-curve branch are currently desktop-only.
 
 `APEX` is built on the Astropy ecosystem [@astropy2022], using `photutils` for
 detection and aperture/PSF photometry, `astroquery` for Gaia/SIMBAD access, and
@@ -41,9 +45,10 @@ photometry rely on tools such as AstroImageJ [@collins2017] and HOPS. These are
 strong for single-object transit follow-up but are GUI-centric and offer limited
 headless automation, and they do not target cluster CMD/isochrone work or
 multi-night ensemble light curves. `APEX` addresses this gap with (1) a unified
-desktop + scriptable pipeline so the same analysis runs interactively or in
-batch/CI, (2) first-class cluster CMD and isochrone fitting, and (3) multi-night
-merging and period analysis at scale (tens to thousands of frames).
+desktop + scriptable pipeline in which the window and the batch run are the same
+objects, not two implementations kept in agreement, (2) first-class cluster CMD
+and isochrone fitting, and (3) multi-night merging and period analysis at scale
+(tens to thousands of frames).
 
 # Validation
 
