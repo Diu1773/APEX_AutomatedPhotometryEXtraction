@@ -1,7 +1,8 @@
 """CMD Step 10 (headless): zero-point calibration and the wide CMD table.
 
 Same shape as Step 8 — the compute is a ``QThread`` in the GUI module, driven
-synchronously, guarded on PyQt5 being importable (it is an optional extra).
+synchronously. The calculation lives in `apex.analysis.cmd.zeropoint_runner`,
+so this needs no Qt at all (2026-08-16).
 
 Step 10 does not need Steps 8 or 9. It reads star IDs straight from the Step 7
 tables and the Step 6 master catalogue, and *switches* to PSF magnitudes the
@@ -34,14 +35,6 @@ BACKUP_NAMES = (
     "median_by_ID_filter_wide_cmd.csv",
     "zp_fit_coefficients.csv",
 )
-
-
-def _qt_available() -> bool:
-    try:
-        import PyQt5.QtCore  # noqa: F401
-    except Exception:  # noqa: BLE001
-        return False
-    return True
 
 
 def _photometry_source(zp_dir: Path) -> str:
@@ -87,14 +80,6 @@ class ZeropointStep(PipelineStep):
                 / "median_by_ID_filter_wide_cmd.csv").exists()
 
     def run(self, ctx: RunContext) -> StepResult:
-        if not _qt_available():
-            return StepResult(
-                index=self.index, key=self.key, status=StepStatus.NOT_IMPLEMENTED,
-                message=("zero-point calibration still runs through the GUI "
-                         "module's worker, which needs PyQt5. Install the extra "
-                         "(pip install 'apex[gui]') or run this step in the app."),
-            )
-
         zp_dir = step10_zp_dir(ctx.result_dir)
         if zp_dir.exists():
             backup = zp_dir / "_pre_run_backup"
@@ -104,16 +89,10 @@ class ZeropointStep(PipelineStep):
                 if source.exists():
                     shutil.copyfile(source, backup / name)
 
-        from PyQt5.QtCore import QCoreApplication
-
-        QCoreApplication.instance() or QCoreApplication([])
-
-        from apex.gui.workflow.cmd.step10_zeropoint_calibration import (
-            ZeropointCalibrationWorker,
-        )
+        from apex.analysis.cmd.zeropoint_runner import ZeropointCalibrationRunner
 
         params = ctx.params
-        worker = ZeropointCalibrationWorker(
+        worker = ZeropointCalibrationRunner(
             params, params.P.data_dir, params.P.result_dir, params.P.cache_dir)
         if ctx.logger is not None:
             worker._log = lambda message: ctx.logger.info("%s", message)

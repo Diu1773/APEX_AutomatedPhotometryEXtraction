@@ -2,9 +2,11 @@
 
 Two things are easy to get wrong here and neither shows up as an error.
 
-First, PyQt5 is an *optional* dependency (the ``gui`` extra) while Steps 8 and
-10 still drive the GUI module's worker. A base install must be told what to
-install, not meet an ImportError partway through a pipeline.
+First, PyQt5 is an *optional* dependency (the ``gui`` extra). Step 10's
+calculation moved to ``apex.analysis.cmd.zeropoint_runner`` on 2026-08-16 and
+needs no Qt at all; Step 8 still drives the GUI module's worker, so a base
+install must be told what to install rather than meet an ImportError partway
+through a pipeline.
 
 Second, Step 8 writes its per-frame tables as it goes and its signature only
 after every frame succeeded — so "the directory exists" is not the same
@@ -74,11 +76,40 @@ def test_missing_pyqt_says_what_to_install_rather_than_raising(tmp_path, monkeyp
     assert "gui" in result.message and "PyQt5" in result.message
 
 
-def test_zeropoint_says_the_same_without_pyqt(tmp_path, monkeypatch):
-    monkeypatch.setattr("apex.pipeline.steps.zeropoint._qt_available", lambda: False)
-    result = ZeropointStep().run(_ctx(tmp_path))
-    assert result.status == StepStatus.NOT_IMPLEMENTED
-    assert "gui" in result.message
+def test_zeropoint_needs_no_qt_at_all(tmp_path):
+    """Step 10 used to report NOT_IMPLEMENTED without PyQt5 because it reached
+    into the GUI module for its worker. The calculation now lives in
+    `apex.analysis.cmd.zeropoint_runner`, so a script can calibrate zeropoints
+    on a Qt-free install (2026-08-16)."""
+    import sys
+
+    import apex.pipeline.steps.zeropoint as step_module
+
+    source = Path(step_module.__file__).read_text(encoding="utf-8")
+    assert "PyQt5" not in source
+    assert not hasattr(step_module, "_qt_available")
+
+    # Importing the calculation must not drag Qt in behind it.
+    for name in [m for m in sys.modules if m.startswith("PyQt5")]:
+        del sys.modules[name]
+    import importlib
+
+    importlib.reload(importlib.import_module("apex.analysis.cmd.zeropoint_runner"))
+    assert not [m for m in sys.modules if m.startswith("PyQt5")]
+
+
+def test_the_window_and_the_script_run_the_same_zeropoint_code():
+    """Not equivalent code — the same function object. The GUI subclass adds the
+    thread and the Qt signals and binds the runner's `run` explicitly, because
+    `QThread` sits first in the MRO and brings its own empty one."""
+    pytest.importorskip("PyQt5")
+    from apex.analysis.cmd.zeropoint_runner import ZeropointCalibrationRunner
+    from apex.gui.workflow.cmd.step10_zeropoint_calibration import (
+        ZeropointCalibrationWorker,
+    )
+
+    assert ZeropointCalibrationWorker.run is ZeropointCalibrationRunner.run
+    assert issubclass(ZeropointCalibrationWorker, ZeropointCalibrationRunner)
 
 
 def test_psf_completeness_is_the_signature_not_the_directory(tmp_path):
