@@ -1,0 +1,120 @@
+"""A setting a window offers has to survive pressing Save.
+
+The chain is: a widget shows `getattr(P, name, literal)`, the user edits it,
+the dialog writes it back onto `P`, and `save_toml` walks the key map writing
+`getattr(P, attr)` into the file. Break any link and the window still says
+"Parameters saved." while nothing is written — the value lives until the app
+closes and then goes.
+
+Reproduced on 2026-08-16 with the Extinction (Airmass Fit) tool:
+
+    loaded, P has extfit/extinction knob : False
+    file value                           : 3.0
+    save_toml returned                   : True   <- dialog shows "Parameters saved."
+    file value after save                : 3.0    <- the 9.9 never landed
+    value after reload                   : attribute does not exist
+
+Thirty settings were in that state, seventeen of them in that one tool. They
+are wired now. This test is the guard: a name a window reads off `P` or writes
+to it must either arrive (so the map persists it) or be listed below as
+something that is not a setting.
+"""
+
+from __future__ import annotations
+
+import json
+import re
+from pathlib import Path
+
+import pytest
+
+from apex.config.parameter_map import CMD_TOML_KEY_MAP, LC_TOML_KEY_MAP
+from apex.config.parameters_cmd import Parameters, read_params
+
+REPO = Path(__file__).absolute().parents[1]
+GUI = [p for p in (REPO / "apex/gui").rglob("*.py") if "__pycache__" not in p.parts]
+
+READS = re.compile(r'getattr\(\s*(?:self\.)?(?:params\.)?P\s*,\s*"([a-z_][a-z0-9_]*)"')
+WRITES = re.compile(
+    r'(?:setattr\(\s*self\.params\.P\s*,\s*"([a-z_][a-z0-9_]*)"'
+    r'|self\.params\.P\.([a-z_][a-z0-9_]*)\s*=)'
+)
+
+# Names a window touches on `P` that are deliberately not settings. Anything
+# else must be reachable, or the window is offering a value it cannot keep.
+NOT_SETTINGS = {
+    # Runtime state the window fills in, never read from a file.
+    "file_path_map": "airmass window builds this at run time",
+    "target": "the merge window's current selection, not a stored preference",
+    "readnoise": "Step 0 reads the measured value off the frames",
+    # Legacy duplicates. `target.ra_deg` maps to `target_ra_deg`, which is what
+    # the code actually reads; these bare names are the old spelling.
+    "ra_deg": "superseded by target_ra_deg",
+    "dec_deg": "superseded by target_dec_deg",
+    # Per-window image cache sizes: tuning knobs with no dialog, sized from the
+    # step's own working set rather than from a preference.
+    "step3_fits_cache_size": "internal cache size, no dialog",
+    "step4_fits_cache_size": "internal cache size, no dialog",
+    "step8_fits_cache_size": "internal cache size, no dialog",
+}
+
+
+def _gui_setting_names() -> dict[str, str]:
+    names: dict[str, str] = {}
+    for path in GUI:
+        text = path.read_text(encoding="utf-8", errors="replace")
+        for match in READS.finditer(text):
+            names.setdefault(match.group(1), path.name)
+        for match in WRITES.finditer(text):
+            names.setdefault(match.group(1) or match.group(2), path.name)
+    return names
+
+
+@pytest.fixture(scope="module")
+def blank(tmp_path_factory):
+    config = tmp_path_factory.mktemp("ws") / "apex_config.json"
+    config.write_text(json.dumps({"io": {"result_dir": ".", "data_dir": "."}}),
+                      encoding="utf-8")
+    return config
+
+
+def test_every_setting_a_window_offers_can_be_saved(blank):
+    names = _gui_setting_names()
+    assert len(names) > 250, "GUI 를 못 훑었다 — 정규식을 확인할 것"
+
+    mapped = {row[1] for row in CMD_TOML_KEY_MAP} | {row[1] for row in LC_TOML_KEY_MAP}
+    P = read_params(blank).P
+    broken = sorted(
+        name for name in names
+        if name not in NOT_SETTINGS and not hasattr(P, name) and name not in mapped
+    )
+    assert not broken, (
+        "창이 저장할 수 없는 설정을 내놓는다 — 맵에 행을 넣거나, 설정이 아니면 "
+        f"NOT_SETTINGS 에 이유와 함께 적을 것: "
+        + ", ".join(f"{n} ({names[n]})" for n in broken)
+    )
+
+
+def test_the_not_settings_list_has_no_stale_entries(blank):
+    """Something that became reachable should leave the exemption list."""
+    names = _gui_setting_names()
+    stale = sorted(n for n in NOT_SETTINGS if n not in names)
+    assert not stale, f"GUI 가 더는 안 쓰는 이름이 목록에 남아 있다: {stale}"
+
+
+def test_a_window_edit_survives_save_and_reload(tmp_path):
+    """The round trip the Extinction tool used to fail."""
+    config = tmp_path / "apex_config.json"
+    config.write_text(json.dumps({
+        "io": {"result_dir": str(tmp_path / "result"), "data_dir": str(tmp_path / "data")},
+    }), encoding="utf-8")
+
+    params = Parameters(config)
+    assert params.P.extinction_snr_min == pytest.approx(10.0)
+
+    params.P.extinction_snr_min = 9.9          # what the dialog does on Save
+    assert params.save_toml() is True
+
+    written = json.loads(config.read_text(encoding="utf-8"))
+    assert written["extinction_fit"]["snr_min"] == pytest.approx(9.9)
+    assert Parameters(config).P.extinction_snr_min == pytest.approx(9.9)

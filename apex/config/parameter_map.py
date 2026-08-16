@@ -380,6 +380,29 @@ COMMON_TOML_KEY_MAP: tuple[tuple, ...] = (
     (('target', 'ra_deg'), 'target_ra_deg', 'float_or_none', None),
     (('target', 'dec_deg'), 'target_dec_deg', 'float_or_none', None),
     (('simbad', 'timeout_s'), 'simbad_timeout_s', 'float', 20.0),
+    # --- Extinction (Airmass Fit) tool. Seventeen knobs the window offered and
+    # could not persist; the file's `extinction_fit` section named none of them.
+    (('extinction_fit', 'snr_min'), 'extinction_snr_min', 'float', 10.0),
+    (('extinction_fit', 'min_good_stars'), 'extinction_min_good_stars', 'int', 3),
+    (('extinction_fit', 'min_points_color'), 'extinction_min_points_color', 'int', 30),
+    (('extinction_fit', 'min_points_quadratic'), 'extinction_min_points_quadratic', 'int', 20),
+    (('extinction_fit', 'use_quadratic'), 'extinction_use_quadratic', 'bool', True),
+    (('extinction_fit', 'use_color_dependent'), 'extinction_use_color_dependent', 'bool', True),
+    (('extinction_fit', 'delta_x_enable'), 'extinction_delta_x_enable', 'bool', True),
+    (('extinction_fit', 'delta_x_min'), 'extinction_delta_x_min', 'float', 0.3),
+    (('extinction_fit', 'frame_qc_method'), 'extinction_frame_qc_method', 'str', "mad"),
+    (('extinction_fit', 'frame_qc_sigma'), 'extinction_frame_qc_sigma', 'float', 3.0),
+    (('extinction_fit', 'star_min_frames'), 'extinction_star_min_frames', 'int', 8),
+    (('extinction_fit', 'star_rms_max'), 'extinction_star_rms_max', 'float', 0.10),
+    (('extinction_fit', 'star_snr_med_min'), 'extinction_star_snr_med_min', 'float', 10.0),
+    (('extinction_fit', 'star_use_weights'), 'extinction_star_use_weights', 'bool', True),
+    (('extinction_fit', 'varstar_method'), 'extinction_varstar_method', 'str', "mad"),
+    (('extinction_fit', 'varstar_min_frames'), 'extinction_varstar_min_frames', 'int', 5),
+    (('extinction_fit', 'varstar_sigma'), 'extinction_varstar_sigma', 'float', 3.0),
+    # --- Reference build and airmass windows, same shape.
+    (('refbuild', 'build_mode'), 'ref_build_mode', 'str', "hybrid"),
+    (('refbuild', 'compare_exclude_split'), 'step6_compare_exclude_split', 'bool', True),
+    (('airmass', 'update_source'), 'airmass_update_source', 'str', "auto"),
 )
 
 CMD_ONLY_TOML_KEY_MAP: tuple[tuple, ...] = (
@@ -417,6 +440,7 @@ CMD_ONLY_TOML_KEY_MAP: tuple[tuple, ...] = (
     (('site', 'lon_deg'), 'site_lon_deg', 'float', 0.0),
     (('site', 'alt_m'), 'site_alt_m', 'float', 0.0),
     (('site', 'tz_offset_hours'), 'site_tz_offset_hours', 'float', 0.0),
+    (('cmd', 'psf_match_radius_px'), 'psf_cmd_match_radius_px', 'float', 1.0),
 )
 
 PSF_TOML_KEY_MAP: tuple[tuple, ...] = (
@@ -596,6 +620,8 @@ LC_ONLY_TOML_KEY_MAP: tuple[tuple, ...] = (
     (('cmd', 'snr_calib_min'), 'cmd_snr_calib_min', 'float', 20.0),
     (('cmd', 'zp', 'clip_sigma'), 'zp_clip_sigma', 'float', 3.0),
     (('cmd', 'zp', 'fit_iters'), 'zp_fit_iters', 'int', 5),
+    (('light_curve', 'comparison_auto_pool_max'), 'comparison_auto_pool_max', 'int', 30),
+    (('light_curve', 'comparison_auto_ensemble_max'), 'comparison_auto_ensemble_max', 'int', 12),
 )
 
 # ── Canonical composed maps — callers must use these ─────────────────────────
