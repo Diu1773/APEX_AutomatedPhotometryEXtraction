@@ -95,7 +95,9 @@ class ZeropointStep(PipelineStep):
         worker = ZeropointCalibrationRunner(
             params, params.P.data_dir, params.P.result_dir, params.P.cache_dir)
         if ctx.logger is not None:
-            worker._log = lambda message: ctx.logger.info("%s", message)
+            # Subscribe rather than replace the method: the run announces, the
+            # caller decides where it lands.
+            worker.on_log.subscribe(lambda message: ctx.logger.info("%s", message))
 
         started = time.perf_counter()
         worker.run()

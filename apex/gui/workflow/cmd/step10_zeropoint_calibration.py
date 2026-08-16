@@ -285,6 +285,13 @@ class ZeropointCalibrationWorker(QThread, ZeropointCalibrationRunner):
     def __init__(self, params, data_dir: Path, result_dir: Path, cache_dir: Path):
         QThread.__init__(self)
         ZeropointCalibrationRunner.__init__(self, params, data_dir, result_dir, cache_dir)
+        # This is the whole adapter: the calculation announces on its channels,
+        # and here each one becomes a Qt signal, so it crosses to the GUI thread
+        # exactly as it did when the worker was a QThread subclass.
+        self.on_progress.subscribe(self.progress.emit)
+        self.on_log.subscribe(self.log.emit)
+        self.on_finished.subscribe(self.finished.emit)
+        self.on_error.subscribe(self.error.emit)
 
 
 class CmdViewerWindow(QWidget):

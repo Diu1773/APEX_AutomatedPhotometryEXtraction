@@ -76,11 +76,16 @@ def test_missing_pyqt_says_what_to_install_rather_than_raising(tmp_path, monkeyp
     assert "gui" in result.message and "PyQt5" in result.message
 
 
-def test_zeropoint_needs_no_qt_at_all(tmp_path):
+def test_zeropoint_needs_no_qt_at_all():
     """Step 10 used to report NOT_IMPLEMENTED without PyQt5 because it reached
     into the GUI module for its worker. The calculation now lives in
     `apex.analysis.cmd.zeropoint_runner`, so a script can calibrate zeropoints
-    on a Qt-free install (2026-08-16)."""
+    on a Qt-free install (2026-08-16).
+
+    Checked in a fresh interpreter: reloading the module in-process would hand
+    the GUI subclass a stale function object and break the identity check below.
+    """
+    import subprocess
     import sys
 
     import apex.pipeline.steps.zeropoint as step_module
@@ -89,13 +94,17 @@ def test_zeropoint_needs_no_qt_at_all(tmp_path):
     assert "PyQt5" not in source
     assert not hasattr(step_module, "_qt_available")
 
-    # Importing the calculation must not drag Qt in behind it.
-    for name in [m for m in sys.modules if m.startswith("PyQt5")]:
-        del sys.modules[name]
-    import importlib
-
-    importlib.reload(importlib.import_module("apex.analysis.cmd.zeropoint_runner"))
-    assert not [m for m in sys.modules if m.startswith("PyQt5")]
+    probe = (
+        "import sys;"
+        "import apex.pipeline.steps.zeropoint;"
+        "import apex.analysis.cmd.zeropoint_runner;"
+        "print([m for m in sys.modules if m.startswith('PyQt5')])"
+    )
+    out = subprocess.run([sys.executable, "-X", "utf8", "-c", probe],
+                         cwd=Path(__file__).absolute().parents[1],
+                         capture_output=True, text=True, timeout=180)
+    assert out.returncode == 0, out.stderr
+    assert out.stdout.strip() == "[]", f"Qt 가 딸려 들어온다: {out.stdout}"
 
 
 def test_the_window_and_the_script_run_the_same_zeropoint_code():
@@ -110,6 +119,37 @@ def test_the_window_and_the_script_run_the_same_zeropoint_code():
 
     assert ZeropointCalibrationWorker.run is ZeropointCalibrationRunner.run
     assert issubclass(ZeropointCalibrationWorker, ZeropointCalibrationRunner)
+
+
+def test_the_calculation_speaks_its_own_language_not_qt_s():
+    """The core announces on channels it owns.
+
+    The first cut had the core call `.emit()` so 1,767 lines could move without
+    being touched; that left Qt's vocabulary in `apex.analysis`, where a reader
+    would fairly assume Qt was involved. Renaming cost five call sites here and
+    would have cost thirty-eight after Step 8 moves, so it was done first.
+    """
+    source = (Path(__file__).absolute().parents[1]
+              / "apex/analysis/cmd/zeropoint_runner.py").read_text(encoding="utf-8")
+    assert ".emit(" not in source
+    assert "on_progress.send(" in source
+
+    from apex.analysis.cmd.zeropoint_runner import ZeropointCalibrationRunner
+
+    assert ZeropointCalibrationRunner._CHANNELS == ("progress", "log", "finished", "error")
+
+
+def test_a_subscriber_that_raises_does_not_end_the_run():
+    """An hour of photometry must not be lost to a progress bar throwing."""
+    from apex.analysis.worker_signals import Channel
+
+    seen = []
+    channel = Channel("progress")
+    channel.subscribe(lambda *args: seen.append(args))
+    channel.subscribe(lambda *args: 1 / 0)
+    channel.subscribe(lambda *args: seen.append(("after",) + args))
+    channel.send(3, 10, "frame.fit")
+    assert seen == [(3, 10, "frame.fit"), ("after", 3, 10, "frame.fit")]
 
 
 def test_psf_completeness_is_the_signature_not_the_directory(tmp_path):

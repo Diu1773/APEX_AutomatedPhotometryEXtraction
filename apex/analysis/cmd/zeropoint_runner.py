@@ -38,7 +38,7 @@ import pandas as pd
 import time
 import traceback
 import warnings
-from apex.analysis.worker_signals import SignalHost
+from apex.analysis.worker_signals import ReportsProgress
 
 
 def _cmd_photometry_index_candidates(result_dir: Path | str) -> list[Path]:
@@ -1238,11 +1238,15 @@ def export_gaia_cmd_comparison_products(output_dir: Path, log_func=None) -> list
             pass
     return saved
 
-class ZeropointCalibrationRunner(SignalHost):
-    """The Step 10 calculation. `SignalHost` supplies the four signals
-    unless a Qt subclass already declared them."""
+class ZeropointCalibrationRunner(ReportsProgress):
+    """The Step 10 calculation, with nothing in it that knows about a window.
 
-    _SIGNALS = ("progress", "log", "finished", "error")
+    Announces on `on_progress` / `on_log` / `on_finished` / `on_error`. The GUI
+    subscribes its Qt signals to those; the headless pipeline subscribes its
+    logger; a bare script subscribes nothing.
+    """
+
+    _CHANNELS = ("progress", "log", "finished", "error")
 
     def __init__(self, params, data_dir: Path, result_dir: Path, cache_dir: Path):
         super().__init__()
@@ -1258,7 +1262,7 @@ class ZeropointCalibrationRunner(SignalHost):
         self._stop_requested = True
 
     def _log(self, msg: str):
-        self.log.emit(msg)
+        self.on_log.send(msg)
 
     def _pick_col(self, cols, cands):
         for c in cands:
@@ -2017,7 +2021,7 @@ class ZeropointCalibrationRunner(SignalHost):
             total = len(idx)
             for i, (_, r) in enumerate(idx.iterrows(), start=1):
                 if self._stop_requested:
-                    self.finished.emit({"stopped": True})
+                    self.on_finished.send({"stopped": True})
                     return
                 p = self._resolve_path(r.get("path", ""))
                 if p is None or (not p.exists()):
@@ -2144,7 +2148,7 @@ class ZeropointCalibrationRunner(SignalHost):
                     tmp = tmp[(~m) | (tmp["snr"].to_numpy(float) >= min_snr_for_mag)].copy()
 
                 rows.append(tmp)
-                self.progress.emit(i, total, str(r.get("file", "")))
+                self.on_progress.send(i, total, str(r.get("file", "")))
 
             self._log(f"Read frames: {len(rows)} | missing paths: {n_missing}")
             if missing_examples:
@@ -2999,10 +3003,10 @@ class ZeropointCalibrationRunner(SignalHost):
             summary.update(summarize_photometry_table(df_out))
             self.last_summary = dict(summary)
             self.last_error = ""
-            self.finished.emit(summary)
+            self.on_finished.send(summary)
         except Exception as e:
             error_msg = f"{type(e).__name__}: {str(e)}\n{traceback.format_exc()}"
             self.last_error = error_msg
             self.last_summary = {}
-            self.error.emit(error_msg)
+            self.on_error.send(error_msg)
 
