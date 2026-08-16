@@ -483,12 +483,20 @@ CMD_ONLY_TOML_KEY_MAP: tuple[tuple, ...] = (
     (('isochrone', 'mag_band'), 'iso_mag_band', 'str', "g"),
     (('isochrone', 'age_min'), 'iso_age_min', 'float', 8.5),
     (('isochrone', 'age_max'), 'iso_age_max', 'float', 10.2),
-    (('isochrone', 'mh_min'), 'iso_mh_min', 'float', -1.0),
+    # The [M/H] box must reach a globular. -1.0 does not: M13 sits near -1.5, and
+    # because the fit narrows this box around an [M/H] prior and never widens it,
+    # a metal-poor prior inside a (-1.0, 0.5) box leaves lo > hi and the grid
+    # comes out empty. -2.2 is the floor of the run that recovered M13's
+    # literature metallicity (-1.559).
+    (('isochrone', 'mh_min'), 'iso_mh_min', 'float', -2.2),
     (('isochrone', 'mh_max'), 'iso_mh_max', 'float', 0.5),
     (('isochrone', 'dm_min'), 'iso_dm_min', 'float', 5.0),
     (('isochrone', 'dm_max'), 'iso_dm_max', 'float', 18.0),
     (('isochrone', 'ecolor_min'), 'iso_ecolor_min', 'float', 0.0),
-    (('isochrone', 'ecolor_max'), 'iso_ecolor_max', 'float', 0.5),
+    # E(colour), not E(B-V) — for B-V they are nearly the same (R_B - R_V ~ 1.0).
+    # 1.0 is what the desktop dialog has always used; 0.5 would have been a
+    # silent narrowing of it.
+    (('isochrone', 'ecolor_max'), 'iso_ecolor_max', 'float', 1.0),
     (('isochrone', 'mh_prior'), 'iso_mh_prior', 'str', ""),
     (('isochrone', 'ecolor_prior'), 'iso_ecolor_prior', 'str', ""),
     (('isochrone', 'dm_prior'), 'iso_dm_prior', 'str', ""),

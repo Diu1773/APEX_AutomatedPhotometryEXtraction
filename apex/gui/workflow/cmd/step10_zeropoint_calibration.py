@@ -272,15 +272,21 @@ def resolve_cmd_photometry_provenance(result_dir: Path | str) -> dict[str, str]:
 # `pyqtSignal` declarations are class attributes, `SignalHost` finds them and
 # does not replace them, so the window and the headless runner emit through the
 # very same code (2026-08-16).
-class ZeropointCalibrationWorker(QThread, ZeropointCalibrationRunner):
+# The runner comes FIRST in the bases. Two reasons, both measured:
+#   * `QThread` first would put its own empty `run` ahead of the calculation's,
+#     so `start()` would quietly do nothing.
+#   * sip's `QThread.__init__` walks the cooperative chain, so with `QThread`
+#     first it lands on the runner's `__init__` with no arguments and raises
+#     "missing 4 required positional arguments" — every GUI construction of
+#     this worker failed (caught by tests/test_psf_isochrone_integration.py on
+#     the first full-suite run after the move, 2026-08-17).
+# With the runner first, `run` resolves to the calculation by MRO and
+# `QThread.__init__` chains harmlessly to `object`.
+class ZeropointCalibrationWorker(ZeropointCalibrationRunner, QThread):
     progress = pyqtSignal(int, int, str)
     log = pyqtSignal(str)
     finished = pyqtSignal(dict)
     error = pyqtSignal(str)
-
-    # `QThread` comes first in the MRO and has its own empty `run`, which would
-    # win and quietly do nothing. Bind the calculation explicitly.
-    run = ZeropointCalibrationRunner.run
 
     def __init__(self, params, data_dir: Path, result_dir: Path, cache_dir: Path):
         QThread.__init__(self)

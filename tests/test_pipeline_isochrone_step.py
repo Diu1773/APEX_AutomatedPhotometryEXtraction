@@ -120,3 +120,147 @@ def test_the_step_module_carries_no_qt():
     )
     for word in ("PyQt5", "QThread", "apex.gui"):
         assert word not in code
+
+
+def test_it_reads_the_key_the_service_actually_writes():
+    """`convergence_ok`, not `converged`.
+
+    The first version of this step asked the summary for `converged`. The
+    service writes `convergence_ok`, so the missing key came back None and
+    every fit — including the ones that converged — was reported as a failure.
+    A batch that mislabels its own success is worse than one that is silent.
+    """
+    import inspect
+
+    from apex.pipeline.steps import isochrone as mod
+
+    source = inspect.getsource(mod.IsochroneStep.run)
+    assert 'summary.get("convergence_ok")' in source
+    assert 'summary.get("converged")' not in source
+
+    service = inspect.getsource(
+        __import__("apex.analysis.cmd.isochrone_fit_service", fromlist=["x"]))
+    assert '"convergence_ok"' in service, "서비스가 쓰는 키 이름이 바뀌었다"
+
+
+def test_the_record_says_what_the_fit_was(tmp_path, monkeypatch):
+    """A posterior without its bounds and priors cannot be judged."""
+    import json
+    import logging
+    from types import SimpleNamespace
+
+    from apex.pipeline.context import RunContext
+
+    params = _params(tmp_path, {"colors": "B-V", "file_path": "grid.dat",
+                                "n_walkers": 8, "n_steps": 10})
+    zp_dir = tmp_path / "result" / "cmd_zeropoint"
+    zp_dir.mkdir(parents=True)
+    (zp_dir / "median_by_ID_filter_wide_cmd.csv").write_text("ID\n1\n", encoding="utf-8")
+
+    def fake_fit(df, config, make_figures=True, progress_cb=None):
+        return SimpleNamespace(
+            summary={"convergence_ok": True, "age_gyr": [1, 2, 3]},
+            n_stars=42, member_meta={"applied": False}, warnings=["조심"],
+        )
+
+    import apex.analysis.cmd.isochrone_fit_service as service
+    monkeypatch.setattr(service, "fit_cluster_isochrone", fake_fit)
+
+    ctx = RunContext(mode="cmd", params=params,
+                     result_dir=Path(params.P.result_dir),
+                     data_dir=Path(params.P.data_dir),
+                     logger=logging.getLogger("test"))
+    result = IsochroneStep().run(ctx)
+    assert result.status == StepStatus.OK
+    assert "did NOT" not in result.message
+
+    written = json.loads(
+        (Path(params.P.result_dir) / "cmd_isochrone"
+         / "isochrone_fit_summary.json").read_text(encoding="utf-8"))
+    assert written["n_stars"] == 42
+    assert written["warnings"] == ["조심"]
+    assert written["settings"]["n_walkers"] == 8
+    assert written["settings"]["seed"] is not None
+    assert written["settings"]["age_bounds"]
+    assert written["wide_table"].endswith("median_by_ID_filter_wide_cmd.csv")
+
+
+# ---------------------------------------------------------------------------
+# The search box: where the walls are decides what can be found
+# ---------------------------------------------------------------------------
+
+def test_the_metallicity_box_can_hold_a_globular(tmp_path):
+    """The default `[M/H]` floor used to be -1.0. M13 is near -1.5.
+
+    Worse than "cannot reach it": the fit narrows this box around an [M/H]
+    prior with max(lo,·)/min(hi,·) and never widens it, so a metal-poor prior
+    inside a (-1.0, +0.5) box produced lo = -1.000, hi = -1.360 — inverted. The
+    grid mask `(mh >= lo) & (mh <= hi)` then selects nothing, and the failure
+    reads as bad data rather than as walls in the wrong place.
+    """
+    config = build_fit_config(_params(tmp_path, {"colors": "B-V", "file_path": "g.dat"}))
+    lo, hi = config.mh_bounds
+    assert lo <= -1.5, f"[M/H] 하한 {lo} 는 구상성단을 못 담는다"
+    assert hi >= 0.0
+    assert config.ecolor_bounds[1] >= 1.0, "E(colour) 상한이 데스크톱 판보다 좁다"
+
+
+def test_an_out_of_box_prior_is_named_before_the_mcmc(tmp_path):
+    from apex.pipeline.steps.isochrone import check_bounds
+
+    ok = build_fit_config(_params(tmp_path, {
+        "colors": "B-V", "file_path": "g.dat", "mh_prior": "-1.56, 0.10"}))
+    assert check_bounds(ok) == [], "이 사전값은 이제 상자 안에 있다"
+
+    narrow = build_fit_config(_params(tmp_path, {
+        "colors": "B-V", "file_path": "g.dat",
+        "mh_min": -1.0, "mh_max": 0.5, "mh_prior": "-1.56, 0.10"}))
+    problems = check_bounds(narrow)
+    assert problems, "뒤집힌 상자를 잡아내지 못한다"
+    assert "[M/H]" in problems[0]
+
+
+def test_it_blocks_instead_of_spending_an_mcmc_on_an_empty_grid(tmp_path):
+    import logging
+
+    from apex.pipeline.context import RunContext
+
+    params = _params(tmp_path, {
+        "colors": "B-V", "file_path": "g.dat",
+        "mh_min": -1.0, "mh_max": 0.5, "mh_prior": "-1.56, 0.10"})
+    zp_dir = tmp_path / "result" / "cmd_zeropoint"
+    zp_dir.mkdir(parents=True)
+    (zp_dir / "median_by_ID_filter_wide_cmd.csv").write_text("ID\n1\n", encoding="utf-8")
+
+    ctx = RunContext(mode="cmd", params=params,
+                     result_dir=Path(params.P.result_dir),
+                     data_dir=Path(params.P.data_dir),
+                     logger=logging.getLogger("test"))
+    result = IsochroneStep().run(ctx)
+    assert result.status == StepStatus.BLOCKED
+    assert "inverted" in result.message
+
+
+def test_the_desktop_dialog_no_longer_decides_the_boxes_itself():
+    """Same setting, one place — the point of the whole 2026-08-17 sweep.
+
+    The dialog hardcoded `mh_bounds=(-1.0, 0.5)`, `dm_bounds` and
+    `ecolor_bounds` while the headless step read them from the configuration.
+    Two authorities for one number is how they came to disagree.
+    """
+    import inspect
+    import re
+
+    source = (Path(__file__).absolute().parents[1]
+              / "apex/gui/workflow/cmd/step12_isochrone_model.py").read_text(encoding="utf-8")
+    body = re.sub(r"#[^\n]*", "", source)
+    for name in ("mh_bounds=", "dm_bounds=", "ecolor_bounds="):
+        assert name not in body, f"창이 아직 {name} 를 스스로 정한다"
+    assert "build_fit_config(self.params" in body, "창이 공용 빌더를 안 쓴다"
+    assert "check_bounds(cfg)" in body, "창이 뒤집힌 상자를 안 막는다"
+
+    # And both callers must be translating with the same function.
+    from apex.analysis.cmd import isochrone_config
+    from apex.pipeline.steps import isochrone as step
+    assert step.build_fit_config is isochrone_config.build_fit_config
+    assert inspect.getmodule(step.build_fit_config) is isochrone_config

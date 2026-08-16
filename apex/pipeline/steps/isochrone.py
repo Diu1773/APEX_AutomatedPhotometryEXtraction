@@ -23,91 +23,23 @@ from typing import List
 
 import pandas as pd
 
+from apex.analysis.cmd.isochrone_config import (
+    build_fit_config,
+    check_bounds,
+    colors_from_params as _colors,
+    missing_decisive_settings,
+    prior_from_params as _prior,
+)
 from apex.pipeline.base import PipelineStep, StepResult, StepStatus
 from apex.pipeline.context import RunContext
 from apex.utils.step_paths_cmd import step10_zp_dir, step12_iso_dir
 
 CMD_TABLE = "median_by_ID_filter_wide_cmd.csv"
 
-
-def _colors(params) -> list[tuple[str, str]]:
-    """`isochrone.colors` as pairs, e.g. "B-V,V-R" -> [("B","V"), ("V","R")]."""
-    raw = str(getattr(params.P, "iso_colors", "") or "").strip()
-    pairs = []
-    for token in raw.replace(";", ",").split(","):
-        token = token.strip()
-        if not token or "-" not in token:
-            continue
-        left, _, right = token.partition("-")
-        if left.strip() and right.strip():
-            pairs.append((left.strip(), right.strip()))
-    return pairs
-
-
-def _prior(params, name: str) -> tuple[float, float] | None:
-    """A prior written as "value,sigma"; absent means no prior."""
-    raw = str(getattr(params.P, name, "") or "").strip()
-    if not raw:
-        return None
-    parts = [p.strip() for p in raw.replace(";", ",").split(",")]
-    if len(parts) != 2:
-        return None
-    try:
-        return float(parts[0]), float(parts[1])
-    except ValueError:
-        return None
-
-
-def build_fit_config(params, iso_file: Path | None = None):
-    """Turn the config rows into an `IsochroneFitConfig`.
-
-    Kept out of `run` so a test can check the translation without an MCMC.
-    """
-    from apex.analysis.cmd.isochrone_fit_service import IsochroneFitConfig
-
-    P = params.P
-    path = iso_file or (str(getattr(P, "iso_file_path", "") or "").strip() or None)
-    return IsochroneFitConfig(
-        colors=_colors(params),
-        mag_band=str(getattr(P, "iso_mag_band", "g") or "g"),
-        iso_file=str(path) if path else None,
-        age_bounds=(float(P.iso_age_min), float(P.iso_age_max)),
-        mh_bounds=(float(P.iso_mh_min), float(P.iso_mh_max)),
-        dm_bounds=(float(P.iso_dm_min), float(P.iso_dm_max)),
-        ecolor_bounds=(float(P.iso_ecolor_min), float(P.iso_ecolor_max)),
-        mh_prior=_prior(params, "iso_mh_prior"),
-        ecolor_prior=_prior(params, "iso_ecolor_prior"),
-        dm_prior=_prior(params, "iso_dm_prior"),
-        parallax_distance_prior=bool(P.iso_parallax_distance_prior),
-        parallax_dm_sigma=float(P.iso_parallax_dm_sigma),
-        parallax_dm_window=float(P.iso_parallax_dm_window),
-        use_membership=bool(P.iso_use_membership),
-        data_snr_min=float(P.iso_data_snr_min),
-        fit_snr_min=float(P.iso_fit_snr_min),
-        max_stars=int(P.iso_max_stars),
-        n_walkers=int(P.iso_n_walkers),
-        n_burn=int(P.iso_n_burn),
-        n_steps=int(P.iso_n_steps),
-        f_bin=float(P.iso_f_bin),
-        f_field=float(P.iso_f_field),
-        err_floor=float(P.iso_err_floor),
-        seed=int(P.iso_seed),
-    )
-
-
-def missing_decisive_settings(params) -> list[str]:
-    """What must be written down before a batch fit means anything.
-
-    Only two, and both for the reason in the module docstring: the colours
-    because the fit is undefined without them, and the isochrone grid because
-    there is no sensible default file.
-    """
-    missing = []
-    if not _colors(params):
-        missing.append("isochrone.colors (예: \"B-V,V-R\")")
-    if not str(getattr(params.P, "iso_file_path", "") or "").strip():
-        missing.append("isochrone.file_path (PARSEC 격자 파일)")
-    return missing
+__all__ = [
+    "IsochroneStep", "build_fit_config", "check_bounds",
+    "missing_decisive_settings", "_colors", "_prior",
+]
 
 
 class IsochroneStep(PipelineStep):
@@ -141,6 +73,14 @@ class IsochroneStep(PipelineStep):
                          + "; ".join(missing)),
             )
 
+        inverted = check_bounds(build_fit_config(ctx.params))
+        if inverted:
+            return StepResult(
+                index=self.index, key=self.key, status=StepStatus.BLOCKED,
+                message=("search box is inverted, so the grid would be empty: "
+                         + "; ".join(inverted)),
+            )
+
         from apex.analysis.cmd.isochrone_fit_service import fit_cluster_isochrone
 
         out_dir = step12_iso_dir(ctx.result_dir)
@@ -162,9 +102,25 @@ class IsochroneStep(PipelineStep):
         summary = getattr(result, "summary", None) or {}
         import json
 
+        # Everything needed to say what this fit was, not just what it found:
+        # a posterior without its bounds, its priors and its star count cannot
+        # be judged (a median sitting on a bound is the wall, not a result).
+        config = build_fit_config(ctx.params)
+        record = {
+            "summary": summary,
+            "n_stars": getattr(result, "n_stars", None),
+            "member_meta": getattr(result, "member_meta", None),
+            "warnings": list(getattr(result, "warnings", []) or []),
+            "settings": {k: getattr(config, k) for k in vars(config)},
+            "elapsed_s": elapsed,
+            "wide_table": str(table),
+        }
         (out_dir / "isochrone_fit_summary.json").write_text(
-            json.dumps(summary, indent=1, default=str), encoding="utf-8")
-        converged = summary.get("converged")
+            json.dumps(record, indent=1, default=str), encoding="utf-8")
+
+        # The service calls it `convergence_ok`. Reading a key the service does
+        # not write returns None, which reports every fit as a failure.
+        converged = bool(summary.get("convergence_ok"))
         note = "converged" if converged else "did NOT converge — see the summary"
         return StepResult(
             index=self.index, key=self.key, status=StepStatus.OK,

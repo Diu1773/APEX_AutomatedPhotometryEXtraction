@@ -535,7 +535,12 @@ def _allstar_fit_one(cleaned_patch: np.ndarray,
 # can run Step 8 without PyQt5. This adds the thread and the Qt signals, and
 # subscribes each of the runner's channels to one — the window and the headless
 # pipeline drive the very same object (2026-08-16).
-class Step6PSFWorker(QThread, PsfPhotometryRunner):
+# The runner comes FIRST in the bases — see the note on
+# `ZeropointCalibrationWorker` in step10_zeropoint_calibration.py. In short:
+# `QThread` first would shadow `run` with its own empty one, and sip's
+# `QThread.__init__` would walk the cooperative chain into the runner's
+# `__init__` with no arguments and raise.
+class Step6PSFWorker(PsfPhotometryRunner, QThread):
     progress = pyqtSignal(int, int, str)
     worker_status = pyqtSignal(int, str, str, int)
     frame_done = pyqtSignal(str, dict)
@@ -544,10 +549,6 @@ class Step6PSFWorker(QThread, PsfPhotometryRunner):
     finished = pyqtSignal(dict)
     error = pyqtSignal(str, str)
     log = pyqtSignal(str)
-
-    # `QThread` is first in the MRO and brings its own empty `run`, which would
-    # win and quietly do nothing. Bind the calculation explicitly.
-    run = PsfPhotometryRunner.run
 
     def __init__(self, file_list, params, data_dir, result_dir, cache_dir,
                  use_cropped=False):

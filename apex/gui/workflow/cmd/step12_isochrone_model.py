@@ -10,6 +10,7 @@ from __future__ import annotations
 import hashlib
 import json
 import time
+from dataclasses import replace
 from pathlib import Path
 from typing import Optional
 
@@ -31,6 +32,7 @@ from PyQt5.QtWidgets import (
 )
 from PyQt5.QtCore import Qt, QThread, pyqtSignal, QTimer
 
+from apex.analysis.cmd.isochrone_config import build_fit_config, check_bounds
 from apex.gui.workflow.step_window_base import StepWindowBase
 from apex.gui.layout_rules import clamp_to_screen, fit_combo, scroll_wrap
 from apex.gui.theme import ICON, Tokens, refresh, style_button
@@ -1506,7 +1508,7 @@ class IsochroneModelWindow(StepWindowBase):
         if df is None:
             return
         try:
-            from apex.analysis.cmd.isochrone_fit_service import IsochroneFitConfig
+            from apex.analysis.cmd.isochrone_fit_service import fit_cluster_isochrone  # noqa: F401
         except Exception as exc:
             QMessageBox.critical(self, "Error", f"Fit service unavailable: {exc}")
             return
@@ -1542,10 +1544,17 @@ class IsochroneModelWindow(StepWindowBase):
             ecolor_prior = (self.mcmc_ebv_mean.value() * r_color,
                             max(self.mcmc_ebv_sigma.value() * abs(r_color), 1e-3))
 
-        cfg = IsochroneFitConfig(
-            colors=colors, mag_band=mag_band, iso_file=Path(iso_file),
+        # The search boxes come from the configuration, the same rows the
+        # headless step reads — this dialog used to hardcode them, and its
+        # [M/H] box (-1.0, +0.5) could not contain a globular cluster. Ask for
+        # a metal-poor prior inside it and the service's tightening leaves
+        # lo > hi, so the grid mask selects nothing (measured 2026-08-17;
+        # apex/analysis/cmd/isochrone_config.py).
+        cfg = replace(
+            build_fit_config(self.params, Path(iso_file)),
+            # What this dialog's own widgets own:
+            colors=colors, mag_band=mag_band,
             age_bounds=age_bounds,
-            mh_bounds=(-1.0, 0.5), dm_bounds=(5.0, 18.0), ecolor_bounds=(0.0, 1.0),
             mh_prior=mh_prior, ecolor_prior=ecolor_prior,
             use_membership=self.mcmc_membership_chk.isChecked(),
             parallax_distance_prior=self.mcmc_parallax_chk.isChecked(),
@@ -1554,6 +1563,15 @@ class IsochroneModelWindow(StepWindowBase):
             n_steps=self.mcmc_steps_spin.value(),
             n_burn=self.mcmc_burn_spin.value(),
         )
+
+        inverted = check_bounds(cfg)
+        if inverted:
+            QMessageBox.warning(
+                self, "탐색 범위",
+                "사전값이 탐색 상자 밖이라 격자가 비어 적합을 시작할 수 없습니다.\n\n"
+                + "\n".join(f"· {p}" for p in inverted)
+                + "\n\n파라미터 창에서 isochrone 의 범위를 넓히세요.")
+            return
 
         # Record the settings actually used, to show alongside the results.
         self._mcmc_run_info = {
