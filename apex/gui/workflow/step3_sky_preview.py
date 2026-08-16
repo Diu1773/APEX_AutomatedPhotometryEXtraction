@@ -28,6 +28,9 @@ from PyQt5.QtGui import QColor
 from apex.gui.layout_rules import FittedDialog, tame_canvas
 from apex.gui.widgets.fits_viewer import FITSViewerWidget, OverlayMarker
 
+from dataclasses import replace
+
+from .param_dialog import run_param_dialog, specs_from_map
 from .step_window_base import StepWindowBase
 from .ui_helpers import (
     add_parameter_reset_button,
@@ -72,16 +75,21 @@ class SkyPreviewWindow(StepWindowBase):
         self.cursor_x = None
         self.cursor_y = None
 
-        # Photometry parameters from parameters.toml (hud5x section)
-        hud5 = getattr(params.P, "_hud5", {})
-        self.aperture_scale = float(hud5.get("5x.aperture_scale", "") or 1.0)
-        self.annulus_in_scale = float(hud5.get("5x.annulus_in_scale", "") or 4.0)
-        self.annulus_out_scale = float(hud5.get("5x.annulus_out_scale", "") or 2.0)  # width
+        # The same names the dialog writes back. They used to differ: the window
+        # read the `hud5x` section and saved to `photometry.scales`, and the two
+        # had drifted — 4.0/2.0 shown against 6.0/3.0 in use. So the preview
+        # measured with radii the pipeline did not use, the edited value never
+        # survived a restart, and opening the dialog and pressing Save with
+        # nothing touched rewrote Step 7's sky annulus to the display numbers
+        # (2026-08-16).
+        self.aperture_scale = float(getattr(params.P, "phot_aperture_scale", 1.0) or 1.0)
+        self.annulus_in_scale = float(getattr(params.P, "fitsky_annulus_scale", 4.0) or 4.0)
+        self.annulus_out_scale = float(getattr(params.P, "fitsky_dannulus_scale", 2.0) or 2.0)  # width
         # Hidden safety floors only. User-facing control stays scale-based.
         self.min_r_ap_px = _MIN_R_AP_PX
         self.min_r_in_px = _MIN_R_IN_PX
         self.min_r_out_px = _MIN_R_OUT_PX
-        self.sigma_clip_value = float(hud5.get("5x.sigma_clip", "") or 3.0)
+        self.sigma_clip_value = float(getattr(params.P, "annulus_sigma_clip", 3.0) or 3.0)
         # FWHM seed in arcsec (converted to px using pixel_scale)
         self.fwhm_seed_arcsec = float(getattr(params.P, "fwhm_guess_arcsec", None) or 2.5)
 
@@ -1015,94 +1023,58 @@ Mag:  {mag_str} ± {mag_err_str}
 
     # ========== Parameter Dialog ==========
 
+    # The window names the rows it shows; the map row carries the label, range
+    # and default, so a widget can only exist for a setting the loader builds
+    # and `save_toml` persists.
+    _PARAM_ATTRS = (
+        "fwhm_guess_arcsec",
+        "phot_aperture_scale",
+        "fitsky_annulus_scale",
+        "fitsky_dannulus_scale",
+        "annulus_sigma_clip",
+        "zp_initial",
+    )
+
     def open_parameters_dialog(self):
-        dialog, layout, buttons = build_scroll_param_dialog(
-            self, "Photometry Parameters",
-            info_text="Adjust aperture photometry parameters. Changes apply immediately to measurements.",
-            size=(440, 400),
+        specs = specs_from_map(
+            self._PARAM_ATTRS,
+            # The seed has no stored default (it is optional in the file), so the
+            # window keeps the value it has always offered.
+            overrides={"fwhm_guess_arcsec": {
+                "label": "FWHM Seed (arcsec)", "lo": 0.1, "hi": 20.0,
+                "step": 0.1, "decimals": 2,
+            }},
+        )
+        specs = tuple(
+            s if s.attr != "fwhm_guess_arcsec" else replace(s, default=2.5)
+            for s in specs
         )
 
-        form = QFormLayout()
-
-        spin_fwhm = QDoubleSpinBox()
-        spin_fwhm.setRange(0.1, 20.0)
-        spin_fwhm.setSingleStep(0.1)
-        spin_fwhm.setDecimals(2)
-        spin_fwhm.setValue(self.fwhm_seed_arcsec)
-        form.addRow("FWHM Seed (arcsec):", spin_fwhm)
-
-        spin_ap = QDoubleSpinBox()
-        spin_ap.setRange(0.5, 10.0)
-        spin_ap.setSingleStep(0.1)
-        spin_ap.setDecimals(2)
-        spin_ap.setValue(self.aperture_scale)
-        form.addRow("Aperture Scale (× FWHM):", spin_ap)
-
-        spin_ann_in = QDoubleSpinBox()
-        spin_ann_in.setRange(1.0, 20.0)
-        spin_ann_in.setSingleStep(0.1)
-        spin_ann_in.setDecimals(2)
-        spin_ann_in.setValue(self.annulus_in_scale)
-        form.addRow("Annulus Inner Scale (× FWHM):", spin_ann_in)
-
-        spin_ann_out = QDoubleSpinBox()
-        spin_ann_out.setRange(0.5, 20.0)
-        spin_ann_out.setSingleStep(0.1)
-        spin_ann_out.setDecimals(2)
-        spin_ann_out.setValue(self.annulus_out_scale)
-        form.addRow("Annulus Outer Width (× FWHM):", spin_ann_out)
-
-        spin_sigma = QDoubleSpinBox()
-        spin_sigma.setRange(1.0, 10.0)
-        spin_sigma.setSingleStep(0.1)
-        spin_sigma.setDecimals(1)
-        spin_sigma.setValue(self.sigma_clip_value)
-        form.addRow("Sigma Clipping (σ):", spin_sigma)
-
-        spin_zp = QDoubleSpinBox()
-        spin_zp.setRange(0.0, 50.0)
-        spin_zp.setSingleStep(0.1)
-        spin_zp.setDecimals(2)
-        spin_zp.setValue(float(getattr(self.params.P, "zp_initial", 25.0)))
-        spin_zp.setToolTip("Display-only zero point for Step 3 preview magnitude.")
-        form.addRow("Preview ZP:", spin_zp)
-
-        layout.addLayout(form)
-        layout.addStretch(1)
-
-        add_parameter_reset_button(
-            buttons,
-            [
-                (spin_fwhm, 2.5),
-                (spin_ap, 1.0),
-                (spin_ann_in, 4.0),
-                (spin_ann_out, 2.0),
-                (spin_sigma, 3.0),
-                (spin_zp, 25.0),
-            ],
-        )
-
-        def _save():
-            self.fwhm_seed_arcsec = spin_fwhm.value()
-            self.aperture_scale = spin_ap.value()
-            self.annulus_in_scale = spin_ann_in.value()
-            self.annulus_out_scale = spin_ann_out.value()
+        def _apply() -> bool:
+            P = self.params.P
+            self.fwhm_seed_arcsec = float(P.fwhm_guess_arcsec or 2.5)
+            self.aperture_scale = float(P.phot_aperture_scale)
+            self.annulus_in_scale = float(P.fitsky_annulus_scale)
+            self.annulus_out_scale = float(P.fitsky_dannulus_scale)
+            self.sigma_clip_value = float(P.annulus_sigma_clip)
             self.min_r_ap_px = _MIN_R_AP_PX
             self.min_r_in_px = _MIN_R_IN_PX
             self.min_r_out_px = _MIN_R_OUT_PX
-            self.sigma_clip_value = spin_sigma.value()
-            self.params.P.fwhm_guess_arcsec = self.fwhm_seed_arcsec
-            self.params.P.phot_aperture_scale = self.aperture_scale
-            self.params.P.fitsky_annulus_scale = self.annulus_in_scale
-            self.params.P.fitsky_dannulus_scale = self.annulus_out_scale
-            self.params.P.annulus_sigma_clip = self.sigma_clip_value
-            self.params.P.zp_initial = spin_zp.value()
             self.persist_params()
             self.save_state()
-            QMessageBox.information(dialog, "Saved", "Parameters updated and saved!")
-            dialog.accept()
+            # The window's own wording, kept as it was.
+            QMessageBox.information(self, "Saved", "Parameters updated and saved!")
+            return None
 
-        buttons.accepted.connect(_save)
+        run_param_dialog(
+            self,
+            "Photometry Parameters",
+            specs,
+            on_save=_apply,
+            resize=(440, 400),
+            info_text=("Adjust aperture photometry parameters. "
+                       "Changes apply immediately to measurements."),
+        )
         buttons.rejected.connect(dialog.reject)
         dialog.exec_()
 
