@@ -23,6 +23,7 @@ from PyQt5.QtWidgets import (
     QSpinBox,
 )
 
+from apex.config.parameter_map import toml_key_map_for_mode
 from apex.gui.workflow.ui_helpers import add_parameter_reset_button, build_scroll_param_dialog
 
 
@@ -140,6 +141,57 @@ def _spec_default_value(spec: ParamSpec) -> Any:
     if spec.kind == "float":
         return float(spec.lo)
     return None
+
+
+def specs_from_map(
+    attrs: Sequence[str],
+    *,
+    mode: str = "cmd",
+    overrides: dict[str, dict[str, Any]] | None = None,
+) -> tuple[ParamSpec, ...]:
+    """Build the dialog rows from the key map instead of declaring them twice.
+
+    A window used to repeat what the map already said — the attribute, its type
+    and its default — and add the display bits on top. Two lists, no check that
+    they agreed, and a third place (the loader) that had to agree with both.
+    That is how a window came to offer settings it could not save: the widget
+    existed, the map row did not, and `save_toml` skipped it in silence.
+
+    Now the row is the declaration and the window only names which rows it
+    shows, in order. A setting a window can display is one the loader builds and
+    the map persists, by construction.
+
+    `overrides` is for the rare row whose label or range is window-specific;
+    anything passed here is a deliberate exception, not a second declaration.
+    """
+    rows = {}
+    for row in toml_key_map_for_mode(mode):
+        if len(row) >= 4 and row[1] not in rows:
+            rows[row[1]] = row
+        elif len(row) >= 5:
+            rows[row[1]] = row
+
+    specs: list[ParamSpec] = []
+    for attr in attrs:
+        if attr == "sep":
+            specs.append(ParamSpec("", kind="sep"))
+            continue
+        row = rows.get(attr)
+        if row is None:
+            raise KeyError(
+                f"{attr!r} 은 키 맵에 값이 없다 — 창에 띄우려면 먼저 행을 만들 것 "
+                f"(그래야 저장이 파일까지 간다)"
+            )
+        meta: dict[str, Any] = dict(row[4]) if len(row) >= 5 and row[4] else {}
+        meta.update((overrides or {}).get(attr, {}))
+        specs.append(ParamSpec(
+            label=meta.pop("label", attr),
+            attr=attr,
+            kind=row[2],
+            default=row[3],
+            **meta,
+        ))
+    return tuple(specs)
 
 
 def run_param_dialog(

@@ -215,6 +215,10 @@ class Parameters:
         # between CMD and LC, that are computed, or that alias another key.
         values = build_settings(raw, TOML_KEY_MAP)
         values.update(
+            # Shared Steps 4-5 offer these; CMD set them and LC did not, so the
+            # same window saved in one mode and not the other (2026-08-16).
+            detect_mode=str(raw.get("detect_mode", "normal")).strip().lower() or "normal",
+            parallel_max_workers=_geti(raw, "max_workers", 0),
             schema_version=_geti(raw, "schema_version", CANONICAL_SCHEMA_VERSION),
 
             # I/O

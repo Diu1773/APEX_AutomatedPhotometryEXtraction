@@ -142,7 +142,7 @@ def build_settings(raw: dict, key_map: Iterable[tuple]) -> dict[str, Any]:
     for row in key_map:
         if len(row) < 4:
             continue
-        _path, attr, kind, default = row
+        attr, kind, default = row[1], row[2], row[3]
         values[attr] = coerce_setting(kind, raw.get(attr), default)
     return values
 
@@ -317,7 +317,7 @@ COMMON_TOML_KEY_MAP: tuple[tuple, ...] = (
     (('gaia', 'radius_fudge'), 'gaia_radius_fudge', 'float', 1.35),
     (('gaia', 'mag_max'), 'gaia_mag_max', 'float', 18.0),
     (('gaia', 'wcs_mag_max'), 'gaia_wcs_mag_max', 'float', 18.0),
-    (('refbuild', 'wcs_match_radius_arcsec'), 'ref_wcs_match_radius_arcsec', 'float', 2.0),
+    (('refbuild', 'wcs_match_radius_arcsec'), 'ref_wcs_match_radius_arcsec', 'float', 2.0, {'label': 'WCS match radius (arcsec)', 'lo': 0.1, 'hi': 30.0, 'step': 0.1, 'decimals': 2}),
     (('gaia', 'snr_calib_min'), 'gaia_snr_calib_min', 'float', 20.0),
     (('gaia', 'gi_min'), 'gaia_gi_min', 'float', -0.5),
     (('gaia', 'gi_max'), 'gaia_gi_max', 'float', 4.5),
@@ -326,8 +326,8 @@ COMMON_TOML_KEY_MAP: tuple[tuple, ...] = (
     (('gaia', 'hard_deadline_s'), 'gaia_hard_deadline_s', 'float', 0.0),
     (('gaia', 'backoff_s'), 'gaia_backoff_s', 'float', 6.0),
     (('gaia', 'allow_no_cache'), 'gaia_allow_no_cache', 'bool', True),
-    (('gaia', 'g_limit'), 'idmatch_gaia_g_limit', 'float', 18.0),
-    (('idmatch', 'gaia_g_limit'), 'idmatch_gaia_g_limit', 'float', 18.0),
+    (('gaia', 'g_limit'), 'idmatch_gaia_g_limit', 'float', 18.0, {'label': 'Gaia G limit (hybrid ID)', 'lo': 10.0, 'hi': 25.0, 'step': 0.5, 'decimals': 2}),
+    (('idmatch', 'gaia_g_limit'), 'idmatch_gaia_g_limit', 'float', 18.0, {'label': 'Gaia G limit (hybrid ID)', 'lo': 10.0, 'hi': 25.0, 'step': 0.5, 'decimals': 2}),
     (('idmatch', 'match_r_fwhm'), 'idmatch_match_r_fwhm', 'float', 0.8),
     (('idmatch', 'two_pass_enable'), 'idmatch_two_pass_enable', 'bool', True),
     (('idmatch', 'tight_radius_arcsec'), 'idmatch_tight_radius_arcsec', 'float', 1.0),
@@ -403,15 +403,50 @@ COMMON_TOML_KEY_MAP: tuple[tuple, ...] = (
     (('refbuild', 'build_mode'), 'ref_build_mode', 'str', "hybrid"),
     (('refbuild', 'compare_exclude_split'), 'step6_compare_exclude_split', 'bool', True),
     (('airmass', 'update_source'), 'airmass_update_source', 'str', "auto"),
+    # --- Step 6 (master catalogue) is a shared step, and these lived in the
+    # LC-only map, so the CMD window offered them and could save none of them.
+    # Every default here is the literal the code was already using (2026-08-16).
+    (('refbuild', 'sat_drop_pct'), 'ref_select_sat_pct', 'float', 20.0, {'label': 'Drop top saturation frames', 'lo': 0.0, 'hi': 100.0, 'step': 1.0, 'decimals': 1, 'suffix': '%'}),
+    (('refbuild', 'elong_drop_pct'), 'ref_select_elong_pct', 'float', 20.0, {'label': 'Drop top elongation frames', 'lo': 0.0, 'hi': 100.0, 'step': 1.0, 'decimals': 1, 'suffix': '%'}),
+    (('refbuild', 'per_date'), 'ref_per_date', 'bool', True, {'label': 'Per-date reference'}),
+    (('refbuild', 'master_union'), 'ref_master_union', 'bool', True, {'label': 'Union master (all frames)'}),
+    (('refbuild', 'union_min_frames'), 'ref_union_min_frames', 'int', 1, {'label': 'Union min detections/star', 'lo': 1, 'hi': 1000}),
+    (('refbuild', 'ref_cat_max_sources'), 'ref_cat_max_sources', 'int', 0, {'label': 'Ref catalog max sources (0=all)', 'lo': 0, 'hi': 50000}),
+    (('refbuild', 'ref_cat_min_sources'), 'ref_cat_min_sources', 'int', 50, {'label': 'Ref catalog min sources', 'lo': 0, 'hi': 50000}),
+    (('refbuild', 'ref_cat_max_elong'), 'ref_cat_max_elong', 'float', 1.5, {'label': 'Ref max elongation', 'lo': 0.0, 'hi': 10.0, 'step': 0.1, 'decimals': 2}),
+    (('refbuild', 'ref_cat_max_abs_round'), 'ref_cat_max_abs_round', 'float', 0.4, {'label': 'Ref max |roundness|', 'lo': 0.0, 'hi': 5.0, 'step': 0.05, 'decimals': 2}),
+    (('refbuild', 'ref_cat_sharp_min'), 'ref_cat_sharp_min', 'float', 0.2, {'label': 'Ref sharpness min', 'lo': -5.0, 'hi': 5.0, 'step': 0.1, 'decimals': 2}),
+    (('refbuild', 'ref_cat_sharp_max'), 'ref_cat_sharp_max', 'float', 1.0, {'label': 'Ref sharpness max', 'lo': -5.0, 'hi': 5.0, 'step': 0.1, 'decimals': 2}),
+    (('refbuild', 'ref_cat_min_peak_adu'), 'ref_cat_min_peak_adu', 'float', 0.0, {'label': 'Ref min peak/flux (0=off)', 'lo': 0.0, 'hi': 1000000000.0, 'step': 1.0, 'decimals': 1}),
+    (('refbuild', 'wcs_min_match_rate'), 'ref_wcs_min_match_rate', 'float', 0.2, {'label': 'WCS min match rate', 'lo': 0.0, 'hi': 1.0, 'step': 0.05, 'decimals': 2}),
+    (('refbuild', 'wcs_min_match_n'), 'ref_wcs_min_match_n', 'int', 50, {'label': 'WCS min match count', 'lo': 0, 'hi': 100000}),
+    (('refbuild', 'wcs_max_sep_med_arcsec'), 'ref_wcs_max_sep_med_arcsec', 'float', 1.5, {'label': 'WCS max sep median (arcsec)', 'lo': 0.0, 'hi': 30.0, 'step': 0.1, 'decimals': 2}),
+    (('refbuild', 'wcs_max_sep_p90_arcsec'), 'ref_wcs_max_sep_p90_arcsec', 'float', 2.5, {'label': 'WCS max sep p90 (arcsec)', 'lo': 0.0, 'hi': 60.0, 'step': 0.1, 'decimals': 2}),
+    (('refbuild', 'wcs_max_dup_rate'), 'ref_wcs_max_dup_rate', 'float', 0.1, {'label': 'WCS max duplicate rate', 'lo': 0.0, 'hi': 1.0, 'step': 0.05, 'decimals': 2}),
+    # --- The airmass and extinction tools open in both modes, and the night
+    # parsing keys sit in every config's `io` section, yet all of these lived
+    # in the LC-only map: CMD read none of them and its windows could save
+    # none of them. Defaults match the literals CMD was using (2026-08-16).
+    (('io', 'night_parse_mode'), 'night_parse_mode', 'str', "regex"),
+    (('io', 'night_parse_regex'), 'night_parse_regex', 'str', r".*_(\d{8})"),
+    (('io', 'night_parse_split_delim'), 'night_parse_split_delim', 'str', "_"),
+    (('io', 'night_parse_split_index'), 'night_parse_split_index', 'int', -1),
+    (('io', 'night_parse_last_digits'), 'night_parse_last_digits', 'int', 8),
+    (('io', 'airmass_formula'), 'airmass_formula', 'str', "Kasten & Young (1989)"),
+    (('io', 'airmass_update_mode'), 'airmass_update_mode', 'str', "overwrite"),
+    (('extinction_fit', 'clip_sigma'), 'extfit_clip_sigma', 'float', 3.0),
+    (('extinction_fit', 'fit_iters'), 'extfit_fit_iters', 'int', 5),
+    # --- Steps 4 and 5 are shared; these were CMD-only, so the LC windows
+    # offered them and could not save them (2026-08-16).
+    (('detection', 'mode'), 'detect_mode'),
+    (('wcs', 'astap_annotate_variables'), 'astap_annotate_variables', 'bool', False),
 )
 
 CMD_ONLY_TOML_KEY_MAP: tuple[tuple, ...] = (
-    (('detection', 'mode'), 'detect_mode'),
     (('detection', 'deblend', 'mode'), 'deblend_mode'),
-    (('wcs', 'astap_annotate_variables'), 'astap_annotate_variables', 'bool', False),
     (('wcs', 'header_coord_warn_sep_deg'), 'wcs_header_coord_warn_sep_deg', 'float', 0.5),
     (('wcs', 'header_coord_max_sep_deg'), 'wcs_header_coord_max_sep_deg', 'float', 5.0),
-    (('gaia', 'match_tol_arcsec'), 'ref_wcs_match_radius_arcsec', 'float', 2.0),
+    (('gaia', 'match_tol_arcsec'), 'ref_wcs_match_radius_arcsec', 'float', 2.0, {'label': 'WCS match radius (arcsec)', 'lo': 0.1, 'hi': 30.0, 'step': 0.1, 'decimals': 2}),
     (('gaia', 'derived_enable'), 'gaia_derived_enable', 'bool', True),
     (('gaia', 'pmem_method'), 'gaia_pmem_method'),
     (('gaia', 'pmem_ruwe_max'), 'gaia_pmem_ruwe_max', 'float', 2.0),
@@ -555,15 +590,8 @@ CMD_ONLY_TOML_KEY_MAP += (
 )
 
 LC_ONLY_TOML_KEY_MAP: tuple[tuple, ...] = (
-    (('io', 'night_parse_mode'), 'night_parse_mode', 'str', "regex"),
-    (('io', 'night_parse_regex'), 'night_parse_regex', 'str', r".*_(\d{8})"),
-    (('io', 'night_parse_split_delim'), 'night_parse_split_delim', 'str', "_"),
-    (('io', 'night_parse_split_index'), 'night_parse_split_index', 'int', -1),
-    (('io', 'night_parse_last_digits'), 'night_parse_last_digits', 'int', 8),
     (('io', 'night_parse_include_unmatched'), 'night_parse_include_unmatched', 'bool', False),
-    (('io', 'airmass_formula'), 'airmass_formula', 'str', "Kasten & Young (1989)"),
     (('io', 'airmass_update_header'), 'airmass_update_header', 'bool', False),
-    (('io', 'airmass_update_mode'), 'airmass_update_mode', 'str', "overwrite"),
     (('instrument', 'gain_e_per_adu'), 'gain_e_per_adu', 'float_or_none', None),
     (('instrument', 'rdnoise_e'), 'rdnoise_e'),
     (('instrument', 'noise_use_fits_header'), 'noise_use_fits_header', 'bool', False),
@@ -587,29 +615,10 @@ LC_ONLY_TOML_KEY_MAP: tuple[tuple, ...] = (
     (('idmatch', 'min_pairs'), 'idmatch_min_pairs', 'int', 15),
     (('idmatch', 'transform_mode'), 'idmatch_transform_mode', 'str', "similarity"),
     (('idmatch', 'mutual_nearest'), 'idmatch_mutual_nearest', 'bool', True),
-    (('refbuild', 'sat_drop_pct'), 'ref_select_sat_pct', 'float', 20.0),
-    (('refbuild', 'elong_drop_pct'), 'ref_select_elong_pct', 'float', 20.0),
-    (('refbuild', 'per_date'), 'ref_per_date', 'bool', True),
-    (('refbuild', 'master_union'), 'ref_master_union', 'bool', True),
-    (('refbuild', 'union_min_frames'), 'ref_union_min_frames', 'int', 1),
-    (('refbuild', 'ref_cat_max_sources'), 'ref_cat_max_sources', 'int', 0),
-    (('refbuild', 'ref_cat_min_sources'), 'ref_cat_min_sources', 'int', 50),
-    (('refbuild', 'ref_cat_max_elong'), 'ref_cat_max_elong', 'float', 1.5),
-    (('refbuild', 'ref_cat_max_abs_round'), 'ref_cat_max_abs_round', 'float', 0.4),
-    (('refbuild', 'ref_cat_sharp_min'), 'ref_cat_sharp_min', 'float', 0.2),
-    (('refbuild', 'ref_cat_sharp_max'), 'ref_cat_sharp_max', 'float', 1.0),
-    (('refbuild', 'ref_cat_min_peak_adu'), 'ref_cat_min_peak_adu', 'float', 0.0),
-    (('refbuild', 'wcs_min_match_rate'), 'ref_wcs_min_match_rate', 'float', 0.2),
-    (('refbuild', 'wcs_min_match_n'), 'ref_wcs_min_match_n', 'int', 50),
-    (('refbuild', 'wcs_max_sep_med_arcsec'), 'ref_wcs_max_sep_med_arcsec', 'float', 1.5),
-    (('refbuild', 'wcs_max_sep_p90_arcsec'), 'ref_wcs_max_sep_p90_arcsec', 'float', 2.5),
-    (('refbuild', 'wcs_max_dup_rate'), 'ref_wcs_max_dup_rate', 'float', 0.1),
     (('light_curve', 'color_index_by_filter'), 'lightcurve_color_index_by_filter'),
     (('light_curve', 'color_term_by_filter'), 'lightcurve_color_term_by_filter'),
     (('extinction_fit', 'order'), 'extfit_order', 'int', 1),
     (('extinction_fit', 'min_points'), 'extfit_min_points', 'int', 5),
-    (('extinction_fit', 'clip_sigma'), 'extfit_clip_sigma', 'float', 3.0),
-    (('extinction_fit', 'fit_iters'), 'extfit_fit_iters', 'int', 5),
     (('extinction_fit', 'use_color_terms'), 'extfit_use_color_terms', 'bool', False),
     (('extinction_fit', 'color_index_by_filter'), 'extfit_color_index_by_filter'),
     (('extinction_fit', 'color_c1_by_filter'), 'extfit_color_c1_by_filter'),

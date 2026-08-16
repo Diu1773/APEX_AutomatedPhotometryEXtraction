@@ -37,7 +37,7 @@ from matplotlib.figure import Figure
 
 from .step_window_base import StepWindowBase
 from .run_control import RunControlBar, format_duration, progress_status_text
-from .param_dialog import ParamSpec, run_param_dialog
+from .param_dialog import ParamSpec, run_param_dialog, specs_from_map
 from .log_panel import WorkflowLogWindow, WorkerStatusPanel, append_timestamped_log, show_raised
 from .ui_helpers import (
     create_output_reuse_checkbox,
@@ -1299,27 +1299,35 @@ class RefBuildWorker(QThread):
         self.finished.emit(summary if summary else {})
 
 
-_STEP6_SPECS: tuple[ParamSpec, ...] = (
-    ParamSpec("Drop top saturation frames", "ref_select_sat_pct", "float", 0.0, 100.0, 1.0, 1, "%", default=20.0),
-    ParamSpec("Drop top elongation frames", "ref_select_elong_pct", "float", 0.0, 100.0, 1.0, 1, "%", default=20.0),
-    ParamSpec("Per-date reference", "ref_per_date", "bool", default=True),
-    ParamSpec("Union master (all frames)", "ref_master_union", "bool", default=True),
-    ParamSpec("Union min detections/star", "ref_union_min_frames", "int", 1, 1000, default=1),
-    ParamSpec("Ref catalog max sources (0=all)", "ref_cat_max_sources", "int", 0, 50000, default=0),
-    ParamSpec("Ref catalog min sources", "ref_cat_min_sources", "int", 0, 50000, default=50),
-    ParamSpec("Ref max elongation", "ref_cat_max_elong", "float", 0.0, 10.0, 0.1, 2, default=1.5),
-    ParamSpec("Ref max |roundness|", "ref_cat_max_abs_round", "float", 0.0, 5.0, 0.05, 2, default=0.4),
-    ParamSpec("Ref sharpness min", "ref_cat_sharp_min", "float", -5.0, 5.0, 0.1, 2, default=0.2),
-    ParamSpec("Ref sharpness max", "ref_cat_sharp_max", "float", -5.0, 5.0, 0.1, 2, default=1.0),
-    ParamSpec("Ref min peak/flux (0=off)", "ref_cat_min_peak_adu", "float", 0.0, 1e9, 1.0, 1, default=0.0),
-    ParamSpec("WCS match radius (arcsec)", "ref_wcs_match_radius_arcsec", "float", 0.1, 30.0, 0.1, 2, default=2.0),
-    ParamSpec("WCS min match rate", "ref_wcs_min_match_rate", "float", 0.0, 1.0, 0.05, 2, default=0.2),
-    ParamSpec("WCS min match count", "ref_wcs_min_match_n", "int", 0, 100000, default=50),
-    ParamSpec("WCS max sep median (arcsec)", "ref_wcs_max_sep_med_arcsec", "float", 0.0, 30.0, 0.1, 2, default=1.5),
-    ParamSpec("WCS max sep p90 (arcsec)", "ref_wcs_max_sep_p90_arcsec", "float", 0.0, 60.0, 0.1, 2, default=2.5),
-    ParamSpec("WCS max duplicate rate", "ref_wcs_max_dup_rate", "float", 0.0, 1.0, 0.05, 2, default=0.1),
-    ParamSpec("Gaia G limit (hybrid ID)", "idmatch_gaia_g_limit", "float", 10.0, 25.0, 0.5, 2, default=18.0),
+# The window names the rows it shows, in order. Everything else about each
+# setting — where it lives in the config file, its type, its default, its label
+# and range — is the map row, so a widget can only exist for a setting the
+# loader builds and `save_toml` persists. Before 2026-08-16 this list repeated
+# the type and default, and thirty settings across the app had a widget and no
+# row: editing one showed "Parameters saved." and wrote nothing.
+_STEP6_ATTRS: tuple[str, ...] = (
+    "ref_select_sat_pct",
+    "ref_select_elong_pct",
+    "ref_per_date",
+    "ref_master_union",
+    "ref_union_min_frames",
+    "ref_cat_max_sources",
+    "ref_cat_min_sources",
+    "ref_cat_max_elong",
+    "ref_cat_max_abs_round",
+    "ref_cat_sharp_min",
+    "ref_cat_sharp_max",
+    "ref_cat_min_peak_adu",
+    "ref_wcs_match_radius_arcsec",
+    "ref_wcs_min_match_rate",
+    "ref_wcs_min_match_n",
+    "ref_wcs_max_sep_med_arcsec",
+    "ref_wcs_max_sep_p90_arcsec",
+    "ref_wcs_max_dup_rate",
+    "idmatch_gaia_g_limit",
 )
+
+_STEP6_SPECS: tuple[ParamSpec, ...] = specs_from_map(_STEP6_ATTRS)
 
 
 class RefBuildWindow(StepWindowBase):

@@ -56,17 +56,33 @@ NOT_SETTINGS = {
     "step3_fits_cache_size": "internal cache size, no dialog",
     "step4_fits_cache_size": "internal cache size, no dialog",
     "step8_fits_cache_size": "internal cache size, no dialog",
+    # A real setting, deliberately left unreachable in CMD: LC's map gives it 5
+    # (the config file's value) where the CMD code falls back to 10, so wiring it
+    # would change which extinction fits CMD accepts. Needs a decision, not a
+    # quiet move — see docs/audit/CONFIG_REACHABILITY.md.
+    "extfit_min_points": "CMD 코드 10 vs 파일 5 — 배선하면 적합 결과가 바뀐다",
 }
 
 
-def _gui_setting_names() -> dict[str, str]:
-    names: dict[str, str] = {}
+def _mode_of(path: Path) -> str:
+    """Which modes open this window. Steps 1-7 and the tools open in both."""
+    parts = str(path).replace("\\", "/")
+    if "/workflow/cmd/" in parts:
+        return "cmd"
+    if "/workflow/lc/" in parts:
+        return "lc"
+    return "both"
+
+
+def _gui_setting_names() -> dict[str, tuple[str, str]]:
+    """attr -> (mode that opens the window, file it was found in)."""
+    names: dict[str, tuple[str, str]] = {}
     for path in GUI:
         text = path.read_text(encoding="utf-8", errors="replace")
         for match in READS.finditer(text):
-            names.setdefault(match.group(1), path.name)
+            names.setdefault(match.group(1), (_mode_of(path), path.name))
         for match in WRITES.finditer(text):
-            names.setdefault(match.group(1) or match.group(2), path.name)
+            names.setdefault(match.group(1) or match.group(2), (_mode_of(path), path.name))
     return names
 
 
@@ -78,20 +94,37 @@ def blank(tmp_path_factory):
     return config
 
 
-def test_every_setting_a_window_offers_can_be_saved(blank):
+@pytest.mark.parametrize("mode", ["cmd", "lc"])
+def test_every_setting_a_window_offers_can_be_saved(mode, tmp_path):
+    """Per mode, not the union of both.
+
+    Checking `CMD map | LC map` was too lenient and hid the biggest instance:
+    Step 6 builds the master catalogue and is shared by both modes, but all
+    seventeen of its settings sat in the LC-only map. Opened from CMD the window
+    showed them, saved none of them, and reverted on the next launch.
+    """
+    from apex.config.parameters_lc import read_params as read_lc
+
+    config = tmp_path / "apex_config.json"
+    config.write_text(json.dumps({"io": {"result_dir": ".", "data_dir": "."}}),
+                      encoding="utf-8")
+    key_map = LC_TOML_KEY_MAP if mode == "lc" else CMD_TOML_KEY_MAP
+    P = (read_lc if mode == "lc" else read_params)(config).P
+
     names = _gui_setting_names()
     assert len(names) > 250, "GUI 를 못 훑었다 — 정규식을 확인할 것"
 
-    mapped = {row[1] for row in CMD_TOML_KEY_MAP} | {row[1] for row in LC_TOML_KEY_MAP}
-    P = read_params(blank).P
+    mapped = {row[1] for row in key_map}
     broken = sorted(
-        name for name in names
-        if name not in NOT_SETTINGS and not hasattr(P, name) and name not in mapped
+        name for name, (window_mode, _file) in names.items()
+        if name not in NOT_SETTINGS
+        and window_mode in (mode, "both")
+        and not hasattr(P, name) and name not in mapped
     )
     assert not broken, (
-        "창이 저장할 수 없는 설정을 내놓는다 — 맵에 행을 넣거나, 설정이 아니면 "
-        f"NOT_SETTINGS 에 이유와 함께 적을 것: "
-        + ", ".join(f"{n} ({names[n]})" for n in broken)
+        f"{mode.upper()} 모드에서 창이 저장할 수 없는 설정을 내놓는다 — 맵에 행을 "
+        f"넣거나, 설정이 아니면 NOT_SETTINGS 에 이유와 함께 적을 것: "
+        + ", ".join(f"{n} ({names[n][1]})" for n in broken)
     )
 
 
