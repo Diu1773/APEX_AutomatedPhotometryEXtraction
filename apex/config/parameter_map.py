@@ -248,20 +248,29 @@ COMMON_TOML_KEY_MAP: tuple[tuple, ...] = (
     (('photometry', 'radii', 'max_iter'), 'fitsky_max_iter', 'int', 5),
     (('photometry', 'radii', 'neighbor_mask_scale'), 'annulus_neighbor_mask_scale', 'float', 1.3),
     (('photometry', 'apcorr', 'apply'), 'apcorr_apply', 'bool', True),
-    # The measuring aperture, in FWHM. 1.0 is the conventional choice and the
-    # one the correction is least sensitive to: the enclosed-flux curve is
-    # 2.4x steeper at 0.8, so the same FWHM error costs 2.4x more there, and an
-    # aperture correction is one scalar per frame — it removes the mean offset
-    # but not the part that varies star to star. Runs before 2026-08-17 used
-    # 0.8 / 2.4, which was never chosen: the code read `forced_r_ap_scale`, a
-    # name nothing set, and took its literal fallback while every config on
-    # disk asked for 1.0 / 3.0 and was ignored.
-    (('photometry', 'apcorr', 'small_scale'), 'apcorr_small_scale', 'float', 1.0),
-    # The reference aperture the correction extrapolates to. For a Gaussian,
-    # 2.4 and 3.0 are both ~100 % — but the measured correction is 1.57-1.61x
-    # (0.49-0.52 mag) where a Gaussian predicts 1.20x, so real wings carry far
-    # more light than the arithmetic suggests and the extra reach is not free.
-    (('photometry', 'apcorr', 'large_scale'), 'apcorr_large_scale', 'float', 3.0),
+    # The measuring aperture, in FWHM. 0.8, and now for a reason.
+    #
+    # It began as an accident — the code read `forced_r_ap_scale`, a name
+    # nothing set, and took its literal while every config on disk asked for
+    # 1.0 and was ignored. Raising it to the conventional 1.0 on 2026-08-17
+    # looked right on paper: the enclosed-flux curve is 2.4x steeper at 0.8, so
+    # a FWHM error costs 2.4x more there, and a per-frame correction cannot
+    # give that back.
+    #
+    # Then five clusters were reprocessed and compared star by star against an
+    # external catalogue. 1.0 was WORSE in 13 of 15 bands, median +0.008 mag,
+    # and a split run isolated it to this radius alone (`large_scale` 2.4 -> 3.0
+    # is roughly free). The reason is the term the classic optimum leaves out:
+    # the measuring aperture is applied to every star, so it swallows
+    # neighbours, and in a crowded field even the sky estimate is contaminated.
+    # Only the sparsest field, M67, tied. See docs/audit/APERTURE_RADIUS_DECISION.md.
+    (('photometry', 'apcorr', 'small_scale'), 'apcorr_small_scale', 'float', 0.8),
+    # The reference aperture the correction extrapolates to. Measured slightly
+    # better at 3.0 than 2.4 (-0.001 mag, 5 of 6 bands) because it is derived
+    # from bright *isolated* stars, where more reach buys wing light without
+    # buying neighbours. Left at 2.4 because 0.001 mag does not justify
+    # reprocessing five clusters; raise it whenever they are reprocessed anyway.
+    (('photometry', 'apcorr', 'large_scale'), 'apcorr_large_scale', 'float', 2.4),
     (('photometry', 'apcorr', 'min_n'), 'apcorr_use_min_n', 'int', 20),
     (('photometry', 'apcorr', 'scatter_max'), 'apcorr_scatter_max', 'float', 0.05),
     # Decoration, not behaviour: nothing reads these. The config advertises a

@@ -92,20 +92,20 @@ def test_the_aperture_scales_come_from_the_config_now(parameters):
     were never connected, so fifty config files on disk carried an aperture
     radius no run had used.
 
-    Wiring it was made behaviour-neutral first — 0.8 / 2.4 everywhere, the radii
-    every stored product was measured with — and raised to 1.0 / 3.0 on
-    2026-08-17, which is what the configs had been asking for all along.
-
-    0.8 was never chosen. It looked deliberate because it landed exactly on
-    `small_scale_min`, but nothing reads that key, or `small_scale_max`,
-    `large_scale_min/max`, `scale_step`, `scale_min/max`, or `optimize_scales`:
-    the config advertises an aperture optimiser that does not exist. What made
-    the value cost something is that the enclosed-flux curve is 2.4x steeper at
-    0.8 than at 1.0, and an aperture correction is one scalar per frame — it
-    removes the mean offset, not the part that varies star to star.
+    0.8 was not chosen either, at first — it looked deliberate because it landed
+    exactly on `small_scale_min`, but nothing reads that key or any other in the
+    "optimise scales" block; the config advertises an aperture optimiser that
+    does not exist. It was raised to the conventional 1.0 / 3.0 on 2026-08-17
+    and put back the same day, because five clusters reprocessed and compared
+    star by star against an external catalogue said 1.0 is WORSE — 13 of 15
+    bands, median +0.008 mag, isolated by a split run to the measuring radius
+    alone. The classic optimum leaves out the term that decides it here: the
+    measuring aperture is applied to every star, so it swallows neighbours.
+    Only M67, the sparsest field, tied.
+    See docs/audit/APERTURE_RADIUS_DECISION.md.
     """
-    assert parameters.apcorr_small_scale == pytest.approx(1.0)
-    assert parameters.apcorr_large_scale == pytest.approx(3.0)
+    assert parameters.apcorr_small_scale == pytest.approx(0.8)
+    assert parameters.apcorr_large_scale == pytest.approx(2.4)
 
     source = (REPO / "apex/analysis/forced_photometry.py").read_text(encoding="utf-8")
     assert 'getattr(P, "apcorr_small_scale"' in source
@@ -167,19 +167,19 @@ def test_every_declaration_of_the_radii_agrees():
 
     sources = {
         "apex/config/parameter_map.py": [
-            (r"'apcorr_small_scale', 'float', ([\d.]+)", "1.0"),
-            (r"'apcorr_large_scale', 'float', ([\d.]+)", "3.0"),
+            (r"'apcorr_small_scale', 'float', ([\d.]+)", "0.8"),
+            (r"'apcorr_large_scale', 'float', ([\d.]+)", "2.4"),
         ],
         "apex/analysis/forced_photometry.py": [
-            (r'getattr\(P, "apcorr_small_scale", ([\d.]+)\)', "1.0"),
-            (r'getattr\(P, "apcorr_large_scale", ([\d.]+)\)', "3.0"),
+            (r'getattr\(P, "apcorr_small_scale", ([\d.]+)\)', "0.8"),
+            (r'getattr\(P, "apcorr_large_scale", ([\d.]+)\)', "2.4"),
         ],
         "apex/benchmark/photometry_crosscheck.py": [
-            (r"DEFAULT_APERTURE_SCALE = ([\d.]+)", "1.0"),
-            (r"DEFAULT_REF_AP_SCALE = ([\d.]+)", "3.0"),
+            (r"DEFAULT_APERTURE_SCALE = ([\d.]+)", "0.8"),
+            (r"DEFAULT_REF_AP_SCALE = ([\d.]+)", "2.4"),
         ],
         "apex/benchmark/iraf_crosscheck.py": [
-            (r"aperture_scale_fwhm: float = ([\d.]+)", "1.0"),
+            (r"aperture_scale_fwhm: float = ([\d.]+)", "0.8"),
         ],
     }
     for path, checks in sources.items():
@@ -197,5 +197,5 @@ def test_the_shipped_template_matches_the_code():
 
     example = json.loads((REPO / "parameters.example.json").read_text(encoding="utf-8"))
     apcorr = example["photometry"]["apcorr"]
-    assert apcorr["small_scale"] == pytest.approx(1.0)
-    assert apcorr["large_scale"] == pytest.approx(3.0)
+    assert apcorr["small_scale"] == pytest.approx(0.8)
+    assert apcorr["large_scale"] == pytest.approx(2.4)

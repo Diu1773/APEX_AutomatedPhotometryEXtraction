@@ -835,8 +835,8 @@ def run_forced_photometry(
         # Products measured before this date used 0.8 / 2.4 and must be
         # reprocessed to match their own configuration.
         apcorr_apply = bool(getattr(P, "apcorr_apply", True))
-        r_ap_scale   = _to_float(getattr(P, "apcorr_small_scale", 1.0), 1.0)
-        ref_ap_scale = _to_float(getattr(P, "apcorr_large_scale", 3.0), 3.0)
+        r_ap_scale   = _to_float(getattr(P, "apcorr_small_scale", 0.8), 0.8)
+        ref_ap_scale = _to_float(getattr(P, "apcorr_large_scale", 2.4), 2.4)
         min_r_ap     = _to_float(getattr(P, "min_r_ap_px",           4.0), 4.0)
         ann_scale    = _to_float(getattr(P, "fitsky_annulus_scale",   4.0), 4.0)
         dann_scale   = _to_float(getattr(P, "fitsky_dannulus_scale",  2.0), 2.0)

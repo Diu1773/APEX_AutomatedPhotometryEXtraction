@@ -51,8 +51,8 @@ import pandas as pd
 # the production defaults from apex.config.schema.ApertureScalesConfig /
 # ApertureRadiiConfig and apex.analysis.forced_photometry._phot_frame. They are
 # overridden at runtime by the actual params.P attributes when available.
-DEFAULT_APERTURE_SCALE = 1.0     # photometry.apcorr.small_scale
-DEFAULT_REF_AP_SCALE = 3.0       # photometry.apcorr.large_scale
+DEFAULT_APERTURE_SCALE = 0.8     # photometry.apcorr.small_scale
+DEFAULT_REF_AP_SCALE = 2.4       # photometry.apcorr.large_scale
 DEFAULT_ANN_IN_SCALE = 4.0       # fitsky_annulus_scale
 DEFAULT_DANN_SCALE = 2.0         # fitsky_dannulus_scale
 DEFAULT_MIN_R_AP_PX = 4.0        # min_r_ap_px

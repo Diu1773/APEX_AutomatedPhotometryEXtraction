@@ -179,8 +179,8 @@ apply = true
 # them under names nothing set and silently used 0.8 / 2.4 instead; the values
 # here now are those radii, so every stored product matches its own config.
 # Raising them is a real change and needs a reprocess, not just an edit.
-small_scale = 1.0
-large_scale = 3.0
+small_scale = 0.8
+large_scale = 2.4
 min_n = 12
 scatter_max = 0.2
 min_snr = 40.0

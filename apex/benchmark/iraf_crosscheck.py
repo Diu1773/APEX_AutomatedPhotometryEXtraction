@@ -34,7 +34,7 @@ class IRAFCrosscheckConfig:
     mode: str = BOTH_MODE
     filter_name: str = ""
     fwhm_px: float | None = None
-    aperture_scale_fwhm: float = 1.0
+    aperture_scale_fwhm: float = 0.8
     annulus_scale_fwhm: float = 4.0
     dannulus_scale_fwhm: float = 2.0
     min_aperture_px: float = 4.0

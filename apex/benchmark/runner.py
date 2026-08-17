@@ -199,7 +199,7 @@ def _photometry_radii(config: BenchmarkConfig, p: Any, fwhm_px: float) -> tuple[
     aperture_scale = (
         float(config.aperture_scale_fwhm)
         if config.aperture_scale_fwhm is not None
-        else float(getattr(p, "apcorr_small_scale", 1.0))
+        else float(getattr(p, "apcorr_small_scale", 0.8))
     )
     annulus_scale = (
         float(config.annulus_scale_fwhm)

@@ -270,8 +270,8 @@ class Parameters:
             apcorr_scale_max=_getf(raw, "apcorr_scale_max", 5.0),
             apcorr_scale_step=_getf(raw, "apcorr_scale_step", 0.25),
             # loaded into `raw` and was dropped on the way into the namespace.
-            apcorr_large_scale=_getf(raw, "apcorr_large_scale", _getf(raw, "apcorr_large_ref_scale", 3.0)),
-            apcorr_large_ref_scale=_getf(raw, "apcorr_large_scale", _getf(raw, "apcorr_large_ref_scale", 3.0)),
+            apcorr_large_scale=_getf(raw, "apcorr_large_scale", _getf(raw, "apcorr_large_ref_scale", 2.4)),
+            apcorr_large_ref_scale=_getf(raw, "apcorr_large_scale", _getf(raw, "apcorr_large_ref_scale", 2.4)),
 
             # 없으면 None → resolve_wcs_engine 이 내장 엔진을 기본으로 선택.
             wcs_engine=(str(raw.get("wcs_engine", "")).strip().lower() or None),
