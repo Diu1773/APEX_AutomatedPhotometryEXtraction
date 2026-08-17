@@ -265,8 +265,8 @@ class Parameters:
             bkg_use_segm_mask=_as_bool(raw.get("bkg_use_segm_mask", "false"), False),
 
             # one engine measures two different apertures depending on mode.
-            apcorr_large_scale=_getf(raw, "apcorr_large_scale", 2.4),
-            apcorr_large_ref_scale=_getf(raw, "apcorr_large_scale", _getf(raw, "apcorr_large_ref_scale", 2.4)),
+            apcorr_large_scale=_getf(raw, "apcorr_large_scale", 3.0),
+            apcorr_large_ref_scale=_getf(raw, "apcorr_large_scale", _getf(raw, "apcorr_large_ref_scale", 3.0)),
             apcorr_optimize_scales=_as_bool(raw.get("apcorr_optimize_scales", "true"), True),
             apcorr_small_scale_min=_getf(raw, "apcorr_small_scale_min", 0.8),
             apcorr_small_scale_max=_getf(raw, "apcorr_small_scale_max", 1.4),

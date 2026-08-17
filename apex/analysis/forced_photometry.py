@@ -823,13 +823,20 @@ def run_forced_photometry(
         # [photometry.apcorr] small_scale / large_scale loaded into the
         # parameters and were read nowhere — the two halves never met. Until
         # 2026-08-16 every config on disk asked for 1.0 / 3.0 and every run used
-        # 0.8 / 2.4, the *lower bounds* of the optimiser range the same block
-        # declares, so the apertures sat at the floor of their own range. The
-        # files now state 0.8 / 2.4, the radii the stored products were measured
-        # with; raising them is a real change and needs a reprocess.
+        # 0.8 / 2.4, the literal fallbacks written here.
+        #
+        # 2026-08-17: raised to 1.0 / 3.0, the conventional radii the configs
+        # had been asking for all along. 0.8 was never a decision — it looked
+        # like one because it landed exactly on `small_scale_min`, but nothing
+        # reads that key or any other in the "optimise scales" block. The cost
+        # of staying at 0.8 is real: the enclosed-flux curve is 2.4x steeper
+        # there, so every star whose FWHM differs from the frame median pays
+        # 2.4x more, and a per-frame scalar correction cannot give that back.
+        # Products measured before this date used 0.8 / 2.4 and must be
+        # reprocessed to match their own configuration.
         apcorr_apply = bool(getattr(P, "apcorr_apply", True))
-        r_ap_scale   = _to_float(getattr(P, "apcorr_small_scale", 0.8), 0.8)
-        ref_ap_scale = _to_float(getattr(P, "apcorr_large_scale", 2.4), 2.4)
+        r_ap_scale   = _to_float(getattr(P, "apcorr_small_scale", 1.0), 1.0)
+        ref_ap_scale = _to_float(getattr(P, "apcorr_large_scale", 3.0), 3.0)
         min_r_ap     = _to_float(getattr(P, "min_r_ap_px",           4.0), 4.0)
         ann_scale    = _to_float(getattr(P, "fitsky_annulus_scale",   4.0), 4.0)
         dann_scale   = _to_float(getattr(P, "fitsky_dannulus_scale",  2.0), 2.0)
