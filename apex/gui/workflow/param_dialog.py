@@ -16,6 +16,7 @@ from typing import Any, Callable, Sequence
 
 from PyQt5.QtWidgets import (
     QCheckBox,
+    QComboBox,
     QDoubleSpinBox,
     QFormLayout,
     QLabel,
@@ -24,6 +25,7 @@ from PyQt5.QtWidgets import (
 )
 
 from apex.config.parameter_map import toml_key_map_for_mode
+from apex.gui.layout_rules import fit_combo
 from apex.gui.workflow.ui_helpers import add_parameter_reset_button, build_scroll_param_dialog
 
 
@@ -31,8 +33,16 @@ from apex.gui.workflow.ui_helpers import add_parameter_reset_button, build_scrol
 class ParamSpec:
     """Descriptor for one form row in a parameter dialog.
 
-    kind: "float" | "int" | "bool" | "sep"
+    kind: "float" | "int" | "bool" | "choice" | "sep"
           "sep" inserts a full-width QLabel (attr is ignored).
+          "choice" is a combo box; see `choices`.
+    choices: for kind="choice", the allowed values in display order. Either
+          plain strings, or (value, label) pairs when what is stored differs
+          from what is shown. The stored value is what reaches the config, so
+          it must be a string the loader and the calculation both understand —
+          that is the whole reason these live on the map row and not in the
+          window: a combo offering an option the loader does not accept is the
+          same defect as a widget the config cannot save.
     write_also: additional attrs to receive the same value on save.
     """
 
@@ -46,7 +56,18 @@ class ParamSpec:
     suffix: str = ""
     tooltip: str = ""
     default: Any = None
+    choices: tuple = ()
     write_also: tuple[str, ...] = ()
+
+    def choice_pairs(self) -> tuple[tuple[str, str], ...]:
+        """`choices` as (stored value, shown label), however it was written."""
+        pairs = []
+        for entry in self.choices:
+            if isinstance(entry, (tuple, list)) and len(entry) == 2:
+                pairs.append((str(entry[0]), str(entry[1])))
+            else:
+                pairs.append((str(entry), str(entry)))
+        return tuple(pairs)
 
 
 def build_param_form(
@@ -102,6 +123,26 @@ def build_param_form(
                 w.setToolTip(spec.tooltip)
             form.addRow(spec.label + ":", w)
 
+        elif spec.kind == "choice":
+            w = QComboBox()
+            for value, shown in spec.choice_pairs():
+                w.addItem(shown, value)
+            # Select by stored value, not by position: the config holds the
+            # value, and a list that gains an option must not silently change
+            # what an existing workspace means.
+            current = str(raw) if raw is not None else str(spec.default or "")
+            index = w.findData(current)
+            if index < 0 and current:
+                # A workspace written before this option list existed. Keep the
+                # value visible rather than snapping it to the first entry.
+                w.addItem(f"{current} (설정 파일 값)", current)
+                index = w.count() - 1
+            w.setCurrentIndex(max(index, 0))
+            fit_combo(w)
+            if spec.tooltip:
+                w.setToolTip(spec.tooltip)
+            form.addRow(spec.label + ":", w)
+
         else:
             continue
 
@@ -124,6 +165,11 @@ def read_param_form(
             value = w.value()
         elif spec.kind == "bool":
             value = w.isChecked()
+        elif spec.kind == "choice":
+            # The stored value, not the shown label.
+            value = w.currentData()
+            if value is None:
+                value = w.currentText()
         else:
             continue
         setattr(params_P, spec.attr, value)
@@ -140,6 +186,9 @@ def _spec_default_value(spec: ParamSpec) -> Any:
         return int(spec.lo)
     if spec.kind == "float":
         return float(spec.lo)
+    if spec.kind == "choice":
+        pairs = spec.choice_pairs()
+        return pairs[0][0] if pairs else None
     return None
 
 
