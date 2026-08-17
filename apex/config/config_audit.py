@@ -25,6 +25,7 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+from functools import lru_cache
 from typing import Any, Iterable
 
 # Keys that carry structure rather than settings, or that the loader consumes
@@ -85,23 +86,114 @@ def audit(config_path: str | Path, mode: str = "cmd") -> dict[str, list[str]]:
     }
 
 
+# The third kind, the quiet one. It needs the source tree, so it is separate
+# from the two above — but it is not a test-only concern: a window offering a
+# knob that changes nothing is a defect a user meets, not a regression a suite
+# catches. `specs_from_map` refuses to build a widget for anything this reports.
+_CONFIG_LAYER = {
+    "apex/config/parameter_map.py",
+    "apex/config/parameters_cmd.py",
+    "apex/config/parameters_lc.py",
+    "apex/config/schema.py",
+    "apex/config/config_audit.py",
+    # Names a setting only to say that nothing reads it. Counting it as a reader
+    # would make the check erase its own findings: writing the list down would
+    # shorten the list.
+    "tests/test_settings_nobody_reads.py",
+}
+_SKIP_DIRS = (".venv", ".venv-deploy", "build/", "dist/", "validation/", "benchmark/")
+
+
+@lru_cache(maxsize=2)
+def _python_sources(repo_root: Path) -> dict[str, str]:
+    """Every source file that could read a setting.
+
+    `validation/` is skipped on purpose and not because it does not matter: it
+    is a junction onto the E: drive holding ~20 GB, and walking it turns this
+    from a second into several minutes. Settings used only by a validation
+    script are reported here as unread, which is the honest answer anyway —
+    they do not reach the pipeline.
+    """
+    out: dict[str, str] = {}
+    for path in repo_root.rglob("*.py"):
+        rel = path.relative_to(repo_root).as_posix()
+        if rel.startswith(_SKIP_DIRS) or "__pycache__" in rel:
+            continue
+        try:
+            out[rel] = path.read_text(encoding="utf-8", errors="ignore")
+        except OSError:
+            continue
+    return out
+
+
+@lru_cache(maxsize=8)
+def _unread_cached(root: Path, mode: str) -> tuple[tuple[str, ...], tuple[str, ...]]:
+    import re
+
+    from apex.config.parameter_map import toml_key_map_for_mode
+
+    sources = _python_sources(root)
+    attrs = sorted({row[1] for row in toml_key_map_for_mode(mode)
+                    if len(row) >= 2 and isinstance(row[1], str)})
+    dead, gui_only = [], []
+    for attr in attrs:
+        pattern = re.compile(rf"\b{re.escape(attr)}\b")
+        users = [rel for rel, text in sources.items()
+                 if rel not in _CONFIG_LAYER and pattern.search(text)]
+        if not users:
+            dead.append(attr)
+        elif all(u.startswith("apex/gui/") for u in users):
+            gui_only.append(attr)
+    return tuple(dead), tuple(gui_only)
+
+
+def unread_settings(repo_root: str | Path | None = None,
+                    mode: str = "cmd") -> dict[str, list[str]]:
+    """Settings that reach `P` and that no module outside the config layer reads.
+
+    Returns {"dead": [...], "gui_only": [...]}. The split matters: a setting the
+    desktop reads is doing something even if the pipeline never sees it, but it
+    also means a headless run silently ignores it.
+
+    A name counts as read if it appears anywhere in a source file, not only in a
+    `getattr`. That is deliberately generous — two call sites build the attribute
+    name at run time from a literal list, and a stricter rule would call those
+    dead. Being generous here means the list under-reports, never over-reports.
+    """
+    root = Path(repo_root) if repo_root else Path(__file__).absolute().parents[2]
+    dead, gui_only = _unread_cached(root, mode)
+    return {"dead": list(dead), "gui_only": list(gui_only)}
+
+
 def main(argv: list[str] | None = None) -> int:
     import argparse
 
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
-    ap.add_argument("config", type=Path)
+    ap.add_argument("config", type=Path, nargs="?",
+                    help="검사할 apex_config.json (--unread 만 볼 때는 생략 가능)")
     ap.add_argument("--mode", choices=("cmd", "lc"), default="cmd")
+    ap.add_argument("--unread", action="store_true",
+                    help="세 번째 종류도 검사한다 — P 에 도착하지만 아무도 안 읽는 설정")
     args = ap.parse_args(argv)
 
-    result = audit(args.config, args.mode)
-    for label, heading in (("unmapped", "매핑이 없다 — 로더가 통째로 무시한다"),
-                           ("dropped", "매핑은 됐지만 생성자가 안 받아 사라진다")):
-        names = result[label]
-        print(f"\n=== {heading} ({len(names)}) ===")
+    def section(heading: str, names: list[str]) -> None:
+        print()
+        print(f"=== {heading} ({len(names)}) ===")
         for name in names:
             print(f"  {name}")
-    total = len(result["unmapped"]) + len(result["dropped"])
-    print(f"\n적었지만 코드에 닿지 않는 설정 {total} 개")
+
+    if args.config is not None:
+        result = audit(args.config, args.mode)
+        section("매핑이 없다 — 로더가 통째로 무시한다", result["unmapped"])
+        section("매핑은 됐지만 생성자가 안 받아 사라진다", result["dropped"])
+        total = len(result["unmapped"]) + len(result["dropped"])
+        print()
+        print(f"적었지만 코드에 닿지 않는 설정 {total} 개")
+
+    if args.unread or args.config is None:
+        found = unread_settings(mode=args.mode)
+        section("도착하지만 아무도 안 읽는다", found["dead"])
+        section("GUI 만 읽는다 — 헤드리스는 무시한다", found["gui_only"])
     return 0
 
 

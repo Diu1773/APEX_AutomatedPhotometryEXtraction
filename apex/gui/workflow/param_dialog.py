@@ -12,6 +12,7 @@ Usage (multi-section with QGroupBox):
 from __future__ import annotations
 
 from dataclasses import dataclass
+from functools import lru_cache
 from typing import Any, Callable, Sequence
 
 from PyQt5.QtWidgets import (
@@ -192,6 +193,21 @@ def _spec_default_value(spec: ParamSpec) -> Any:
     return None
 
 
+@lru_cache(maxsize=4)
+def _unread_for(mode: str) -> frozenset[str]:
+    """Names no module reads, computed once per mode.
+
+    Cached because it walks the source tree; a dialog opening must not pay for
+    that twice. If the walk fails for any reason the guard opens rather than
+    breaking the dialog — a missing check is better than an unusable window.
+    """
+    try:
+        from apex.config.config_audit import unread_settings
+        return frozenset(unread_settings(mode=mode)["dead"])
+    except Exception:                                    # noqa: BLE001
+        return frozenset()
+
+
 def specs_from_map(
     attrs: Sequence[str],
     *,
@@ -212,6 +228,12 @@ def specs_from_map(
 
     `overrides` is for the rare row whose label or range is window-specific;
     anything passed here is a deliberate exception, not a second declaration.
+
+    A row that no module reads is refused. Offering a knob that changes nothing
+    is worse than not offering it: the user turns it, saves, sees the value in
+    the file, and gets the same answer. Fifty-odd such rows exist (see
+    `config_audit.unread_settings`); none of them should reach a dialog until
+    someone either wires it up or deletes it.
     """
     rows = {}
     for row in toml_key_map_for_mode(mode):
@@ -230,6 +252,12 @@ def specs_from_map(
             raise KeyError(
                 f"{attr!r} 은 키 맵에 값이 없다 — 창에 띄우려면 먼저 행을 만들 것 "
                 f"(그래야 저장이 파일까지 간다)"
+            )
+        if attr in _unread_for(mode):
+            raise KeyError(
+                f"{attr!r} 은 어떤 모듈도 읽지 않는다 — 창에 띄우면 사용자가 "
+                f"돌려도 아무 일이 안 생긴다. 배선하거나 맵에서 지울 것 "
+                f"(python -m apex.config.config_audit --unread)"
             )
         meta: dict[str, Any] = dict(row[4]) if len(row) >= 5 and row[4] else {}
         meta.update((overrides or {}).get(attr, {}))
