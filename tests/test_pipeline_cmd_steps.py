@@ -286,3 +286,65 @@ def test_nothing_still_reaches_for_a_qt_signal_on_the_runners():
         "헤드리스 경로가 다시 Qt 를 붙들고 있다 — 채널을 subscribe 할 것: "
         + ", ".join(offenders)
     )
+
+
+def test_the_ap_vs_psf_figure_is_drawn_by_shared_code():
+    """`step8_ap_vs_psf_comparison.png` used to need a window.
+
+    The drawing was a 180-line method on the Step 8 dialog, wired to three spin
+    boxes and a canvas, so the figure existed only if somebody had opened that
+    tab. A headless run wrote every other Step 8 product and not this one — the
+    figure that says whether the two photometries agree. Measured 2026-08-18.
+    """
+    import io
+    import tokenize
+    from pathlib import Path
+
+    from apex.analysis.cmd.psf_photometry_runner import (
+        draw_ap_vs_psf, filter_ap_vs_psf,
+    )
+
+    assert callable(draw_ap_vs_psf) and callable(filter_ap_vs_psf)
+
+    repo = Path(__file__).absolute().parents[1]
+    window = (repo / "apex/gui/workflow/cmd/step8_psf_photometry.py").read_text(encoding="utf-8")
+    code = " ".join(
+        tok.string
+        for tok in tokenize.generate_tokens(io.StringIO(window).readline)
+        if tok.type not in (tokenize.COMMENT, tokenize.STRING)
+    )
+    assert "draw_ap_vs_psf" in code, "창이 공용 그리기를 안 쓴다"
+    # The window must not have kept its own copy of the drawing.
+    assert "add_subplot ( 121 )" not in code.replace("(", " ( ").replace(")", " ) ")
+
+    runner = (repo / "apex/analysis/cmd/psf_photometry_runner.py").read_text(encoding="utf-8")
+    assert "step8_ap_vs_psf_comparison.png" in runner, "배치가 그 그림을 안 쓴다"
+
+
+def test_the_comparison_cuts_are_applied_once_and_reported(tmp_path):
+    """The cut counts have to survive into the caption, or the figure lies."""
+    import numpy as np
+    import pandas as pd
+    from matplotlib.figure import Figure
+
+    from apex.analysis.cmd.psf_photometry_runner import (
+        draw_ap_vs_psf, filter_ap_vs_psf,
+    )
+
+    n = 300
+    df = pd.DataFrame({
+        "mag_ap": np.linspace(15, 20, n),
+        "mag_psf": np.linspace(15, 20, n) + 0.01,
+        "FILTER": ["B"] * n,
+        "snr_psf": np.linspace(1, 100, n),
+        "qfit": np.full(n, 0.5),
+    })
+    kept, before = filter_ap_vs_psf(df, snr_min=50.0)
+    assert before == n
+    assert 0 < len(kept) < n, "SNR 절단이 안 걸렸다"
+
+    text = draw_ap_vs_psf(Figure(figsize=(10, 4)), kept, before)
+    assert f"N={len(kept)}/{before}" in text
+
+    empty = draw_ap_vs_psf(Figure(figsize=(10, 4)), kept.iloc[0:0], 0)
+    assert "No data" in empty, "빈 결과가 빈 축으로 보이면 안 된다"

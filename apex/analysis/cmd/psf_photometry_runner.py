@@ -474,6 +474,19 @@ def export_psf_qc_products(psf_dir: Path, params=None, result_dir: Path | None =
             fig.savefig(fp, dpi=160, bbox_inches="tight")
             saved.append(fp)
 
+    # 구경 vs PSF 비교 그림. 창에서만 나오던 것이라 헤드리스 실행에는
+    # 없었다 — 두 측광이 서로 맞는지 말해주는 바로 그 그림이다.
+    if cmp_df is not None and not getattr(cmp_df, "empty", True):
+        try:
+            df_cut, n_before = filter_ap_vs_psf(cmp_df)
+            fig = Figure(figsize=(10.0, 4.0), dpi=120)
+            draw_ap_vs_psf(fig, df_cut, n_before)
+            fp = psf_dir / "step8_ap_vs_psf_comparison.png"
+            fig.savefig(fp, dpi=160, bbox_inches="tight")
+            saved.append(fp)
+        except Exception:  # noqa: BLE001 - a figure must not fail the export
+            pass
+
     # 최종 진단 — 대표 프레임 한 장. 창은 사용자가 고른 프레임을 그리지만
     # 배치는 고를 사람이 없으므로 인덱스 첫 프레임을 쓴다.
     if params is not None and result_dir is not None and not idx.empty:
@@ -5686,3 +5699,135 @@ class PsfPhotometryRunner(ReportsProgress):
             self.on_error.send("PSF_WORKER", f"{type(e).__name__}: {e}\n{traceback.format_exc()}")
             self.on_finished.send({})
 
+
+
+# ── Aperture vs PSF comparison figure ────────────────────────────────────────
+#
+# This lived in the Step 8 window as a 180-line method wired to three spin
+# boxes, two combo boxes, a canvas and a status label. The consequence was that
+# `step8_ap_vs_psf_comparison.png` only existed if somebody had opened the
+# window and looked at the tab — a headless run produced every other Step 8
+# product and not this one, which is the figure that says whether the two
+# photometries agree.
+#
+# The window keeps the widgets; this keeps the drawing. Both go through here, so
+# the batch figure and the on-screen figure cannot drift apart.
+
+_AP_VS_PSF_COLORS = {
+    "u": "#9467bd", "g": "#2ca02c", "r": "#d62728",
+    "i": "#ff7f0e", "z": "#8c564b", "b": "#1f77b4",
+    "v": "#bcbd22", "ha": "#e377c2",
+}
+
+
+def filter_ap_vs_psf(merged, *, flags0_only: bool = False, snr_min: float = 0.0,
+                     qfit_max: float = 0.0, dmag_clip: float = 0.0,
+                     filter_name: str = "", frame_name: str = ""):
+    """The cuts, separated from the drawing so both callers apply the same ones.
+
+    Returns (df, n_before). `df` carries a `delta` column (mag_ap − mag_psf) and
+    is empty when nothing survives — the caller decides what to say about that.
+    """
+    import numpy as np
+    import pandas as pd
+
+    if merged is None or getattr(merged, "empty", True):
+        return pd.DataFrame(), 0
+
+    df = merged.copy()
+    df["mag_ap"] = pd.to_numeric(df.get("mag_ap"), errors="coerce")
+    df["mag_psf"] = pd.to_numeric(df.get("mag_psf"), errors="coerce")
+    df = df[np.isfinite(df["mag_ap"]) & np.isfinite(df["mag_psf"])].copy()
+    if df.empty:
+        return df, 0
+
+    df["delta"] = df["mag_ap"] - df["mag_psf"]
+    n_before = int(len(df))
+
+    for col in ("flags_psf", "snr_psf", "qfit", "qfit_noise_ratio"):
+        if col in df.columns:
+            df[col] = pd.to_numeric(df[col], errors="coerce")
+
+    if filter_name and filter_name.lower() != "all" and "FILTER" in df.columns:
+        from apex.utils.astro_utils import normalize_filter_name
+        key = normalize_filter_name(filter_name)
+        df = df[df["FILTER"].astype(str).map(normalize_filter_name) == key].copy()
+    if frame_name and frame_name.lower() != "all" and "FRAME" in df.columns:
+        df = df[df["FRAME"].astype(str) == frame_name].copy()
+
+    if flags0_only and "flags_psf" in df.columns:
+        df = df[np.isfinite(df["flags_psf"]) & (df["flags_psf"] == 0)].copy()
+    if snr_min > 0 and "snr_psf" in df.columns:
+        df = df[np.isfinite(df["snr_psf"]) & (df["snr_psf"] >= snr_min)].copy()
+    if qfit_max > 0:
+        # `qfit_noise_ratio` when it exists and is populated — it is the
+        # normalised version, so the same threshold means the same thing across
+        # frames of different depth.
+        col = ("qfit_noise_ratio"
+               if "qfit_noise_ratio" in df.columns
+               and np.isfinite(df["qfit_noise_ratio"]).any() else "qfit")
+        if col in df.columns:
+            df = df[np.isfinite(df[col]) & (df[col] <= qfit_max)].copy()
+    if dmag_clip > 0:
+        df = df[np.isfinite(df["delta"]) & (np.abs(df["delta"]) <= dmag_clip)].copy()
+
+    return df, n_before
+
+
+def draw_ap_vs_psf(fig, df, n_before: int, *, split_excluded: int = 0) -> str:
+    """Draw the two panels onto `fig`. Returns the one-line statistics text.
+
+    An empty `df` gets a figure that says so rather than an empty axis — a blank
+    panel and "no data survived the cuts" look identical on screen and only one
+    of them is informative.
+    """
+    import numpy as np
+
+    fig.clf()
+    if df is None or df.empty:
+        ax = fig.add_subplot(111)
+        ax.text(0.5, 0.5, "No data after filters.\nRelax SNR/qfit/|Δmag| settings.",
+                transform=ax.transAxes, ha="center", va="center",
+                fontsize=10, color="gray")
+        ax.set_xticks([]); ax.set_yticks([])
+        return "No data after filters."
+
+    filt_col = "FILTER" if "FILTER" in df.columns else None
+    ax1 = fig.add_subplot(121)
+    ax2 = fig.add_subplot(122)
+
+    stats_parts = []
+    groups = df.groupby(filt_col) if filt_col else [("all", df)]
+    for filt, sub in groups:
+        color = _AP_VS_PSF_COLORS.get(str(filt).lower(), "#999999")
+        ax1.scatter(sub["mag_ap"], sub["mag_psf"], s=4, alpha=0.35,
+                    color=color, label=str(filt), rasterized=True)
+        ax2.scatter(sub["mag_ap"], sub["delta"], s=4, alpha=0.35,
+                    color=color, label=str(filt), rasterized=True)
+        stats_parts.append(
+            f"{filt}: N={len(sub)}  Δmed={float(np.nanmedian(sub['delta'])):+.3f}"
+            f"  σ={float(np.nanstd(sub['delta'])):.3f}")
+
+    all_mag = np.concatenate([df["mag_ap"].values, df["mag_psf"].values])
+    lo, hi = np.nanmin(all_mag) - 0.2, np.nanmax(all_mag) + 0.2
+    ax1.plot([lo, hi], [lo, hi], "k--", lw=0.8, alpha=0.5, zorder=0)
+    ax1.set_xlim(lo, hi); ax1.set_ylim(lo, hi)
+    ax1.set_xlabel("mag_ap", fontsize=9)
+    ax1.set_ylabel("mag_psf", fontsize=9)
+    ax1.set_title("Aperture vs PSF magnitude", fontsize=9)
+    ax1.legend(fontsize=7, markerscale=2, loc="upper left")
+
+    dmed_all = float(np.nanmedian(df["delta"]))
+    ax2.axhline(dmed_all, color="#D62728", lw=2.0, ls="-", alpha=0.95, zorder=1,
+                label=f"Δmag median {dmed_all:+.3f}")
+    ax2.axhline(0.0, color="k", lw=0.8, ls="--", alpha=0.6, zorder=0)
+    ax2.axhline(+0.05, color="gray", lw=0.5, ls=":", alpha=0.5, zorder=0)
+    ax2.axhline(-0.05, color="gray", lw=0.5, ls=":", alpha=0.5, zorder=0)
+    ax2.set_xlabel("mag_ap", fontsize=9)
+    ax2.set_ylabel("Δmag  (Ap − PSF)", fontsize=9)
+    ax2.set_title("Δmag vs mag_ap", fontsize=9)
+    ax2.legend(fontsize=7, markerscale=2, loc="upper left")
+
+    fig.tight_layout()
+    return (f"N={len(df)}/{n_before}  |  split_excluded={int(split_excluded)}  |  "
+            + "  |  ".join(stats_parts))

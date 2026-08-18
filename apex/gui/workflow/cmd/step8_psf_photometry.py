@@ -2471,185 +2471,77 @@ class PSFPhotometryWindow(StepWindowBase):
             pass
         return merged, int(split_excluded_total)
 
-    def _plot_mag_comparison(self):  # noqa: C901
-        """Scatter: mag_ap (Step5) vs mag_psf (Step6), merged on det_uid."""
+    def _plot_mag_comparison(self):
+        """Aperture vs PSF, drawn by the shared code the batch run also uses.
+
+        This was 180 lines here, which is why `step8_ap_vs_psf_comparison.png`
+        only existed when somebody had opened this tab: a headless run wrote
+        every other Step 8 product and not this one. The window still owns the
+        widgets — what to filter by, where to draw, what to label — and the
+        drawing moved next to the calculation.
+        """
         if not hasattr(self, "cmp_fig"):
             return
 
-        _FILT_COLORS = {
-            "u": "#9467bd", "g": "#2ca02c", "r": "#d62728",
-            "i": "#ff7f0e", "z": "#8c564b", "b": "#1f77b4",
-            "v": "#bcbd22", "ha": "#e377c2",
-        }
+        from apex.analysis.cmd.psf_photometry_runner import (
+            draw_ap_vs_psf, filter_ap_vs_psf,
+        )
 
-        # 병합은 헤드리스와 **같은 함수**로 한다 — 창과 배치가 각자 병합하면
-        # 두 산출물이 조용히 갈라진다. 캐시(_cmp_merged_df)는 창 쪽 사정이다.
-        if not hasattr(self, "_cmp_merged_df") or self._cmp_merged_df is None:
+        # Merge through the same function the batch uses; the cache is ours.
+        if getattr(self, "_cmp_merged_df", None) is None:
             merged, split_excluded_total = self._load_or_build_comparison()
             self._cmp_merged_df = merged
             self._cmp_split_excluded_total = int(split_excluded_total)
 
-        self.cmp_fig.clf()
+        merged = self._cmp_merged_df
+        self._refresh_comparison_selectors(merged)
 
-        def _empty(msg):
-            ax = self.cmp_fig.add_subplot(111)
-            ax.text(0.5, 0.5, msg, transform=ax.transAxes,
-                    ha="center", va="center", fontsize=10, color="gray")
-            self.cmp_canvas.draw_idle()
-            self.cmp_stats_label.setText(msg)
+        def _widget(name, default=0.0):
+            w = getattr(self, name, None)
+            return float(w.value()) if w is not None else default
 
-        if self._cmp_merged_df.empty:
-            _empty("No matched data.\nRun Step 7 and Step 8 first.")
-            return
+        def _combo(name):
+            w = getattr(self, name, None)
+            return str(w.currentText()).strip() if w is not None else ""
 
-        df = self._cmp_merged_df.copy()
-
-        # Refresh filter/frame selectors from available merged data.
-        if hasattr(self, "cmp_filter_combo"):
-            try:
-                _fvals = sorted(df["FILTER"].dropna().astype(str).unique().tolist()) if "FILTER" in df.columns else []
-                _cur = self.cmp_filter_combo.currentText().strip() or "all"
-                self.cmp_filter_combo.blockSignals(True)
-                self.cmp_filter_combo.clear()
-                self.cmp_filter_combo.addItem("all")
-                for _v in _fvals:
-                    self.cmp_filter_combo.addItem(_v)
-                self.cmp_filter_combo.setCurrentText(_cur if _cur in (["all"] + _fvals) else "all")
-                self.cmp_filter_combo.blockSignals(False)
-            except Exception:
-                pass
-        if hasattr(self, "cmp_frame_combo"):
-            try:
-                _frames = sorted(df["FRAME"].dropna().astype(str).unique().tolist()) if "FRAME" in df.columns else []
-                _cur = self.cmp_frame_combo.currentText().strip() or "all"
-                self.cmp_frame_combo.blockSignals(True)
-                self.cmp_frame_combo.clear()
-                self.cmp_frame_combo.addItem("all")
-                for _v in _frames:
-                    self.cmp_frame_combo.addItem(_v)
-                self.cmp_frame_combo.setCurrentText(_cur if _cur in (["all"] + _frames) else "all")
-                self.cmp_frame_combo.blockSignals(False)
-            except Exception:
-                pass
-
-        df["mag_ap"] = pd.to_numeric(df.get("mag_ap"), errors="coerce")
-        df["mag_psf"] = pd.to_numeric(df.get("mag_psf"), errors="coerce")
-        df = df[np.isfinite(df["mag_ap"]) & np.isfinite(df["mag_psf"])].copy()
-
-        if len(df) == 0:
-            _empty("All magnitudes are NaN.\nCheck Step 7 forced photometry and Step 8 PSF outputs.")
-            return
-
-        df["delta"] = df["mag_ap"] - df["mag_psf"]
-        n_before = int(len(df))
-
-        # Pre-convert numeric filter columns once
-        if "flags_psf" in df.columns:
-            df["flags_psf"] = pd.to_numeric(df["flags_psf"], errors="coerce")
-        if "snr_psf" in df.columns:
-            df["snr_psf"] = pd.to_numeric(df["snr_psf"], errors="coerce")
-        if "qfit" in df.columns:
-            df["qfit"] = pd.to_numeric(df["qfit"], errors="coerce")
-        if "qfit_noise_ratio" in df.columns:
-            df["qfit_noise_ratio"] = pd.to_numeric(
-                df["qfit_noise_ratio"], errors="coerce"
-            )
-
-        # Selector filters (filter/frame)
-        if hasattr(self, "cmp_filter_combo") and "FILTER" in df.columns:
-            _fsel = str(self.cmp_filter_combo.currentText()).strip()
-            if _fsel and _fsel.lower() != "all":
-                _fkey = normalize_filter_name(_fsel)
-                df = df[df["FILTER"].astype(str).map(normalize_filter_name) == _fkey].copy()
-        if hasattr(self, "cmp_frame_combo") and "FRAME" in df.columns:
-            _rsel = str(self.cmp_frame_combo.currentText()).strip()
-            if _rsel and _rsel.lower() != "all":
-                df = df[df["FRAME"].astype(str) == _rsel].copy()
-
-        # User filters
-        if getattr(self, "cmp_flags0_only", None) is not None and self.cmp_flags0_only.isChecked() and "flags_psf" in df.columns:
-            df = df[np.isfinite(df["flags_psf"]) & (df["flags_psf"] == 0)].copy()
-        if getattr(self, "cmp_snr_min", None) is not None:
-            _snr_min = float(self.cmp_snr_min.value())
-            if _snr_min > 0 and "snr_psf" in df.columns:
-                df = df[np.isfinite(df["snr_psf"]) & (df["snr_psf"] >= _snr_min)].copy()
-        if getattr(self, "cmp_qfit_max", None) is not None:
-            _qmax = float(self.cmp_qfit_max.value())
-            _qfit_column = (
-                "qfit_noise_ratio"
-                if "qfit_noise_ratio" in df.columns
-                and np.isfinite(df["qfit_noise_ratio"]).any()
-                else "qfit"
-            )
-            if _qmax > 0 and _qfit_column in df.columns:
-                df = df[
-                    np.isfinite(df[_qfit_column]) & (df[_qfit_column] <= _qmax)
-                ].copy()
-        if getattr(self, "cmp_dmag_clip", None) is not None:
-            _dclip = float(self.cmp_dmag_clip.value())
-            if _dclip > 0:
-                df = df[np.isfinite(df["delta"]) & (np.abs(df["delta"]) <= _dclip)].copy()
-
-        if len(df) == 0:
-            _empty("No data after filters.\nRelax SNR/qfit/|Δmag| settings.")
-            return
-
-        filt_col = "FILTER" if "FILTER" in df.columns else None
-
-        ax1 = self.cmp_fig.add_subplot(121)
-        ax2 = self.cmp_fig.add_subplot(122)
-
-        stats_parts = []
-        groups = df.groupby(filt_col) if filt_col else [("all", df)]
-        for filt, sub in groups:
-            color = _FILT_COLORS.get(str(filt).lower(), "#999999")
-            ax1.scatter(sub["mag_ap"], sub["mag_psf"],
-                        s=4, alpha=0.35, color=color, label=str(filt), rasterized=True)
-            ax2.scatter(sub["mag_ap"], sub["delta"],
-                        s=4, alpha=0.35, color=color, label=str(filt), rasterized=True)
-            n = len(sub)
-            med = float(np.nanmedian(sub["delta"]))
-            std = float(np.nanstd(sub["delta"]))
-            stats_parts.append(f"{filt}: N={n}  Δmed={med:+.3f}  σ={std:.3f}")
-
-        # 1:1 reference line (ax1)
-        all_mag = np.concatenate([df["mag_ap"].values, df["mag_psf"].values])
-        lo, hi = np.nanmin(all_mag) - 0.2, np.nanmax(all_mag) + 0.2
-        ax1.plot([lo, hi], [lo, hi], "k--", lw=0.8, alpha=0.5, zorder=0)
-        ax1.set_xlim(lo, hi)
-        ax1.set_ylim(lo, hi)
-        ax1.set_xlabel("mag_ap", fontsize=9)
-        ax1.set_ylabel("mag_psf", fontsize=9)
-        ax1.set_title("Aperture vs PSF magnitude", fontsize=9)
-        ax1.legend(fontsize=7, markerscale=2, loc="upper left")
-
-        # Zero ± 0.05 reference lines (ax2) + robust median guide
-        dmed_all = float(np.nanmedian(df["delta"]))
-        ax2.axhline(
-            dmed_all,
-            color="#D62728",
-            lw=2.0,
-            ls="-",
-            alpha=0.95,
-            zorder=1,
-            label=f"Δmag median {dmed_all:+.3f}",
+        flags0 = bool(getattr(self, "cmp_flags0_only", None) is not None
+                      and self.cmp_flags0_only.isChecked())
+        df, n_before = filter_ap_vs_psf(
+            merged, flags0_only=flags0,
+            snr_min=_widget("cmp_snr_min"), qfit_max=_widget("cmp_qfit_max"),
+            dmag_clip=_widget("cmp_dmag_clip"),
+            filter_name=_combo("cmp_filter_combo"),
+            frame_name=_combo("cmp_frame_combo"),
         )
-        ax2.axhline(0.0,  color="k",    lw=0.8, ls="--", alpha=0.6, zorder=0)
-        ax2.axhline(+0.05, color="gray", lw=0.5, ls=":",  alpha=0.5, zorder=0)
-        ax2.axhline(-0.05, color="gray", lw=0.5, ls=":",  alpha=0.5, zorder=0)
-        ax2.set_xlabel("mag_ap", fontsize=9)
-        ax2.set_ylabel("Δmag  (Ap − PSF)", fontsize=9)
-        ax2.set_title("Δmag vs mag_ap", fontsize=9)
-        ax2.legend(fontsize=7, markerscale=2, loc="upper left")
-
-        self.cmp_fig.tight_layout()
+        text = draw_ap_vs_psf(
+            self.cmp_fig, df, n_before,
+            split_excluded=int(getattr(self, "_cmp_split_excluded_total", 0)),
+        )
         self.cmp_canvas.draw_idle()
-        self.cmp_stats_label.setText(
-            f"N={len(df)}/{n_before}  |  split_excluded={int(getattr(self, '_cmp_split_excluded_total', 0))}  |  "
-            + "  |  ".join(stats_parts)
-        )
+        self.cmp_stats_label.setText(text)
 
-    # ── Load existing results from disk (called on restore_state) ─────────────
+    def _refresh_comparison_selectors(self, df) -> None:
+        """Keep the filter/frame combos in step with what the merge produced."""
+        for attr, column in (("cmp_filter_combo", "FILTER"),
+                             ("cmp_frame_combo", "FRAME")):
+            combo = getattr(self, attr, None)
+            if combo is None or df is None or getattr(df, "empty", True):
+                continue
+            if column not in df.columns:
+                continue
+            try:
+                values = sorted(df[column].dropna().astype(str).unique().tolist())
+                current = combo.currentText().strip() or "all"
+                combo.blockSignals(True)
+                combo.clear()
+                combo.addItem("all")
+                for value in values:
+                    combo.addItem(value)
+                combo.setCurrentText(current if current in (["all"] + values) else "all")
+                combo.blockSignals(False)
+            except Exception:  # noqa: BLE001 - a stale selector must not stop the plot
+                pass
+
 
     def _load_from_disk(self):
         """Reload EPSF models and residual images from disk into memory caches."""
