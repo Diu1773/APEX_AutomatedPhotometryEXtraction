@@ -89,8 +89,7 @@ def _make_app_icon() -> QIcon:
 def _ensure_parameters() -> str | None:
     """Create the workspace JSON from the bundled example on first run."""
     params = _APP_DIR / "apex_config.json"
-    if params.exists() or (_APP_DIR / "parameters.toml").exists():
-        # An existing legacy TOML is migrated lazily by config_io on load.
+    if params.exists():
         return None
     if _FROZEN:
         example = Path(sys._MEIPASS) / "parameters.example.toml"
