@@ -99,6 +99,17 @@ class WcsStep(PipelineStep):
             f"{n_ok}/{len(file_list)} frames solved ({engine}); "
             f"WCS-QC pass={n_qc}"
         )
+        # Step 5 had no figure at all — not even in the window. The numbers
+        # were in frame_wcs_qc.csv and nothing looked at them together.
+        try:
+            from apex.analysis.wcs_qc_plots import export_wcs_qc
+            qc_figures = export_wcs_qc(ctx.result_dir, ctx.params)
+            if qc_figures:
+                msg += f'; {len(qc_figures)} QC figures'
+        except Exception:  # noqa: BLE001 - QC must not fail a finished solve
+            if ctx.logger is not None:
+                ctx.logger.exception('Could not write Step 5 QC figure')
+
         return StepResult(
             index=self.index, key=self.key, status=StepStatus.OK,
             message=msg, outputs=[str(out_dir)],
