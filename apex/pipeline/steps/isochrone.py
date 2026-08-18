@@ -121,6 +121,31 @@ class IsochroneStep(PipelineStep):
         # (32 x 6000) finished and then died with FileNotFoundError on this very
         # write, throwing away the whole posterior. Re-creating costs nothing.
         out_dir.mkdir(parents=True, exist_ok=True)
+
+        # The service built these and the step used to drop them on the floor,
+        # so a batch run produced the age and not the picture of it — and the
+        # picture is what goes in the paper. Same filenames the desktop window
+        # writes, so a headless run and a window run leave the same products.
+        figures = []
+        for attr, name, dpi in (("cmd_figure", "mcmc_cmd_isochrone.png", 160),
+                                ("corner_figure", "mcmc_corner.png", 130)):
+            fig = getattr(result, attr, None)
+            if fig is None:
+                continue
+            try:
+                fig.savefig(out_dir / name, dpi=dpi, bbox_inches="tight")
+                figures.append(name)
+            except Exception:  # noqa: BLE001 - a figure must not fail the fit
+                if ctx.logger is not None:
+                    ctx.logger.exception("Could not save %s", name)
+            finally:
+                try:
+                    import matplotlib.pyplot as plt
+                    plt.close(fig)
+                except Exception:  # noqa: BLE001
+                    pass
+        record["figures"] = figures
+
         (out_dir / "isochrone_fit_summary.json").write_text(
             json.dumps(record, indent=1, default=str), encoding="utf-8")
 
@@ -128,7 +153,8 @@ class IsochroneStep(PipelineStep):
         # not write returns None, which reports every fit as a failure.
         converged = bool(summary.get("convergence_ok"))
         note = "converged" if converged else "did NOT converge — see the summary"
+        made = f"; {len(figures)} figures" if figures else "; no figures"
         return StepResult(
             index=self.index, key=self.key, status=StepStatus.OK,
-            message=f"isochrone fit {note}", duration_s=elapsed,
+            message=f"isochrone fit {note}{made}", duration_s=elapsed,
         )

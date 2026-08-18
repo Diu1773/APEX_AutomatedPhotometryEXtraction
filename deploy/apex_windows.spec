@@ -144,7 +144,7 @@ hiddenimports += [
 # the whole package so sub-widgets keep working in the installed app.
 hiddenimports += _collect_submodules("apex")
 
-datas += [(str(ROOT / "parameters.example.toml"), ".")]
+datas += [(str(ROOT / "parameters.example.json"), ".")]
 datas += [(str(ROOT / "README.md"), ".")]
 resources_dir = ROOT / "apex" / "resources"
 icon_path = resources_dir / "apex.ico"

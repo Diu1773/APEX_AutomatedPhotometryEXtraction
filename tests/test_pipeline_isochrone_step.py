@@ -303,3 +303,90 @@ def test_the_result_survives_its_own_output_directory_vanishing(tmp_path, monkey
     result = IsochroneStep().run(ctx)
     assert result.status == StepStatus.OK
     assert (out_dir / "isochrone_fit_summary.json").exists(), "결과를 잃었다"
+
+
+def test_it_saves_the_figures_the_service_already_made(tmp_path, monkeypatch):
+    """A batch run must produce the picture, not only the number.
+
+    `fit_cluster_isochrone(make_figures=True)` builds the CMD and corner figures
+    and hands them back. The step was writing the summary and dropping them, so
+    a headless run gave an age with nothing to show for it — and the figure is
+    what goes in the paper. Measured 2026-08-18: a full headless run left zero
+    PNGs in `cmd_isochrone/`; the one on disk was from a validation script three
+    days earlier.
+    """
+    import json
+    import logging
+    from types import SimpleNamespace
+
+    import matplotlib
+    matplotlib.use("Agg")
+    import matplotlib.pyplot as plt
+
+    from apex.pipeline.context import RunContext
+
+    params = _params(tmp_path, {"colors": "B-V", "file_path": "grid.dat"})
+    zp_dir = tmp_path / "result" / "cmd_zeropoint"
+    zp_dir.mkdir(parents=True)
+    (zp_dir / "median_by_ID_filter_wide_cmd.csv").write_text("ID\n1\n", encoding="utf-8")
+
+    def fake_fit(df, config, make_figures=True, progress_cb=None):
+        cmd_fig, corner_fig = plt.figure(), plt.figure()
+        return SimpleNamespace(
+            summary={"convergence_ok": True}, n_stars=5, member_meta={},
+            warnings=[], cmd_figure=cmd_fig, corner_figure=corner_fig)
+
+    import apex.analysis.cmd.isochrone_fit_service as service
+    monkeypatch.setattr(service, "fit_cluster_isochrone", fake_fit)
+
+    ctx = RunContext(mode="cmd", params=params,
+                     result_dir=Path(params.P.result_dir),
+                     data_dir=Path(params.P.data_dir),
+                     logger=logging.getLogger("test"))
+    result = IsochroneStep().run(ctx)
+    assert result.status == StepStatus.OK
+    assert "2 figures" in result.message
+
+    out = Path(params.P.result_dir) / "cmd_isochrone"
+    # Same names the desktop window writes, so both routes leave the same files.
+    for name in ("mcmc_cmd_isochrone.png", "mcmc_corner.png"):
+        assert (out / name).exists(), f"{name} 이 저장되지 않았다"
+        assert (out / name).stat().st_size > 0
+
+    body = json.loads((out / "isochrone_fit_summary.json").read_text(encoding="utf-8"))
+    assert body["figures"] == ["mcmc_cmd_isochrone.png", "mcmc_corner.png"]
+
+
+def test_a_fit_without_figures_still_finishes(tmp_path, monkeypatch):
+    """A figure must never be the thing that fails an hour-long fit."""
+    import logging
+    from types import SimpleNamespace
+
+    from apex.pipeline.context import RunContext
+
+    params = _params(tmp_path, {"colors": "B-V", "file_path": "grid.dat"})
+    zp_dir = tmp_path / "result" / "cmd_zeropoint"
+    zp_dir.mkdir(parents=True)
+    (zp_dir / "median_by_ID_filter_wide_cmd.csv").write_text("ID\n1\n", encoding="utf-8")
+
+    class Exploding:
+        def savefig(self, *a, **k):
+            raise RuntimeError("no backend")
+
+    def fake_fit(df, config, make_figures=True, progress_cb=None):
+        return SimpleNamespace(summary={"convergence_ok": True}, n_stars=5,
+                               member_meta={}, warnings=[],
+                               cmd_figure=Exploding(), corner_figure=None)
+
+    import apex.analysis.cmd.isochrone_fit_service as service
+    monkeypatch.setattr(service, "fit_cluster_isochrone", fake_fit)
+
+    ctx = RunContext(mode="cmd", params=params,
+                     result_dir=Path(params.P.result_dir),
+                     data_dir=Path(params.P.data_dir),
+                     logger=logging.getLogger("test"))
+    result = IsochroneStep().run(ctx)
+    assert result.status == StepStatus.OK, "그림 실패가 적합을 죽였다"
+    assert "no figures" in result.message
+    assert (Path(params.P.result_dir) / "cmd_isochrone"
+            / "isochrone_fit_summary.json").exists()

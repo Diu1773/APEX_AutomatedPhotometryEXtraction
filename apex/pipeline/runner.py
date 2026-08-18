@@ -117,12 +117,14 @@ class PipelineRunner:
             # the step, so the manifest can say which settings this step read
             # rather than which settings existed. Restored in `finally` — a step
             # that raises must not leave the proxy in place for the next one.
-            recorder = RecordingNamespace(ctx.params.P)
-            real_P = ctx.params.P
-            try:
-                ctx.params.P = recorder
-            except Exception:                       # noqa: BLE001 - frozen params
-                recorder = None
+            real_P = getattr(ctx.params, "P", None)
+            recorder = None
+            if real_P is not None:
+                recorder = RecordingNamespace(real_P)
+                try:
+                    ctx.params.P = recorder
+                except Exception:                   # noqa: BLE001 - frozen params
+                    recorder = None
             try:
                 result = step.run(ctx)
             except Exception as exc:  # noqa: BLE001 - one bad step must not crash the run
@@ -157,6 +159,9 @@ class PipelineRunner:
         report.ended = datetime.now().isoformat()
         if not ctx.dry_run:
             self._write_manifest(ctx, report)
+            if getattr(ctx.params, "P", None) is None:
+                log.debug("No parameters to record for this run")
+                return report
             try:
                 written = write_parameter_record(
                     ctx.result_dir, ctx.params, ctx.mode, settings_read,

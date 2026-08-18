@@ -92,9 +92,9 @@ def _ensure_parameters() -> str | None:
     if params.exists():
         return None
     if _FROZEN:
-        example = Path(sys._MEIPASS) / "parameters.example.toml"
+        example = Path(sys._MEIPASS) / "parameters.example.json"
     else:
-        example = _APP_DIR / "parameters.example.toml"
+        example = _APP_DIR / "parameters.example.json"
     if not example.exists():
         return f"Default parameter file is missing:\n{example}"
     if example.exists():
