@@ -22,10 +22,6 @@ import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 
-try:
-    import tomllib
-except ImportError:  # pragma: no cover - Python 3.10
-    import tomli as tomllib
 
 from apex.benchmark.artificial_stars import (
     extract_empirical_psf,
@@ -50,7 +46,7 @@ from apex.utils.photometry_utils import phot_vectorized
 @dataclass
 class BenchmarkConfig:
     input_fits: str = ""
-    parameter_file: str = "parameters.toml"
+    parameter_file: str = "apex_config.json"
     output_root: str = "benchmark/runs"
     seed: int = 20260607
     trials: int = 3

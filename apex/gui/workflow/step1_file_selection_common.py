@@ -36,15 +36,7 @@ from apex.gui.workflow.step_window_base import StepWindowBase
 from apex.gui.workflow.target_resolver import TargetResolveWorker, target_failure_message
 from apex.utils.step_paths import step1_dir
 
-try:  # Python 3.11+
-    import tomllib  # type: ignore
-except Exception:  # Python 3.10
-    import tomli as tomllib  # type: ignore
 
-try:
-    import tomli_w  # type: ignore
-except Exception:
-    tomli_w = None
 
 
 class CommonFileSelectionWindow(StepWindowBase):
@@ -552,13 +544,6 @@ class CommonFileSelectionWindow(StepWindowBase):
             pass
 
     def _persist_param_file(self, io_updates=None, target_updates=None) -> None:
-        if tomli_w is None:
-            if hasattr(self.params, "save_toml"):
-                try:
-                    self.params.save_toml()
-                except Exception:
-                    pass
-            return
 
         param_path = Path(getattr(self.params, "param_file", "parameters.toml"))
         if not param_path.exists():

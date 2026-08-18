@@ -11,9 +11,9 @@ Commands
     apex doctor [--network]      Diagnose the runtime: Python, dependencies,
                                  external WCS solvers, and (optionally) network
                                  reachability to Gaia/SIMBAD.
-    apex config init             Create parameters.toml from the bundled example.
-    apex config path             Print the resolved parameters.toml path.
-    apex config show             Print the active parameters.toml.
+    apex config init             Create apex_config.json from the bundled example.
+    apex config path             Print the resolved apex_config.json path.
+    apex config show             Print the active apex_config.json.
     apex gui [--mode cmd|lc]     Launch the desktop GUI (imports PyQt5 lazily).
 
 The intent is for this module to grow an ``apex run`` subcommand once the
@@ -57,16 +57,23 @@ def _repo_root() -> Path:
     return Path(__file__).resolve().parent.parent
 
 
-def _example_toml() -> Optional[Path]:
+def _example_config() -> Optional[Path]:
+    """The shipped template. JSON — TOML was removed on 2026-08-18.
+
+    Legacy TOML had already stopped being read in 2026-08-06 (JSON became the
+    authority and a `.toml` was migrated once on first load), but the CLI kept
+    speaking it: `apex config init` copied a TOML template, and `doctor` looked
+    for a `parameters.toml` that nothing would have read.
+    """
     if getattr(sys, "frozen", False):
-        candidate = Path(getattr(sys, "_MEIPASS", _repo_root())) / "parameters.example.toml"
+        candidate = Path(getattr(sys, "_MEIPASS", _repo_root())) / "parameters.example.json"
     else:
-        candidate = _repo_root() / "parameters.example.toml"
+        candidate = _repo_root() / "parameters.example.json"
     return candidate if candidate.exists() else None
 
 
 def _params_path() -> Path:
-    return _repo_root() / "parameters.toml"
+    return _repo_root() / "apex_config.json"
 
 
 # ── version ──────────────────────────────────────────────────────────────────
@@ -148,7 +155,7 @@ def _check_external_solvers(results: list) -> None:
     else:
         results.append((_WARN, "astrometry.net solve-field not on PATH (optional WCS solver)"))
 
-    # ASTAP - read the configured exe from parameters.toml when present.
+    # ASTAP - read the configured exe from apex_config.json when present.
     astap_exe = None
     pp = _params_path()
     if pp.exists():
@@ -169,11 +176,11 @@ def _check_external_solvers(results: list) -> None:
 def _check_config(results: list) -> None:
     pp = _params_path()
     if pp.exists():
-        results.append((_OK, f"parameters.toml present: {pp}"))
-    elif _example_toml():
-        results.append((_WARN, "parameters.toml missing - run 'apex config init' to create it"))
+        results.append((_OK, f"apex_config.json present: {pp}"))
+    elif _example_config():
+        results.append((_WARN, "apex_config.json missing - run 'apex config init' to create it"))
     else:
-        results.append((_FAIL, "Neither parameters.toml nor parameters.example.toml found"))
+        results.append((_FAIL, "Neither apex_config.json nor parameters.example.json found"))
 
 
 def _check_network(results: list) -> None:
@@ -246,18 +253,18 @@ def _cmd_config(args: argparse.Namespace) -> int:
         return 0
     if action == "init":
         if pp.exists():
-            print(f"{_WARN} parameters.toml already exists: {pp}")
+            print(f"{_WARN} apex_config.json already exists: {pp}")
             return 0
-        example = _example_toml()
+        example = _example_config()
         if not example:
-            print(f"{_FAIL} parameters.example.toml not found; cannot initialize.")
+            print(f"{_FAIL} parameters.example.json not found; cannot initialize.")
             return 1
         shutil.copy(example, pp)
         print(f"{_OK} Created {pp} from {example.name}")
         return 0
     if action == "show":
         if not pp.exists():
-            print(f"{_FAIL} parameters.toml not found; run 'apex config init' first.")
+            print(f"{_FAIL} apex_config.json not found; run 'apex config init' first.")
             return 1
         print(pp.read_text(encoding="utf-8"))
         return 0
@@ -390,13 +397,19 @@ def _load_validate_config(config_path: Optional[str]):
     if not path.exists():
         print(f"{_WARN} validate config not found, ignoring: {path}")
         return None
-    from apex.utils.io_utils import load_toml
-    raw = load_toml(path)  # BOM-tolerant (PowerShell-written files)
+    # The validate-run config. JSON now; a legacy .toml is still accepted so an
+    # old invocation keeps working, which is the one place that still earns it.
+    if path.suffix.lower() == ".toml":
+        from apex.utils.io_utils import load_toml
+        raw = load_toml(path)
+    else:
+        import json as _json
+        raw = _json.loads(path.read_text(encoding="utf-8-sig"))
     section = raw.get("validate", raw)
     import types
 
     ns = types.SimpleNamespace()
-    ns.parameter_file = section.get("parameter_file", "parameters.toml")
+    ns.parameter_file = section.get("parameter_file", "apex_config.json")
     ns.iraf = section.get("iraf", {})
     ns.known_targets = section.get("known_targets", {})
     ns.crosscheck = section.get("crosscheck", {})
@@ -424,7 +437,7 @@ def _cmd_validate(args: argparse.Namespace) -> int:
 
         if config is None:
             config = types.SimpleNamespace(
-                parameter_file="parameters.toml", iraf={}, known_targets={}, crosscheck={}
+                parameter_file="apex_config.json", iraf={}, known_targets={}, crosscheck={}
             )
         cc = dict(getattr(config, "crosscheck", {}) or {})
         if result_dir:
@@ -506,7 +519,7 @@ def build_parser() -> argparse.ArgumentParser:
         help="Also probe Gaia/SIMBAD reachability (adds a few seconds).",
     )
 
-    p_config = sub.add_parser("config", help="Manage parameters.toml.")
+    p_config = sub.add_parser("config", help="Manage apex_config.json.")
     p_config.add_argument(
         "config_action",
         choices=["init", "path", "show"],
@@ -519,7 +532,7 @@ def build_parser() -> argparse.ArgumentParser:
     p_run.add_argument("--mode", choices=["cmd", "lc"], required=True,
                        help="Pipeline mode.")
     p_run.add_argument("--config", default=None,
-                       help="Path to parameters.toml (default: ./parameters.toml).")
+                       help="Path to apex_config.json (default: ./apex_config.json).")
     p_run.add_argument("--steps", default=None,
                        help="Step subset, e.g. '1-7', '4', '2,4,6' (default: all).")
     p_run.add_argument("--result-dir", default=None, help="Override [io].result_dir.")

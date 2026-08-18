@@ -15,10 +15,6 @@ import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 
-try:
-    import tomllib
-except ImportError:  # pragma: no cover - Python 3.10
-    import tomli as tomllib
 
 from apex.benchmark.runner import load_benchmark_config, run_benchmark
 

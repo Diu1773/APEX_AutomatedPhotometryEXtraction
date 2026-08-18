@@ -134,14 +134,17 @@ def test_params_expose_the_calibration_table(tmp_path):
         assert opts.overscan_edge == "top"
 
 
-def test_example_toml_matches_the_dataclass_defaults():
-    """The shipped example must not document a value the code no longer uses."""
+def test_the_shipped_example_matches_the_dataclass_defaults():
+    """The shipped example must not document a value the code no longer uses.
+
+    It was `parameters.example.toml` until 2026-08-18; TOML left the runtime
+    that day and the template went with it.
+    """
+    import json
     from pathlib import Path
 
-    from apex.utils.io_utils import load_toml
-
-    example = Path(__file__).absolute().parents[1] / "parameters.example.toml"
-    section = read_calibration_section(load_toml(example))
+    example = Path(__file__).absolute().parents[1] / "parameters.example.json"
+    section = read_calibration_section(json.loads(example.read_text(encoding="utf-8")))
     defaults = CalibrationOptions()
     known = set(CalibrationOptions.field_names())
     for key, value in section.items():

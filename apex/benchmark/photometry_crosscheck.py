@@ -48,7 +48,7 @@ import pandas as pd
 # ── tunables ──────────────────────────────────────────────────────────────────
 
 # APEX forced-photometry aperture/sky scales (FWHM units) and floors — these are
-# the production defaults from apex.config.schema.ApertureScalesConfig /
+# the production defaults from the photometry key-map rows (apex.config.parameter_map) /
 # ApertureRadiiConfig and apex.analysis.forced_photometry._phot_frame. They are
 # overridden at runtime by the actual params.P attributes when available.
 DEFAULT_APERTURE_SCALE = 0.8     # photometry.apcorr.small_scale

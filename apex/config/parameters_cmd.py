@@ -8,10 +8,6 @@ from pathlib import Path
 from typing import Dict, Any, Iterable
 import hashlib
 import types
-try:  # Python 3.11+
-    import tomllib  # type: ignore
-except Exception:  # Python 3.10 and earlier
-    import tomli as tomllib  # type: ignore
 
 from apex.config.calibration_section import read_calibration_section
 from apex.config.parameter_map import (
@@ -191,7 +187,7 @@ class Parameters:
     All configuration is stored as a SimpleNamespace for easy attribute access
     """
 
-    def __init__(self, param_file: str | Path = "parameters.toml"):
+    def __init__(self, param_file: str | Path = "apex_config.json"):
         from apex.config.config_io import migrate_config_path
         param_file = migrate_config_path(param_file)
         """Initialize parameters from file"""
@@ -260,15 +256,12 @@ class Parameters:
             },
 
             # Photometry execution flags
-            bkg_use_segm_mask=_as_bool(raw.get("bkg_use_segm_mask", "true"), True),
 
             # ID matching
-            idmatch_mode=str(raw.get("idmatch_mode", "normal")).strip().lower() or "normal",
 
             # Aperture/annulus config
             apcorr_scale_min=_getf(raw, "apcorr_scale_min", 0.5),
             apcorr_scale_max=_getf(raw, "apcorr_scale_max", 5.0),
-            apcorr_scale_step=_getf(raw, "apcorr_scale_step", 0.25),
             # loaded into `raw` and was dropped on the way into the namespace.
             apcorr_large_scale=_getf(raw, "apcorr_large_scale", _getf(raw, "apcorr_large_ref_scale", 2.4)),
             apcorr_large_ref_scale=_getf(raw, "apcorr_large_scale", _getf(raw, "apcorr_large_ref_scale", 2.4)),
@@ -285,7 +278,6 @@ class Parameters:
             wcs_qc_min_inlier_rate=_getf(raw, "wcs_qc_min_inlier_rate", 0.50),
             wcs_qc_max_edge_ratio=_getf(raw, "wcs_qc_max_edge_ratio", 0.0),
             wcs_qc_max_center_offset_arcsec=_getf(raw, "wcs_qc_max_center_offset_arcsec", 0.0),
-            gaia_pmem_method=str(raw.get("gaia_pmem_method", "gmm3d")).strip().lower() or "gmm3d",
             idmatch_use_qc_pass_only=_as_bool(raw.get("idmatch_use_qc_pass_only", "true"), True),
             idmatch_use_wcs_qc_gate=_as_bool(raw.get("idmatch_use_wcs_qc_gate", "true"), True),
             idmatch_wcs_qc_min_match_rate=_getf(raw, "idmatch_wcs_qc_min_match_rate", 0.20),
@@ -337,10 +329,6 @@ class Parameters:
             psf_build_mode=str(raw.get("psf_build_mode", "epsf")).strip().lower() or "epsf",
 
             # Cross-frame pixel matching (Steps 7–8)
-            cross_frame_ransac_tol_px=_getf(raw, "cross_frame_ransac_tol_px", 2.0),
-            cross_frame_ransac_max_iter=_geti(raw, "cross_frame_ransac_max_iter", 1000),
-            cross_frame_ransac_min_inliers=_geti(raw, "cross_frame_ransac_min_inliers", 6),
-            cross_frame_match_tol_px=_getf(raw, "cross_frame_match_tol_px", 3.0),
 
             # Step 2 crop rectangle (config-driven, headless). Default: skip.
             crop_enable=_as_bool(raw.get("crop_enable", "false"), False),
@@ -439,14 +427,14 @@ class Parameters:
         from apex.config.config_io import load_config_data, save_config_data
         try:
             data, param_path = load_config_data(
-                path or getattr(self, "param_file", "parameters.toml"))
+                path or getattr(self, "param_file", "apex_config.json"))
         except Exception:
             param_path = None
             data = {}
         if param_path is None:
             from apex.config.config_io import resolve_config_path
             param_path = resolve_config_path(
-                path or getattr(self, "param_file", "parameters.toml"))
+                path or getattr(self, "param_file", "apex_config.json"))
         ensure_schema_version(data)
 
         for row in TOML_KEY_MAP:
@@ -502,7 +490,7 @@ class Parameters:
         print("=======================================================\n")
 
 
-def read_params(path: str | Path = "parameters.toml") -> Parameters:
+def read_params(path: str | Path = "apex_config.json") -> Parameters:
     """
     Load parameters from file
 

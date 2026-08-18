@@ -94,7 +94,6 @@ _CONFIG_LAYER = {
     "apex/config/parameter_map.py",
     "apex/config/parameters_cmd.py",
     "apex/config/parameters_lc.py",
-    "apex/config/schema.py",
     "apex/config/config_audit.py",
     # Names a setting only to say that nothing reads it. Counting it as a reader
     # would make the check erase its own findings: writing the list down would

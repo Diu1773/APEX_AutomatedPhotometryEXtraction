@@ -247,7 +247,7 @@ class MainWindowWorkflow(AutoFitMixin, QMainWindow):
                 from apex.config.parameters_cmd import Parameters
             else:
                 from apex.config.parameters_lc import Parameters
-            param_path = Path(param_file) if param_file else Path("parameters.toml")
+            param_path = Path(param_file) if param_file else Path("apex_config.json")
             self.params = Parameters(param_path)
             # 파라미터 파일을 명시해서 연 경우에는 그 파일이 기준이다.
             # 기본 parameters.toml 로 연 평소 실행에서는 예전처럼 마지막으로

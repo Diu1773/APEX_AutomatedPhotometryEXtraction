@@ -311,14 +311,3 @@ def test_save_toml_preserves_forced_phot_quality_knobs(tmp_path):
     assert data["photometry"]["apcorr"]["isolation_factor"] == 2.8
     assert data["source_quality"]["anchor_neighbor_fwhm_mult"] == 2.1
     assert data["source_quality"]["apcorr_flux_pct"] == 70.0
-
-
-def test_pydantic_schema_accepts_schema_version(tmp_path):
-    pytest.importorskip("pydantic")
-    from apex.config.schema import Parameters
-
-    param_path = _write_minimal_toml(tmp_path)
-    params = Parameters.from_toml(param_path)
-
-    assert params.schema_version == CANONICAL_SCHEMA_VERSION
-    assert params.detection.engine.value == "sep"

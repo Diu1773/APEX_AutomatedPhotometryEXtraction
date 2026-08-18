@@ -13,14 +13,6 @@ import tempfile
 import json
 import time
 import shutil
-try:
-    import tomllib
-except ImportError:
-    import tomli as tomllib  # type: ignore
-try:
-    import tomli_w  # type: ignore
-except Exception:
-    tomli_w = None
 from pathlib import Path
 
 import numpy as np
@@ -2748,21 +2740,28 @@ class IRAFPhotometryWindow(AutoFitMixin, QMainWindow):
         """Get path for IRAF config file (separate from project state)."""
         return self.result_dir / "iraf_config.json"
 
-    def _load_iraf_params_from_toml(self) -> bool:
-        toml_path = Path("parameters.toml")
-        if not toml_path.exists():
+    def _load_iraf_params_from_config(self) -> bool:
+        """IRAF knobs out of the workspace config.
+
+        These lived in a `parameters.toml` at the repo root — the wrong file in
+        two ways once JSON became the authority (2026-08-06): the wrong format,
+        and the wrong place, since it was the repo root rather than the
+        workspace being analysed. Both fixed on 2026-08-18.
+        """
+        from apex.config.config_io import load_config_data
+
+        path = getattr(getattr(self, "params", None), "param_file", None)
+        if not path:
             return False
         try:
-            data = toml_path.read_text(encoding="utf-8")
-            cfg = tomllib.loads(data)
+            cfg, _ = load_config_data(path)
         except Exception:
             return False
-
-        tools = cfg.get("tools", {}) if isinstance(cfg, dict) else {}
-        iraf_cfg = tools.get("iraf", {}) if isinstance(tools, dict) else {}
-        if not iraf_cfg:
-            iraf_cfg = cfg.get("iraf", {})
-        params = iraf_cfg.get("params", {})
+        tools = cfg.get("tools") if isinstance(cfg, dict) else None
+        iraf_cfg = (tools or {}).get("iraf") if isinstance(tools, dict) else None
+        if not isinstance(iraf_cfg, dict):
+            iraf_cfg = cfg.get("iraf") if isinstance(cfg, dict) else None
+        params = (iraf_cfg or {}).get("params")
         if isinstance(params, dict) and params:
             try:
                 self.iraf_params.from_dict(params)
@@ -2772,29 +2771,28 @@ class IRAFPhotometryWindow(AutoFitMixin, QMainWindow):
                 return False
         return False
 
-    def _save_iraf_params_to_toml(self, notify: bool = False):
-        if tomli_w is None:
+    def _save_iraf_params_to_config(self, notify: bool = False):
+        from apex.config.config_io import load_config_data, save_config_data
+
+        path = getattr(getattr(self, "params", None), "param_file", None)
+        if not path:
             if notify:
-                QMessageBox.warning(self, "Error", "tomli_w is required to write parameters.toml")
+                QMessageBox.warning(self, "Error", "열린 워크스페이스 설정이 없습니다")
             return
-        toml_path = Path("parameters.toml")
         try:
-            if toml_path.exists():
-                cfg = tomllib.loads(toml_path.read_text(encoding="utf-8"))
-            else:
-                cfg = {}
-            tools = cfg.get("tools", {})
+            cfg, json_path = load_config_data(path)
+            tools = cfg.get("tools")
             if not isinstance(tools, dict):
                 tools = {}
-            iraf_cfg = tools.get("iraf", {})
+            iraf_cfg = tools.get("iraf")
             if not isinstance(iraf_cfg, dict):
                 iraf_cfg = {}
             iraf_cfg["params"] = self.iraf_params.to_dict()
             tools["iraf"] = iraf_cfg
             cfg["tools"] = tools
-            toml_path.write_text(tomli_w.dumps(cfg), encoding="utf-8")
+            save_config_data(json_path, cfg)
             if notify:
-                QMessageBox.information(self, "Saved", f"IRAF parameters saved to:\n{toml_path}")
+                QMessageBox.information(self, "Saved", f"IRAF parameters saved to:\n{json_path}")
         except Exception as e:
             if notify:
                 QMessageBox.warning(self, "Error", f"Failed to save: {e}")
@@ -2802,17 +2800,17 @@ class IRAFPhotometryWindow(AutoFitMixin, QMainWindow):
     def _save_params_to_file(self):
         """Save current parameters to separate config file."""
         self._apply_params_silent()  # Apply UI values to params object first
-        self._save_iraf_params_to_toml(notify=True)
+        self._save_iraf_params_to_config(notify=True)
 
     def _auto_save_params(self):
         """Auto-save current parameters without UI prompts."""
         self._apply_params_silent()
-        self._save_iraf_params_to_toml(notify=False)
+        self._save_iraf_params_to_config(notify=False)
 
     def _load_params_from_file(self):
         """Load parameters from config file."""
-        if self._load_iraf_params_from_toml():
-            QMessageBox.information(self, "Loaded", "IRAF parameters loaded from parameters.toml")
+        if self._load_iraf_params_from_config():
+            QMessageBox.information(self, "Loaded", "IRAF parameters loaded from the workspace config")
             return
         config_path = self._get_config_path()
         if not config_path.exists():
@@ -2829,7 +2827,7 @@ class IRAFPhotometryWindow(AutoFitMixin, QMainWindow):
 
     def _auto_load_params(self):
         """Auto-load parameters from config file if exists."""
-        if self._load_iraf_params_from_toml():
+        if self._load_iraf_params_from_config():
             return
         config_path = self._get_config_path()
         if config_path.exists():
@@ -3333,13 +3331,15 @@ class IRAFPhotometryWindow(AutoFitMixin, QMainWindow):
             "sigma_ref": p.sigma_ref,
         }
 
-    def _load_iraf_toml_config(self) -> tuple[dict, dict]:
-        toml_path = Path("parameters.toml")
-        if not toml_path.exists():
+    def _load_iraf_filter_config(self) -> tuple[dict, dict]:
+        # 워크스페이스 설정에서 읽는다. 레포 루트의 parameters.toml 이 아니라.
+        from apex.config.config_io import load_config_data
+
+        path = getattr(getattr(self, "params", None), "param_file", None)
+        if not path:
             return {}, {}
         try:
-            data = toml_path.read_text(encoding="utf-8")
-            cfg = tomllib.loads(data)
+            cfg, _ = load_config_data(path)
         except Exception:
             return {}, {}
 
@@ -4123,7 +4123,7 @@ class IRAFPhotometryWindow(AutoFitMixin, QMainWindow):
             )
 
         self._auto_save_params()
-        filter_params, filter_aliases = self._load_iraf_toml_config()
+        filter_params, filter_aliases = self._load_iraf_filter_config()
         param_defaults = self._build_iraf_param_defaults()
         use_apex_frames = bool(self.use_apex_step4_check.isChecked())
         apex_frame_params = self._load_apex_frame_params() if use_apex_frames else {}

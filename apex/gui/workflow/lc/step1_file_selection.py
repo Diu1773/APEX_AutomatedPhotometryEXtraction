@@ -23,14 +23,6 @@ from apex.analysis.header_target import select_header_target
 from apex.gui.workflow.target_resolver import TargetResolveWorker, target_failure_message
 from apex.utils.step_paths_lc import step1_dir
 from apex.utils.run_workspace import build_result_workspace_dir, write_run_manifest
-try:  # Python 3.11+
-    import tomllib  # type: ignore
-except Exception:  # Python 3.10 and earlier
-    import tomli as tomllib  # type: ignore
-try:
-    import tomli_w  # type: ignore
-except Exception:
-    tomli_w = None
 
 
 # =============================================================================
@@ -861,8 +853,6 @@ class FileSelectionWindow(StepWindowBase):
 
     def _persist_param_file(self, io_updates=None, target_updates=None):
         """Persist key IO/target selections to parameters.toml."""
-        if tomli_w is None:
-            return
         param_path = Path(getattr(self.params, "param_file", "parameters.toml"))
         if not param_path.exists():
             return

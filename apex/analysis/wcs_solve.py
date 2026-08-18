@@ -1869,7 +1869,7 @@ class WcsWorkerBase:
             if center_coord is None:
                 raise RuntimeError(
                     "Target coordinate not set. Resolve target in Step 1 "
-                    "(writes targets_simbad.tsv) or set parameters.toml "
+                    "(writes targets_simbad.tsv) or set apex_config.json "
                     "target.ra_deg / target.dec_deg."
                 )
             L(f"[WCS] Gaia center source = {center_source} ({center_coord.ra.deg:.6f}, {center_coord.dec.deg:.6f})")
@@ -2698,7 +2698,7 @@ class InternalWcsWorkerBase:
         if not (approx_scale > 0):
             self.error.emit(
                 "pixel_scale_arcsec not set in parameters.\n"
-                "Configure telescope/camera in parameters.toml first."
+                "Configure telescope/camera in apex_config.json first."
             )
             return
 
@@ -4906,7 +4906,7 @@ def run_wcs_solve(
     eng = _normalize_engine(engine) if engine is not None else resolve_wcs_engine(params)
 
     # 헤드리스 호출자가 target_coord 를 안 넘기면 config 의 target 좌표로 채운다.
-    # (ASTAP 워커는 중심 좌표가 필수인데, 이 유도가 없으면 "set parameters.toml
+    # (ASTAP 워커는 중심 좌표가 필수인데, 이 유도가 없으면 "set apex_config.json
     # target.ra_deg" 라는 에러 안내가 실제로는 동작하지 않는 안내가 된다.)
     if target_coord is None:
         try:

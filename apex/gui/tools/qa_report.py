@@ -54,14 +54,6 @@ from PyQt5.QtGui import QFont, QColor
 from apex.gui.layout_rules import FittedDialog, prevent_collapse, tame_canvas
 from apex.gui.theme import Tokens, style_button
 
-try:  # Python 3.11+
-    import tomllib  # type: ignore
-except Exception:
-    import tomli as tomllib  # type: ignore
-try:
-    import tomli_w  # type: ignore
-except Exception:
-    tomli_w = None
 
 
 def _qa_filter_key(value: Any) -> str:
@@ -1221,9 +1213,6 @@ class QAReportWindow(ToolWindowBase):
 
     def _save_qa_params(self):
         path = self._qa_param_path()
-        if tomli_w is None:
-            self.log("tomli_w not available; QA params not saved.")
-            return
         data = {}
         if path.exists():
             try:

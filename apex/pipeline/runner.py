@@ -15,6 +15,7 @@ from typing import List, Optional
 
 from apex.pipeline.base import PipelineStep, StepResult, StepStatus
 from apex.pipeline.context import RunContext
+from apex.pipeline.provenance import RecordingNamespace, write_parameter_record
 
 
 @dataclass
@@ -76,6 +77,7 @@ class PipelineRunner:
         log.info("Pipeline plan (%s): steps %s",
                  ctx.mode, ", ".join(str(s.index) for s in plan) or "(none)")
 
+        settings_read: dict = {}
         for step in plan:
             label = f"Step {step.index} [{step.key}] {step.title}"
 
@@ -111,16 +113,32 @@ class PipelineRunner:
 
             log.info("%s -> running...", label)
             t0 = time.perf_counter()
+            # Stand a recorder in front of the parameters for the duration of
+            # the step, so the manifest can say which settings this step read
+            # rather than which settings existed. Restored in `finally` — a step
+            # that raises must not leave the proxy in place for the next one.
+            recorder = RecordingNamespace(ctx.params.P)
+            real_P = ctx.params.P
+            try:
+                ctx.params.P = recorder
+            except Exception:                       # noqa: BLE001 - frozen params
+                recorder = None
             try:
                 result = step.run(ctx)
             except Exception as exc:  # noqa: BLE001 - one bad step must not crash the run
                 dt = time.perf_counter() - t0
                 log.exception("%s -> FAILED", label)
+                if recorder is not None:
+                    ctx.params.P = real_P
+                    settings_read[step.key] = recorder.seen
                 report.results.append(StepResult(
                     index=step.index, key=step.key, status=StepStatus.FAILED,
                     message=f"{type(exc).__name__}: {exc}", duration_s=dt,
                 ))
                 break
+            if recorder is not None:
+                ctx.params.P = real_P
+                settings_read[step.key] = recorder.seen
             result.duration_s = time.perf_counter() - t0
             log.info("%s -> %s (%.2fs) %s",
                      label, result.status, result.duration_s, result.message)
@@ -139,6 +157,15 @@ class PipelineRunner:
         report.ended = datetime.now().isoformat()
         if not ctx.dry_run:
             self._write_manifest(ctx, report)
+            try:
+                written = write_parameter_record(
+                    ctx.result_dir, ctx.params, ctx.mode, settings_read,
+                    environment=self._environment(),
+                )
+                log.info("Parameters recorded: %s",
+                         ", ".join(p.name for p in written))
+            except Exception:  # noqa: BLE001 - a record must not fail a finished run
+                log.exception("Could not write the parameter record")
         return report
 
     @staticmethod

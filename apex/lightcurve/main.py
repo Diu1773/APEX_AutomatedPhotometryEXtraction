@@ -17,7 +17,7 @@ _ROOT = _HERE.parent.parent               # Automated_Photometry_EXtraction/
 if str(_ROOT) not in sys.path:
     sys.path.insert(0, str(_ROOT))
 
-os.chdir(_ROOT)  # parameters.toml lives at project root
+os.chdir(_ROOT)  # apex_config.json lives at project root
 
 from PyQt5.QtWidgets import QApplication, QMessageBox
 from PyQt5.QtCore import Qt
@@ -29,13 +29,13 @@ def main() -> int:
     # under Windows display scaling.
     QApplication.setAttribute(Qt.AA_EnableHighDpiScaling, True)
     QApplication.setAttribute(Qt.AA_UseHighDpiPixmaps, True)
-    # A workspace is chosen by its parameters.toml — without this the app can
+    # A workspace is chosen by its apex_config.json — without this the app can
     # only ever open the repo-root file, so switching clusters meant editing
     # that file (and mixing io paths with another target's [target] block).
     import argparse
     ap = argparse.ArgumentParser(add_help=False)
     ap.add_argument("--params", "-p", default=None,
-                    help="parameters.toml for the workspace to open")
+                    help="apex_config.json for the workspace to open")
     cli_args, qt_argv = ap.parse_known_args()
     app = QApplication([sys.argv[0]] + qt_argv)
     app.setApplicationName("APEX LC")

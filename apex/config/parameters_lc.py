@@ -8,10 +8,6 @@ from pathlib import Path
 from typing import Dict, Any, Iterable
 import hashlib
 import types
-try:  # Python 3.11+
-    import tomllib  # type: ignore
-except Exception:  # Python 3.10 and earlier
-    import tomli as tomllib  # type: ignore
 
 from apex.config.calibration_section import read_calibration_section
 from apex.config.parameter_map import (
@@ -190,7 +186,7 @@ class Parameters:
     All configuration is stored as a SimpleNamespace for easy attribute access
     """
 
-    def __init__(self, param_file: str | Path = "parameters.toml"):
+    def __init__(self, param_file: str | Path = "apex_config.json"):
         from apex.config.config_io import migrate_config_path
         param_file = migrate_config_path(param_file)
         """Initialize parameters from file"""
@@ -241,10 +237,6 @@ class Parameters:
             calibration=dict(raw.get("_calibration") or {}),
 
             lightcurve_color_index_by_filter=raw.get("lightcurve_color_index_by_filter", {}) or {},
-            lightcurve_color_term_by_filter=raw.get("lightcurve_color_term_by_filter", {}) or {},
-            extfit_color_index_by_filter=raw.get("extfit_color_index_by_filter", {}) or {},
-            extfit_color_c1_by_filter=raw.get("extfit_color_c1_by_filter", {}) or {},
-            extfit_color_c2_by_filter=raw.get("extfit_color_c2_by_filter", {}) or {},
 
             # 5X HUD viewer parameters
             _hud5={
@@ -262,7 +254,6 @@ class Parameters:
             },
 
             # Photometry execution flags
-            bkg_use_segm_mask=_as_bool(raw.get("bkg_use_segm_mask", "false"), False),
 
             # one engine measures two different apertures depending on mode.
             apcorr_large_scale=_getf(raw, "apcorr_large_scale", 2.4),
@@ -272,7 +263,6 @@ class Parameters:
             apcorr_small_scale_max=_getf(raw, "apcorr_small_scale_max", 1.4),
             apcorr_large_scale_min=_getf(raw, "apcorr_large_scale_min", 2.4),
             apcorr_large_scale_max=_getf(raw, "apcorr_large_scale_max", 4.0),
-            apcorr_scale_step=_getf(raw, "apcorr_scale_step", 0.2),
             apcorr_min_gap_fwhm=_getf(raw, "apcorr_min_gap_fwhm", 1.0),
             apcorr_max_pairs=_geti(raw, "apcorr_max_pairs", 24),
 
@@ -421,14 +411,14 @@ class Parameters:
         from apex.config.config_io import load_config_data, save_config_data
         try:
             data, param_path = load_config_data(
-                path or getattr(self, "param_file", "parameters.toml"))
+                path or getattr(self, "param_file", "apex_config.json"))
         except Exception:
             param_path = None
             data = {}
         if param_path is None:
             from apex.config.config_io import resolve_config_path
             param_path = resolve_config_path(
-                path or getattr(self, "param_file", "parameters.toml"))
+                path or getattr(self, "param_file", "apex_config.json"))
         ensure_schema_version(data)
 
         for row in TOML_KEY_MAP:
@@ -476,7 +466,7 @@ class Parameters:
         print("=======================================================\n")
 
 
-def read_params(path: str | Path = "parameters.toml") -> Parameters:
+def read_params(path: str | Path = "apex_config.json") -> Parameters:
     """
     Load parameters from file
 

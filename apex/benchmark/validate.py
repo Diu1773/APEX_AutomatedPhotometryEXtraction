@@ -131,13 +131,13 @@ def _resolve_gain(config: Any) -> float:
     candidates: list[Path] = []
     if parameter_file:
         candidates.append(Path(parameter_file))
-    candidates.append(_repo_root() / "parameters.toml")
+    candidates.append(_repo_root() / "apex_config.json")
     for path in candidates:
         try:
             if not path or not Path(path).exists():
                 continue
-            from apex.utils.io_utils import load_toml
-            raw = load_toml(path)  # BOM-tolerant
+            from apex.config.config_io import load_config_data
+            raw, _ = load_config_data(path)  # JSON authority, BOM tolerant
             for section in (raw, raw.get("instrument", {}), raw.get("camera", {})):
                 if isinstance(section, dict) and "gain_e_per_adu" in section:
                     g = _finite(section["gain_e_per_adu"])
@@ -179,15 +179,15 @@ def run_artificial_star_suite(
     if synth_overrides:
         synth.update(synth_overrides)
 
-    parameter_file = "parameters.toml"
+    parameter_file = "apex_config.json"
     if config is not None:
         parameter_file = getattr(config, "parameter_file", parameter_file)
     # Self-contained runs (config=None, CI, or a fresh checkout) must not depend
-    # on a user's runtime parameters.toml. When the named file is absent, fall
-    # back to the repo runtime file if present, else the committed example.
+    # on a user's runtime config. When the named file is absent, fall back to the
+    # repo runtime file if present, else the committed example.
     if not Path(parameter_file).exists():
-        _runtime = _repo_root() / "parameters.toml"
-        _example = _repo_root() / "parameters.example.toml"
+        _runtime = _repo_root() / "apex_config.json"
+        _example = _repo_root() / "parameters.example.json"
         if _runtime.exists():
             parameter_file = str(_runtime)
         elif _example.exists():
