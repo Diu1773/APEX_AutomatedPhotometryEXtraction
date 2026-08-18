@@ -132,6 +132,16 @@ class RefBuildStep(PipelineStep):
             f"master catalog built: {n_sources} sources "
             f"(ref={ref_frame}, filter={ref_filter_used})"
         )
+        # The overview the window drew into a canvas and never saved, so a
+        # batch run produced ref_frame_stats.csv and no picture of it.
+        try:
+            from apex.analysis.refbuild_qc import export_refbuild_qc
+            products = export_refbuild_qc(ctx.params)
+            if products:
+                msg += f'; {len(products)} QC products'
+        except Exception:  # noqa: BLE001 - QC must not fail a finished build
+            ctx.logger.exception('Could not write Step 6 QC products')
+
         return StepResult(
             index=self.index, key=self.key, status=StepStatus.OK,
             message=msg, outputs=[str(out_dir)],

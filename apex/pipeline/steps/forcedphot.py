@@ -78,6 +78,21 @@ class ForcedPhotStep(PipelineStep):
         use_processes = os.environ.get(
             "APEX_FORCEDPHOT_PROCESSES", "1").strip().lower() not in ("0", "false", "no", "off")
 
+        # The growth curve is the one Step 7 product that never reaches
+        # disk: the run hands it to `apcorr_cb` and the window plots it
+        # live. Catch it here so a batch run can draw the same figure —
+        # otherwise the curve the aperture correction is read off exists
+        # only on somebody's screen.
+        growth_curves: dict = {}
+
+        def _catch_growth_curve(gc):
+            try:
+                name = str(gc.get('fname') or gc.get('file') or '')
+                if name and gc.get('radii_px'):
+                    growth_curves[name] = dict(gc)
+            except Exception:  # noqa: BLE001 - QC must not disturb the run
+                pass
+
         summary = run_forced_photometry(
             file_list,
             ctx.params,
@@ -86,6 +101,7 @@ class ForcedPhotStep(PipelineStep):
             result_dir=ctx.result_dir,
             logger=ctx.logger,
             use_processes=use_processes,
+            apcorr_cb=_catch_growth_curve,
         )
 
         out_dir = step7_forced_phot_dir(ctx.result_dir)
@@ -118,6 +134,18 @@ class ForcedPhotStep(PipelineStep):
             except Exception as exc:  # noqa: BLE001 - QC must not fail the step
                 if ctx.logger is not None:
                     ctx.logger.warning("photometric QC skipped: %s", exc)
+
+        try:
+            from apex.analysis.forcedphot_qc import (
+                export_forcedphot_qc, one_per_filter,
+            )
+            qc_figures = export_forcedphot_qc(
+                ctx.result_dir, ctx.params, one_per_filter(growth_curves))
+            if qc_figures:
+                msg += f'; {len(qc_figures)} QC figures'
+        except Exception:  # noqa: BLE001 - QC must not fail finished photometry
+            if ctx.logger is not None:
+                ctx.logger.exception('Could not write Step 7 QC figures')
 
         return StepResult(
             index=self.index, key=self.key, status=StepStatus.OK,

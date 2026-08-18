@@ -1700,6 +1700,10 @@ def run_forced_photometry(
             )
 
             if gc_data:
+                # The frame this curve belongs to. The window knew it from the
+                # row the user clicked; a batch consumer has only the payload,
+                # and without a name it cannot title or file the figure.
+                gc_data["fname"] = fname_r
                 gc_data["filter"] = filt_r
                 gc_data["apcorr"] = apcorr_val
                 gc_data["n_detected"] = n_det

@@ -1138,60 +1138,16 @@ class ForcedPhotWindow(StepWindowBase):
         ax_scatter.grid(True, alpha=0.3)
 
     def _update_center_plot(self, fname: str, row: Optional[dict] = None):
+        """Drawn by the code the batch also uses."""
         if not _HAVE_MPL or self._center_canvas is None:
             return
-        ax_hist = self._center_ax_hist
-        ax_scatter = self._center_ax_scatter
-        ax_hist.cla()
-        ax_scatter.cla()
-        self._init_center_axes()
-        if not fname:
-            self._center_canvas.draw_idle()
-            return
+        from apex.analysis.forcedphot_qc import draw_center_shift
 
-        path = step7_forced_phot_dir(self.params.P.result_dir) / f"photometry_{fname}.tsv"
-        if not path.exists():
-            ax_hist.set_title(f"{fname} not found", fontsize=9)
-            self._center_canvas.draw_idle()
-            return
-
-        try:
-            df = pd.read_csv(path, sep="\t")
-        except Exception as exc:
-            ax_hist.set_title(f"Read failed: {exc}", fontsize=9)
-            self._center_canvas.draw_idle()
-            return
-
-        center_error = _numeric_col(df, "center_error_px")
-        mag_err = _numeric_col(df, "mag_err")
-        outlier = _bool_col(df, "centroid_outlier")
-        finite_center = center_error[np.isfinite(center_error)]
-        if len(finite_center) > 0:
-            ax_hist.hist(finite_center.to_numpy(float), bins=30, color="#1565C0", alpha=0.78)
-        outlier_default = float(getattr(self.params.P, "centroid_outlier_px", 1.0))
-        outlier_px = _to_float(row.get("centroid_outlier_px") if row else None, outlier_default)
-        if np.isfinite(outlier_px):
-            ax_hist.axvline(outlier_px, color="#E53935", ls="--", lw=1.2, label=f"outlier={outlier_px:.2f}px")
-            ax_hist.legend(fontsize=7, frameon=False)
-
-        finite_scatter = center_error.notna() & mag_err.notna()
-        if finite_scatter.any():
-            idx = np.where(finite_scatter.to_numpy())[0]
-            if len(idx) > 5000:
-                idx = np.linspace(0, len(idx) - 1, 5000).astype(int)
-                idx = np.where(finite_scatter.to_numpy())[0][idx]
-            x = center_error.iloc[idx].to_numpy(float)
-            y = mag_err.iloc[idx].to_numpy(float)
-            colors = np.where(outlier.iloc[idx].to_numpy(bool), "#E53935", "#2E7D32")
-            ax_scatter.scatter(x, y, s=8, c=colors, alpha=0.55, linewidths=0)
-
-        title = str(fname)
-        if row:
-            title += (
-                f" | p90={self._fmt_table_float(row.get('center_error_p90_px'), '{:.3f}')}px"
-                f" | outliers={self._fmt_pct(row.get('centroid_outlier_rate'))}"
-            )
-        ax_hist.set_title(title, fontsize=9)
+        draw_center_shift(
+            self._center_ax_hist, self._center_ax_scatter,
+            self.params.P.result_dir, fname, row,
+            _to_float(getattr(self.params.P, "centroid_outlier_px", 1.0), 1.0),
+        )
         self._center_canvas.draw_idle()
 
     def _on_center_stats_row_selected(self):
@@ -1218,63 +1174,17 @@ class ForcedPhotWindow(StepWindowBase):
         ax_err.grid(True, alpha=0.3)
 
     def _update_gc_plot(self, gc: dict):
-        """Redraw the growth curve figure for a single frame."""
+        """Redraw the growth curve figure for a single frame.
+
+        The drawing moved to `apex.analysis.forcedphot_qc` so the batch can make
+        the same picture — this curve is where the aperture correction comes
+        from, and it used to exist only on screen.
+        """
         if not _HAVE_MPL or self._gc_canvas is None:
             return
-        ax_mag = self._gc_ax_mag
-        ax_err = self._gc_ax_err
-        ax_mag.cla()
-        ax_err.cla()
-        self._init_gc_axes()
+        from apex.analysis.forcedphot_qc import draw_growth_curve
 
-        if not gc:
-            self._gc_canvas.draw_idle()
-            return
-
-        fwhm  = float(gc.get("fwhm_px", 0.0) or 0.0)
-        r_ap  = float(gc.get("r_ap_px",  0.0))
-        r_ref = float(gc.get("r_ref_px", 0.0))
-        r_opt = float(gc.get("r_opt_px", 0.0) or 0.0)
-        fname = str(gc.get("fname", ""))
-        apcorr_val = float(gc.get("apcorr", np.nan))
-
-        radii = gc.get("radii_px", [])
-        encs  = gc.get("enclosed_frac", [])
-        errs  = gc.get("mag_err", [])
-
-        if radii and encs:
-            arr = np.asarray(encs, dtype=float)
-            arr = np.where((arr > 0) & np.isfinite(arr), arr, np.nan)
-            mag = -2.5 * np.log10(arr)
-            ax_mag.plot(radii, mag, "-o", color="#1565C0",
-                        lw=1.5, markersize=5,
-                        markeredgecolor="white", markeredgewidth=0.5)
-        if radii and errs:
-            ax_err.plot(radii, errs, "-s", color="#E53935",
-                        lw=1.8, markersize=5,
-                        markeredgecolor="white", markeredgewidth=0.5)
-
-        for ax in (ax_mag, ax_err):
-            if r_opt > 0:
-                ax.axvline(r_opt, color="#7B1FA2", lw=1.6, ls="-",
-                           alpha=0.85, label=f"r_opt={r_opt:.1f}px")
-            if r_ap > 0:
-                ax.axvline(r_ap, color="#E53935", lw=1.2, ls="--",
-                           alpha=0.8, label=f"r_ap={r_ap:.1f}px")
-            if r_ref > 0:
-                ax.axvline(r_ref, color="#43A047", lw=1.2, ls="--",
-                           alpha=0.8, label=f"r_ref={r_ref:.1f}px")
-            if fwhm > 0:
-                ax.axvline(fwhm, color="#6D4C41", lw=1.0, ls=":",
-                           alpha=0.8, label=f"FWHM={fwhm:.2f}px")
-
-        ax_mag.invert_yaxis()
-        title = fname
-        if np.isfinite(apcorr_val):
-            title += f"  |  apcorr={apcorr_val:.4f}"
-        ax_mag.set_title(title, fontsize=9)
-        ax_mag.legend(fontsize=7, frameon=False, loc="best")
-        ax_err.legend(fontsize=7, frameon=False, loc="best")
+        draw_growth_curve(self._gc_ax_mag, self._gc_ax_err, gc)
         self._gc_canvas.draw_idle()
 
     def _on_apcorr_row_selected(self):
