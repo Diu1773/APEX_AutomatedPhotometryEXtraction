@@ -124,6 +124,19 @@ class DetectStep(PipelineStep):
         )
         if isinstance(median_fwhm_px, (int, float)) and median_fwhm_px == median_fwhm_px:
             msg += f"; median FWHM {float(median_fwhm_px):.2f}px"
+
+        # The QC summary and the two figures the window has always written. They
+        # were a method on the dialog, so a batch run left this directory with
+        # no figures at all (measured 2026-08-18).
+        try:
+            from apex.analysis.detection_qc import export_qc_products
+            products = export_qc_products(ctx.result_dir, params=ctx.params)
+            if products:
+                msg += f"; {len(products)} QC products"
+        except Exception:  # noqa: BLE001 - QC must not fail a finished detection
+            ctx.logger.exception("Could not write Step 4 QC products")
+            products = []
+
         return StepResult(
             index=self.index, key=self.key, status=StepStatus.OK,
             message=msg, outputs=[str(out_dir)],

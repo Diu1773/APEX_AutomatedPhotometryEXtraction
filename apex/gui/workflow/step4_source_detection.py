@@ -1346,20 +1346,23 @@ class QCInspectionPanel(QWidget):
         return out_path
 
     def export_qc_products(self) -> list[Path]:
+        """The same three products the batch writes, drawn by the same code.
+
+        This used to build them here, which is why a headless run produced none
+        of them. The window still supplies what only it knows — the table it
+        assembled while scanning, and which frames the user excluded.
+        """
+        from apex.analysis.detection_qc import export_qc_products as _export
+
         df = self._build_quality_df()
         if df.empty:
             return []
-        out_dir = step4_dir(self.params.P.result_dir)
-        out_dir.mkdir(parents=True, exist_ok=True)
-        saved = [self._write_qc_summary_csv(df, out_dir)]
-        fig = Figure(figsize=(10.5, 7.2), dpi=120)
-        self._draw_qc_overview(fig, df)
-        fig_path = out_dir / "step4_qc_overview.png"
-        fig.savefig(fig_path, dpi=160, bbox_inches="tight")
-        saved.append(fig_path)
-        overlay_path = self._write_detection_overlay_examples(df, out_dir)
-        if overlay_path is not None:
-            saved.append(overlay_path)
+        saved = _export(
+            self.params.P.result_dir, df,
+            exclude_reasons=self.exclude_reasons, params=self.params,
+        )
+        if saved:
+            self.log(f"[QC] {len(saved)} products -> {saved[0].parent}")
         return saved
 
     def save_frame_quality(self):
