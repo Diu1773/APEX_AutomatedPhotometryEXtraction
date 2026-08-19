@@ -40,10 +40,13 @@ def _step(mode: str, index: int):
     return next(s for s in get_steps(mode) if s.index == index)
 
 
-def test_cmd_gains_steps_8_to_12_and_lc_does_not():
-    cmd = [s.index for s in get_steps("cmd")]
-    assert cmd == list(range(1, 13))
-    assert [s.index for s in get_steps("lc")] == list(range(1, 8))
+def test_each_mode_gains_its_own_steps_after_the_shared_seven():
+    """LC reached only 7 until 2026-08-19, and not because its science needed a
+    window — the services were already Qt-free. Its target choice had no config
+    surface, so a batch run could not say which star the curve was of."""
+    assert [s.index for s in get_steps("cmd")] == list(range(1, 13))
+    assert [s.index for s in get_steps("lc")] == list(range(1, 9))
+    assert get_steps("lc")[-1].key == "lctarget"
 
 
 def test_the_two_that_execute_are_psf_and_zeropoint():
