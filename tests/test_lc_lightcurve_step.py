@@ -13,7 +13,7 @@ two drift without deleting an inheritance.
 Measured against the curve the window itself saved (YZ Boo, two nights, 364
 frames, `E:/APEX_validation/reprocess/YZBoo_2n`): every science column matches to
 0.0e+00. That comparison needs 20 GB of frames so it is not a unit test; it is
-recorded in `docs/audit/LC_STEP9_HEADLESS.md`. What is testable here is the
+recorded in `docs/audit/LC_HEADLESS_STEPS_9_AND_11.md`. What is testable here is the
 structure that makes the comparison stay true.
 """
 

@@ -1,6 +1,6 @@
 import numpy as np
 
-import apex.gui.workflow.lc.step11_period_analysis as period_module
+import apex.analysis.light_curve.period_plot as plot_module
 from apex.gui.workflow.lc.step11_period_analysis import PeriodAnalysisWindow
 
 
@@ -48,7 +48,10 @@ def test_step12_reuses_check_star_periodogram(monkeypatch):
         calls.append(args)
         return {"best_period": 0.1}
 
-    monkeypatch.setattr(period_module, "compute_ls", fake_compute)
+    # `compute_ls` is called from `period_plot` since the figure moved out of
+    # the window (2026-08-19). Patching the GUI module's name silently stopped
+    # intercepting anything, and the test then asserted on an empty list.
+    monkeypatch.setattr(plot_module, "compute_ls", fake_compute)
     check = {
         "time": np.array([1.0, 2.0]),
         "mag": np.array([0.1, -0.1]),

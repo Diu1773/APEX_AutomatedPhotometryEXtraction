@@ -608,6 +608,22 @@ LC_ONLY_TOML_KEY_MAP: tuple[tuple, ...] = (
     (('lightcurve', 'comparison_mode'), 'lc_comparison_mode', 'str', "auto"),
     (('lightcurve', 'comparison_count'), 'lc_comparison_count', 'int', 10),
     (('lightcurve', 'filter'), 'lc_filter', 'str', ""),
+    # Period search (LC step 11). Unlike the target above, every one of these
+    # has a defensible default — they are the window's own starting values — so
+    # a batch run uses them rather than blocking. The search window is the one
+    # worth setting per object: 0.01-10 d covers δ Scuti through most eclipsing
+    # binaries, and a period outside it simply will not be found.
+    (('lightcurve', 'period_min_days'), 'lc_period_min_days', 'float', 0.01),
+    (('lightcurve', 'period_max_days'), 'lc_period_max_days', 'float', 10.0),
+    (('lightcurve', 'period_samples_per_peak'), 'lc_period_samples_per_peak', 'int', 10),
+    (('lightcurve', 'period_methods'), 'lc_period_methods', 'str', "ls,pdm"),
+    (('lightcurve', 'period_pdm_bins'), 'lc_period_pdm_bins', 'int', 10),
+    # Alias resolution. Default on, and not for convenience: without it the
+    # adopted period is whichever peak Lomb-Scargle happened to like, and on a
+    # two-night run that is routinely an alias of the sampling window. YZ Boo
+    # measured this — LS alone adopts 0.0945 d, alias resolution adopts
+    # 0.1042 d, and the literature period is 0.104092 d.
+    (('lightcurve', 'period_resolve_aliases'), 'lc_period_resolve_aliases', 'bool', True),
     (('instrument', 'gain_e_per_adu'), 'gain_e_per_adu', 'float_or_none', None),
     (('instrument', 'rdnoise_e'), 'rdnoise_e'),
     (('instrument', 'noise_use_fits_header'), 'noise_use_fits_header', 'bool', False),

@@ -46,8 +46,11 @@ def test_each_mode_gains_its_own_steps_after_the_shared_seven():
     surface, so a batch run could not say which star the curve was of. Step 8
     gave it one; step 9, the same day, walks through and builds the curve."""
     assert [s.index for s in get_steps("cmd")] == list(range(1, 13))
-    assert [s.index for s in get_steps("lc")] == list(range(1, 10))
-    assert [s.key for s in get_steps("lc")][-2:] == ["lctarget", "lclightcurve"]
+    # The exact LC list lives in test_pipeline_runner; here we only care that
+    # LC continues past the shared seven with steps of its own.
+    lc_keys = [s.key for s in get_steps("lc")][7:]
+    assert lc_keys and lc_keys[0] == "lctarget"
+    assert set(lc_keys).isdisjoint(s.key for s in get_steps("cmd")[7:])
 
 
 def test_the_two_that_execute_are_psf_and_zeropoint():

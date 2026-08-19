@@ -170,5 +170,9 @@ def test_registry_shared_steps_shape():
         steps = get_steps(mode)
         assert [s.index for s in steps][:7] == [1, 2, 3, 4, 5, 6, 7]
         assert steps[0].key == "scan"
-    assert [s.index for s in get_steps("lc")] == list(range(1, 10))
+    # The one place that pins both full lists. Two other files used to pin the
+    # LC one as well, so adding a step broke three tests instead of this one.
+    assert [s.index for s in get_steps("lc")] == list(range(1, 12))
+    assert [s.key for s in get_steps("lc")][7:] == [
+        "lctarget", "lclightcurve", "lcdetrend", "lcperiod"]
     assert [s.index for s in get_steps("cmd")] == list(range(1, 13))

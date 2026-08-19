@@ -122,12 +122,20 @@ def test_a_resolved_target_is_written_where_the_next_steps_look(tmp_path):
     assert body["source"] == "config"
 
 
-def test_the_lc_pipeline_now_reaches_step_9():
-    """Step 8 opened the gate; step 9 walks through it and builds the curve."""
+def test_the_gate_is_step_8_of_the_lc_pipeline():
+    """This file is about the gate, not the pipeline's length.
+
+    It used to assert the whole LC step list, and so did two other files — so
+    every new LC step broke three tests that had nothing to do with it. The
+    full shape now lives in `test_pipeline_runner.test_registry_shared_steps_shape`
+    alone.
+    """
     from apex.pipeline.registry import get_steps
 
-    assert [s.index for s in get_steps("lc")] == list(range(1, 10))
-    assert [s.key for s in get_steps("lc")][-2:] == ["lctarget", "lclightcurve"]
+    by_index = {s.index: s for s in get_steps("lc")}
+    assert 8 in by_index
+    assert by_index[8].key == "lctarget"
+    assert isinstance(by_index[8], LcTargetStep)
 
 
 def test_the_new_settings_are_actually_read():
