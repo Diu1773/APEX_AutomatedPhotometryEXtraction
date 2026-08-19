@@ -30,10 +30,11 @@ PAPER = REPO / "paper/paper.md"
 # What the Summary paragraph names as running without a GUI toolkit.
 CLAIMED_HEADLESS = {
     "scan", "crop", "sky", "detect", "wcs", "refbuild",
-    "forcedphot", "psf", "zeropoint", "isochrone",
+    "forcedphot", "psf", "zeropoint", "cmdplot", "isochrone",
 }
-# What it names as desktop-only.
-CLAIMED_DESKTOP_ONLY = {"masterid", "cmdplot"}
+# What it names as desktop-only. Only the master-ID editor now: it is
+# interactive by nature, and Step 10 does not need it.
+CLAIMED_DESKTOP_ONLY = {"masterid"}
 
 
 def test_the_steps_the_paper_calls_scriptable_are_implemented():

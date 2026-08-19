@@ -29,12 +29,15 @@ differential light curves with detrending and period analysis (Lomb–Scargle,
 PDM, BLS). It runs as a PyQt5 desktop application, and as a scriptable
 command-line pipeline that needs no GUI toolkit installed: calibration,
 detection, astrometry, catalog construction, aperture and PSF photometry,
-zero-point calibration and the isochrone fit all live in `apex.analysis`, and
-the desktop windows drive those same objects rather than copies of them. The
-batch isochrone fit declines to run until the settings that decide the answer —
-the colours, the age window, any prior — are written in the configuration, since
-library defaults yield a confidently wrong age. The interactive master-ID
-editor, the CMD viewer and the light-curve branch remain desktop-only.
+zero-point calibration, the colour-magnitude diagram and the isochrone fit all
+live in `apex.analysis`, and the desktop windows drive those same objects rather
+than copies of them. Every step also writes its own quality-control figures, so a
+batch run leaves the diagnostics a referee would ask for and not only the tables.
+The batch isochrone fit declines to run until the settings that decide the answer
+— the colours, the age window, any prior — are written in the configuration,
+since library defaults yield a confidently wrong age. The interactive master-ID
+editor, the CMD viewer's region and membership tools, and the light-curve branch
+remain desktop-only.
 
 `APEX` is built on the Astropy ecosystem [@astropy2022], using `photutils` for
 detection and aperture/PSF photometry, `astroquery` for Gaia/SIMBAD access, and

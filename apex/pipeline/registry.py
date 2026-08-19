@@ -9,17 +9,15 @@ calculation lives in ``apex.analysis.cmd`` and needs no Qt (2026-08-17); the
 desktop windows subclass those runners to add a thread and Qt signals, so the
 app and this pipeline drive the same objects.
 
-Steps 9, 11 and 12 stay :class:`DeferredStep` on purpose, and none of the three
-is merely unwritten. 9 (master-ID editor) is interactive by nature and Step 10
-does not need it. 11 (CMD plot) has nothing to port: it loads the Step 10 table
-and opens the viewer, so a headless version would be a new figure export rather
-than the same work without a window. 12 (isochrone MCMC) *does* have a Qt-free
-service, but its answer is decided by settings the config does not carry —
-colours, age bounds, priors — and running it on defaults produces a confident
-wrong number: the default 0.2-6 Gyr window cannot reach a globular at all, and
-without an E(B-V) prior an open cluster rails at the floor (measured, see
-``validation/psf_crossinstrument/REPORT_UB_DEGENERACY.md``). Giving Step 12 a
-config surface is a deliberate decision, not a default to be guessed here.
+Only Step 9 stays :class:`DeferredStep`, and not because it is unwritten: the
+master-ID editor is interactive by nature and Step 10 does not need it.
+
+Steps 11 and 12 were deferred and are not any more, for opposite reasons.
+11 (CMD plot) was described as having "nothing to port" — true of the viewer,
+which is an instrument, and false of the figure, which a run that measures a
+cluster should leave behind (2026-08-19). 12 (isochrone MCMC) always had a
+Qt-free service; what it lacked was a config surface for the settings that
+decide the answer, and it now refuses to run rather than guess them.
 """
 
 from __future__ import annotations
@@ -37,6 +35,7 @@ from apex.pipeline.steps.refbuild import RefBuildStep
 from apex.pipeline.steps.forcedphot import ForcedPhotStep
 from apex.pipeline.steps.psf import PsfPhotometryStep
 from apex.pipeline.steps.isochrone import IsochroneStep
+from apex.pipeline.steps.cmdplot import CmdPlotStep
 from apex.pipeline.steps.zeropoint import ZeropointStep
 from apex.utils import step_paths as sp
 from apex.utils import step_paths_cmd as spc
@@ -67,11 +66,7 @@ def _cmd_steps() -> List[PipelineStep]:
             interactive=True,
         ),
         ZeropointStep(),
-        DeferredStep(
-            11, "cmdplot", "CMD plot",
-            inputs_fn=lambda ctx: [spc.step10_zp_dir(ctx.result_dir)],
-            outputs_fn=lambda ctx: [spc.step11_cmd_dir(ctx.result_dir)],
-        ),
+        CmdPlotStep(),
         IsochroneStep(),
     ]
 
@@ -79,8 +74,8 @@ def _cmd_steps() -> List[PipelineStep]:
 def get_steps(mode: str) -> List[PipelineStep]:
     """Ordered steps for a mode: shared 1-7, then the mode's own.
 
-    CMD contributes 8-12 (8 and 10 execute; 9, 11, 12 are deferred — see the
-    module docstring for why each). LC's 8-11 are not ported yet.
+    CMD contributes 8-12; only 9 is deferred (interactive by nature — see the
+    module docstring). LC's 8-11 are not ported yet.
 
     Detector calibration (index 0) is deliberately excluded here — it is an
     optional off-chain pre-stage; use :func:`get_calibration_step` for it. This
