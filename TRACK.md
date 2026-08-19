@@ -25,7 +25,7 @@
 
 ## 지금
 
-## 2026-08-18~19 — 레거시를 걷어내고, 헤드리스가 그림을 낸다
+### 2026-08-18~19 — 레거시를 걷어내고, 헤드리스가 그림을 낸다
 
 커밋 14 개(`788a8d1` … `193d5ce`). 기록: `docs/audit/HEADLESS_QC_FIGURES.md` ·
 `docs/audit/APERTURE_RADIUS_DECISION.md` ·
@@ -981,7 +981,7 @@ vs VizieR 1749/1900(151 제외), 보정성 910 중 RUWE>1.4 가 84 개(9.2 %)로
 작업이 계속 쌓인 결과다. 다음에 손볼 때 08-07 이전 항목을 `docs/audit/` 로 옮기고
 「지금」은 최근 두 세션만 남길 것.
 
-## 측정 완료 — `n_det_frames` 분포 · 두 성단 (2026-07-28)
+### 측정 완료 — `n_det_frames` 분포 · 두 성단 (2026-07-28)
 
 **데이터: M67 (Moravian C3-61000 · 2026-02-08 밤 · g′ 60 s × 10장 · `E:\APEX_validation\reprocess\M67\sci`)**
 실행: `apex run --mode lc` steps 1–4 + 6 (헤드리스, `union_min_frames=1`).
