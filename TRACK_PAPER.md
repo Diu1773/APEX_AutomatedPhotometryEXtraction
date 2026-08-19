@@ -33,6 +33,40 @@
 
 ## 지금 (2026-08-12 ResearchCampaign 기반 국문 통합 초안)
 
+### 2026-08-17~19 · P1 「GUI↔헤드리스 parity」가 측정됐다 — 심사 지적 셋 중 하나 해소
+
+08-13 ARS 심사가 재심 전 P1 으로 지목한 세 가지 중 첫째다. 이제 **동일성이 검증
+대상이 아니라 구조**다 — 창이 계산 객체를 상속하므로
+`Step6PSFWorker.run is PsfPhotometryRunner.run` 이 참이다.
+
+**실측** (M13 15 프레임, PyQt5 **미설치** 기본 설치):
+
+| 스텝 | 저장본 대비 |
+|---|---|
+| Step 10 영점 | 표 48 개 전부 **0.0e+00** |
+| Step 8 PSF | **0.0e+00** (별 22,305 · 44 열) |
+| Step 12 이소크론 | 나이 0.3 % · [M/H] 0.011 dex — **서로 다른 구현**끼리 |
+
+Step 8 은 처음에 5 개 측정이 4.8e-05 어긋났다. 통제 실험(Qt 있는 환경 재실행)이
+**0.0e+00** 을 내면서 「실행 간 잡음」이라는 첫 판정을 뒤집었고, 패키지 93 대 49 를
+대조해 **scipy 1.17.1 vs 1.18.0** 으로 좁힌 뒤 버전을 내려 확정했다. 움직인 5 개는
+전부 이미 `CROWDING_UNRELIABLE`/`NONCONVERGENCE` 로 표시된 것들이고 flags 는 동일했다.
+
+**논문에 쓸 때의 단서**: 재현에는 같은 설정·같은 입력에 더해 **같은 패키지 버전**이
+필요하다. 그래서 실행 매니페스트가 이제 `environment`(python·platform·수치 패키지
+버전)를 남긴다. 근거: `docs/audit/HEADLESS_WITHOUT_QT.md`.
+
+**부수 성과 — 헤드리스가 QC 그림을 낸다(7 → 19 장).** Step 4·5·6·7·8·11·12 가 각자
+QC 그림을 쓰므로, 배치 실행이 표만이 아니라 **심사자가 요구할 진단 그림**을 남긴다.
+근거: `docs/audit/HEADLESS_QC_FIGURES.md`.
+
+**원고 반영 완료**: Summary 를 두 번 고쳤다(헤드리스로 도는 스텝 목록, 데스크톱
+전용으로 남는 것). `tests/test_paper_claims_match_the_code.py` 가 원고 문장과 코드가
+갈라지면 깨지므로, 이 문단이 다시 낡을 일은 테스트가 막는다.
+
+**남은 P1 둘**: PSF 주입의 독립성 · native 모듈별 비용·정확도 표. 아래 「다음 3개」 참조.
+
+
 **2026-08-13 · ARS full 모의 심사 기록**
 
 - 국문 정본을 A&A Section 15 기준으로 다중 관점 심사한 결과는 **Major Revision**이다.
@@ -614,9 +648,10 @@ v0.1.0 태그는 있음).
    자동 감사와 접촉판 육안 검수까지 끝났다. 남은 것은 과학 수치의 원출력 대조다. 특히 표 5의
    엔진별 상수 영점 제거 수치와 컷 전 원잔차, 표 6의 프레임 내부/외부 보정별 산포를
    구분한다.
-1. **GUI↔헤드리스 parity와 성능 baseline을 고정한다.** 같은 JSON 설정으로 출력 hash,
-   행 수, finite mask, 핵심 수치, source read count, wall time, peak RSS를 기록한다.
-   이 측정 전에는 worker 수나 Bottleneck의 속도 우위를 논문에 쓰지 않는다.
+1. **성능 baseline 을 고정한다.** parity 는 2026-08-17~19 에 측정됐다(위 절).
+   남은 것은 성능 쪽이다 — 같은 JSON 설정으로 source read count, wall time,
+   peak RSS 를 기록한다. **이 측정 전에는 worker 수나 Bottleneck 의 속도 우위를
+   논문에 쓰지 않는다**(기존 규약 유지).
 2. **A&A 제출 패키지를 닫는다.** 기기 사양·제조사 서지, Data/code availability,
    AI disclosure, CRediT와 CITATION.cff를 확인하고, 한 commit의 manifest에서 표·그림·
    원고를 재생성한다. 그 뒤 영문판 이식과 Section 15 양식 점검을 시작한다.
