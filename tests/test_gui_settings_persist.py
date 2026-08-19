@@ -45,7 +45,6 @@ WRITES = re.compile(
 NOT_SETTINGS = {
     # Runtime state the window fills in, never read from a file.
     "file_path_map": "airmass window builds this at run time",
-    "target": "the merge window's current selection, not a stored preference",
     "readnoise": "Step 0 reads the measured value off the frames",
     # Legacy duplicates. `target.ra_deg` maps to `target_ra_deg`, which is what
     # the code actually reads; these bare names are the old spelling.

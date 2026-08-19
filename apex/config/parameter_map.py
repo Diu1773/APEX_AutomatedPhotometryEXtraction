@@ -624,6 +624,27 @@ LC_ONLY_TOML_KEY_MAP: tuple[tuple, ...] = (
     # measured this — LS alone adopts 0.0945 d, alias resolution adopts
     # 0.1042 d, and the literature period is 0.104092 d.
     (('lightcurve', 'period_resolve_aliases'), 'lc_period_resolve_aliases', 'bool', True),
+    # Detrending (LC step 10). The defaults are the window's own starting
+    # values; `detrend_plot_view` is the one that deliberately differs — the
+    # window shows one panel because its canvas shares a screen with the
+    # controls, and a saved record has no such constraint.
+    (('lightcurve', 'detrend_mode'), 'lc_detrend_mode', 'str', "offset"),
+    (('lightcurve', 'detrend_sigma_clip'), 'lc_detrend_sigma_clip', 'bool', True),
+    (('lightcurve', 'detrend_clip_sigma'), 'lc_detrend_clip_sigma', 'float', 3.0),
+    (('lightcurve', 'detrend_clip_iters'), 'lc_detrend_clip_iters', 'int', 3),
+    (('lightcurve', 'detrend_plot_view'), 'lc_detrend_plot_view', 'str', "all"),
+    (('lightcurve', 'detrend_color_by'), 'lc_detrend_color_by', 'str', ""),
+    (('lightcurve', 'detrend_global_min_comps'), 'lc_detrend_global_min_comps', 'int', 3),
+    (('lightcurve', 'detrend_global_sigma'), 'lc_detrend_global_sigma', 'float', 3.0),
+    (('lightcurve', 'detrend_global_iters'), 'lc_detrend_global_iters', 'int', 3),
+    (('lightcurve', 'detrend_global_rms_pct'), 'lc_detrend_global_rms_pct', 'float', 80.0),
+    (('lightcurve', 'detrend_global_rms_threshold'), 'lc_detrend_global_rms_threshold', 'float', 0.05),
+    (('lightcurve', 'detrend_global_frame_sigma'), 'lc_detrend_global_frame_sigma', 'float', 5.0),
+    (('lightcurve', 'detrend_global_robust'), 'lc_detrend_global_robust', 'bool', True),
+    (('lightcurve', 'detrend_global_normalize'), 'lc_detrend_global_normalize', 'bool', False),
+    (('lightcurve', 'detrend_global_k2'), 'lc_detrend_global_k2', 'bool', False),
+    (('lightcurve', 'detrend_sysrem_iter'), 'lc_detrend_sysrem_iter', 'int', 3),
+    (('lightcurve', 'detrend_sysrem_apply'), 'lc_detrend_sysrem_apply', 'int', 1),
     (('instrument', 'gain_e_per_adu'), 'gain_e_per_adu', 'float_or_none', None),
     (('instrument', 'rdnoise_e'), 'rdnoise_e'),
     (('instrument', 'noise_use_fits_header'), 'noise_use_fits_header', 'bool', False),

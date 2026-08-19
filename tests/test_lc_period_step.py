@@ -9,7 +9,7 @@ Measured against the analysis the window saved (YZ Boo, two nights, 364 points,
 `E:/APEX_validation/reprocess/YZBoo_2n`), with the same filter grouping and the
 same input file: all four methods agree to 0.0e+00, and PDM lands 0.19 % from
 the literature period (0.104092 d). That needs the workspace, so it lives in
-`docs/audit/LC_HEADLESS_STEPS_9_AND_11.md` rather than here; what is testable here is
+`docs/audit/LC_HEADLESS_STEPS_8_TO_11.md` rather than here; what is testable here is
 the wiring and the refusals.
 """
 
@@ -171,28 +171,31 @@ def test_the_new_settings_are_actually_read():
 
 
 def test_the_lc_pipeline_now_reaches_step_11():
-    """10 is deferred: detrending is the one LC stage whose calculation reads
-    from widgets and writes to them, so it is a refactor rather than a move."""
-    from apex.pipeline.base import DeferredStep
+    """Step 10 was deferred for one day, on the reading that its calculation
+    took its inputs from widgets. It did not — `_sync_state_from_controls` had
+    been copying them into plain attributes all along — so it runs headless
+    too, and the LC branch has no deferred step left."""
     from apex.pipeline.registry import get_steps
 
     steps = get_steps("lc")
     assert [s.index for s in steps] == list(range(1, 12))
     assert [s.key for s in steps][-4:] == [
         "lctarget", "lclightcurve", "lcdetrend", "lcperiod"]
-    assert isinstance({s.index: s for s in steps}[10], DeferredStep)
 
 
-def test_the_deferred_detrend_still_recognises_gui_work(tmp_path):
-    """A deferred step must see a window-produced result as complete."""
+def test_the_detrend_recognises_a_window_produced_result(tmp_path):
+    """A batch run must not redo work the window already did."""
     from apex.pipeline.registry import get_steps
     from apex.utils.step_paths_lc import step10_detrend_dir
 
     step = {s.index: s for s in get_steps("lc")}[10]
     ctx = _ctx(tmp_path)
     assert not step.is_complete(ctx)
-    step10_detrend_dir(tmp_path).mkdir(parents=True, exist_ok=True)
-    (step10_detrend_dir(tmp_path) / "lightcurve_ID5_offset.csv").write_text("a\n1\n")
+    out = step10_detrend_dir(tmp_path)
+    out.mkdir(parents=True, exist_ok=True)
+    # `_current` is what both paths write last; a bare `_offset` is one mode's
+    # file and does not mean the step finished.
+    (out / "lightcurve_ID5_current.csv").write_text("a\n1\n")
     assert step.is_complete(ctx)
 
 

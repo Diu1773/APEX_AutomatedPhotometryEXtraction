@@ -38,6 +38,7 @@ from apex.pipeline.steps.isochrone import IsochroneStep
 from apex.pipeline.steps.cmdplot import CmdPlotStep
 from apex.pipeline.steps.lc_target import LcTargetStep
 from apex.pipeline.steps.lc_lightcurve import LcLightCurveStep
+from apex.pipeline.steps.lc_detrend import LcDetrendStep
 from apex.pipeline.steps.lc_period import LcPeriodStep
 from apex.pipeline.steps.zeropoint import ZeropointStep
 from apex.utils import step_paths as sp
@@ -50,22 +51,11 @@ def _sel(rd):
 
 
 def _lc_steps() -> List[PipelineStep]:
-    """LC's own steps.
-
-    10 is the gap: detrending is the one LC stage whose calculation reads its
-    inputs from widgets and writes its results to them, so it is a refactor
-    rather than a move. 11 does not wait for it — `find_best_lightcurve_csv`
-    prefers a detrended curve when one exists and uses the raw one when it
-    does not, so a batch run gets a period either way.
-    """
+    """LC's own steps — 8 through 11, all of them running headless."""
     return [
         LcTargetStep(),
         LcLightCurveStep(),
-        DeferredStep(
-            10, "lcdetrend", "Detrend & night merge",
-            outputs_fn=lambda ctx: [spl.step10_detrend_dir(ctx.result_dir)],
-            interactive=True,
-        ),
+        LcDetrendStep(),
         LcPeriodStep(),
     ]
 

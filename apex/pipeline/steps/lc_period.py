@@ -41,6 +41,28 @@ def _methods(params) -> List[str]:
     return out or ["ls"]
 
 
+def _method_spread(results) -> "float | None":
+    """How far apart the periodogram methods land, as a fraction of the median.
+
+    Only meaningful when the alias analysis could not settle which peak is real.
+    A large spread there is the run telling you two nights were not enough.
+    """
+    import numpy as np
+
+    periods = []
+    for key in ("corr_ls", "raw_ls", "corr_pdm", "raw_pdm", "corr_bls", "raw_bls"):
+        found = (results or {}).get(key) or {}
+        value = found.get("best_period")
+        if value and float(value) > 0:
+            periods.append(float(value))
+    if len(periods) < 2:
+        return None
+    med = float(np.median(periods))
+    if med <= 0:
+        return None
+    return float((max(periods) - min(periods)) / med)
+
+
 def _resolve_aliases(lc_data, results, min_period, max_period, samples, log=None):
     """Rank the sampling-window aliases of the strongest peak.
 
@@ -239,15 +261,26 @@ class LcPeriodStep(PipelineStep):
                 if status == "RESOLVED" and adopted:
                     best.append(f"{flt or 'all'}={float(adopted):.6f} d")
                 else:
+                    # Unresolved, so the fallback picks whichever method comes
+                    # first — and on two nights those methods can disagree by
+                    # more than the answer is worth. YZ Boo with its nights
+                    # correctly labelled: LS 0.094468 d, PDM 0.104295 d, and the
+                    # literature says 0.104092. Picking one silently would
+                    # publish a 9 % error as a number; saying they disagree is
+                    # the honest output, and it costs one line of message.
                     note = f" [alias {status.lower()}]" if status else ""
+                    picked = None
                     for key in ("corr_ls", "raw_ls", "corr_pdm", "raw_pdm"):
                         found = (results or {}).get(key) or {}
                         period = found.get("best_period")
-                        if period:
-                            best.append(
-                                f"{flt or 'all'} {key.split('_')[-1].upper()}"
-                                f"={period:.6f} d{note}")
-                            break
+                        if period and picked is None:
+                            picked = (key.split("_")[-1].upper(), float(period))
+                    spread = _method_spread(results)
+                    if picked:
+                        line = f"{flt or 'all'} {picked[0]}={picked[1]:.6f} d{note}"
+                        if spread is not None and spread > 0.02:
+                            line += f" — methods disagree by {100 * spread:.0f} %"
+                        best.append(line)
                 analysed += 1
             except Exception as exc:                    # noqa: BLE001
                 failed.append(f"{flt or 'all'}: {exc}")
