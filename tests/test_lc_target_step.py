@@ -32,6 +32,7 @@ from apex.analysis.light_curve.target_config import (
 from apex.pipeline.base import StepStatus
 from apex.pipeline.context import RunContext
 from apex.pipeline.steps.lc_target import LcTargetStep
+from apex.utils.step_paths import master_catalog_path
 
 
 def _params(tmp_path, **over):
@@ -43,9 +44,16 @@ def _params(tmp_path, **over):
 
 
 def _master(tmp_path, n=25):
-    out = tmp_path / "step6_refbuild"
-    out.mkdir(parents=True, exist_ok=True)
-    pd.DataFrame({"ID": range(1, n + 1)}).to_csv(out / "master_sources.csv", index=False)
+    """Write the master catalog where Step 6 writes it, in Step 6's format.
+
+    This helper used to invent `master_sources.csv`, which is also the name the
+    step guessed — so the suite passed while the step blocked on every real
+    workspace. Both now ask `master_catalog_path()`, and the binding test below
+    holds that demand against what Step 6 itself calls done.
+    """
+    path = master_catalog_path(tmp_path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    pd.DataFrame({"ID": range(1, n + 1)}).to_csv(path, sep="\t", index=False)
 
 
 def _ctx(tmp_path, params):
@@ -114,11 +122,12 @@ def test_a_resolved_target_is_written_where_the_next_steps_look(tmp_path):
     assert body["source"] == "config"
 
 
-def test_the_lc_pipeline_now_reaches_step_8():
+def test_the_lc_pipeline_now_reaches_step_9():
+    """Step 8 opened the gate; step 9 walks through it and builds the curve."""
     from apex.pipeline.registry import get_steps
 
-    assert [s.index for s in get_steps("lc")] == list(range(1, 9))
-    assert get_steps("lc")[-1].key == "lctarget"
+    assert [s.index for s in get_steps("lc")] == list(range(1, 10))
+    assert [s.key for s in get_steps("lc")][-2:] == ["lctarget", "lclightcurve"]
 
 
 def test_the_new_settings_are_actually_read():
@@ -129,3 +138,49 @@ def test_the_new_settings_are_actually_read():
     for name in ("lc_target_id", "lc_target_name", "lc_comparison_ids",
                  "lc_comparison_mode", "lc_comparison_count", "lc_filter"):
         assert name not in dead, f"{name} 을 읽는 코드가 없다"
+
+
+def test_the_gate_asks_for_the_file_step_6_writes(tmp_path):
+    """The input this step demands must be the file its producer calls done.
+
+    This is the test that was missing. The step named `master_sources.csv`; the
+    refbuild step writes `ref_catalog.tsv`; the fixture above invented the
+    former, so nothing disagreed and `LcTargetStep` returned BLOCKED on every
+    workspace in existence for as long as it existed. Comparing against a
+    literal would have reproduced the same mistake, so this compares against
+    what `RefBuildStep.is_complete` actually looks at.
+    """
+    from apex.pipeline.steps.refbuild import RefBuildStep
+
+    required = LcTargetStep().inputs(_ctx(tmp_path, _params(tmp_path)))
+    assert len(required) == 1
+    demanded = required[0]
+
+    step6 = RefBuildStep()
+    ctx = _ctx(tmp_path, _params(tmp_path))
+    assert not step6.is_complete(ctx)
+
+    demanded.parent.mkdir(parents=True, exist_ok=True)
+    demanded.write_text("ID\n1\n", encoding="utf-8")
+
+    # Writing exactly what step 8 demands must be enough to make step 6 complete.
+    assert step6.is_complete(ctx), (
+        f"LcTargetStep demands {demanded.name}, but RefBuildStep does not "
+        "consider that file its output — the two disagree about the master catalog"
+    )
+
+
+def test_it_reads_a_tab_separated_catalog(tmp_path):
+    """Step 6 writes TSV. Read as CSV it is one column whose name is the header line."""
+    path = master_catalog_path(tmp_path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    pd.DataFrame({"ID": [1, 2, 3], "source_id": [10, 20, 30]}).to_csv(
+        path, sep="\t", index=False)
+
+    params = _params(tmp_path, lc_target_id=2, lc_comparison_mode="auto")
+    result = LcTargetStep().run(_ctx(tmp_path, params))
+    assert result.status == StepStatus.OK, result.message
+
+    selection = read_selection(tmp_path)
+    assert selection["target_id"] == 2
+    assert selection["comparison_ids"], "auto mode found no comparisons in a TSV catalog"

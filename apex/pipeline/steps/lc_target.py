@@ -10,6 +10,13 @@ This step is that gate, and it blocks rather than guesses, the same way the
 isochrone step does. A batch that produces nothing beats one that produces a
 clean light curve of the wrong object — because a light curve of the wrong
 object does not look wrong.
+
+A gate refusing also does not look wrong, which is how this one spent its first
+eight days blocked on every workspace in existence: it asked for
+`master_sources.csv`, and Step 6 writes `ref_catalog.tsv`. The test suite agreed
+with the mistake because its fixture invented the same name. Both now ask
+`master_catalog_path()`, and a test holds the demand against what `RefBuildStep`
+itself calls done.
 """
 
 from __future__ import annotations
@@ -25,11 +32,8 @@ from apex.analysis.light_curve.target_config import (
 )
 from apex.pipeline.base import PipelineStep, StepResult, StepStatus
 from apex.pipeline.context import RunContext
-from apex.utils.step_paths import step6_refbuild_dir
+from apex.utils.step_paths import master_catalog_path
 from apex.utils.step_paths_lc import step8_selection_dir
-
-MASTER_TABLE = "master_sources.csv"
-
 
 class LcTargetStep(PipelineStep):
     index = 8
@@ -37,7 +41,7 @@ class LcTargetStep(PipelineStep):
     name = "Light-curve target"
 
     def inputs(self, ctx: RunContext) -> List[Path]:
-        return [step6_refbuild_dir(ctx.result_dir) / MASTER_TABLE]
+        return [master_catalog_path(ctx.result_dir)]
 
     def outputs(self, ctx: RunContext) -> List[Path]:
         return [step8_selection_dir(ctx.result_dir) / "lc_target_selection.json"]
@@ -54,7 +58,7 @@ class LcTargetStep(PipelineStep):
                          "no default is defensible: " + "; ".join(missing)),
             )
 
-        master = step6_refbuild_dir(ctx.result_dir) / MASTER_TABLE
+        master = master_catalog_path(ctx.result_dir)
         if not master.exists():
             return StepResult(
                 index=self.index, key=self.key, status=StepStatus.BLOCKED,
@@ -64,7 +68,7 @@ class LcTargetStep(PipelineStep):
         started = time.perf_counter()
         target = read_target(ctx.params)
         try:
-            catalog = pd.read_csv(master)
+            catalog = pd.read_csv(master, sep="	")
         except Exception as exc:                    # noqa: BLE001
             return StepResult(
                 index=self.index, key=self.key, status=StepStatus.FAILED,

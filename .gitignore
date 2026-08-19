@@ -60,3 +60,6 @@ validation/paper/논문작업/refs/
 
 # 국문 논문 말뭉치 (저작권) — corpus_compare.py 가 읽는다. 출처는 STYLE_HARNESS.md Z-5
 validation/paper/논문작업/refs_ko/
+
+# 세션 작업용 임시 폴더 — 워크스페이스 사본·추출 스크립트·중간 그림
+scratchpad/

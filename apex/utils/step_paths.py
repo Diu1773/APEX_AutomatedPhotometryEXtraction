@@ -97,6 +97,20 @@ def step6_refbuild_dir(result_dir: PathLike) -> Path:
     return step_dir(result_dir, STEP6_REFBUILD_DIRNAME)
 
 
+MASTER_CATALOG_NAME = "ref_catalog.tsv"
+
+
+def master_catalog_path(result_dir: PathLike) -> Path:
+    """The master catalog Step 6 writes, and everything downstream reads.
+
+    The name lived as a string literal in eight places, and a ninth invented
+    "master_sources.csv" — which made the LC target step block on every
+    workspace there is, silently, because a gate refusing looks like a gate
+    working. A step that needs this file should ask here.
+    """
+    return step6_refbuild_dir(result_dir) / MASTER_CATALOG_NAME
+
+
 def step7_forced_phot_dir(result_dir: PathLike) -> Path:
     return step_dir(result_dir, STEP7_FORCED_PHOT_DIRNAME)
 

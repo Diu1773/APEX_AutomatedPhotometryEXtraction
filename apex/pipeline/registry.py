@@ -37,6 +37,7 @@ from apex.pipeline.steps.psf import PsfPhotometryStep
 from apex.pipeline.steps.isochrone import IsochroneStep
 from apex.pipeline.steps.cmdplot import CmdPlotStep
 from apex.pipeline.steps.lc_target import LcTargetStep
+from apex.pipeline.steps.lc_lightcurve import LcLightCurveStep
 from apex.pipeline.steps.zeropoint import ZeropointStep
 from apex.utils import step_paths as sp
 from apex.utils import step_paths_cmd as spc
@@ -47,8 +48,8 @@ def _sel(rd):
 
 
 def _lc_steps() -> List[PipelineStep]:
-    """LC's own steps. Only 8 so far — see the module docstring."""
-    return [LcTargetStep()]
+    """LC's own steps. 8 and 9 so far — see the module docstring."""
+    return [LcTargetStep(), LcLightCurveStep()]
 
 
 def _shared_steps() -> List[PipelineStep]:

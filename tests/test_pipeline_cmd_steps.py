@@ -43,10 +43,11 @@ def _step(mode: str, index: int):
 def test_each_mode_gains_its_own_steps_after_the_shared_seven():
     """LC reached only 7 until 2026-08-19, and not because its science needed a
     window — the services were already Qt-free. Its target choice had no config
-    surface, so a batch run could not say which star the curve was of."""
+    surface, so a batch run could not say which star the curve was of. Step 8
+    gave it one; step 9, the same day, walks through and builds the curve."""
     assert [s.index for s in get_steps("cmd")] == list(range(1, 13))
-    assert [s.index for s in get_steps("lc")] == list(range(1, 9))
-    assert get_steps("lc")[-1].key == "lctarget"
+    assert [s.index for s in get_steps("lc")] == list(range(1, 10))
+    assert [s.key for s in get_steps("lc")][-2:] == ["lctarget", "lclightcurve"]
 
 
 def test_the_two_that_execute_are_psf_and_zeropoint():

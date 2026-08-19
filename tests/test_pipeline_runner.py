@@ -160,10 +160,15 @@ def test_project_state_marked_on_ok(tmp_path):
 # ── registry wiring ──────────────────────────────────────────────────────────
 
 def test_registry_shared_steps_shape():
-    """Steps 1-7 are shared; CMD then continues into its own 8-12."""
+    """Steps 1-7 are shared; each mode then continues into its own.
+
+    This asserted `lc == [1..7]` until 2026-08-19 — and kept asserting it for a
+    day after LC gained step 8, because the full suite was not run in between.
+    Both mode lists now live here so a new step cannot land unnoticed.
+    """
     for mode in ("cmd", "lc"):
         steps = get_steps(mode)
         assert [s.index for s in steps][:7] == [1, 2, 3, 4, 5, 6, 7]
         assert steps[0].key == "scan"
-    assert [s.index for s in get_steps("lc")] == [1, 2, 3, 4, 5, 6, 7]
+    assert [s.index for s in get_steps("lc")] == list(range(1, 10))
     assert [s.index for s in get_steps("cmd")] == list(range(1, 13))
