@@ -36,6 +36,7 @@ from apex.pipeline.steps.forcedphot import ForcedPhotStep
 from apex.pipeline.steps.psf import PsfPhotometryStep
 from apex.pipeline.steps.isochrone import IsochroneStep
 from apex.pipeline.steps.cmdplot import CmdPlotStep
+from apex.pipeline.steps.lc_target import LcTargetStep
 from apex.pipeline.steps.zeropoint import ZeropointStep
 from apex.utils import step_paths as sp
 from apex.utils import step_paths_cmd as spc
@@ -43,6 +44,11 @@ from apex.utils import step_paths_cmd as spc
 
 def _sel(rd):
     return sp.step1_dir(rd) / "selection.json"
+
+
+def _lc_steps() -> List[PipelineStep]:
+    """LC's own steps. Only 8 so far — see the module docstring."""
+    return [LcTargetStep()]
 
 
 def _shared_steps() -> List[PipelineStep]:
@@ -75,7 +81,8 @@ def get_steps(mode: str) -> List[PipelineStep]:
     """Ordered steps for a mode: shared 1-7, then the mode's own.
 
     CMD contributes 8-12; only 9 is deferred (interactive by nature — see the
-    module docstring). LC's 8-11 are not ported yet.
+    module docstring). LC now contributes 8 (target resolution); its 9-11 are
+    not ported yet, though their calculation is already Qt-free.
 
     Detector calibration (index 0) is deliberately excluded here — it is an
     optional off-chain pre-stage; use :func:`get_calibration_step` for it. This
@@ -83,8 +90,7 @@ def get_steps(mode: str) -> List[PipelineStep]:
     if mode not in ("cmd", "lc"):
         raise ValueError(f"mode must be 'cmd' or 'lc', got {mode!r}")
     steps = _shared_steps()
-    if mode == "cmd":
-        steps += _cmd_steps()
+    steps += _cmd_steps() if mode == "cmd" else _lc_steps()
     return steps
 
 

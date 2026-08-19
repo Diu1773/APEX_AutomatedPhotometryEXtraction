@@ -597,6 +597,17 @@ CMD_ONLY_TOML_KEY_MAP += (
 )
 
 LC_ONLY_TOML_KEY_MAP: tuple[tuple, ...] = (
+    # Which star the light curve is of, and what it is compared against. LC's
+    # calculation has been Qt-free all along; this is what kept it in the window.
+    # No default is defensible — the brightest star or the field centre would
+    # give a confident curve of the wrong object — so a batch run blocks on a
+    # missing target instead of guessing one.
+    (('lightcurve', 'target_id'), 'lc_target_id', 'int', -1),
+    (('lightcurve', 'target_name'), 'lc_target_name', 'str', ""),
+    (('lightcurve', 'comparison_ids'), 'lc_comparison_ids', 'str', ""),
+    (('lightcurve', 'comparison_mode'), 'lc_comparison_mode', 'str', "auto"),
+    (('lightcurve', 'comparison_count'), 'lc_comparison_count', 'int', 10),
+    (('lightcurve', 'filter'), 'lc_filter', 'str', ""),
     (('instrument', 'gain_e_per_adu'), 'gain_e_per_adu', 'float_or_none', None),
     (('instrument', 'rdnoise_e'), 'rdnoise_e'),
     (('instrument', 'noise_use_fits_header'), 'noise_use_fits_header', 'bool', False),
