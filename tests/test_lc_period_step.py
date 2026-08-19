@@ -360,3 +360,66 @@ def test_nightly_offset_detrending_forces_the_raw_series(tmp_path):
         "the corrected series was used after a correction that does not "
         "preserve the nightly baseline")
     assert out["nightly_baseline_preserved"] is False
+
+
+def test_an_unresolved_alias_analysis_does_not_override_the_peak():
+    """The service reports RESOLVED / AMBIGUOUS / INSUFFICIENT. Taking its top
+    candidate regardless throws away the one thing it was asked to determine.
+
+    AE UMa measured the cost. Two nights, 2.13 d baseline; the service returned
+    AMBIGUOUS ("leave-one-night-out agreement is 50%") with rank 1 = 0.082514 d
+    and rank 2 = 0.086079 d. The plain Lomb-Scargle peak was 0.086011 d and the
+    literature period is 0.086017 d — so obeying rank 1 turned a 0.01 % answer
+    into a 4.07 % one, and folded the figure at the wrong period.
+    """
+    from apex.analysis.light_curve.period_plot import PeriodSummaryPlotter
+
+    plotter = PeriodSummaryPlotter()
+    plotter.lc_data = {"mag_corr": None}
+    plotter.results = {"raw_ls": {"best_period": 0.086011}}
+
+    plotter.alias_analysis = {"status": "AMBIGUOUS", "adopted_period": 0.082514}
+    assert plotter._summary_period() == pytest.approx(0.086011), (
+        "an AMBIGUOUS alias analysis must not override the periodogram peak")
+
+    plotter.alias_analysis = {"status": "INSUFFICIENT", "adopted_period": 0.082514}
+    assert plotter._summary_period() == pytest.approx(0.086011)
+
+    # ...and when it did resolve, it wins — that is what takes YZ Boo from
+    # 9.2 % off the literature period to 0.11 %.
+    plotter.alias_analysis = {"status": "RESOLVED", "adopted_period": 0.104209}
+    assert plotter._summary_period() == pytest.approx(0.104209)
+
+    plotter.alias_analysis = None
+    assert plotter._summary_period() == pytest.approx(0.086011)
+
+
+def test_the_step_reports_the_same_period_the_figure_folds_at(tmp_path):
+    """One rule, two consumers. They disagreed until 2026-08-19: the message
+    printed the alias candidate while the figure folded at the peak."""
+    import numpy as np
+
+    write_selection(tmp_path, LcTarget(target_id=5), [1, 2, 3])
+    _curve(tmp_path, period=0.1)
+    result = LcPeriodStep().run(_ctx(tmp_path))
+    assert result.status == StepStatus.OK, result.message
+
+    body = json.loads(sorted(step11_period_dir(tmp_path)
+                             .glob("period_analysis_*.json"))[0].read_text(encoding="utf-8"))
+    status = str((body.get("alias_analysis") or {}).get("status", "")).upper()
+    if status == "RESOLVED":
+        assert "[alias" not in result.message
+    else:
+        assert "[alias" in result.message, (
+            "an unresolved alias analysis must be visible in the step message, "
+            f"not silently dropped (status={status})")
+
+
+def test_the_filter_count_in_the_message_counts_filters(tmp_path):
+    """It counted `written`, which also holds the figure and four periodogram
+    CSVs — so a single-filter run reported "2 filter(s)"."""
+    write_selection(tmp_path, LcTarget(target_id=5), [1, 2, 3])
+    _curve(tmp_path)
+    result = LcPeriodStep().run(_ctx(tmp_path, _params(tmp_path, lc_filter="all")))
+    assert result.status == StepStatus.OK, result.message
+    assert "1 filter(s)" in result.message, result.message

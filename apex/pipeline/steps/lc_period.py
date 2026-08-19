@@ -170,6 +170,8 @@ class LcPeriodStep(PipelineStep):
         written: List[str] = []
         best: List[str] = []
         failed: List[str] = []
+        analysed = 0                       # filters, not files — `written`
+                                           # also holds figures and periodograms
 
         for flt in filters:
             try:
@@ -229,18 +231,24 @@ class LcPeriodStep(PipelineStep):
                 except Exception as exc:              # noqa: BLE001
                     if log:
                         log(f"[figure] {flt or 'all'}: {exc}")
+                # Report what the run concluded, by the same rule the figure
+                # folds at: the alias candidate only when the service says it
+                # resolved, the periodogram peak otherwise.
+                status = str((alias_analysis or {}).get("status", "")).upper()
                 adopted = (alias_analysis or {}).get("adopted_period")
-                if adopted:
+                if status == "RESOLVED" and adopted:
                     best.append(f"{flt or 'all'}={float(adopted):.6f} d")
                 else:
+                    note = f" [alias {status.lower()}]" if status else ""
                     for key in ("corr_ls", "raw_ls", "corr_pdm", "raw_pdm"):
                         found = (results or {}).get(key) or {}
                         period = found.get("best_period")
                         if period:
                             best.append(
                                 f"{flt or 'all'} {key.split('_')[-1].upper()}"
-                                f"={period:.6f} d")
+                                f"={period:.6f} d{note}")
                             break
+                analysed += 1
             except Exception as exc:                    # noqa: BLE001
                 failed.append(f"{flt or 'all'}: {exc}")
 
@@ -253,7 +261,7 @@ class LcPeriodStep(PipelineStep):
                 duration_s=elapsed,
             )
 
-        note = f"target ID {target_id}, {len(written)} filter(s)"
+        note = f"target ID {target_id}, {analysed} filter(s)"
         if best:
             note += " — " + ", ".join(best)
         if failed:

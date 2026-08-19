@@ -181,8 +181,25 @@ class PeriodSummaryPlotter:
         return "corr" if has_corr and preserves_baseline else "raw"
 
     def _summary_period(self) -> float:
-        adopted = float((self.alias_analysis or {}).get("adopted_period", np.nan))
-        if np.isfinite(adopted) and adopted > 0:
+        """The period this figure folds at.
+
+        The alias analysis is only allowed to override the periodogram peak
+        when it says it actually resolved the ambiguity. It reports
+        RESOLVED / AMBIGUOUS / INSUFFICIENT, and taking its top candidate
+        regardless throws away the one thing it was asked to determine.
+
+        Measured on AE UMa (two nights, 2.13 d baseline): the service returned
+        AMBIGUOUS with "leave-one-night-out agreement is 50%", its rank-1
+        candidate was 0.082514 d and its rank-2 was 0.086079 d. The plain
+        Lomb-Scargle peak was 0.086011 d and the literature period is
+        0.086017 d — so adopting rank 1 turned a 0.01 % answer into a 4.07 %
+        one. On YZ Boo, where the status is RESOLVED, the override is what
+        takes 9.2 % down to 0.11 %.
+        """
+        analysis = self.alias_analysis or {}
+        status = str(analysis.get("status", "")).upper()
+        adopted = float(analysis.get("adopted_period", np.nan))
+        if status == "RESOLVED" and np.isfinite(adopted) and adopted > 0:
             return adopted
         for method in ("ls", "pdm", "bls"):
             result = self._summary_method_result(method)
