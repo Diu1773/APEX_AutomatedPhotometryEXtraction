@@ -615,3 +615,57 @@ def test_the_window_and_the_batch_run_use_one_report_writer(tmp_path):
             is comparison_screening.write_selection_reports)
     assert (lc_target.write_selection_reports
             is comparison_screening.write_selection_reports)
+
+
+# ── one reader for Step 8's decision, whichever half wrote it ──────────────
+
+def test_step8_selection_is_read_from_either_half(tmp_path):
+    """The window writes `selection_<f>.json`; the step writes one file.
+
+    The Step 11 period window knew only the window's, so on a batch-built
+    workspace it held the release with "comparison selection metadata is
+    missing" — about a run that had selected an ensemble and written the
+    stability report right beside it.
+    """
+    from apex.analysis.light_curve.target_config import (
+        LcTarget, read_step8_selection, write_selection,
+    )
+
+    write_selection(tmp_path, LcTarget(target_id=153, filter_key="all"),
+                    [119, 166, 182], check_id=187, selected_by="stability")
+    got = read_step8_selection(tmp_path, "g")
+    assert got is not None
+    assert got["target_id"] == 153
+    assert got["comparison_ids"] == [119, 166, 182]
+    assert got["check_id"] == 187
+    assert got["selected_by"] == "stability"
+
+
+def test_the_windows_own_record_wins_when_both_exist(tmp_path):
+    from apex.analysis.light_curve.target_config import (
+        LcTarget, read_step8_selection, write_selection,
+    )
+
+    write_selection(tmp_path, LcTarget(target_id=153, filter_key="all"), [1, 2, 3])
+    _window_selection(tmp_path, "g", target=153, comps=(119, 166), check=187)
+    assert read_step8_selection(tmp_path, "g")["comparison_ids"] == [119, 166]
+    # No window file for `r`, so the pipeline's record answers for it.
+    assert read_step8_selection(tmp_path, "r")["comparison_ids"] == [1, 2, 3]
+
+
+def test_a_pipeline_record_for_one_filter_does_not_answer_for_another(tmp_path):
+    """`filter: all` stands for every band; a named filter only for itself."""
+    from apex.analysis.light_curve.target_config import (
+        LcTarget, read_step8_selection, write_selection,
+    )
+
+    write_selection(tmp_path, LcTarget(target_id=153, filter_key="g"), [1, 2, 3])
+    assert read_step8_selection(tmp_path, "g")["comparison_ids"] == [1, 2, 3]
+    assert read_step8_selection(tmp_path, "r") is None
+
+
+def test_step11_asks_the_shared_reader(tmp_path):
+    from apex.analysis.light_curve import target_config
+    from apex.gui.workflow.lc import step11_period_analysis as window
+
+    assert window.read_step8_selection is target_config.read_step8_selection

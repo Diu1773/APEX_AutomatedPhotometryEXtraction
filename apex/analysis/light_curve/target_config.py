@@ -254,3 +254,70 @@ def read_window_selection(result_dir, filter_key: str = "",
         return (position, -len(entry["comparison_ids"]), entry["filter"])
 
     return min(found, key=rank)
+
+
+def read_step8_selection(result_dir, filter_key: str = "") -> dict | None:
+    """Step 8's decision for one filter, from whichever half recorded it.
+
+    The window writes `selection_<filter>.json`; the pipeline step writes
+    `lc_target_selection.json`. Both are "which star, and which comparisons",
+    and a reader that knows only one of them sees nothing on half the
+    workspaces. The Step 11 period window knew only the window's, so on a batch
+    workspace it held the release with "comparison selection metadata is
+    missing" — about a run that had selected an ensemble and written the
+    stability report right beside it.
+
+    Returns the window's shape, so callers need no branch:
+    `comparison_ids`, `comparison_source_ids`, `check_id`, `check_source_id`,
+    `timestamp`, plus `source_file`.
+    """
+    import json
+
+    from apex.utils.common_helpers import normalize_filter_key
+    from apex.utils.step_paths_lc import step8_selection_dir
+
+    folder = Path(step8_selection_dir(result_dir))
+    wanted = normalize_filter_key(filter_key) if filter_key else ""
+
+    if wanted:
+        path = folder / f"selection_{filter_key}.json"
+        if path.exists():
+            try:
+                body = json.loads(path.read_text(encoding="utf-8"))
+            except Exception:                       # noqa: BLE001
+                body = None
+            if isinstance(body, dict) and body.get("target_id") is not None:
+                body["source_file"] = str(path)
+                return body
+
+    path = folder / "lc_target_selection.json"
+    if not path.exists():
+        return None
+    try:
+        body = json.loads(path.read_text(encoding="utf-8"))
+    except Exception:                               # noqa: BLE001
+        return None
+    if not isinstance(body, dict) or body.get("target_id") is None:
+        return None
+
+    # The pipeline carries one ensemble for the workspace, and records which
+    # filter it was screened on. `all` (or nothing) means it stands for every
+    # filter; a named filter only answers for itself.
+    recorded = normalize_filter_key(str(body.get("filter") or ""))
+    if recorded and recorded.lower() not in ("all", "any", "*"):
+        if wanted and recorded != wanted:
+            return None
+
+    check_id = body.get("check_id")
+    return {
+        "filter": filter_key or body.get("filter", ""),
+        "target_id": int(body["target_id"]),
+        "target_source_id": None,
+        "comparison_ids": [int(v) for v in (body.get("comparison_ids") or [])],
+        "comparison_source_ids": [],
+        "check_id": int(check_id) if check_id is not None else None,
+        "check_source_id": None,
+        "timestamp": "",
+        "selected_by": str(body.get("selected_by", "")),
+        "source_file": str(path),
+    }

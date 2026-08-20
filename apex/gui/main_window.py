@@ -351,7 +351,19 @@ class MainWindowWorkflow(AutoFitMixin, QMainWindow):
             # 이 상태는 모드당 하나(apex/.state/<mode>)라 마지막에 GUI 로 연
             # 프로젝트가 남아 있고, 그대로 두면 지정한 result_dir 이 조용히
             # 바뀌어 엉뚱한 자료를 읽는다.
+            #
+            # data_dir 만 비교하면 그 일이 그대로 일어난다. **같은 입력 자료를
+            # 두 result_dir 로 재처리하는 것은 흔한 구성**이고(이 저장소의
+            # `reprocess/YZBoo_2n` 와 `_fullrun_yzboo` 가 바로 그렇다), 그때
+            # data_dir 은 같으므로 가드를 통과해 저장된 result_dir 이 지정한
+            # 것을 덮었다. `--params other.json` 으로 연 창이 지난 세션
+            # 워크스페이스의 결과를 읽고 있었다 (2026-08-21).
+            saved_result_dir = state_data.get("result_dir")
+            current_result_dir = getattr(self.params.P, "result_dir", None)
             if Path(data_dir) != Path(self.params.P.data_dir):
+                data_dir = None
+            elif (saved_result_dir and current_result_dir
+                  and Path(saved_result_dir) != Path(current_result_dir)):
                 data_dir = None
         if data_dir:
             self.params.P.data_dir = Path(data_dir)

@@ -43,6 +43,7 @@ from PyQt5.QtCore import Qt, QThread, QTimer, pyqtSignal
 from apex.gui.layout_rules import tame_canvas
 from apex.gui.theme import style_button, Tokens
 from apex.gui.workflow.step_window_base import StepWindowBase
+from apex.analysis.light_curve.target_config import read_step8_selection
 from apex.analysis.light_curve.period_analysis_service import (
     compute_ls,
     run_period_analysis,
@@ -951,15 +952,15 @@ class PeriodAnalysisWindow(StepWindowBase, PeriodSummaryPlotter):
         filters: dict[str, dict] = {}
         release_reasons: list[str] = []
         for filt in filter_keys:
-            selection_path = selection_dir / f"selection_{filt}.json"
             stability_path = selection_dir / f"comparison_stability_{filt}.json"
-            selection: dict = {}
             stability: dict = {}
-            try:
-                if selection_path.exists():
-                    selection = json.loads(selection_path.read_text(encoding="utf-8"))
-            except Exception:
-                selection = {}
+            # Either half's record of the same decision. The window writes
+            # `selection_<filter>.json`, the pipeline step writes
+            # `lc_target_selection.json`; reading only the first held the
+            # release with "comparison selection metadata is missing" on every
+            # batch-built workspace — beside a stability report that was there.
+            selection = read_step8_selection(self.params.P.result_dir, filt) or {}
+            selection_path = Path(selection.get("source_file", "")) if selection                 else selection_dir / f"selection_{filt}.json"
             try:
                 if stability_path.exists():
                     stability = json.loads(stability_path.read_text(encoding="utf-8"))
@@ -974,7 +975,7 @@ class PeriodAnalysisWindow(StepWindowBase, PeriodSummaryPlotter):
             check_source_id = selection.get("check_source_id")
             check_metrics = dict(stability.get("check_metrics") or {})
             filters[filt] = {
-                "selection_file": str(selection_path) if selection_path.exists() else "",
+                "selection_file": str(selection_path) if selection else "",
                 "stability_file": str(stability_path) if stability_path.exists() else "",
                 "photometry_source": str(stability.get("photometry_source", "unknown")),
                 "comparison_ids": comparison_ids,
