@@ -568,3 +568,50 @@ def test_an_empty_built_selection_falls_through_to_step8(tmp_path):
 
     (built / "comp_selection.json").write_text("{broken", encoding="utf-8")
     assert sorted(_load_selection_ids(tmp_path)[1]) == [119, 166]
+
+
+def test_a_batch_run_leaves_the_files_step_11_reads(tmp_path):
+    """All four Step 8 reports, not just the screening one.
+
+    Three of the four were built inline in the window, so a workspace produced
+    headless had none of them — including `comparison_stability_<filter>.json`,
+    which the Step 11 period window reads to say which comparisons it is
+    standing on. Opening Step 11 on a batch workspace found nothing there.
+    """
+    import json
+
+    from apex.utils.step_paths_lc import step8_selection_dir
+
+    _master_with_source_ids(tmp_path)
+    _photometry(tmp_path)
+    ctx = _ctx(tmp_path, _params(tmp_path, lc_target_id=1,
+                                 lc_comparison_mode="auto", lc_filter=""))
+
+    out = LcTargetStep().run(ctx)
+    assert out.status is StepStatus.OK, out.message
+
+    folder = Path(step8_selection_dir(tmp_path))
+    names = {p.name for p in folder.iterdir()}
+    assert "comparison_screening_g.csv" in names
+    assert "comparison_stability_g.csv" in names
+    assert "comparison_stability_g.json" in names
+
+    summary = json.loads((folder / "comparison_stability_g.json").read_text(
+        encoding="utf-8"))
+    assert summary["selected_source_ids"], summary
+    assert summary["screening_funnel"]["measured"] >= summary["screening_funnel"]["adopted"]
+    # A batch run has no hand-rejects and no window clock; it says so rather
+    # than inventing them.
+    assert summary["manual_rejected_source_ids"] == []
+    assert summary["timestamp"] == ""
+
+
+def test_the_window_and_the_batch_run_use_one_report_writer(tmp_path):
+    from apex.analysis.light_curve import comparison_screening
+    from apex.gui.workflow.lc import step8_target_selection as window_module
+    from apex.pipeline.steps import lc_target
+
+    assert (window_module.write_selection_reports
+            is comparison_screening.write_selection_reports)
+    assert (lc_target.write_selection_reports
+            is comparison_screening.write_selection_reports)

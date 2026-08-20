@@ -399,3 +399,77 @@ def write_screening_report(result_dir, result: ScreeningResult) -> Path:
     report.insert(3, "mag_error_input_column", info.get("mag_error_column", ""))
     report.to_csv(path, index=False, encoding="utf-8")
     return path
+
+
+def write_selection_reports(result_dir, result: ScreeningResult, *,
+                            manual_rejects: Optional[Iterable] = None,
+                            timestamp: str = "") -> list[Path]:
+    """Every file Step 8 leaves behind for one filter, from one writer.
+
+    Four of them, and only the first was shared. The other three were inline in
+    the window, so a workspace built headless had none of them — including
+    `comparison_stability_<filter>.json`, which the Step 11 period window reads
+    to explain which comparisons it is standing on. Opening Step 11 on a batch
+    workspace therefore found nothing there and said nothing about it.
+
+    `manual_rejects` and `timestamp` are the window's own context: which stars
+    that user rejected by hand, and when. A batch run has neither, and the files
+    say so by leaving them empty rather than inventing them.
+    """
+    import json
+
+    from apex.utils.step_paths_lc import step8_selection_dir
+
+    out_dir = Path(step8_selection_dir(result_dir))
+    out_dir.mkdir(parents=True, exist_ok=True)
+    safe = "".join(ch if ch.isalnum() or ch in "._-" else "_"
+                   for ch in str(result.filter_key)) or "all"
+    info = result.source_info or {}
+    written = [write_screening_report(result_dir, result)]
+
+    def _stamp(frame: pd.DataFrame) -> pd.DataFrame:
+        frame = frame.copy()
+        frame.insert(0, "filter", result.filter_key)
+        frame.insert(1, "photometry_source", info.get("source", ""))
+        frame.insert(2, "mag_input_column", info.get("mag_column", ""))
+        frame.insert(3, "mag_error_input_column", info.get("mag_error_column", ""))
+        return frame
+
+    selected = {int(v) for v in result.selected_ids}
+    metrics = result.metrics
+    if isinstance(metrics, pd.DataFrame) and not metrics.empty:
+        table = _stamp(metrics)
+        ids = table["star_id"].astype("int64")
+        table["selected"] = ids.isin(selected)
+        table["check_star"] = (ids == int(result.check_id)
+                               if result.check_id is not None else False)
+        path = out_dir / f"comparison_stability_{safe}.csv"
+        table.to_csv(path, index=False, encoding="utf-8")
+        written.append(path)
+
+    trials = result.ensemble_trials
+    if isinstance(trials, pd.DataFrame) and not trials.empty:
+        table = _stamp(trials.drop(columns=["comparison_source_ids"], errors="ignore"))
+        path = out_dir / f"comparison_ensemble_trials_{safe}.csv"
+        table.to_csv(path, index=False, encoding="utf-8")
+        written.append(path)
+
+    summary = {
+        "filter": result.filter_key,
+        "target_source_id": int(result.target_id),
+        "photometry_source": info.get("source", ""),
+        "mag_input_column": info.get("mag_column", ""),
+        "mag_error_input_column": info.get("mag_error_column", ""),
+        "candidate_pool_source_ids": [int(v) for v in result.candidate_ids],
+        "selected_source_ids": sorted(selected),
+        "check_source_id": int(result.check_id) if result.check_id is not None else None,
+        "check_metrics": dict(result.check_metrics or {}),
+        "removed_source_ids": [int(v) for v in (result.stability or {}).get("removed_ids", [])],
+        "manual_rejected_source_ids": sorted(_as_id_set(manual_rejects)),
+        "screening_funnel": result.funnel.as_dict(),
+        "timestamp": timestamp,
+    }
+    path = out_dir / f"comparison_stability_{safe}.json"
+    path.write_text(json.dumps(summary, indent=2, ensure_ascii=False), encoding="utf-8")
+    written.append(path)
+    return written

@@ -46,7 +46,7 @@ import pandas as pd
 
 from apex.analysis.light_curve.comparison_screening import (
     ScreeningResult, colors_from_catalog, screen_measurements,
-    write_screening_report,
+    write_selection_reports,
 )
 from apex.analysis.light_curve.photometry_source_service import (
     load_filter_photometry_timeseries,
@@ -58,7 +58,7 @@ from apex.analysis.light_curve.target_config import (
 from apex.pipeline.base import PipelineStep, StepResult, StepStatus
 from apex.pipeline.context import RunContext
 from apex.utils.common_helpers import normalize_filter_key
-from apex.utils.step_paths import forced_phot_input_dir, master_catalog_path
+from apex.utils.step_paths import master_catalog_path
 from apex.utils.step_paths_lc import step8_selection_dir
 
 
@@ -238,7 +238,8 @@ class LcTargetStep(PipelineStep):
                     if screened.check_id is not None:
                         check_id = sid_to_id.get(int(screened.check_id))
                     notes.append(screened.funnel.as_text())
-                    outputs.append(str(write_screening_report(ctx.result_dir, screened)))
+                    outputs.extend(str(p) for p in
+                                   write_selection_reports(ctx.result_dir, screened))
             if not comparisons:
                 # Catalogue order is not a ranking, so it is a fallback and it
                 # is named as one rather than passed off as a selection.

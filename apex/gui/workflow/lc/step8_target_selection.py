@@ -38,10 +38,11 @@ from apex.gui.widgets.fits_viewer import FITSViewerWidget, OverlayMarker
 from apex.gui.widgets.comparison_automation_dialog import ComparisonAutomationDialog
 from apex.gui.widgets.comparison_lightcurve_preview import ComparisonLightCurvePreview
 from apex.analysis.light_curve.comparison_screening import (
+    ScreeningFunnel,
     ScreeningResult,
     build_candidate_pool,
     screen_measurements,
-    write_screening_report,
+    write_selection_reports,
 )
 from apex.analysis.light_curve.comparison_stability_service import (
     build_target_difference,
@@ -3793,77 +3794,37 @@ class TargetComparisonSelectionWindow(StepWindowBase):
         return result
 
     def _write_comparison_stability_report(self, flt: str, result: dict) -> None:
-        output_dir = step8_selection_dir(self.params.P.result_dir)
-        output_dir.mkdir(parents=True, exist_ok=True)
-        safe_filter = re.sub(r"[^A-Za-z0-9_.-]+", "_", str(flt))
-        metrics = result.get("metrics", pd.DataFrame()).copy()
-        source_info = result.get("source_info", {})
+        """The four files Step 8 leaves behind — through the shared writer.
+
+        All four used to be built inline here, so a workspace produced headless
+        had none of them. One of the four,
+        `comparison_stability_<filter>.json`, is what the Step 11 period window
+        reads to say which comparisons it is standing on: opening Step 11 on a
+        batch workspace found nothing there.
+        """
         selected_ids = set(int(value) for value in result.get("selected_ids", []))
         check_id = result.get("recommended_check_id")
-        if not metrics.empty:
-            metrics.insert(0, "filter", flt)
-            metrics.insert(1, "photometry_source", source_info.get("source", ""))
-            metrics.insert(2, "mag_input_column", source_info.get("mag_column", ""))
-            metrics.insert(3, "mag_error_input_column", source_info.get("mag_error_column", ""))
-            metrics["selected"] = metrics["star_id"].astype("int64").isin(selected_ids)
-            metrics["check_star"] = (
-                metrics["star_id"].astype("int64") == int(check_id)
-                if check_id is not None
-                else False
-            )
-            metrics.to_csv(
-                output_dir / f"comparison_stability_{safe_filter}.csv", index=False
-            )
-        # The screening report is written by the shared writer so the window and
-        # a batch run leave one file, not two under the same name.
-        basic = result.get("basic_report", pd.DataFrame())
-        if isinstance(basic, pd.DataFrame) and not basic.empty:
-            write_screening_report(
-                self.params.P.result_dir,
-                ScreeningResult(
-                    filter_key=str(flt),
-                    target_id=int(result.get("target_id", 0)),
-                    target_mag=float(result.get("target_mag", float("nan"))),
-                    measurements=result.get("measurements", pd.DataFrame()),
-                    source_info=dict(source_info),
-                    report=basic.copy(),
-                    candidate_ids=[int(v) for v in result.get("candidate_ids", [])],
-                    metrics=result.get("metrics", pd.DataFrame()),
-                    selected_ids=sorted(selected_ids),
-                    check_id=int(check_id) if check_id is not None else None,
-                ),
-            )
-        trials = result.get("ensemble_trials", pd.DataFrame()).copy()
-        if not trials.empty:
-            trials = trials.drop(columns=["comparison_source_ids"], errors="ignore")
-            trials.insert(0, "filter", flt)
-            trials.insert(1, "photometry_source", source_info.get("source", ""))
-            trials.insert(2, "mag_input_column", source_info.get("mag_column", ""))
-            trials.insert(3, "mag_error_input_column", source_info.get("mag_error_column", ""))
-            trials.to_csv(
-                output_dir / f"comparison_ensemble_trials_{safe_filter}.csv",
-                index=False,
-            )
-        summary = {
-            "filter": flt,
-            "target_source_id": int(result["target_id"]),
-            "photometry_source": result.get("source_info", {}).get("source", ""),
-            "mag_input_column": result.get("source_info", {}).get("mag_column", ""),
-            "mag_error_input_column": result.get("source_info", {}).get("mag_error_column", ""),
-            "candidate_pool_source_ids": [int(value) for value in result.get("candidate_ids", [])],
-            "selected_source_ids": sorted(selected_ids),
-            "check_source_id": int(check_id) if check_id is not None else None,
-            "check_metrics": result.get("check_metrics", {}),
-            "removed_source_ids": [int(value) for value in result.get("removed_ids", [])],
-            "manual_rejected_source_ids": sorted(self.filter_rejected_sources.get(flt, set())),
-            "timestamp": time.strftime("%Y-%m-%d %H:%M:%S"),
-        }
-        with open(
-            output_dir / f"comparison_stability_{safe_filter}.json",
-            "w",
-            encoding="utf-8",
-        ) as handle:
-            json.dump(summary, handle, indent=2, ensure_ascii=False)
+        write_selection_reports(
+            self.params.P.result_dir,
+            ScreeningResult(
+                filter_key=str(flt),
+                target_id=int(result["target_id"]),
+                target_mag=float(result.get("target_mag", float("nan"))),
+                measurements=result.get("measurements", pd.DataFrame()),
+                source_info=dict(result.get("source_info", {})),
+                report=result.get("basic_report", pd.DataFrame()),
+                candidate_ids=[int(v) for v in result.get("candidate_ids", [])],
+                metrics=result.get("metrics", pd.DataFrame()),
+                selected_ids=sorted(selected_ids),
+                check_id=int(check_id) if check_id is not None else None,
+                check_metrics=dict(result.get("check_metrics", {})),
+                ensemble_trials=result.get("ensemble_trials", pd.DataFrame()),
+                funnel=result.get("funnel") or ScreeningFunnel(),
+                stability=dict(result),
+            ),
+            manual_rejects=self.filter_rejected_sources.get(flt, set()),
+            timestamp=time.strftime("%Y-%m-%d %H:%M:%S"),
+        )
 
     def _review_comparison_recommendations(
         self,
