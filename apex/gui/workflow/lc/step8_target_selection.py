@@ -38,8 +38,10 @@ from apex.gui.widgets.fits_viewer import FITSViewerWidget, OverlayMarker
 from apex.gui.widgets.comparison_automation_dialog import ComparisonAutomationDialog
 from apex.gui.widgets.comparison_lightcurve_preview import ComparisonLightCurvePreview
 from apex.analysis.light_curve.comparison_screening import (
+    ScreeningResult,
     build_candidate_pool,
     screen_measurements,
+    write_screening_report,
 )
 from apex.analysis.light_curve.comparison_stability_service import (
     build_target_difference,
@@ -3812,14 +3814,24 @@ class TargetComparisonSelectionWindow(StepWindowBase):
             metrics.to_csv(
                 output_dir / f"comparison_stability_{safe_filter}.csv", index=False
             )
-        basic = result.get("basic_report", pd.DataFrame()).copy()
-        if not basic.empty:
-            basic.insert(0, "filter", flt)
-            basic.insert(1, "photometry_source", source_info.get("source", ""))
-            basic.insert(2, "mag_input_column", source_info.get("mag_column", ""))
-            basic.insert(3, "mag_error_input_column", source_info.get("mag_error_column", ""))
-            basic.to_csv(
-                output_dir / f"comparison_screening_{safe_filter}.csv", index=False
+        # The screening report is written by the shared writer so the window and
+        # a batch run leave one file, not two under the same name.
+        basic = result.get("basic_report", pd.DataFrame())
+        if isinstance(basic, pd.DataFrame) and not basic.empty:
+            write_screening_report(
+                self.params.P.result_dir,
+                ScreeningResult(
+                    filter_key=str(flt),
+                    target_id=int(result.get("target_id", 0)),
+                    target_mag=float(result.get("target_mag", float("nan"))),
+                    measurements=result.get("measurements", pd.DataFrame()),
+                    source_info=dict(source_info),
+                    report=basic.copy(),
+                    candidate_ids=[int(v) for v in result.get("candidate_ids", [])],
+                    metrics=result.get("metrics", pd.DataFrame()),
+                    selected_ids=sorted(selected_ids),
+                    check_id=int(check_id) if check_id is not None else None,
+                ),
             )
         trials = result.get("ensemble_trials", pd.DataFrame()).copy()
         if not trials.empty:

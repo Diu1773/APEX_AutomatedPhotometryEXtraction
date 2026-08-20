@@ -357,14 +357,21 @@ def colors_from_catalog(
 
 
 def write_screening_report(result_dir, result: ScreeningResult) -> Path:
-    """Persist the per-star verdict beside the selection it produced."""
+    """Persist the per-star verdict beside the selection it produced.
+
+    One writer, one file. This first wrote `comparison_screening_<f>.tsv` while
+    the window wrote `comparison_screening_<f>.csv` from its own inline code —
+    the same report, the same name, differing only in extension, so a workspace
+    run both ways carried two versions of it. Same shape of mistake as the
+    window and the pipeline keeping their Step 8 choices in different files.
+    """
     from apex.utils.step_paths_lc import step8_selection_dir
 
     out_dir = Path(step8_selection_dir(result_dir))
     out_dir.mkdir(parents=True, exist_ok=True)
     safe = "".join(ch if ch.isalnum() or ch in "._-" else "_"
                    for ch in str(result.filter_key)) or "all"
-    path = out_dir / f"comparison_screening_{safe}.tsv"
+    path = out_dir / f"comparison_screening_{safe}.csv"
 
     report = result.report.copy()
     selected = set(result.selected_ids)
@@ -383,5 +390,12 @@ def write_screening_report(result_dir, result: ScreeningResult) -> Path:
             report = report.merge(
                 metrics[[key] + keep], on="star_id", how="left", suffixes=("", "_metric")
             )
-    report.to_csv(path, sep="\t", index=False, encoding="utf-8")
+    # Provenance first, the way the window has always written this file: which
+    # filter, and which photometry column the magnitudes came from.
+    info = result.source_info or {}
+    report.insert(0, "filter", result.filter_key)
+    report.insert(1, "photometry_source", info.get("source", ""))
+    report.insert(2, "mag_input_column", info.get("mag_column", ""))
+    report.insert(3, "mag_error_input_column", info.get("mag_error_column", ""))
+    report.to_csv(path, index=False, encoding="utf-8")
     return path

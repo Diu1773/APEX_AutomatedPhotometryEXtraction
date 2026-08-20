@@ -298,8 +298,13 @@ def test_auto_mode_ranks_by_stability_and_says_which_screen_ran(tmp_path):
     assert written["target_id"] not in written["comparison_ids"]
     # The per-star verdict lands beside the selection, not only in a log line.
     report = next(p for p in out.outputs if "comparison_screening" in p)
-    table = pd.read_csv(report, sep="\t")
-    assert {"star_id", "coverage", "eligible", "basic_reason", "role"} <= set(table.columns)
+    # One file, the window's: this used to write a `.tsv` sibling of the `.csv`
+    # the window wrote from its own inline code — the same report under the same
+    # name, so a workspace run both ways carried two versions of it.
+    assert report.endswith(".csv"), report
+    table = pd.read_csv(report)
+    assert {"star_id", "coverage", "eligible", "basic_reason", "role",
+            "filter", "photometry_source"} <= set(table.columns)
     assert (table["role"] == "target").sum() == 1
 
 
@@ -514,3 +519,52 @@ def test_the_two_sides_ask_the_same_question_about_filters(tmp_path):
     assert lc_target._available_filters is target_config.filters_by_frame_count
     assert window.filters_by_frame_count is target_config.filters_by_frame_count
     assert window.read_window_selection is target_config.read_window_selection
+
+
+def test_step9_reads_its_own_output_before_step8s_pick(tmp_path):
+    """What was built beats what was proposed.
+
+    Saving a light curve writes `comp_selection.json` with `comp_active_ids`,
+    and Step 10 already preferred it. Step 9 did not read its own output, so a
+    workspace whose UI state had been lost — copied to another machine, or
+    project_state cleared — reopened to Step 8's pick rather than the ensemble
+    the curve was actually made from.
+    """
+    import json
+
+    from apex.gui.workflow.lc.step9_lightcurve_builder import _load_selection_ids
+    from apex.utils.step_paths_lc import step9_lc_dir
+
+    _window_selection(tmp_path, "g", target=153, comps=(119, 166), check=187)
+    built = Path(step9_lc_dir(tmp_path))
+    built.mkdir(parents=True, exist_ok=True)
+    (built / "comp_selection.json").write_text(json.dumps({
+        "target_id": 153,
+        "comp_candidate_ids": [119, 166, 182, 199],
+        "comp_active_ids": [182, 199],
+    }), encoding="utf-8")
+
+    target_id, comp_ids = _load_selection_ids(tmp_path)
+    assert target_id == 153
+    assert sorted(comp_ids) == [182, 199]          # built, not proposed
+
+
+def test_an_empty_built_selection_falls_through_to_step8(tmp_path):
+    """A `comp_selection.json` with no active list is not an answer."""
+    import json
+
+    from apex.gui.workflow.lc.step9_lightcurve_builder import _load_selection_ids
+    from apex.utils.step_paths_lc import step9_lc_dir
+
+    _window_selection(tmp_path, "g", target=153, comps=(119, 166), check=187)
+    built = Path(step9_lc_dir(tmp_path))
+    built.mkdir(parents=True, exist_ok=True)
+    (built / "comp_selection.json").write_text(
+        json.dumps({"target_id": 153, "comp_active_ids": []}), encoding="utf-8")
+
+    target_id, comp_ids = _load_selection_ids(tmp_path)
+    assert target_id == 153
+    assert sorted(comp_ids) == [119, 166]
+
+    (built / "comp_selection.json").write_text("{broken", encoding="utf-8")
+    assert sorted(_load_selection_ids(tmp_path)[1]) == [119, 166]

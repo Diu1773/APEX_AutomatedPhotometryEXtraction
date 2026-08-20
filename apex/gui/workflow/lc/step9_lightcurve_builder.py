@@ -594,7 +594,37 @@ def _get_color_index_map(result_dir: Path, color_index_by_filter: dict[str, str]
     return out
 
 
+def _load_built_selection_ids(result_dir: Path) -> tuple[int | None, list[int]]:
+    """Target and active comparisons from the last saved light curve.
+
+    `comp_selection.json` is written by `lightcurve_output_service` whenever a
+    curve is saved, so it records what the curve was actually built from — a
+    stronger claim than Step 8's pick, which is only what was proposed.
+    """
+    path = step9_lc_dir(result_dir) / "comp_selection.json"
+    if not path.exists():
+        return None, []
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except Exception:                               # noqa: BLE001
+        return None, []
+    target_id = data.get("target_id")
+    active = [int(x) for x in (data.get("comp_active_ids") or [])
+              if str(x).strip()]
+    return (int(target_id) if target_id is not None else None), active
+
+
 def _load_selection_ids(result_dir: Path) -> tuple[int | None, list[int]]:
+    # What this window last *built* comes first. Saving a light curve writes
+    # `comp_selection.json` with `comp_active_ids`, and Step 10 already reads it
+    # in preference to anything else — but this window did not read its own
+    # output, so reopening a workspace whose UI state had been lost (copied to
+    # another machine, project_state cleared) came back to Step 8's pick rather
+    # than the ensemble the curve was actually made from.
+    built = _load_built_selection_ids(result_dir)
+    if built[0] is not None and built[1]:
+        return built
+
     # per-filter selection_{filter}.json 우선 (가장 최신)
     filter_sel = _load_selection_ids_by_filter(result_dir)
     if filter_sel:

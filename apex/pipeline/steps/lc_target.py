@@ -24,7 +24,7 @@ the stability screen that ranks them by how steady they actually were lived
 inside the window. On the same 364 YZ Boo frames the batch ensemble's average
 came out 0.68 mag from the window's, and nothing in the output said the two runs
 had used different stars. The screen is now `comparison_screening`, the window
-calls the same functions, and `comparison_screening_<filter>.tsv` records every
+calls the same functions, and `comparison_screening_<filter>.csv` records every
 measured star and the stage that dropped it.
 
 The third was the gate refusing work that had already been done. The window
