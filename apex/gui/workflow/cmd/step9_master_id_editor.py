@@ -145,7 +145,10 @@ class MasterIdEditorWindow(StepWindowBase):
             "G=Radial profile, [ / ]=Prev/Next frame\n"
             "Green=Gaia in master, Yellow=Local, Cyan=forced-only. Members ● = Gaia member dot."
         )
-        info.setStyleSheet("QLabel { background-color: #E3F2FD; padding: 10px; border-radius: 5px; }")
+        # Was a hand-painted #E3F2FD, which ignores whichever theme is chosen
+        # and turns unreadable on the dark presets. `role="info"` is the same
+        # look, taken from the palette.
+        info.setProperty("role", "info")
         self.content_layout.addWidget(info)
 
         control_layout = QHBoxLayout()

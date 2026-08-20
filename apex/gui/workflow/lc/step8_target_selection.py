@@ -37,15 +37,16 @@ import sip
 from apex.gui.widgets.fits_viewer import FITSViewerWidget, OverlayMarker
 from apex.gui.widgets.comparison_automation_dialog import ComparisonAutomationDialog
 from apex.gui.widgets.comparison_lightcurve_preview import ComparisonLightCurvePreview
+from apex.analysis.light_curve.comparison_screening import (
+    build_candidate_pool,
+    screen_measurements,
+)
 from apex.analysis.light_curve.comparison_stability_service import (
-    ComparisonSelectionConfig,
     build_target_difference,
     compute_leave_one_out_residuals,
     compute_stability_metrics,
     recommend_check_candidate,
     score_stability_metrics,
-    select_adaptive_ensemble,
-    select_stable_comparisons,
 )
 from apex.analysis.light_curve.photometry_source_service import (
     load_filter_photometry_timeseries,
@@ -527,6 +528,8 @@ class TargetComparisonSelectionWindow(StepWindowBase):
         self.filter_rejected_sources: Dict[str, Set[int]] = {}
         self._filter_timeseries_cache: Dict[str, tuple[pd.DataFrame, dict]] = {}
         self._filter_stability_cache: Dict[str, dict] = {}
+        # Screening funnel text per filter, filled in by automation.
+        self._screening_funnel: Dict[str, str] = {}
         self._comparison_preview: Optional[ComparisonLightCurvePreview] = None
         self._comparison_preview_worker: Optional[_ComparisonPreviewWorker] = None
         self._comparison_preview_request_token = 0
@@ -674,6 +677,22 @@ class TargetComparisonSelectionWindow(StepWindowBase):
             label.setFont(font)
 
     def setup_step_ui(self):
+        # Eleven keys drive this window and until now six of them appeared on
+        # screen, only while it was narrow — widen it and `Target (T)` became
+        # `Target`, so the key vanished exactly where there was room for it. G
+        # and P appeared nowhere. CMD's Master ID Editor has spelled its keys
+        # out in a banner all along; this is that banner.
+        shortcuts = QLabel(
+            "Pick a star in the table or the preview, then give it a role.\n"
+            "Roles: T=Target, C=Comparison (toggle), K=Check   ·   "
+            "Master: A=Add, D=Remove, Shift+D=Remove box\n"
+            "Look: G=Radial profile, P=Light-curve preview   ·   "
+            "Move: .=Next filter, [ / ]=Prev/Next frame"
+        )
+        shortcuts.setProperty("role", "info")
+        self.content_layout.addWidget(shortcuts)
+        self._shortcut_banner = shortcuts
+
         # ── Row 0: Filter + Frame + Status (한 줄) ──
         top_bar = QHBoxLayout()
         top_bar.setSpacing(8)
@@ -711,50 +730,79 @@ class TargetComparisonSelectionWindow(StepWindowBase):
 
         self.content_layout.addLayout(top_bar)
 
-        # ── Row 1: role summary + direct role assignment ──
+        # ── Row 1: the three roles, each value beside the button that sets it ──
+        # They used to sit at opposite ends of the window: the labels started at
+        # the left margin and the buttons were flushed right, so at 1600 px wide
+        # `Comps: 0` and the button that changes it were 1300 px apart and the
+        # eye had to pair them by name. Button first, then the value it drives.
         action_row1 = QHBoxLayout()
         action_row1.setSpacing(8)
+
+        btn_set_target = QPushButton("Set Target")
+        btn_set_target.setToolTip("Assign the selected source as target  (T)")
+        btn_set_target.clicked.connect(self.set_target_selected)
+        action_row1.addWidget(btn_set_target)
 
         # These three read as a legend for the overlay markers, so they take
         # their colour from the same map the markers do — previously they were
         # hardcoded and drifted the moment a user recoloured an overlay (the
         # check label was already #8A6A00 against a #FFD700 marker).
-        self.target_label = QLabel("Target: (none)")
+        self.target_label = QLabel("(none)")
         action_row1.addWidget(self.target_label)
 
-        self.comparison_label = QLabel("Comps: 0")
+        action_row1.addSpacing(Tokens.S3)
+
+        btn_toggle_comp = QPushButton("Toggle Comparison")
+        btn_toggle_comp.setToolTip(
+            "Add or remove the selected source from the ensemble  (C)"
+        )
+        btn_toggle_comp.clicked.connect(self.toggle_comparison_selected)
+        action_row1.addWidget(btn_toggle_comp)
+
+        self.comparison_label = QLabel("0")
         action_row1.addWidget(self.comparison_label)
 
-        self.check_label = QLabel("Check: (none)")
+        action_row1.addSpacing(Tokens.S3)
+
+        btn_set_check = QPushButton("Set Check")
+        btn_set_check.setToolTip(
+            "Assign the selected source as the independent check star  (K)"
+        )
+        btn_set_check.clicked.connect(self.set_check_selected)
+        action_row1.addWidget(btn_set_check)
+
+        self.check_label = QLabel("(none)")
         action_row1.addWidget(self.check_label)
         self._refresh_role_label_colors()
 
         action_row1.addStretch()
 
-        btn_set_target = QPushButton("Target")
-        btn_set_target.setToolTip("Assign the selected source as target")
-        btn_set_target.clicked.connect(self.set_target_selected)
-        action_row1.addWidget(btn_set_target)
-
-        btn_toggle_comp = QPushButton("Comparison")
-        btn_toggle_comp.setToolTip("Add or remove the selected source from the ensemble")
-        btn_toggle_comp.clicked.connect(self.toggle_comparison_selected)
-        action_row1.addWidget(btn_toggle_comp)
-
-        btn_set_check = QPushButton("Check")
-        btn_set_check.setToolTip("Assign the selected source as the independent check star")
-        btn_set_check.clicked.connect(self.set_check_selected)
-        action_row1.addWidget(btn_set_check)
-
         self.content_layout.addLayout(action_row1)
 
-        # ── Row 2: selected source + comparison analysis ──
+        # ── Row 2: selected source + screening funnel + automation ──
         action_row2 = QHBoxLayout()
         action_row2.setSpacing(8)
 
         self.selected_label = QLabel("Selected: (none)")
         self.selected_label.setProperty("role", "caption")
         action_row2.addWidget(self.selected_label)
+
+        # Automation used to report only its endpoint ("3 comparisons + check
+        # 187"), so a run that found three out of four thousand looked the same
+        # as one that found three out of five. This is where each stage dropped
+        # candidates; it stays hidden until a run fills it in.
+        self.screening_label = QLabel("")
+        self.screening_label.setProperty("role", "caption")
+        self.screening_label.setToolTip(
+            "measured: sources with usable photometry in this filter\n"
+            "coverage: measured on at least 90% of the frames\n"
+            "eligible: minus the target, manual rejects, and Gaia/SIMBAD variables\n"
+            "pool: the highest-ranked eligible candidates (comparison_auto_pool_max)\n"
+            "adopted: the ensemble the stability search kept"
+        )
+        self.screening_label.setVisible(False)
+        action_row2.addSpacing(Tokens.S3)
+        action_row2.addWidget(self.screening_label)
 
         action_row2.addStretch()
 
@@ -885,6 +933,11 @@ class TargetComparisonSelectionWindow(StepWindowBase):
         self._viewer = FITSViewerWidget(self)
         self._viewer.gl.mouse_pressed.connect(self._on_viewer_click)
         viewer_layout.addWidget(self._viewer)
+        # 2:1 left the table 501 px for nine columns, so it carried a
+        # horizontal scrollbar at every window size while the preview kept
+        # 1035 px it mostly did not use. The table is where a star is judged —
+        # magnitude, colour, Gaia variability, SIMBAD type — and after
+        # screening it carries three more columns still.
         main_layout.addWidget(viewer_group, stretch=2)
 
         # Detection table (all sources in current frame)
@@ -919,7 +972,7 @@ class TargetComparisonSelectionWindow(StepWindowBase):
         self.master_table.doubleClicked.connect(self._on_table_double_click)
         table_layout.addWidget(self.master_table)
 
-        main_layout.addWidget(table_group, stretch=1)
+        main_layout.addWidget(table_group, stretch=3)
 
         self.content_layout.addLayout(main_layout, 1)
 
@@ -2418,6 +2471,7 @@ class TargetComparisonSelectionWindow(StepWindowBase):
             self.update_master_table()
         self.update_target_labels()
         self._update_check_label()
+        self._update_screening_label()
 
     def populate_file_list(self):
         """현재 필터의 파일 목록 로드"""
@@ -3139,7 +3193,7 @@ class TargetComparisonSelectionWindow(StepWindowBase):
 
     def update_target_labels(self):
         if self.target_source_id is None:
-            self.target_label.setText("Target: (none)")
+            self.target_label.setText("(none)")
         else:
             # Show stable ID (1, 2, 3...) with source type
             display_id = self.sid_to_id.get(self.target_source_id)
@@ -3152,7 +3206,7 @@ class TargetComparisonSelectionWindow(StepWindowBase):
             mag_str = f"G={g_mag:.2f}" if np.isfinite(g_mag) else "G=?"
             color_str = f"BP-RP={color:.2f}" if np.isfinite(color) else ""
             extra = f" {mag_str}" + (f" {color_str}" if color_str else "")
-            self.target_label.setText(f"Target: ID {display_id}{extra}")
+            self.target_label.setText(f"ID {display_id}{extra}")
         # Show comparison count with IDs if few
         target_color = self._get_color_for_source(self.target_source_id) if self.target_source_id else float("nan")
         n_comp = len(self.comparison_ids)
@@ -3164,9 +3218,9 @@ class TargetComparisonSelectionWindow(StepWindowBase):
                     self._load_global_id_map(self.current_filter)
                     comp_id = self._global_id_map.get(sid, "?")
                 comp_parts.append(str(comp_id))
-            self.comparison_label.setText(f"Comps: {', '.join(comp_parts)}")
+            self.comparison_label.setText(", ".join(comp_parts))
         else:
-            self.comparison_label.setText(f"Comps: {n_comp}")
+            self.comparison_label.setText(str(n_comp))
 
     def _select_table_row_by_sid(self, source_id: int):
         if source_id is None:
@@ -3481,14 +3535,47 @@ class TargetComparisonSelectionWindow(StepWindowBase):
     def _update_check_label(self):
         flt = self.current_filter
         if flt is None:
-            self.check_label.setText("Check: (none)")
+            self.check_label.setText("(none)")
             return
         check_sid = self.filter_check_stars.get(flt)
         if check_sid is None:
-            self.check_label.setText("Check: (none)")
+            self.check_label.setText("(none)")
         else:
             disp_id = self.sid_to_id.get(int(check_sid), "?")
-            self.check_label.setText(f"Check: ID {disp_id}")
+            self.check_label.setText(f"ID {disp_id}")
+
+    def _screening_funnel_text(self, result: dict) -> str:
+        """Count what each screening stage dropped, from the run's own tables.
+
+        Every number here is read back out of the automation result — the
+        candidate-pool summary and the ensemble the stability search kept — so
+        the line cannot drift away from what the run actually did.
+        """
+        report = result.get("basic_report")
+        if not isinstance(report, pd.DataFrame) or report.empty:
+            return ""
+        measured = int(len(report))
+        coverage = int((pd.to_numeric(report["coverage"], errors="coerce") >= 0.90).sum())
+        eligible = int(report["eligible"].astype(bool).sum())
+        pool = len(result.get("candidate_ids", []))
+        adopted = len(result.get("selected_ids", []))
+        check_id = result.get("recommended_check_id")
+        stages = (
+            f"{measured} measured → {coverage} coverage → {eligible} eligible "
+            f"→ {pool} pool → {adopted} adopted"
+        )
+        if check_id is not None:
+            disp = self.sid_to_id.get(int(check_id), int(check_id))
+            stages += f", check ID {disp}"
+        return stages
+
+    def _update_screening_label(self) -> None:
+        label = getattr(self, "screening_label", None)
+        if label is None:
+            return
+        text = self._screening_funnel.get(self.current_filter or "", "")
+        label.setText(f"Screening: {text}" if text else "")
+        label.setVisible(bool(text))
 
     def _open_color_dialog(self):
         if self._color_dialog is not None and self._color_dialog.isVisible():
@@ -3600,85 +3687,25 @@ class TargetComparisonSelectionWindow(StepWindowBase):
         catalog_reject_ids: Optional[Set[int]] = None,
         prefer_current: bool = True,
     ) -> tuple[list[int], pd.DataFrame, float]:
-        total_frames = int(measurements["frame"].nunique())
-        summary = (
-            measurements.groupby("star_id")
-            .agg(
-                n=("frame", "nunique"),
-                mean_mag=("mag", "median"),
-                median_error=("mag_err", "median"),
-            )
-            .reset_index()
-        )
-        summary["star_id"] = pd.to_numeric(
-            summary["star_id"], errors="coerce"
-        ).astype("Int64")
-        summary = summary[summary["star_id"].notna()].copy()
-        summary["star_id"] = summary["star_id"].astype("int64")
-        summary["coverage"] = summary["n"] / max(total_frames, 1)
-        target_rows = summary[summary["star_id"] == int(target_id)]
-        target_mag = (
-            float(target_rows.iloc[0]["mean_mag"])
-            if not target_rows.empty
-            else float("nan")
-        )
-        summary["d_mag"] = (
-            np.abs(summary["mean_mag"] - target_mag)
-            if np.isfinite(target_mag)
-            else 0.0
-        )
+        """The coverage/exclusion screen — the shared one, not a copy.
 
-        manual_rejects = self.filter_rejected_sources.get(flt, set())
-        summary["eligible"] = summary["coverage"] >= 0.90
-        summary["basic_reason"] = ""
-        summary.loc[summary["coverage"] < 0.90, "basic_reason"] = "low_coverage"
-        summary.loc[summary["star_id"] == int(target_id), ["eligible", "basic_reason"]] = [
-            False,
-            "target",
-        ]
-        if manual_rejects:
-            summary.loc[
-                summary["star_id"].isin(manual_rejects), ["eligible", "basic_reason"]
-            ] = [False, "manual_reject"]
-
-        variable_ids = {
-            int(star_id)
-            for star_id in summary.loc[summary["eligible"], "star_id"]
-            if self._is_gaia_variable_candidate(int(star_id))
-        }
-        if variable_ids:
-            summary.loc[
-                summary["star_id"].isin(variable_ids), ["eligible", "basic_reason"]
-            ] = [False, "gaia_variable"]
-
-        external_rejects = {int(value) for value in (catalog_reject_ids or set())}
-        if external_rejects:
-            summary.loc[
-                summary["star_id"].isin(external_rejects),
-                ["eligible", "basic_reason"],
-            ] = [False, "simbad_variable"]
-
-        eligible = summary[summary["eligible"]].copy()
-        eligible = eligible.sort_values(
-            ["d_mag", "median_error", "coverage", "star_id"],
-            ascending=[True, True, False, True],
-            na_position="last",
+        This used to be eighty-nine lines here and nowhere else, which is why a
+        headless run had no screen at all and fell back to catalogue order. The
+        window now supplies only what is window-specific: which stars this user
+        rejected by hand, which ones are already in the ensemble, and how to ask
+        whether a source is a catalogued variable.
+        """
+        return build_candidate_pool(
+            measurements,
+            int(target_id),
+            int(target_count),
+            manual_rejects=self.filter_rejected_sources.get(flt, set()),
+            is_variable=self._is_gaia_variable_candidate,
+            external_rejects=catalog_reject_ids,
+            prefer_ids=(self.filter_comparisons.get(flt, set())
+                        if prefer_current else ()),
+            pool_cap=int(getattr(self.params.P, "comparison_auto_pool_max", 30)),
         )
-        configured_cap = int(getattr(self.params.P, "comparison_auto_pool_max", 30))
-        pool_cap = max(3, configured_cap, int(target_count))
-        eligible_ids = set(eligible["star_id"].astype("int64"))
-        current = (
-            [
-                int(star_id)
-                for star_id in sorted(self.filter_comparisons.get(flt, set()))
-                if int(star_id) in eligible_ids
-            ]
-            if prefer_current
-            else []
-        )
-        ranked = [int(value) for value in eligible["star_id"].tolist()]
-        pool = current + [value for value in ranked if value not in current]
-        return pool[:pool_cap], summary, target_mag
 
     def _analyze_filter_comparisons(
         self,
@@ -3691,6 +3718,12 @@ class TargetComparisonSelectionWindow(StepWindowBase):
         prefer_current: bool = True,
         should_stop: Optional[Callable[[], bool]] = None,
     ) -> dict:
+        """Screen, score and pick, then keep the answer in the window's shape.
+
+        The selection itself is `screen_measurements`, the same call a batch run
+        makes. What stays here is the caching: repeat clicks on the same filter
+        with the same rejects must not re-run a minute of leave-one-out work.
+        """
         desired_count = int(
             target_count
             or getattr(self.params.P, "comparison_auto_ensemble_max", 12)
@@ -3714,66 +3747,41 @@ class TargetComparisonSelectionWindow(StepWindowBase):
         )
         if should_stop is not None and should_stop():
             raise RuntimeError("Comparison analysis canceled.")
-        if measurements.empty:
-            raise ValueError(f"No usable photometry time series for filter {flt}.")
-        available = set(measurements["star_id"].astype("int64"))
-        if int(target_id) not in available:
-            raise ValueError(f"Target source {target_id} has no usable measurements in {flt}.")
 
-        pool, basic_report, target_mag = self._comparison_candidate_pool(
-            flt,
+        screened = screen_measurements(
             measurements,
             int(target_id),
-            desired_count,
-            catalog_reject_ids=set(external_rejects),
-            prefer_current=prefer_current,
+            filter_key=str(flt),
+            source_info=source_info,
+            desired_count=desired_count,
+            pool_cap=int(getattr(self.params.P, "comparison_auto_pool_max", 30)),
+            color_for=lambda star_id: self._get_color_for_source(star_id, flt),
+            target_color=self._get_color_for_source(int(target_id), flt),
+            manual_rejects=self.filter_rejected_sources.get(flt, set()),
+            is_variable=self._is_gaia_variable_candidate,
+            external_rejects=catalog_reject_ids,
+            prefer_ids=(self.filter_comparisons.get(flt, set())
+                        if prefer_current else ()),
+            should_stop=should_stop,
         )
-        if len(pool) < 4:
-            raise ValueError(
-                f"Only {len(pool)} candidates pass the 90% coverage and exclusion checks in {flt}; "
-                "at least 3 comparisons plus one check star are required."
-            )
-        target_color = self._get_color_for_source(int(target_id), flt)
-        colors = {star_id: self._get_color_for_source(star_id, flt) for star_id in pool}
-        config = ComparisonSelectionConfig(
-            target_count=max(4, len(pool)),
-            min_comparisons=3,
-        )
-        result = select_stable_comparisons(
-            measurements,
-            pool,
-            target_mag=target_mag,
-            target_color=target_color,
-            color_by_id=colors,
-            config=config,
-        )
-        if should_stop is not None and should_stop():
-            raise RuntimeError("Comparison analysis canceled.")
-        adaptive = select_adaptive_ensemble(
-            measurements,
-            result.get("metrics", pd.DataFrame()),
-            min_comparisons=3,
-            max_comparisons=max(3, desired_count),
-        )
-        result["selected_ids"] = [
-            int(value) for value in adaptive.get("selected_ids", [])
-        ]
-        result["recommended_check_id"] = adaptive.get("check_id")
-        result["check_metrics"] = dict(adaptive.get("check_metrics", {}))
-        result["ensemble_trials"] = adaptive.get("ensemble_trials", pd.DataFrame())
-        result["adaptive_reason"] = str(adaptive.get("reason", ""))
-        result.update(
-            {
-                "signature": signature,
-                "measurements": measurements,
-                "source_info": source_info,
-                "basic_report": basic_report,
-                "candidate_ids": pool,
-                "target_id": int(target_id),
-                "target_mag": target_mag,
-                "target_color": target_color,
-            }
-        )
+
+        result = {
+            "metrics": screened.metrics,
+            "selected_ids": list(screened.selected_ids),
+            "recommended_check_id": screened.check_id,
+            "check_metrics": dict(screened.check_metrics),
+            "ensemble_trials": screened.ensemble_trials,
+            "adaptive_reason": screened.reason,
+            "signature": signature,
+            "measurements": screened.measurements,
+            "source_info": screened.source_info,
+            "basic_report": screened.report,
+            "candidate_ids": list(screened.candidate_ids),
+            "target_id": int(target_id),
+            "target_mag": screened.target_mag,
+            "target_color": self._get_color_for_source(int(target_id), flt),
+            "funnel": screened.funnel,
+        }
         if should_stop is None or not should_stop():
             self._filter_stability_cache[flt] = result
         return result
@@ -4059,6 +4067,10 @@ class TargetComparisonSelectionWindow(StepWindowBase):
                     flt, target_id, selected, result
                 )
                 check_id = int(result["recommended_check_id"])
+                funnel = self._screening_funnel_text(result)
+                if funnel:
+                    self._screening_funnel[str(flt)] = funnel
+                    self.log(f"Automation {flt} screening: {funnel}")
                 completed.append(
                     f"{flt}: {len(selected)} comparisons + check {check_id}"
                 )
@@ -4077,6 +4089,7 @@ class TargetComparisonSelectionWindow(StepWindowBase):
             ).copy()
             self._refresh_role_ui(rebuild_table=False)
             self._apply_simbad_types_to_table()
+        self._update_screening_label()
 
         warnings = [str(value) for value in payload.get("warnings", [])]
         canceled = bool(payload.get("canceled"))

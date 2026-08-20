@@ -109,8 +109,16 @@ def resolve_comparisons(target: LcTarget, catalog: pd.DataFrame,
     return available[:max(target.comparison_count, 1)]
 
 
-def write_selection(result_dir, target: LcTarget, comparisons: list[int]) -> Path:
-    """Persist the choice where the downstream LC steps look for it."""
+def write_selection(result_dir, target: LcTarget, comparisons: list[int],
+                    *, check_id: int | None = None,
+                    selected_by: str = "config") -> Path:
+    """Persist the choice where the downstream LC steps look for it.
+
+    `check_id` and `selected_by` are recorded because a file that says only
+    which stars were used cannot tell an ensemble ranked by stability from one
+    taken in catalogue order — and those two gave averages 0.68 mag apart on the
+    same frames.
+    """
     import json
 
     from apex.utils.step_paths_lc import step8_selection_dir
@@ -118,14 +126,19 @@ def write_selection(result_dir, target: LcTarget, comparisons: list[int]) -> Pat
     out_dir = Path(step8_selection_dir(result_dir))
     out_dir.mkdir(parents=True, exist_ok=True)
     path = out_dir / "lc_target_selection.json"
-    path.write_text(json.dumps({
+    payload = {
         "target_id": target.target_id,
         "target_name": target.target_name,
         "filter": target.filter_key,
         "comparison_mode": target.comparison_mode,
         "comparison_ids": [int(v) for v in comparisons],
         "source": "config",
-    }, indent=2, ensure_ascii=False), encoding="utf-8")
+        "selected_by": selected_by,
+    }
+    if check_id is not None:
+        payload["check_id"] = int(check_id)
+    path.write_text(json.dumps(payload, indent=2, ensure_ascii=False),
+                    encoding="utf-8")
     return path
 
 

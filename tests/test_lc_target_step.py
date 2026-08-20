@@ -192,3 +192,161 @@ def test_it_reads_a_tab_separated_catalog(tmp_path):
     selection = read_selection(tmp_path)
     assert selection["target_id"] == 2
     assert selection["comparison_ids"], "auto mode found no comparisons in a TSV catalog"
+
+
+# ── the screen the batch run was missing ───────────────────────────────────
+#
+# `auto` mode ranked by *catalogue order* for its first eight days, because the
+# stability screen that ranks by measured steadiness lived inside the window. On
+# 364 YZ Boo frames the two ensembles' averages came out 0.68 mag apart and
+# nothing in either output said the runs had used different stars.
+
+def _photometry(tmp_path, filters=("g",), n_frames=40, n_stars=14):
+    """Forced-photometry output shaped the way the loader actually reads it.
+
+    The first version of this fixture invented `<stem>_phot.csv`; the loader
+    looks for `photometry_<frame>.tsv`, tab-separated. That is the same class of
+    mistake as the `master_sources.csv` one — a fixture agreeing with a guess
+    instead of with the producer — so the filename comes from the loader's own
+    resolver rather than from memory.
+    """
+    import numpy as np
+
+    from apex.utils.step_paths import step7_forced_phot_dir
+
+    out = Path(step7_forced_phot_dir(tmp_path))
+    out.mkdir(parents=True, exist_ok=True)
+    rng = np.random.default_rng(11)
+    index_rows = []
+    for flt in filters:
+        for frame in range(n_frames):
+            name = f"{flt}_{frame:04d}.fit"
+            # Scatter grows with star index, so the stability ranking has a real
+            # order to find rather than ties broken by row position.
+            table = pd.DataFrame([{
+                "source_id": 1000 + star,
+                "mag": 12.0 + 0.2 * star + rng.normal(0, 0.002 * star),
+                "mag_err": 0.004,
+            } for star in range(1, n_stars + 1)])
+            table.to_csv(out / f"photometry_{name}.tsv", sep="	", index=False)
+            index_rows.append({"file": name, "filter": flt, "JD": 2460000.0 + frame})
+    pd.DataFrame(index_rows).to_csv(out / "photometry_index.csv", index=False)
+
+
+def _master_with_source_ids(tmp_path, n=14):
+    path = master_catalog_path(tmp_path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    pd.DataFrame({
+        "ID": range(1, n + 1),
+        "source_id": [1000 + i for i in range(1, n + 1)],
+        "phot_bp_mean_mag": [15.0 + 0.1 * i for i in range(1, n + 1)],
+        "phot_rp_mean_mag": [14.0 + 0.1 * i for i in range(1, n + 1)],
+    }).to_csv(path, sep="\t", index=False)
+
+
+def test_filter_all_is_a_sentinel_not_a_filter_name(tmp_path):
+    """`lightcurve.filter=all` must not be handed to the photometry loader.
+
+    The window writes `all` to mean "these roles apply to every filter". Asking
+    for a filter literally named `all` matched nothing, and the step reported
+    "no usable photometry" about a workspace holding hundreds of frames.
+    """
+    from apex.pipeline.steps.lc_target import _screen
+    from apex.analysis.light_curve.target_config import LcTarget
+
+    _master_with_source_ids(tmp_path)
+    _photometry(tmp_path)
+    catalog = pd.read_csv(master_catalog_path(tmp_path), sep="\t")
+    ctx = _ctx(tmp_path, _params(tmp_path, lc_target_id=1, lc_filter="all"))
+
+    result, note = _screen(ctx, LcTarget(target_id=1, filter_key="all"),
+                           catalog, 1001)
+    assert result is not None, note
+    assert "most frames" in note
+    assert "all" not in note.split("(")[0].split()
+
+
+def test_a_named_filter_with_no_photometry_says_so(tmp_path):
+    from apex.pipeline.steps.lc_target import _screen
+    from apex.analysis.light_curve.target_config import LcTarget
+
+    _master_with_source_ids(tmp_path)
+    _photometry(tmp_path, filters=("g",))
+    catalog = pd.read_csv(master_catalog_path(tmp_path), sep="\t")
+    ctx = _ctx(tmp_path, _params(tmp_path, lc_target_id=1, lc_filter="V"))
+
+    result, note = _screen(ctx, LcTarget(target_id=1, filter_key="V"),
+                           catalog, 1001)
+    assert result is None
+    assert "no photometry" in note and "g" in note
+
+
+def test_auto_mode_ranks_by_stability_and_says_which_screen_ran(tmp_path):
+    _master_with_source_ids(tmp_path)
+    _photometry(tmp_path)
+    ctx = _ctx(tmp_path, _params(tmp_path, lc_target_id=1,
+                                 lc_comparison_mode="auto", lc_filter=""))
+
+    out = LcTargetStep().run(ctx)
+    assert out.status is StepStatus.OK, out.message
+    assert "measured" in out.message and "adopted" in out.message
+
+    written = json.loads(
+        read_selection_path(tmp_path).read_text(encoding="utf-8"))
+    assert written["selected_by"] == "stability"
+    assert written["check_id"] not in (None, written["target_id"])
+    assert written["target_id"] not in written["comparison_ids"]
+    # The per-star verdict lands beside the selection, not only in a log line.
+    report = next(p for p in out.outputs if "comparison_screening" in p)
+    table = pd.read_csv(report, sep="\t")
+    assert {"star_id", "coverage", "eligible", "basic_reason", "role"} <= set(table.columns)
+    assert (table["role"] == "target").sum() == 1
+
+
+def test_catalog_order_is_labelled_as_a_fallback_not_a_selection(tmp_path):
+    """With no photometry there is no ranking, and the file must admit it."""
+    _master_with_source_ids(tmp_path)
+    ctx = _ctx(tmp_path, _params(tmp_path, lc_target_id=1,
+                                 lc_comparison_mode="auto"))
+
+    out = LcTargetStep().run(ctx)
+    assert out.status is StepStatus.OK, out.message
+    assert "fell back to catalogue order" in out.message
+    written = json.loads(read_selection_path(tmp_path).read_text(encoding="utf-8"))
+    assert written["selected_by"] == "catalog_order"
+    assert "check_id" not in written
+
+
+def test_manual_mode_is_never_second_guessed_by_the_screen(tmp_path):
+    """The user named those stars; a batch run must not substitute others."""
+    _master_with_source_ids(tmp_path)
+    _photometry(tmp_path)
+    ctx = _ctx(tmp_path, _params(tmp_path, lc_target_id=1,
+                                 lc_comparison_mode="manual",
+                                 lc_comparison_ids="4,5,6"))
+
+    out = LcTargetStep().run(ctx)
+    assert out.status is StepStatus.OK, out.message
+    written = json.loads(read_selection_path(tmp_path).read_text(encoding="utf-8"))
+    assert written["comparison_ids"] == [4, 5, 6]
+    assert written["selected_by"] == "manual"
+
+
+def test_the_window_screens_through_the_shared_function(tmp_path, monkeypatch):
+    """Structural parity: the window must not keep its own copy of the screen.
+
+    Asserting the two agree on one dataset is weaker than asserting there is
+    only one implementation — an assertion that keeps holding as either side
+    changes.
+    """
+    import apex.gui.workflow.lc.step8_target_selection as window_module
+    from apex.analysis.light_curve import comparison_screening
+
+    assert window_module.build_candidate_pool is comparison_screening.build_candidate_pool
+    assert window_module.screen_measurements is comparison_screening.screen_measurements
+
+
+def read_selection_path(result_dir) -> Path:
+    from apex.utils.step_paths_lc import step8_selection_dir
+
+    return Path(step8_selection_dir(result_dir)) / "lc_target_selection.json"
