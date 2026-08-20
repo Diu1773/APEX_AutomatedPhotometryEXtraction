@@ -26,6 +26,14 @@ came out 0.68 mag from the window's, and nothing in the output said the two runs
 had used different stars. The screen is now `comparison_screening`, the window
 calls the same functions, and `comparison_screening_<filter>.tsv` records every
 measured star and the stage that dropped it.
+
+The third was the gate refusing work that had already been done. The window
+saves its choice as `selection_<filter>.json`, one per filter; this step read
+the config and nothing else. So `apex run --mode lc` on a workspace where the
+user had just picked YZ Boo in Step 8 answered that it "needs to know which star
+it is of". Reading their choice is not guessing — the step now does, reports
+which file it came from, and records `selected_by: window` in the output. The
+config still wins wherever it speaks; the window fills its silence.
 """
 
 from __future__ import annotations
@@ -44,8 +52,8 @@ from apex.analysis.light_curve.photometry_source_service import (
     load_filter_photometry_timeseries,
 )
 from apex.analysis.light_curve.target_config import (
-    LcTarget, missing_target_settings, read_target, resolve_comparisons,
-    write_selection,
+    LcTarget, missing_target_settings, read_target, read_window_selection,
+    resolve_comparisons, write_selection,
 )
 from apex.pipeline.base import PipelineStep, StepResult, StepStatus
 from apex.pipeline.context import RunContext
@@ -159,12 +167,38 @@ class LcTargetStep(PipelineStep):
         return self.outputs(ctx)[0].exists()
 
     def run(self, ctx: RunContext) -> StepResult:
-        missing = missing_target_settings(ctx.params)
+        started = time.perf_counter()
+        target = read_target(ctx.params)
+        from_window = None
+
+        # The window keeps its choice in `selection_<filter>.json`; this step
+        # reads the config. So a user who picked a star in Step 8 and then ran
+        # `apex run --mode lc` was told the run "needs to know which star it is
+        # of" about a workspace where they had just said which. Reading what
+        # they chose is not a guess — and it is announced, not assumed.
+        if not target.is_resolved:
+            from_window = read_window_selection(
+                ctx.result_dir, target.filter_key,
+                prefer=_available_filters(ctx.result_dir),
+            )
+            if from_window is not None:
+                target = LcTarget(
+                    target_id=int(from_window["target_id"]),
+                    target_name=target.target_name,
+                    comparison_ids=list(from_window["comparison_ids"]),
+                    comparison_mode="manual",
+                    comparison_count=target.comparison_count,
+                    filter_key=str(from_window["filter"]),
+                )
+
+        missing = missing_target_settings(ctx.params) if from_window is None else []
         if missing:
             return StepResult(
                 index=self.index, key=self.key, status=StepStatus.BLOCKED,
                 message=("a light curve needs to know which star it is of, and "
-                         "no default is defensible: " + "; ".join(missing)),
+                         "no default is defensible: " + "; ".join(missing)
+                         + " — or pick one in the Step 8 window, whose "
+                           "selection_<filter>.json this step reads"),
             )
 
         master = master_catalog_path(ctx.result_dir)
@@ -174,8 +208,6 @@ class LcTargetStep(PipelineStep):
                 message=f"no master catalog at {master}",
             )
 
-        started = time.perf_counter()
-        target = read_target(ctx.params)
         try:
             catalog = pd.read_csv(master, sep="\t")
         except Exception as exc:                    # noqa: BLE001
@@ -198,7 +230,12 @@ class LcTargetStep(PipelineStep):
         comparisons: list[int] = []
         check_id: Optional[int] = None
 
-        if target.comparison_mode == "manual":
+        if from_window is not None:
+            comparisons = list(from_window["comparison_ids"])
+            check_id = from_window.get("check_id")
+            notes.append(f"from the Step 8 window, filter {from_window['filter']}")
+            notes.append(f"{Path(from_window['source_path']).name}")
+        elif target.comparison_mode == "manual":
             comparisons = resolve_comparisons(target, catalog)
             notes.append("manual")
         else:
@@ -235,9 +272,10 @@ class LcTargetStep(PipelineStep):
 
         path = write_selection(
             ctx.result_dir, target, comparisons, check_id=check_id,
-            selected_by=("manual" if target.comparison_mode == "manual"
-                         else ("stability" if check_id is not None
-                               else "catalog_order")),
+            selected_by=("window" if from_window is not None
+                         else "manual" if target.comparison_mode == "manual"
+                         else "stability" if check_id is not None
+                         else "catalog_order"),
         )
         outputs.insert(0, str(path))
         return StepResult(

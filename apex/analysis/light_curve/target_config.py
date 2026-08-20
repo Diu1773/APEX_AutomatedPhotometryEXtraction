@@ -143,7 +143,13 @@ def write_selection(result_dir, target: LcTarget, comparisons: list[int],
 
 
 def read_selection(result_dir) -> dict | None:
-    """The selection a previous step wrote, whether by config or by window."""
+    """The selection `LcTargetStep` wrote, if it has run.
+
+    The docstring here used to say "whether by config or by window". It never
+    was: the window writes `selection_<filter>.json`, one per filter, and this
+    reads only the single file the pipeline step writes. Use
+    `read_window_selection` for the other half.
+    """
     import json
 
     from apex.utils.step_paths_lc import step8_selection_dir
@@ -155,3 +161,69 @@ def read_selection(result_dir) -> dict | None:
         return json.loads(path.read_text(encoding="utf-8"))
     except Exception:                               # noqa: BLE001
         return None
+
+
+def read_window_selection(result_dir, filter_key: str = "",
+                          prefer: list[str] | None = None) -> dict | None:
+    """What the Step 8 window saved, in the shape the pipeline step wants.
+
+    The window and the batch run kept their choices in different files, so a
+    user who picked a star in the window and then ran `apex run --mode lc` was
+    told "a light curve needs to know which star it is of" about a workspace
+    where they had just chosen one. Reading their choice is not guessing.
+
+    The window keeps one selection per filter — the ensembles genuinely differ
+    (YZ Boo: 6 in g, 3 in r, 9 in i, and a different check star in each). The
+    pipeline carries a single ensemble, so this takes the named filter's.
+
+    Without one, `prefer` decides, and the caller passes the same ordering the
+    screening path uses: most frames first. Picking "whichever has the most
+    comparisons" instead chose YZ Boo's i filter (9 stars over 21 frames) over
+    its g (6 stars over 124) — two rules in one step, disagreeing.
+    """
+    import json
+
+    from apex.utils.common_helpers import normalize_filter_key
+    from apex.utils.step_paths_lc import step8_selection_dir
+
+    folder = Path(step8_selection_dir(result_dir))
+    if not folder.is_dir():
+        return None
+
+    found: list[dict] = []
+    for path in sorted(folder.glob("selection_*.json")):
+        try:
+            body = json.loads(path.read_text(encoding="utf-8"))
+        except Exception:                           # noqa: BLE001
+            continue
+        if not isinstance(body, dict) or body.get("target_id") is None:
+            continue
+        comparisons = [int(v) for v in (body.get("comparison_ids") or [])]
+        if not comparisons:
+            continue
+        found.append({
+            "filter": str(body.get("filter")
+                          or path.stem.split("_", 1)[-1]),
+            "target_id": int(body["target_id"]),
+            "comparison_ids": comparisons,
+            "check_id": (int(body["check_id"])
+                         if body.get("check_id") is not None else None),
+            "source_path": str(path),
+        })
+    if not found:
+        return None
+
+    wanted = normalize_filter_key(filter_key) if filter_key else ""
+    if wanted and wanted.lower() not in ("all", "any", "*"):
+        for entry in found:
+            if normalize_filter_key(entry["filter"]) == wanted:
+                return entry
+
+    order = [normalize_filter_key(f) for f in (prefer or [])]
+
+    def rank(entry: dict) -> tuple:
+        key = normalize_filter_key(entry["filter"])
+        position = order.index(key) if key in order else len(order)
+        return (position, -len(entry["comparison_ids"]), entry["filter"])
+
+    return min(found, key=rank)

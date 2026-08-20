@@ -108,10 +108,17 @@ def test_it_recovers_a_known_period(tmp_path):
         f"injected 0.1 d, recovered {periods}")
 
 
-def test_it_runs_each_filter_separately_by_default(tmp_path):
-    """A period belongs to the star, but each band measures it on its own —
-    disagreement between bands is the diagnostic, so they are not merged
-    unless `lightcurve.filter` says to."""
+def test_it_analyses_the_combined_curve_and_each_band(tmp_path):
+    """The combined curve is the answer; the per-band runs are the check.
+
+    Splitting by band only was this step's behaviour until 2026-08-21, and it
+    cost the answer. On YZ Boo each band holds 124 / 119 / 21 points against 364
+    combined, and that density is what separates the true period from its
+    one-cycle alias: per band the step returned g = 0.105272 d with the alias
+    unresolved (+1.13 % from the literature), while the combined curve resolved
+    to 0.104209 d (+0.11 %). Disagreement between bands is still a real
+    diagnostic, so both are produced.
+    """
     import numpy as np
 
     write_selection(tmp_path, LcTarget(target_id=5), [1, 2])
@@ -132,7 +139,20 @@ def test_it_runs_each_filter_separately_by_default(tmp_path):
     result = LcPeriodStep().run(_ctx(tmp_path))
     assert result.status == StepStatus.OK, result.message
     names = {p.name for p in step11_period_dir(tmp_path).glob("period_analysis_*.json")}
-    assert names == {"period_analysis_g_ID5.json", "period_analysis_r_ID5.json"}, names
+    assert names == {"period_analysis_all_ID5.json",
+                     "period_analysis_g_ID5.json",
+                     "period_analysis_r_ID5.json"}, names
+
+
+def test_a_single_band_curve_is_not_analysed_twice(tmp_path):
+    """With one band, `all` and that band are the same rows — one run, not two."""
+    write_selection(tmp_path, LcTarget(target_id=5), [1, 2])
+    _curve(tmp_path)
+
+    result = LcPeriodStep().run(_ctx(tmp_path))
+    assert result.status == StepStatus.OK, result.message
+    names = {p.name for p in step11_period_dir(tmp_path).glob("period_analysis_*.json")}
+    assert names == {"period_analysis_V_ID5.json"}, names
 
 
 def test_the_configured_filter_wins(tmp_path):
@@ -461,3 +481,73 @@ def test_it_writes_the_candidates_rather_than_only_a_pick(tmp_path):
     assert any(abs(float(r["period_days"]) - 0.1) < 0.002 for r in rows), (
         f"injected 0.1 d is not among the candidates: "
         f"{[r['period_days'] for r in rows]}")
+
+
+# ── the candidate table is the answer, so it has to be readable ────────────
+#
+# D-014 closed on "do not pick; lay the candidates out and let a person compare
+# with the literature". That makes this table the deliverable, and its first
+# version worked against itself: it sorted by period, so the resolver's rank-1
+# candidate sat sixth of twelve; and `strength` held periodogram power (0-1,
+# higher is stronger) beside raw BIC (about -2400, lower is better), so the
+# strongest candidate carried the smallest-looking number.
+
+def _candidates(tmp_path, target_id=5, flt="all"):
+    from apex.pipeline.steps.lc_period import _write_candidates
+
+    results = {
+        "raw_ls": {"best_period": 0.094468, "best_power": 0.878},
+        "corr_pdm": {"best_period": 0.105297, "best_power": 0.874},
+    }
+    alias = {
+        "status": "AMBIGUOUS",
+        "input_series": "raw",
+        "candidates": [
+            {"rank": 3, "period": 0.094554, "bic": -2370.86},
+            {"rank": 1, "period": 0.104151, "bic": -2430.67},
+            {"rank": 2, "period": 0.115729, "bic": -2379.85},
+        ],
+    }
+    _write_candidates(tmp_path, target_id, flt, results, alias)
+    return pd.read_csv(
+        step11_period_dir(tmp_path) / f"period_candidates_{flt}_ID{target_id}.csv")
+
+
+def test_the_ranked_candidate_leads_the_table(tmp_path):
+    table = _candidates(tmp_path)
+    assert table.iloc[0]["rank"] == 1
+    assert table.iloc[0]["period_days"] == pytest.approx(0.104151)
+    ranked = table[table["source"] == "alias candidate"]
+    assert list(ranked["rank"]) == [1, 2, 3]
+    # Periodogram peaks come after the ranked candidates, strongest first.
+    peaks = table[table["source"] == "periodogram"]
+    assert list(peaks["period_days"]) == pytest.approx([0.094468, 0.105297])
+    assert table.index.get_loc(peaks.index[0]) > table.index.get_loc(ranked.index[-1])
+
+
+def test_strength_says_what_kind_of_number_it_is(tmp_path):
+    table = _candidates(tmp_path)
+    kinds = set(table["strength_kind"])
+    assert any("delta BIC" in k for k in kinds)
+    assert any("periodogram power" in k for k in kinds)
+    # Never one unlabelled column holding both.
+    for _, row in table.iterrows():
+        assert isinstance(row["strength_kind"], str) and row["strength_kind"]
+
+
+def test_delta_bic_is_zero_for_the_best_and_positive_for_the_rest(tmp_path):
+    """Raw BIC of -2430 in a column called `strength` reads as the weakest."""
+    table = _candidates(tmp_path)
+    ranked = table[table["source"] == "alias candidate"]
+    assert ranked.iloc[0]["strength"] == pytest.approx(0.0)
+    assert (ranked.iloc[1:]["strength"] > 0).all()
+    assert ranked.iloc[1]["strength"] == pytest.approx(2430.67 - 2379.85, abs=1e-6)
+
+
+def test_an_unresolved_run_says_so_next_to_its_front_runner(tmp_path):
+    """The top row must not read as an answer when the run could not confirm it."""
+    table = _candidates(tmp_path)
+    note = str(table.iloc[0]["note"])
+    assert "rank 1 of 3" in note
+    assert "ambiguous" in note.lower()
+    assert "adopted" not in note

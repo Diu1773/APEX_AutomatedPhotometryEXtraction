@@ -78,6 +78,13 @@ def _write_candidates(result_dir, target_id: int, flt: str, results: dict,
     What it can do is lay the candidates out next to each other, with the
     aliases the resolver ranked, so the answer is picked by comparing against
     what the object is known to do. That is the table this writes.
+
+    It has to be readable to do that job, and the first version was not. It
+    sorted by period, so the resolver's rank-1 candidate sat in the middle of
+    twelve rows; and its `strength` column carried periodogram power (0-1,
+    higher is stronger) in some rows and raw BIC (about -2400, *lower* is
+    better) in others, so the best candidate looked like the weakest. Rank
+    leads now, and every strength says what kind of number it is.
     """
     import csv
 
@@ -99,31 +106,56 @@ def _write_candidates(result_dir, target_id: int, flt: str, results: dict,
             "period_days": float(period),
             "period_hours": float(period) * 24.0,
             "strength": found.get("best_power"),
+            "strength_kind": "periodogram power (higher is stronger)",
             "rank": "",
-            "note": "",
+            "note": f"peak of the {labels.get(method, method.upper())} periodogram",
         })
 
     analysis = alias_analysis or {}
     status = str(analysis.get("status", "")).upper()
-    for candidate in (analysis.get("candidates") or [])[:8]:
-        period = candidate.get("period")
-        if not period or float(period) <= 0:
-            continue
+    candidates = [c for c in (analysis.get("candidates") or [])[:8]
+                  if c.get("period") and float(c["period"]) > 0]
+    # BIC is reported relative to the best candidate: 0 for the front-runner and
+    # positive for the rest, which is how a reader expects "worse" to look.
+    # Absolute BIC here is around -2400, so the strongest candidate carried the
+    # most negative number in a column called `strength`.
+    bics = [float(c["bic"]) for c in candidates
+            if isinstance(c.get("bic"), (int, float))]
+    best_bic = min(bics) if bics else None
+    for candidate in candidates:
+        bic = candidate.get("bic")
+        delta = (float(bic) - best_bic
+                 if best_bic is not None and isinstance(bic, (int, float)) else None)
+        rank = candidate.get("rank", "")
+        note = f"alias resolver rank {rank} of {len(candidates)}" if rank else ""
+        if rank == 1:
+            note += (" — adopted" if status == "RESOLVED"
+                     else f" — best fit, but the run says {status.lower() or 'unresolved'}")
         rows.append({
             "source": "alias candidate",
             "method": "alias resolver",
             "series": analysis.get("input_series", ""),
-            "period_days": float(period),
-            "period_hours": float(period) * 24.0,
-            "strength": candidate.get("bic"),
-            "rank": candidate.get("rank", ""),
-            "note": ("adopted" if candidate.get("rank") == 1 and status == "RESOLVED"
-                     else ""),
+            "period_days": float(candidate["period"]),
+            "period_hours": float(candidate["period"]) * 24.0,
+            "strength": delta,
+            "strength_kind": "delta BIC vs the best candidate (0 is best)",
+            "rank": rank,
+            "note": note,
         })
 
     if not rows:
         return None
-    rows.sort(key=lambda r: r["period_days"])
+    # Ranked candidates first, in rank order; then the periodogram peaks by
+    # strength. Sorting by period buried the answer among its own aliases.
+    def order(row: dict) -> tuple:
+        rank = row.get("rank")
+        if isinstance(rank, int) and rank > 0:
+            return (0, rank, 0.0)
+        strength = row.get("strength")
+        strength = float(strength) if isinstance(strength, (int, float)) else 0.0
+        return (1, 0, -strength)
+
+    rows.sort(key=order)
 
     out_dir = Path(step11_period_dir(result_dir))
     out_dir.mkdir(parents=True, exist_ok=True)
@@ -131,7 +163,7 @@ def _write_candidates(result_dir, target_id: int, flt: str, results: dict,
     with path.open("w", encoding="utf-8", newline="") as fh:
         writer = csv.DictWriter(fh, fieldnames=[
             "source", "method", "series", "period_days", "period_hours",
-            "strength", "rank", "note"])
+            "strength", "strength_kind", "rank", "note"])
         writer.writeheader()
         writer.writerows(rows)
 
@@ -260,7 +292,17 @@ class LcPeriodStep(PipelineStep):
         if configured:
             filters = [configured]
         elif "filter" in head.columns:
-            filters = sorted({str(v) for v in head["filter"].dropna().unique() if str(v).strip()})
+            present = sorted({str(v) for v in head["filter"].dropna().unique()
+                              if str(v).strip()})
+            # The combined curve goes first, and it is not a nicety. Per band,
+            # YZ Boo has 124 g / 119 r / 21 i points; combined it has 364, and
+            # that density is what separates the true period from its one-cycle
+            # alias. Splitting by band only, this step returned g = 0.105272 d
+            # with the alias unresolved (+1.13 % from the literature) while the
+            # window's combined analysis resolved it at 0.104209 d (+0.11 %).
+            # Both are worth having — disagreement between bands is a real
+            # diagnostic — but the answer comes from the combined curve.
+            filters = (["all"] + present) if len(present) > 1 else present
         else:
             filters = [""]
         if not filters:

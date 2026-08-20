@@ -350,3 +350,127 @@ def read_selection_path(result_dir) -> Path:
     from apex.utils.step_paths_lc import step8_selection_dir
 
     return Path(step8_selection_dir(result_dir)) / "lc_target_selection.json"
+
+
+# ── the window's choice and the batch run's are the same choice ────────────
+#
+# The window writes `selection_<filter>.json`, one per filter; this step wrote
+# and read `lc_target_selection.json`. So a user who picked YZ Boo in Step 8 and
+# then ran `apex run --mode lc` was told the run "needs to know which star it is
+# of" about a workspace where they had just said which.
+
+def _window_selection(tmp_path, flt, target=153, comps=(119, 166), check=187):
+    import json
+
+    from apex.utils.step_paths_lc import step8_selection_dir
+
+    out = Path(step8_selection_dir(tmp_path))
+    out.mkdir(parents=True, exist_ok=True)
+    (out / f"selection_{flt}.json").write_text(json.dumps({
+        "filter": flt,
+        "target_id": target,
+        "target_source_id": 1000 + target,
+        "comparison_ids": list(comps),
+        "check_id": check,
+    }), encoding="utf-8")
+
+
+def test_the_window_choice_is_read_rather_than_refused(tmp_path):
+    from apex.analysis.light_curve.target_config import read_window_selection
+
+    _window_selection(tmp_path, "g")
+    picked = read_window_selection(tmp_path)
+    assert picked is not None
+    assert picked["target_id"] == 153
+    assert picked["comparison_ids"] == [119, 166]
+    assert picked["check_id"] == 187
+    assert picked["filter"] == "g"
+
+
+def test_a_named_filter_wins_over_the_preference_order(tmp_path):
+    from apex.analysis.light_curve.target_config import read_window_selection
+
+    _window_selection(tmp_path, "g", comps=(119, 166))
+    _window_selection(tmp_path, "i", comps=(1, 2, 3, 4, 5))
+    assert read_window_selection(tmp_path, "i")["filter"] == "i"
+    assert read_window_selection(tmp_path, "g")["filter"] == "g"
+
+
+def test_without_a_named_filter_the_preference_order_decides(tmp_path):
+    """The same order the screen uses — most frames — not most comparisons.
+
+    Ranking by ensemble size chose YZ Boo's i (9 stars over 21 frames) over its
+    g (6 stars over 124): two rules inside one step, disagreeing.
+    """
+    from apex.analysis.light_curve.target_config import read_window_selection
+
+    _window_selection(tmp_path, "g", comps=(119, 166))
+    _window_selection(tmp_path, "i", comps=(1, 2, 3, 4, 5))
+    assert read_window_selection(tmp_path, "", prefer=["g", "r", "i"])["filter"] == "g"
+    assert read_window_selection(tmp_path, "", prefer=["i", "g"])["filter"] == "i"
+    # No ordering to go on: fall back to the larger ensemble, deterministically.
+    assert read_window_selection(tmp_path, "")["filter"] == "i"
+
+
+def test_the_all_sentinel_does_not_match_a_filter_file(tmp_path):
+    from apex.analysis.light_curve.target_config import read_window_selection
+
+    _window_selection(tmp_path, "g", comps=(119, 166))
+    assert read_window_selection(tmp_path, "all", prefer=["g"])["filter"] == "g"
+
+
+def test_an_empty_or_broken_selection_is_not_a_selection(tmp_path):
+    import json
+
+    from apex.analysis.light_curve.target_config import read_window_selection
+    from apex.utils.step_paths_lc import step8_selection_dir
+
+    assert read_window_selection(tmp_path) is None          # no folder at all
+    out = Path(step8_selection_dir(tmp_path))
+    out.mkdir(parents=True, exist_ok=True)
+    (out / "selection_g.json").write_text("{not json", encoding="utf-8")
+    (out / "selection_r.json").write_text(
+        json.dumps({"filter": "r", "target_id": 153, "comparison_ids": []}),
+        encoding="utf-8")
+    assert read_window_selection(tmp_path) is None
+
+
+def test_the_step_uses_the_window_choice_and_says_so(tmp_path):
+    _master_with_source_ids(tmp_path)
+    _photometry(tmp_path)
+    _window_selection(tmp_path, "g", target=1, comps=(4, 5, 6), check=7)
+    ctx = _ctx(tmp_path, _params(tmp_path))          # config names no target
+
+    out = LcTargetStep().run(ctx)
+    assert out.status is StepStatus.OK, out.message
+    assert "Step 8 window" in out.message and "selection_g.json" in out.message
+
+    written = json.loads(read_selection_path(tmp_path).read_text(encoding="utf-8"))
+    assert written["selected_by"] == "window"
+    assert written["comparison_ids"] == [4, 5, 6]
+    assert written["check_id"] == 7
+
+
+def test_the_config_still_wins_over_the_window(tmp_path):
+    """A config that names a target is the authority; the window fills silence."""
+    _master_with_source_ids(tmp_path)
+    _photometry(tmp_path)
+    _window_selection(tmp_path, "g", target=1, comps=(4, 5, 6))
+    ctx = _ctx(tmp_path, _params(tmp_path, lc_target_id=2,
+                                 lc_comparison_mode="manual",
+                                 lc_comparison_ids="8,9"))
+
+    out = LcTargetStep().run(ctx)
+    assert out.status is StepStatus.OK, out.message
+    written = json.loads(read_selection_path(tmp_path).read_text(encoding="utf-8"))
+    assert written["target_id"] == 2
+    assert written["comparison_ids"] == [8, 9]
+    assert written["selected_by"] == "manual"
+
+
+def test_the_refusal_now_points_at_the_window(tmp_path):
+    _master_with_source_ids(tmp_path)
+    ctx = _ctx(tmp_path, _params(tmp_path))
+    out = LcTargetStep().run(ctx)
+    assert out.status is StepStatus.BLOCKED
+    assert "Step 8 window" in out.message
