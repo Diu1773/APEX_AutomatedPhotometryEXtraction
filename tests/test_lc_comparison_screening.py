@@ -174,3 +174,20 @@ def test_funnel_default_is_all_zero():
     assert ScreeningFunnel().as_dict() == {
         "measured": 0, "coverage": 0, "eligible": 0, "pool": 0, "adopted": 0,
     }
+
+
+def test_the_stability_search_return_is_carried_whole():
+    """Listing the keys a caller needs makes the rest vanish without an error.
+
+    The window's stability report reads `removed_ids` and its preview reads
+    `active_ids`. Both come from `select_stable_comparisons`, and a first cut of
+    this extraction copied out `metrics` alone — emptying both silently, on a
+    path no test touched.
+    """
+    frame = _measurements(n_frames=40, n_stars=14)
+    result = screen_measurements(frame, target_id=1, filter_key="g", desired_count=5)
+
+    assert {"selected_ids", "active_ids", "metrics", "residuals", "removed_ids"} <= set(
+        result.stability
+    )
+    assert result.stability["metrics"] is result.metrics

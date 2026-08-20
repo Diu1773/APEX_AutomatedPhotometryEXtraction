@@ -3765,7 +3765,11 @@ class TargetComparisonSelectionWindow(StepWindowBase):
             should_stop=should_stop,
         )
 
-        result = {
+        # Start from the stability search's own dict: `active_ids` and
+        # `removed_ids` are read by the report writer and by the preview, and
+        # listing keys by hand had already dropped both.
+        result = dict(screened.stability)
+        result.update({
             "metrics": screened.metrics,
             "selected_ids": list(screened.selected_ids),
             "recommended_check_id": screened.check_id,
@@ -3781,7 +3785,7 @@ class TargetComparisonSelectionWindow(StepWindowBase):
             "target_mag": screened.target_mag,
             "target_color": self._get_color_for_source(int(target_id), flt),
             "funnel": screened.funnel,
-        }
+        })
         if should_stop is None or not should_stop():
             self._filter_stability_cache[flt] = result
         return result

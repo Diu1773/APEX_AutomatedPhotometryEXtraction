@@ -92,6 +92,13 @@ class ScreeningResult:
     ensemble_trials: pd.DataFrame = field(default_factory=pd.DataFrame)
     reason: str = ""
     funnel: ScreeningFunnel = field(default_factory=ScreeningFunnel)
+    stability: dict = field(default_factory=dict)
+    """`select_stable_comparisons`'s own return, whole.
+
+    Naming the two or three keys a caller happens to need makes the rest vanish
+    silently: `active_ids` and `removed_ids` feed the window's stability report,
+    and picking out `metrics` alone emptied both without any error.
+    """
 
 
 def _as_id_set(values: Optional[Iterable]) -> set[int]:
@@ -309,6 +316,7 @@ def screen_measurements(
         ensemble_trials=adaptive.get("ensemble_trials", pd.DataFrame()),
         reason=str(adaptive.get("reason", "")),
         funnel=funnel,
+        stability=dict(scored),
     )
 
 
