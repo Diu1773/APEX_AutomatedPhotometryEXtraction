@@ -551,3 +551,50 @@ def test_an_unresolved_run_says_so_next_to_its_front_runner(tmp_path):
     assert "rank 1 of 3" in note
     assert "ambiguous" in note.lower()
     assert "adopted" not in note
+
+
+def test_an_eclipsing_binary_puts_its_half_period_in_the_table(tmp_path):
+    """Two unequal minima per orbit — half the period fits, and must be listed.
+
+    A detached binary with a primary and a shallower secondary eclipse repeats
+    at P, but a P/2 fold puts both eclipses on top of each other and fits almost
+    as well. Periodograms routinely land on P/2 for exactly this reason, so a
+    table that offers only one of the two hides the decision a person has to
+    make. There is no eclipsing binary in the local archive, so the signal here
+    is synthetic and the claim is about the table, not about any observation.
+    """
+    import numpy as np
+
+    period = 0.62
+    write_selection(tmp_path, LcTarget(target_id=5), [1, 2])
+    out = step9_lc_dir(tmp_path)
+    out.mkdir(parents=True, exist_ok=True)
+    rng = np.random.default_rng(1129)
+    t = np.sort(rng.uniform(0, 6.0, 700))
+    phase = (t / period) % 1.0
+
+    def eclipse(centre, depth, width):
+        d = np.minimum(np.abs(phase - centre), 1.0 - np.abs(phase - centre))
+        return depth * np.exp(-0.5 * (d / width) ** 2)
+
+    mag = (12.0 + eclipse(0.0, 0.40, 0.03) + eclipse(0.5, 0.22, 0.03)
+           + rng.normal(0, 0.004, t.size))
+    pd.DataFrame({
+        "file": [f"f{i:04d}.fit" for i in range(t.size)], "filter": "V",
+        "BJD_TDB": t + 2460000.0, "mag": mag, "mag_err": 0.004,
+        "diff_mag_raw": mag - 12.0, "diff_err": 0.006,
+    }).to_csv(out / "lightcurve_ID5_raw.csv", index=False)
+
+    result = LcPeriodStep().run(_ctx(tmp_path))
+    assert result.status == StepStatus.OK, result.message
+
+    table = pd.read_csv(
+        step11_period_dir(tmp_path) / "period_candidates_V_ID5.csv")
+    periods = table["period_days"].to_numpy(float)
+    near_full = np.abs(periods - period) / period < 0.02
+    near_half = np.abs(periods - period / 2) / (period / 2) < 0.02
+    assert near_full.any() or near_half.any(), sorted(periods.round(4))
+    # The point of the table is that both readings are on it, so a person can
+    # tell them apart by looking at the folded curve.
+    assert near_full.any() and near_half.any(), (
+        "only one of P and P/2 was offered: " + str(sorted(periods.round(4))))
