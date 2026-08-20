@@ -441,3 +441,118 @@ night_id 버그의 부산물이었다 — 밤을 제대로 가르면 두 밤으�
 11 lcperiod     주기분석 + 그림 1 장    창 저장본과 0.000e+00
 ```
 
+---
+
+# 사용자 결정 셋을 닫았다 (2026-08-20)
+
+## D-014 · 별칭이 안 갈릴 때 — 「고르지 않는다」로 닫혔다
+
+**내가 질문을 잘못 냈다.** 「이건 관측 판단이니 선생님이 정하세요」로 올렸는데,
+사용자는 관측천문·측광 전문가이지 시계열 주기추정 방법론 전공이 아니다.
+분야 경계를 잘못 그었고, 하루 전 C-034 와 같은 실수다 (OPERATOR C-036).
+
+사용자 답이 더 낫다:
+
+> 뭐 걍 문헌이랑 제일 비슷한걸 사용자가 고르던가 해야지 뭐, **애초에 정보가
+> 부족한건데**, pdm이 맞는지 LS가 맞는지 전공자가 아니라서 몰라
+
+**두 밤으로는 원리상 안 갈린다.** 그러면 코드가 하나를 고르는 것 자체가 틀린
+설계다. 규칙을 정하는 게 아니라 **후보를 문헌과 대조할 수 있게 내놓는 것**이 답이다.
+
+### 무엇을 만들었나
+
+`period_candidates_<filter>_ID<n>.csv` — 이 실행이 찾은 주기 전부를, 주기 순으로.
+
+| source | method | series | period_days | period_hours | rank | note |
+|---|---|---|---|---|---|---|
+| alias candidate | alias resolver | raw | 0.086514 | 2.076 | 8 | |
+| periodogram | Lomb-Scargle | raw | 0.094468 | 2.267 | | |
+| alias candidate | alias resolver | raw | 0.094605 | 2.271 | 3 | |
+| periodogram | Lomb-Scargle | corrected | 0.095289 | 2.287 | | |
+| **alias candidate** | alias resolver | raw | **0.104209** | **2.501** | 1 | adopted |
+| **periodogram** | **PDM** | raw | **0.104295** | **2.503** | | |
+| periodogram | PDM | corrected | 0.105297 | 2.527 | | |
+| alias candidate | alias resolver | raw | 0.115791 | 2.779 | 2 | |
+| … | | | | | | |
+
+문헌 YZ Boo **0.104092 일 = 2.498 시간**. 표를 보면 **가까운 셋이 2.50~2.53 시간에
+모여 있고** 나머지는 2.08·2.27·2.78 시간으로 흩어져 있다 — 사람이 문헌 한 줄만
+알면 즉시 고른다. 시간 단위를 같이 넣은 것도 그래서다(문헌은 두 단위로 인용된다).
+
+메시지도 표를 가리킨다:
+
+    all LS=0.095289 d [alias ambiguous] — methods disagree by 11 %;
+      candidates in period_candidates_all_ID153.csv
+
+**여전히 자동으로 고르지는 않는다.** 갈렸을 때(`RESOLVED`)만 별칭 후보가 주기도표
+최고점을 덮고, 안 갈렸으면 최고점을 두되 표를 남긴다.
+
+## D-015 · 중복 삭제 — 30.4 GB 회수, 이름으로 불리는 것은 하나도 안 건드렸다
+
+사용자: **「중복 지워」**
+
+지운 것: **545 개 / 30.4 GB** (E 여유 105 → **136 GB**).
+
+| 지운 곳 | |
+|---|---|
+| `reprocess_cr/M3/calibrated/` | 3.42 GB |
+| `reprocess/M5/sci` · `M3/sci` · `NGC6811/sci` · `M13/sci` | 5.97 GB |
+| `reprocess/*/calibrated/`, `YZBoo_20250430/calibrated/` | 3.6 GB |
+| `psf_engines/qfit_ab/qfit_*/sci` | 3.4 GB |
+| `masters/` 마스터 프레임 | 5.9 GB |
+| IRAF 작업본 `frame.fits` | 2.8 GB |
+
+**남긴 것**: 표(csv·tsv·json) 163 개 — 크기가 0.21 GB 뿐이고 측정값이라 잃으면
+비싸다. AstrylStudio 의 NGC6888 중복 176 개 / 12.8 GB — 다른 프로젝트다.
+
+### 안전을 어떻게 확인했나
+
+**정적 도달성 분석이 두 번 틀렸다.** 첫 판은 정규식 `[^"']*` 가 개행을 넘어
+docstring 을 통째로 삼켜 「경로 조각 7,406 개」가 대부분 쓰레기였다. 고친 뒤에도
+`photometry_*.tsv` 글롭이 안 걸렸다.
+
+그래서 **좁고 결정적인 질문**으로 바꿨다 — 논문 스크립트가 **손으로 이름을 적은
+파일 57 개** 중 삭제 목록에 있는 게 몇 개인가. **0 개**였다.
+
+삭제 뒤 확인:
+
+- 손으로 적은 7 개 프레임 전부 존재 (`M67/sci/` 3 개, `sci_nocr/` 4 개)
+- `fig_completeness_realvssynth.py` **실제 재생성 성공** — 7 개 프레임 다 읽고
+  σ_e·FWHM·m50·S/N50 을 예전과 같은 형태로 출력
+
+`sci_nocr` 는 애초에 삭제 후보에 **0 개**였다. 그 폴더가 중요한 이유가 스크립트
+주석에 있다 — M13·NGC 6811 은 우주선 제거로 재환원되어 `sci/` 가 논문이 쓴
+프레임이 아니고, **주입 당시 프레임은 `sci_nocr/` 에만 남아 있다.**
+
+**되돌릴 수 있다**: 지운 545 개는 전부 같은 바이트가 다른 경로에 있고,
+`restore_map.csv` 에 지운 경로 ↔ 남은 경로가 적혀 있다.
+
+## D-013 · 옛 워크스페이스 — 고치려다 「고칠 수 없다」가 나왔고, 그래서 말하게 했다
+
+사용자: **「13은 알아서 해」**
+
+처음엔 두 줄로 될 줄 알았다. `_load_selection_ids_by_filter` 가 `lc_selection/` 만
+보니 레거시 인식 헬퍼(`selection_input_dir`)로 바꾸면 끝이라고 봤다. 바꿨고,
+**선택 지도는 실제로 로드됐다** (0 → 3 필터).
+
+그런데 **여전히 0/77 이었다.** 두 번째 원인이 있다:
+
+    옛 측광표 열: det_uid, x_det, y_det, xcenter, ycenter, FILTER, ...
+    → source_id 없음, ID 없음
+
+선택 지도는 Gaia `source_id` 로 별을 찾는데 **옛 측광표에는 그 열이 없다.**
+`step8_idmatch/frame_sourceid_to_ID.tsv` 에 `source_id ↔ ID` 는 있지만 `det_uid` 와는
+**위치로 다시 맞춰야** 이어진다 — 옛 스텝 8 을 재구현하는 일이다.
+
+**비례에 맞지 않는다.** 해당 워크스페이스는 9 개이고 전부 YZ Boo·AE UMa 인데,
+둘 다 현행 레이아웃 워크스페이스가 따로 있다. 그래서 **진짜 결함인 「조용함」만
+없앴다** — 이제 이렇게 말한다:
+
+    blocked: built 77 rows and none carry a measurement, because the photometry
+    tables identify sources by det_uid and have neither an ID nor a source_id
+    column. That is a workspace from before the current Step 7 — open it once in
+    the GUI, which upgrades it, or re-run Steps 1-7 headless.
+
+`selection_input_dir` 변경은 그대로 뒀다 — 대상 좌표 조회가 레거시 워크스페이스
+에서도 되므로 BJD 계산에 도움이 된다.
+

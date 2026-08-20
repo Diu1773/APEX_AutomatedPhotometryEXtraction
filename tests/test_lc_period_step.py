@@ -426,3 +426,38 @@ def test_the_filter_count_in_the_message_counts_filters(tmp_path):
     result = LcPeriodStep().run(_ctx(tmp_path, _params(tmp_path, lc_filter="all")))
     assert result.status == StepStatus.OK, result.message
     assert "1 filter(s)" in result.message, result.message
+
+
+def test_it_writes_the_candidates_rather_than_only_a_pick(tmp_path):
+    """Two nights do not determine one period, so the run lists what it found.
+
+    Measured both ways on real objects: YZ Boo's Lomb-Scargle peak is 9.2 % from
+    the literature value and its PDM peak 0.19 %; on AE UMa it is 0.01 % against
+    0.04 %, the other way round. The software has no basis to choose between
+    them, and choosing anyway publishes one of those errors as a number. So the
+    step lays the candidates out — every periodogram peak and every ranked
+    alias — and the answer is picked against what the object is known to do.
+    """
+    import csv
+
+    write_selection(tmp_path, LcTarget(target_id=5), [1, 2, 3])
+    _curve(tmp_path, period=0.1)
+    result = LcPeriodStep().run(_ctx(tmp_path))
+    assert result.status == StepStatus.OK, result.message
+
+    tables = sorted(step11_period_dir(tmp_path).glob("period_candidates_*.csv"))
+    assert tables, "no candidate table written"
+    rows = list(csv.DictReader(tables[0].open(encoding="utf-8")))
+    assert rows, "candidate table is empty"
+
+    columns = set(rows[0])
+    assert {"method", "period_days", "period_hours", "source"} <= columns, columns
+    assert any(r["source"] == "periodogram" for r in rows), (
+        "the periodogram peaks themselves must be in the table")
+    # hours as well as days: a period is compared against a literature value,
+    # and those are quoted both ways.
+    for r in rows:
+        assert abs(float(r["period_hours"]) - float(r["period_days"]) * 24.0) < 1e-9
+    assert any(abs(float(r["period_days"]) - 0.1) < 0.002 for r in rows), (
+        f"injected 0.1 d is not among the candidates: "
+        f"{[r['period_days'] for r in rows]}")

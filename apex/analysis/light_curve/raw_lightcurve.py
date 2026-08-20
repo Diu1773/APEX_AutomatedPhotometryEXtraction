@@ -57,6 +57,7 @@ from apex.utils.step_paths_lc import (
     step2_cropped_dir,
     step6_refbuild_dir,
     step8_selection_dir,
+    selection_input_dir,
     step9_lc_dir,
 )
 from apex.analysis.light_curve.lightcurve_output_service import annotate_raw_lightcurve, save_combined_raw_outputs, save_dataset_raw_outputs
@@ -168,8 +169,15 @@ def _active_comparison_ids_for_filter(
     return [value for value in selected_ids if value in active_set]
 
 def _load_selection_ids_by_filter(result_dir: Path) -> dict:
-    """필터별 selection 로드 (Step 9에서 저장한 selection_{filter}.json)"""
-    step9_out = step8_selection_dir(result_dir)
+    """필터별 selection 로드 (Step 8 이 저장한 selection_{filter}.json).
+
+    `selection_input_dir` 를 쓰는 이유는 2025 년에 만든 결과 폴더가 이 디렉터리를
+    `step9_selection/` 로 부르기 때문이다. 새 이름만 보면 그런 워크스페이스에서
+    빈 사전이 돌아오고, 그러면 호출부가 `df["ID"]` 로 떨어지는데 **옛 측광 TSV 에는
+    `ID` 열이 없다**(`det_uid` 로만 식별). 오류 없이 0 유효점짜리 라이트커브가
+    나온다 — YZ Boo 2025-04-29 에서 77 점 중 0 점으로 재현했다 (D-013).
+    """
+    step9_out = selection_input_dir(result_dir)
     filter_selections = {}
 
     if not step9_out.exists():
@@ -293,7 +301,8 @@ def _load_target_radec(result_dir: Path, target_id: int) -> tuple[float, float]:
 
     Returns (ra_deg, dec_deg), or (nan, nan) if not found.
     """
-    step9_out = step8_selection_dir(result_dir)
+    # 같은 이유로 옛 이름(`step9_selection/`)도 본다 — D-013.
+    step9_out = selection_input_dir(result_dir)
     candidates = list(step9_out.glob("master_catalog_*.tsv")) if step9_out.exists() else []
     candidates += [step9_out / "master_catalog.tsv"] if step9_out.exists() else []
     for path in candidates:

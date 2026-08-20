@@ -23,6 +23,41 @@ from apex.pipeline.context import RunContext
 from apex.utils.step_paths_lc import step8_selection_dir, step9_lc_dir
 
 
+def _diagnose_empty(ctx, builder, target_id: int, summary: dict) -> str:
+    """Say why a curve came out empty, rather than guessing at it.
+
+    An empty curve is the one failure here that does not look like one — the
+    file is written, the row count is right, and every magnitude is blank. The
+    common cause is not a missing star: it is a workspace from 2025, whose
+    photometry tables identify sources by `det_uid` and carry neither `ID` nor
+    `source_id`. Nothing downstream can match a star in those, and the old
+    pipeline bridged the gap with a positional cross-match this one does not do.
+
+    Reproduced on YZ Boo 2025-04-29: 77 rows, 0 usable points, no error (D-013).
+    """
+    n_total = int(summary.get("n_total", 0))
+    columns: set[str] = set()
+    try:
+        index = builder._load_active_photometry_index(ctx.result_dir)
+        frames = [str(v) for v in index.get("file", [])][:3]
+        for frame in frames:
+            table = builder._get_photometry_df(ctx.result_dir, frame)
+            if table is not None and not table.empty:
+                columns |= set(table.columns)
+    except Exception:                                   # noqa: BLE001
+        pass
+
+    if columns and not ({"ID", "source_id"} & columns):
+        return (f"built {n_total} rows and none carry a measurement, because the "
+                f"photometry tables identify sources by det_uid and have neither "
+                f"an ID nor a source_id column. That is a workspace from before "
+                f"the current Step 7 — open it once in the GUI, which upgrades "
+                f"it, or re-run Steps 1-7 headless.")
+    return (f"built {n_total} rows but none had both the target and its "
+            f"ensemble — check that ID {target_id} and the comparisons are in "
+            f"the forced photometry")
+
+
 class LcLightCurveStep(PipelineStep):
     index = 9
     key = "lclightcurve"
@@ -88,9 +123,7 @@ class LcLightCurveStep(PipelineStep):
         if n_valid == 0:
             return StepResult(
                 index=self.index, key=self.key, status=StepStatus.BLOCKED,
-                message=(f"built {summary.get('n_total', 0)} rows but none had both "
-                         f"the target and its ensemble — check that ID {target_id} "
-                         "and the comparisons are in the forced photometry"),
+                message=_diagnose_empty(ctx, builder, target_id, summary),
                 duration_s=elapsed,
             )
 

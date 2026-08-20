@@ -63,6 +63,88 @@ def _method_spread(results) -> "float | None":
     return float((max(periods) - min(periods)) / med)
 
 
+def _write_candidates(result_dir, target_id: int, flt: str, results: dict,
+                      alias_analysis: dict | None):
+    """Every period this run found, in one table, ranked by strength.
+
+    Two nights of a variable star do not determine one period — the sampling
+    leaves aliases that fit as well as the truth, and which method lands on
+    which is not a property of the software. Measured on two objects it went
+    both ways: YZ Boo's Lomb-Scargle peak is 9.2 % from the literature value
+    and its PDM peak 0.19 %; on AE UMa it is the other way round, 0.01 % against
+    0.04 %. So the code has no basis to choose, and choosing anyway publishes
+    one of those errors as a number.
+
+    What it can do is lay the candidates out next to each other, with the
+    aliases the resolver ranked, so the answer is picked by comparing against
+    what the object is known to do. That is the table this writes.
+    """
+    import csv
+
+    import numpy as np
+
+    rows = []
+    labels = {"ls": "Lomb-Scargle", "pdm": "PDM", "bls": "BLS"}
+    for key, found in (results or {}).items():
+        if not isinstance(found, dict):
+            continue
+        period = found.get("best_period")
+        if not period or float(period) <= 0:
+            continue
+        series, _, method = key.partition("_")
+        rows.append({
+            "source": "periodogram",
+            "method": labels.get(method, method.upper()),
+            "series": "corrected" if series == "corr" else "raw",
+            "period_days": float(period),
+            "period_hours": float(period) * 24.0,
+            "strength": found.get("best_power"),
+            "rank": "",
+            "note": "",
+        })
+
+    analysis = alias_analysis or {}
+    status = str(analysis.get("status", "")).upper()
+    for candidate in (analysis.get("candidates") or [])[:8]:
+        period = candidate.get("period")
+        if not period or float(period) <= 0:
+            continue
+        rows.append({
+            "source": "alias candidate",
+            "method": "alias resolver",
+            "series": analysis.get("input_series", ""),
+            "period_days": float(period),
+            "period_hours": float(period) * 24.0,
+            "strength": candidate.get("bic"),
+            "rank": candidate.get("rank", ""),
+            "note": ("adopted" if candidate.get("rank") == 1 and status == "RESOLVED"
+                     else ""),
+        })
+
+    if not rows:
+        return None
+    rows.sort(key=lambda r: r["period_days"])
+
+    out_dir = Path(step11_period_dir(result_dir))
+    out_dir.mkdir(parents=True, exist_ok=True)
+    path = out_dir / f"period_candidates_{flt or 'all'}_ID{int(target_id)}.csv"
+    with path.open("w", encoding="utf-8", newline="") as fh:
+        writer = csv.DictWriter(fh, fieldnames=[
+            "source", "method", "series", "period_days", "period_hours",
+            "strength", "rank", "note"])
+        writer.writeheader()
+        writer.writerows(rows)
+
+    periods = np.array([r["period_days"] for r in rows], dtype=float)
+    return {
+        "path": path,
+        "n": len(rows),
+        "min": float(periods.min()),
+        "max": float(periods.max()),
+        "status": status,
+    }
+
+
 def _resolve_aliases(lc_data, results, min_period, max_period, samples, log=None):
     """Rank the sampling-window aliases of the strongest peak.
 
@@ -228,6 +310,13 @@ class LcPeriodStep(PipelineStep):
                 )
                 written.append(str(path))
 
+                # Not a pick — a list. See `_write_candidates`.
+                spread_info = _write_candidates(
+                    ctx.result_dir, target_id, lc_data.get("filter", flt),
+                    results, alias_analysis)
+                if spread_info is not None:
+                    written.append(str(spread_info["path"]))
+
                 # The same three panels the window draws — light curve,
                 # periodogram, phase fold. A period without the fold is a
                 # number; the fold is what says whether it is the right one.
@@ -279,7 +368,9 @@ class LcPeriodStep(PipelineStep):
                     if picked:
                         line = f"{flt or 'all'} {picked[0]}={picked[1]:.6f} d{note}"
                         if spread is not None and spread > 0.02:
-                            line += f" — methods disagree by {100 * spread:.0f} %"
+                            line += (f" — methods disagree by {100 * spread:.0f} %; "
+                                     f"candidates in period_candidates_"
+                                     f"{flt or 'all'}_ID{target_id}.csv")
                         best.append(line)
                 analysed += 1
             except Exception as exc:                    # noqa: BLE001
