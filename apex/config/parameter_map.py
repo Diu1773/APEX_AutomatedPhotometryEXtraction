@@ -579,6 +579,12 @@ CMD_ONLY_TOML_KEY_MAP += (
     (('cmd', 'zp', 'clip_sigma'), 'zp_clip_sigma', 'float', 3.0),
     (('cmd', 'zp', 'fit_iters'), 'zp_fit_iters', 'int', 5),
     (('cmd', 'zp', 'slope_absmax'), 'zp_slope_absmax', 'float', 1.0),
+    # Per-filter quadratic color term to APPLY, e.g. "B=-0.10,g=-0.06".
+    # Empty (the default) means none. A curvature belongs to the filter
+    # and detector, so it has to be measured across several fields —
+    # fitting it per run put up to 0.086 mag of color-dependent error
+    # into the magnitudes. Each run still reports `ct2_fitted`.
+    (('cmd', 'zp', 'quadratic_color_term'), 'zp_quadratic_color_term', 'str', ""),
     (('cmd', 'color', 'clip_sigma'), 'color_clip_sigma'),
     (('cmd', 'color', 'fit_iters'), 'color_fit_iters'),
     (('cmd', 'color', 'slope_absmax'), 'color_slope_absmax'),

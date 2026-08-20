@@ -139,6 +139,62 @@ def robust_weighted_polyfit(
         m = m_new
     return coeffs, int(m.sum()), scatter
 
+def _quad_coefficient_sigma(x, y, w, coeffs) -> float:
+    """1-sigma on the quadratic coefficient, scaled by the fit's own residuals.
+
+    Reported next to `ct2_fitted` so that a curvature can be read together with
+    how well it was constrained. It is deliberately *not* used as an acceptance
+    test: on five clusters the most significant curvature in the set
+    (|ct2|/sigma = 46) was the one that transferred worst to other fields.
+    Significance says the fit is sure, not that the number belongs to the
+    filter rather than to the field.
+    """
+    x = np.asarray(x, float)
+    y = np.asarray(y, float)
+    w = np.asarray(w, float)
+    m = np.isfinite(x) & np.isfinite(y) & np.isfinite(w) & (w > 0)
+    if int(m.sum()) < 4:
+        return float("nan")
+    xm, ym, wm = x[m], y[m], w[m]
+    sw = np.sqrt(wm)
+    design = np.column_stack([xm * xm, xm, np.ones_like(xm)]) * sw[:, None]
+    resid = ym * sw - design @ np.asarray(coeffs, float)
+    dof = max(int(m.sum()) - 3, 1)
+    try:
+        cov = np.linalg.inv(design.T @ design) * float(resid @ resid) / dof
+    except np.linalg.LinAlgError:
+        return float("nan")
+    value = float(cov[0, 0])
+    return float(np.sqrt(value)) if value > 0 else float("nan")
+
+
+def parse_quadratic_color_terms(raw) -> dict[str, float]:
+    """`"B=-0.10,g=-0.06"` into `{"B": -0.10, "g": -0.06}`.
+
+    Empty means no quadratic is applied, which is the default: a curvature is a
+    property of the filter and detector, so it has to be measured across fields
+    before it can be trusted, and a single run cannot do that. Runs still
+    report what they would have fitted, in `ct2_fitted`.
+    """
+    out: dict[str, float] = {}
+    for token in str(raw or "").replace(";", ",").split(","):
+        token = token.strip()
+        if not token or "=" not in token:
+            continue
+        key, _, value = token.partition("=")
+        key = key.strip()
+        if not key:
+            # "=0.1" would otherwise register a curvature under the empty
+            # filter name, which matches nothing and is never applied — a
+            # typo that looks like a setting.
+            continue
+        try:
+            out[key] = float(value.strip())
+        except ValueError:
+            continue
+    return out
+
+
 def solve_standard_colors(
     inst_mags: dict[str, np.ndarray],
     fit_params: dict[str, dict],
@@ -2366,6 +2422,12 @@ class ZeropointCalibrationRunner(ReportsProgress):
             fit_iters    = int(getattr(P, "zp_fit_iters", 5))
             slope_absmax = float(getattr(P, "zp_slope_absmax", 1.0))
             snr_cut      = float(getattr(P, "gaia_snr_calib_min", getattr(P, "cmd_snr_calib_min", 20.0)))
+            quad_by_filter = parse_quadratic_color_terms(
+                getattr(P, "zp_quadratic_color_term", ""))
+            if quad_by_filter:
+                self._log("[ZP] configured quadratic color terms: "
+                          + ", ".join(f"{k}={v:+.4f}"
+                                      for k, v in sorted(quad_by_filter.items())))
 
             def _arr(col):
                 return out_cal[col].to_numpy(float) if col in out_cal.columns else np.full(len(out_cal), np.nan)
@@ -2536,32 +2598,71 @@ class ZeropointCalibrationRunner(ReportsProgress):
                     clip_sigma=clip_sigma, iters=fit_iters, slope_absmax=s_max, min_n=min_match,
                 )
 
-                # Quadratic color-term refinement: the linear term leaves a
-                # ±0.02-0.03 mag curvature vs color on rich fields (measured on
-                # NGC 6811 B). Adopt the quadratic only when well constrained
-                # (enough calibrators, sane coefficients, scatter not worse).
-                ct2_f = 0.0
+                # Quadratic color term: measured every run, applied only when
+                # the *instrument's* curvature has been supplied.
+                #
+                # It used to be fitted per field and adopted whenever the
+                # scatter did not get worse. A quadratic has one more free
+                # parameter, so "not worse" is nearly free — but the deeper
+                # problem is that the curvature it finds belongs to the field,
+                # not to the filter. Measured on one camera across five
+                # clusters (2026-08-21):
+                #
+                #   R band ct2:  0.000, 0.000, +0.123, +0.042, -0.244
+                #   B band ct2: -0.088, -0.197,  0.000
+                #
+                # Lending one field's curvature to another made 10 of 24 pairs
+                # *worse* than using no curvature at all, by up to 17 mmag. And
+                # no statistic available inside a single fit separates the
+                # transferable curvatures from the rest: the worst offender
+                # (NGC 6811 R, -0.243, +17 mmag on M3) is also the most
+                # significant one in the whole set at |ct2|/sigma = 46. A
+                # sharper test would have adopted it more confidently.
+                #
+                # So the fit stays — `ct2_fitted`/`ct2_sigma` go to
+                # zp_fit_coefficients.csv, and someone with several fields can
+                # see whether their instrument really curves. What no longer
+                # happens is applying a per-field number to the magnitudes: on
+                # this data that injected up to 0.086 mag of colour-dependent
+                # error (M3 V) with nothing to catch it.
+                ct2_f = float(quad_by_filter.get(_BAND_ALIASES.get(filt, filt),
+                                                 quad_by_filter.get(filt, 0.0)))
+                ct2_fit = float("nan")
+                ct2_sig = float("nan")
                 if color_col_name != "none" and int(m_fit.sum()) >= _QUAD_MIN_CALIBRATORS:
                     q_coeffs, Nq, sq = robust_weighted_polyfit(
                         color_x[m_fit], delta[m_fit], w=w_filt[m_fit], degree=2,
                         clip_sigma=clip_sigma, iters=fit_iters, min_n=min_match,
                     )
-                    # |ct2| <= 0.25: broadband transformation curvatures are
-                    # ~0.05 (NGC 6811 B: -0.07); larger values are unphysical
-                    # AND would threaten the fixed-point contraction in
-                    # solve_standard_colors (derivative ~ ct + 2*ct2*C).
-                    if (
-                        q_coeffs is not None
-                        and np.all(np.isfinite(q_coeffs))
-                        and abs(float(q_coeffs[0])) <= 0.25
-                        and abs(float(q_coeffs[1])) <= s_max
-                        and np.isfinite(sq)
-                        and (not np.isfinite(sc_f) or sq <= sc_f + 1e-6)
-                    ):
-                        ct2_f = float(q_coeffs[0])
-                        ct_f = float(q_coeffs[1])
-                        zp_f = float(q_coeffs[2])
-                        Nf, sc_f = int(Nq), float(sq)
+                    if q_coeffs is not None and np.all(np.isfinite(q_coeffs)):
+                        ct2_fit = float(q_coeffs[0])
+                        ct2_sig = _quad_coefficient_sigma(
+                            color_x[m_fit], delta[m_fit], w_filt[m_fit], q_coeffs
+                        )
+                if ct2_f:
+                    # |ct2| bound: the fixed-point iteration in
+                    # solve_standard_colors contracts by ~|ct + 2*ct2*C| per
+                    # pass, so a large curvature can stop it converging.
+                    if abs(ct2_f) > 0.25:
+                        self._log(
+                            f"[ZP][{filt}] configured quadratic color term "
+                            f"{ct2_f:+.4f} exceeds |0.25| and was NOT applied — "
+                            "it would threaten the color solver's convergence"
+                        )
+                        ct2_f = 0.0
+                    else:
+                        # Refit zp and ct with the configured curvature removed,
+                        # so the linear term is not left absorbing part of it.
+                        zp_f, ct_f, Nf, sc_f = self._robust_linfit(
+                            color_x[m_fit],
+                            delta[m_fit] - ct2_f * np.square(color_x[m_fit]),
+                            w=w_filt[m_fit], clip_sigma=clip_sigma,
+                            iters=fit_iters, slope_absmax=s_max, min_n=min_match,
+                        )
+                        self._log(
+                            f"[ZP][{filt}] applying configured quadratic color "
+                            f"term {ct2_f:+.4f} (this run fits {ct2_fit:+.4f})"
+                        )
 
                 clabel = color_col_name.replace("_", "-")
                 axis_tag = "_std" if color_axis == "standard" else "_inst"
@@ -2584,7 +2685,9 @@ class ZeropointCalibrationRunner(ReportsProgress):
                 filter_provenance = provenance_by_filter.get(
                     filt, build_photometry_provenance()
                 )
-                coeff_rows.append({"filter": filt, "zp": zp_f, "ct": ct_f, "ct2": ct2_f, "N": Nf,
+                coeff_rows.append({"filter": filt, "zp": zp_f, "ct": ct_f, "ct2": ct2_f,
+                                   "ct2_fitted": ct2_fit, "ct2_sigma": ct2_sig,
+                                   "N": Nf,
                                    "scatter_rms": sc_f, "color_col": color_col_name,
                                    "color_axis": color_axis,
                                    "ref_source": ref_source_map.get(filt, ""),
