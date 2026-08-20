@@ -99,6 +99,11 @@ python -m pip install -e .            # headless core (서버/CI/배치용, GUI 
 python -m pip install -e ".[gui]"     # 데스크톱 GUI 포함
 python -m pip install -e ".[dev]"     # 개발(GUI+test+build+docs)
 
+# 논문 수치를 그대로 재현할 때만: 그때 쓰인 판을 통째로 고정합니다.
+# 평소 설치에는 쓰지 마세요 — 위의 범위 지정이 새 환경에 맞춰 줍니다.
+python -m pip install -r requirements-lock.txt
+python -m pip install -e . --no-deps
+
 # 런타임 진단: Python·의존성·외부 solver·(옵션)네트워크 점검
 apex doctor
 apex doctor --network
