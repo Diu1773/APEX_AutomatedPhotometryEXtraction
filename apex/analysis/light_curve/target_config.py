@@ -163,6 +163,33 @@ def read_selection(result_dir) -> dict | None:
         return None
 
 
+def filters_by_frame_count(result_dir) -> list[str]:
+    """Filters present in the forced photometry, busiest first.
+
+    Both the window and the pipeline step have to answer "which filter's
+    selection stands for the workspace", and they must answer it the same way.
+    It lived in `apex/pipeline/steps/lc_target.py`, which the GUI layer must not
+    import, so it lives here where both sides can reach it.
+    """
+    import pandas as pd
+
+    from apex.utils.common_helpers import normalize_filter_key
+    from apex.utils.step_paths import forced_phot_input_dir
+
+    index_path = Path(forced_phot_input_dir(result_dir)) / "photometry_index.csv"
+    if not index_path.exists():
+        return []
+    try:
+        index = pd.read_csv(index_path)
+    except Exception:                               # noqa: BLE001
+        return []
+    column = next((c for c in ("filter", "FILTER") if c in index.columns), None)
+    if column is None:
+        return []
+    counts = index[column].astype(str).map(normalize_filter_key).value_counts()
+    return [str(key) for key in counts.index if str(key)]
+
+
 def read_window_selection(result_dir, filter_key: str = "",
                           prefer: list[str] | None = None) -> dict | None:
     """What the Step 8 window saved, in the shape the pipeline step wants.

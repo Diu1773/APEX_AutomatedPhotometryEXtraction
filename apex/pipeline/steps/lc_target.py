@@ -52,8 +52,8 @@ from apex.analysis.light_curve.photometry_source_service import (
     load_filter_photometry_timeseries,
 )
 from apex.analysis.light_curve.target_config import (
-    LcTarget, missing_target_settings, read_target, read_window_selection,
-    resolve_comparisons, write_selection,
+    LcTarget, filters_by_frame_count, missing_target_settings, read_target,
+    read_window_selection, resolve_comparisons, write_selection,
 )
 from apex.pipeline.base import PipelineStep, StepResult, StepStatus
 from apex.pipeline.context import RunContext
@@ -62,28 +62,10 @@ from apex.utils.step_paths import forced_phot_input_dir, master_catalog_path
 from apex.utils.step_paths_lc import step8_selection_dir
 
 
-def _available_filters(result_dir) -> list[str]:
-    """Filters present in the forced photometry, busiest first.
-
-    Order matters: with no `lightcurve.filter` set, the step screens whichever
-    filter has the most frames, and says which one it chose. Silence there would
-    make an ensemble picked from a three-frame filter indistinguishable from one
-    picked from three hundred.
-    """
-    index_path = forced_phot_input_dir(result_dir) / "photometry_index.csv"
-    if not index_path.exists():
-        return []
-    try:
-        index = pd.read_csv(index_path)
-    except Exception:                                        # noqa: BLE001
-        return []
-    column = next((c for c in ("filter", "FILTER") if c in index.columns), None)
-    if column is None:
-        return []
-    counts = (
-        index[column].astype(str).map(normalize_filter_key).value_counts()
-    )
-    return [str(key) for key in counts.index if str(key)]
+# Which filter stands for the workspace: the busiest one. The window has to
+# answer this the same way, and it cannot import from `apex.pipeline`, so the
+# rule lives in the analysis layer and both sides call it.
+_available_filters = filters_by_frame_count
 
 
 def _id_maps(catalog: pd.DataFrame) -> tuple[dict[int, int], dict[int, int]]:

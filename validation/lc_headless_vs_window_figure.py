@@ -32,9 +32,9 @@ fig.patch.set_facecolor(BG)
 ax = axes[0]
 t0 = float(ref_raw["BJD_TDB"].min())
 ax.scatter(ref_raw["BJD_TDB"] - t0, ref_raw["diff_mag_raw"], s=7, c=WIN,
-           alpha=0.6, label="창 (필터별 앙상블)", zorder=3)
+           alpha=0.6, label="창 (합집합 11 개)", zorder=3)
 ax.scatter(new_raw["BJD_TDB"] - t0, new_raw["diff_mag_raw"], s=7, c=HEAD,
-           alpha=0.6, label="헤드리스 (g 앙상블 하나)", zorder=3)
+           alpha=0.6, label="헤드리스 (선별 6 개)", zorder=3)
 ax.invert_yaxis()
 ax.set_xlabel("BJD_TDB − 2460795.09 (일)", fontsize=10)
 ax.set_ylabel("diff_mag_raw (등급)", fontsize=10)

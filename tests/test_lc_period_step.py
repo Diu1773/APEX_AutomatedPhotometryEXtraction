@@ -598,3 +598,22 @@ def test_an_eclipsing_binary_puts_its_half_period_in_the_table(tmp_path):
     # tell them apart by looking at the folded curve.
     assert near_full.any() and near_half.any(), (
         "only one of P and P/2 was offered: " + str(sorted(periods.round(4))))
+
+
+def test_the_run_verdict_travels_with_the_table(tmp_path):
+    """Row count reads as confidence and is not, so the verdict is a column.
+
+    Shortening the same YZ Boo curve: one night gave 1 candidate and an answer
+    2.08 % from the literature; two nights gave 8 candidates and 0.06 %. A longer
+    baseline resolves MORE aliases, so the table grows as the answer improves —
+    the opposite of how a list of eight reads
+    (`validation/period_candidates_vs_nights.py`).
+    """
+    table = _candidates(tmp_path)
+    ranked = table[table["source"] == "alias candidate"]
+    assert set(ranked["run_status"]) == {"AMBIGUOUS"}
+    assert "row count tracks baseline length, not confidence" in str(
+        table.iloc[0]["note"])
+    # Said once, not on every row.
+    carries = table["note"].astype(str).str.contains("row count tracks").sum()
+    assert carries == 1

@@ -474,3 +474,43 @@ def test_the_refusal_now_points_at_the_window(tmp_path):
     out = LcTargetStep().run(ctx)
     assert out.status is StepStatus.BLOCKED
     assert "Step 8 window" in out.message
+
+
+def test_the_busiest_filter_wins_over_the_union(tmp_path, monkeypatch):
+    """The window's Step 9 seed prefers one filter instead of unioning them.
+
+    It used to union every filter's picks "without silently preferring one
+    filter". Every star the union adds is one that some other filter's screening
+    threw out, and held-out check-star scatter on YZ Boo says that costs:
+    union of 11 against the busiest filter's screened 6 gave g 0.02816 ->
+    0.02482, r 0.02002 -> 0.01687, i 0.01230 -> 0.01162 mag.
+    """
+    from apex.analysis.light_curve import target_config
+
+    _window_selection(tmp_path, "g", target=153, comps=(119, 166, 182), check=187)
+    _window_selection(tmp_path, "i", target=153, comps=(65, 92, 273, 281), check=182)
+    monkeypatch.setattr(target_config, "filters_by_frame_count",
+                        lambda _d: ["g", "i"])
+
+    picked = target_config.read_window_selection(
+        tmp_path, "", prefer=target_config.filters_by_frame_count(tmp_path))
+    assert picked["filter"] == "g"
+    assert picked["comparison_ids"] == [119, 166, 182]
+    # Not the union: the four stars only `i` kept must not come along.
+    assert not ({65, 92, 273, 281} & set(picked["comparison_ids"]))
+
+
+def test_the_two_sides_ask_the_same_question_about_filters(tmp_path):
+    """Structural parity: one rule for "which filter stands for the workspace".
+
+    The pipeline step and the Step 9 window each had to answer it, and the
+    window cannot import from `apex.pipeline`, so the rule lives in the analysis
+    layer. Asserting they are the same object keeps holding as it changes.
+    """
+    from apex.analysis.light_curve import target_config
+    from apex.gui.workflow.lc import step9_lightcurve_builder as window
+    from apex.pipeline.steps import lc_target
+
+    assert lc_target._available_filters is target_config.filters_by_frame_count
+    assert window.filters_by_frame_count is target_config.filters_by_frame_count
+    assert window.read_window_selection is target_config.read_window_selection

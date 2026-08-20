@@ -71,6 +71,10 @@ from apex.utils.io_utils import (
 from apex.utils.photometry_loader import FramePhotometryCache, load_frame_photometry
 from apex.utils.constants import MAD_TO_SIGMA, get_parallel_workers
 from apex.analysis.light_curve.global_ensemble import select_comparisons_from_qc
+from apex.analysis.light_curve.target_config import (
+    filters_by_frame_count,
+    read_window_selection,
+)
 from apex.analysis.light_curve.photometry_source_service import (
     load_lightcurve_frame_photometry,
     resolve_lightcurve_photometry_source,
@@ -607,16 +611,26 @@ def _load_selection_ids(result_dir: Path) -> tuple[int | None, list[int]]:
         if len(target_ids) == 1 and len(comp_sets) == 1:
             return next(iter(target_ids)), list(next(iter(comp_sets)))
         if len(target_ids) == 1:
-            # Filters may legitimately carry different comp sets (or some may be
-            # empty). Seed Step 10 with the union so plotting/QC can start from
-            # the full candidate pool without silently preferring one filter.
-            union_comp_ids = sorted({
-                int(x)
-                for sel in filter_sel.values()
-                for x in sel.get("comparison_ids", [])
-                if x is not None
-            })
-            return next(iter(target_ids)), union_comp_ids
+            # Filters legitimately carry different comp sets, and this used to
+            # seed the union of them "without silently preferring one filter".
+            # The union is worse, and measurably: every star it adds is one that
+            # some other filter's screening threw out. Held-out check-star
+            # scatter on YZ Boo, per filter, union of 11 against the busiest
+            # filter's screened 6 (2026-08-21,
+            # `validation/ensemble_per_filter_cost.py`):
+            #
+            #     g  0.02816 -> 0.02482   (-3.35 mmag)
+            #     r  0.02002 -> 0.01687   (-3.15 mmag)
+            #     i  0.01230 -> 0.01162   (-0.67 mmag)
+            #
+            # So one filter is preferred — the one with the most frames, the
+            # same rule the pipeline step uses — and the seeded list is visible
+            # and editable in the comparison field rather than silent.
+            picked = read_window_selection(
+                result_dir, "", prefer=filters_by_frame_count(result_dir))
+            if picked is not None:
+                return int(picked["target_id"]), list(picked["comparison_ids"])
+            return next(iter(target_ids)), []
         return None, []
 
     # Compatibility fallback: target_selection.json + source_id mapping.
@@ -841,7 +855,9 @@ class LightCurveBuilderWindow(StepWindowBase, RawLightCurveBuilder):
         else:
             self.setup_step_ui()
             self.restore_state()
-            self._auto_load_ids()
+            # After restore, so the saved fields win; the selection file only
+            # fills what the last session left blank.
+            self._auto_load_ids(override=False)
         self.background_log.connect(self._append_background_log)
         self.background_worker_status.connect(self._apply_background_worker_status)
         self.background_worker_clear.connect(self._clear_background_worker_status)
@@ -1883,13 +1899,25 @@ class LightCurveBuilderWindow(StepWindowBase, RawLightCurveBuilder):
         self.save_state()
         self.build_light_curve()
 
-    def _auto_load_ids(self):
-        """Step 9 selection에서 target/comp ID를 자동 로드."""
+    def _auto_load_ids(self, *, override: bool = True):
+        """Step 9 selection에서 target/comp ID를 자동 로드.
+
+        `override=False` leaves anything already in the fields alone. The
+        constructor calls it that way because it runs *after* `restore_state()`,
+        and unconditional seeding there silently replaced whatever the user had
+        curated last session. That was invisible while the seed was the union of
+        every filter's picks — it looked like the user's own list. Now that the
+        seed is one filter's screened set (2026-08-21), replacing a curated list
+        with it would be a visible loss.
+
+        `load_from_selection()` is an explicit request, so it keeps overriding.
+        """
         rd = Path(self.params.P.result_dir)
         target_id, comp_ids = _load_selection_ids(rd)
-        if target_id is not None:
+        if target_id is not None and (override or not self.target_edit.text().strip()):
             self.target_edit.setText(str(target_id))
-        if comp_ids:
+        keep = bool(self.comp_edit.text().strip()) or bool(self.comp_candidate_ids)
+        if comp_ids and (override or not keep):
             self.comp_edit.setText(",".join(str(i) for i in comp_ids))
             self.comp_candidate_ids = list(comp_ids)
         self._update_comp_ids_from_input()
@@ -3819,7 +3847,13 @@ class LightCurveBuilderWindow(StepWindowBase, RawLightCurveBuilder):
     def save_state(self):
         state_data = {
             "build_diff": self.opt_diff,
+            # Two different lists. `comp_candidates` is the pool QC scores —
+            # it accumulates on purpose, so a star dropped from the field can
+            # still be re-examined. `comp_active` is what the field says, which
+            # is what actually builds the curve. Only the pool was saved, so a
+            # user's edit came back as whatever Step 8 had picked.
             "comp_candidates": ",".join(str(i) for i in self.comp_candidate_ids),
+            "comp_active": ",".join(str(i) for i in self.comp_ids_list),
             "qc_rms_max": self.qc_rms_max,
             "qc_sigma": self.qc_sigma,
             "qc_outlier_frac": self.qc_outlier_frac_max,
@@ -3846,6 +3880,15 @@ class LightCurveBuilderWindow(StepWindowBase, RawLightCurveBuilder):
             self.opt_diff = bool(state_data.get("build_diff", True))
             candidates_text = state_data.get("comp_candidates", "")
             self.comp_candidate_ids = _safe_int_list(candidates_text)
+            # Put the *active* list back on screen. Nothing wrote the field at
+            # restore, so it was empty and `_auto_load_ids` filled it from the
+            # selection file — a curated list saved last session came back as
+            # whatever Step 8 had picked. That was invisible while the seed was
+            # the union of every filter's picks: it looked like the user's list.
+            active = _safe_int_list(state_data.get("comp_active", ""))
+            self.comp_ids_list = list(active)
+            if active and hasattr(self, "comp_edit"):
+                self.comp_edit.setText(",".join(str(i) for i in active))
             self.qc_rms_max = float(state_data.get("qc_rms_max", self.qc_rms_max))
             self.qc_sigma = float(state_data.get("qc_sigma", self.qc_sigma))
             self.qc_outlier_frac_max = float(state_data.get("qc_outlier_frac", self.qc_outlier_frac_max))

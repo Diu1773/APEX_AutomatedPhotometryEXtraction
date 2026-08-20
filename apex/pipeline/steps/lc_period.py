@@ -107,6 +107,7 @@ def _write_candidates(result_dir, target_id: int, flt: str, results: dict,
             "period_hours": float(period) * 24.0,
             "strength": found.get("best_power"),
             "strength_kind": "periodogram power (higher is stronger)",
+            "run_status": "",
             "rank": "",
             "note": f"peak of the {labels.get(method, method.upper())} periodogram",
         })
@@ -131,6 +132,13 @@ def _write_candidates(result_dir, target_id: int, flt: str, results: dict,
         if rank == 1:
             note += (" — adopted" if status == "RESOLVED"
                      else f" — best fit, but the run says {status.lower() or 'unresolved'}")
+            # Said once, on the row a reader looks at first. Measured on YZ Boo
+            # by shortening the same curve: one night gave 1 candidate and an
+            # answer 2.08 % off, two nights gave 8 candidates and 0.06 % off.
+            # A longer baseline resolves MORE aliases, so the table grows as the
+            # answer improves — the opposite of how a list of eight reads.
+            note += ("; row count tracks baseline length, not confidence "
+                     "— read run_status for that")
         rows.append({
             "source": "alias candidate",
             "method": "alias resolver",
@@ -139,6 +147,7 @@ def _write_candidates(result_dir, target_id: int, flt: str, results: dict,
             "period_hours": float(candidate["period"]) * 24.0,
             "strength": delta,
             "strength_kind": "delta BIC vs the best candidate (0 is best)",
+            "run_status": status or "UNKNOWN",
             "rank": rank,
             "note": note,
         })
@@ -163,7 +172,7 @@ def _write_candidates(result_dir, target_id: int, flt: str, results: dict,
     with path.open("w", encoding="utf-8", newline="") as fh:
         writer = csv.DictWriter(fh, fieldnames=[
             "source", "method", "series", "period_days", "period_hours",
-            "strength", "strength_kind", "rank", "note"])
+            "strength", "strength_kind", "run_status", "rank", "note"])
         writer.writeheader()
         writer.writerows(rows)
 
