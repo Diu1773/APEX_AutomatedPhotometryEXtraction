@@ -38,6 +38,7 @@ from PyQt5.QtWidgets import (
 
 from apex.analysis.cmd.zeropoint_runner import (  # noqa: F401  (re-exported)
     ZeropointCalibrationRunner,
+    _cmd_photometry_index_candidates,
     build_cmd_qc_summary,
     build_gaia_cmd_comparison,
     build_gaia_cmd_drift_table,
