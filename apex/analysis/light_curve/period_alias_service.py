@@ -13,6 +13,8 @@ from typing import Iterable, Optional, Sequence
 
 import numpy as np
 from astropy.timeseries import LombScargle
+
+from apex.analysis.light_curve.period_harmonic_service import resolve_harmonic
 from scipy.optimize import minimize_scalar
 from scipy.signal import find_peaks
 
@@ -227,6 +229,18 @@ def build_alias_candidates(
             continue
         add(seed_f - offset, f"best-window-{offset:.5f}")
         add(seed_f + offset, f"best+window-{offset:.5f}")
+
+    # Harmonics of the peak, which sampling-window offsets never reach. A
+    # Lomb-Scargle fits one sinusoid, so a star that dips twice per cycle — an
+    # eclipsing binary — peaks at twice its orbital frequency and the list
+    # above contains only neighbours of that wrong peak. Measured on five
+    # ASAS-SN detached binaries, the catalogue period was absent from the
+    # candidate table in three of them (2026-08-21). Whether the harmonic or
+    # the peak is right is decided by folding, in `period_harmonic_service`;
+    # this only makes sure the answer is on the table to be decided about.
+    for m in (2, 3):
+        add(seed_f / m, f"subharmonic-1/{m}")
+        add(seed_f * m, f"harmonic-x{m}")
 
     candidates.sort(key=lambda row: float(row["ls_power"]), reverse=True)
     best_power = max(float(candidates[0]["ls_power"]), 1e-30) if candidates else 1.0
@@ -771,11 +785,28 @@ def analyze_period_aliases(
         float(window.get("baseline_days", np.ptp(t))),
     )
 
+    # Which harmonic of the winning candidate the star actually repeats at.
+    # Everything above ranks candidates by how well a *sinusoid* fits, and a
+    # star that dips twice per cycle — an eclipsing binary — is best fitted by
+    # a sinusoid at twice its orbital frequency. Deciding that needs the folded
+    # curve, not the periodogram, so it is a separate question asked here.
+    harmonic = resolve_harmonic(
+        t, y, best_period, mag_err=dy,
+        min_period=float(min_period), max_period=float(max_period),
+    )
+    if harmonic.changed:
+        best_period = float(harmonic.adopted_period)
+        reasons.append(
+            f"Folding says the period is ×{harmonic.factor:g} the periodogram "
+            f"peak: {harmonic.reason}."
+        )
+
     return {
         "status": status,
         "reason": " ".join(reasons),
         "adopted_period": best_period,
-        "adopted_freq_cd": float(fits[0]["freq_cd"]),
+        "adopted_freq_cd": (1.0 / best_period if best_period else float("nan")),
+        "harmonic": harmonic.as_dict(),
         "naive_period": naive_period,
         "was_aliased": bool(was_aliased),
         "candidates": serial_candidates,
