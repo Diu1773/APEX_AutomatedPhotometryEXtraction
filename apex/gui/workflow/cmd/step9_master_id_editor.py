@@ -33,10 +33,11 @@ from PyQt5.QtCore import Qt, QPoint
 from apex.gui.widgets.fits_viewer import FITSViewerWidget, OverlayMarker
 
 from apex.gui.layout_rules import FittedDialog, tame_canvas
+from apex.gui.workflow.param_dialog import (
+    ParamSpec, run_param_dialog, specs_from_map,
+)
 from apex.gui.workflow.step_window_base import StepWindowBase
 from apex.gui.workflow.ui_helpers import (
-    add_parameter_reset_button,
-    build_scroll_param_dialog,
     create_parameter_button,
 )
 from apex.utils.step_paths import (
@@ -53,6 +54,17 @@ from apex.utils.io_utils import (
     read_csv_int64_source_id,
     read_ecsv_int64_source_id,
 )
+
+
+_STEP9_ATTRS: tuple[str, ...] = (
+    "search_radius_px",
+    "bulk_drop_box_px",
+    "gaia_add_max_sep_arcsec",
+    "step8_membership_overlay_enable",
+    "step8_membership_threshold",
+)
+
+_STEP9_SPECS: tuple[ParamSpec, ...] = specs_from_map(_STEP9_ATTRS)
 
 
 class MasterIdEditorWindow(StepWindowBase):
@@ -1669,69 +1681,29 @@ class MasterIdEditorWindow(StepWindowBase):
 
 
     def open_parameters_dialog(self):
-        dialog, layout, buttons = build_scroll_param_dialog(
-            self, "Editor Parameters",
-            info_text="Adjust star editor interaction parameters. Changes apply immediately.",
-            size=(460, 420),
+        """The five editor settings, described once in the key map.
+
+        They used to be five hand-built widgets plus a second, separate list of
+        defaults for the reset button — and the two lists disagreed. The map
+        says `bulk_drop_box_px` defaults to 200 and the membership overlay to
+        off; the reset button restored 24 and on. Whichever pair is right, a
+        value written down twice will drift, and it had.
+        """
+        def _save() -> bool:
+            self._membership_loaded = False
+            self._ensure_membership_map(force=True)
+            self.update_overlay()
+            self.save_state()
+            return True
+
+        run_param_dialog(
+            self,
+            "Editor Parameters",
+            _STEP9_SPECS,
+            on_save=_save,
+            info_text=("Adjust star editor interaction parameters. "
+                       "Changes apply immediately."),
         )
-
-        form = QFormLayout()
-
-        self.param_search = QDoubleSpinBox()
-        self.param_search.setRange(1.0, 50.0)
-        self.param_search.setValue(float(getattr(self.params.P, "search_radius_px", 7.0)))
-        form.addRow("Search Radius (px):", self.param_search)
-
-        self.param_box = QSpinBox()
-        self.param_box.setRange(10, 2000)
-        self.param_box.setValue(int(getattr(self.params.P, "bulk_drop_box_px", 200)))
-        form.addRow("Remove Box Size (px):", self.param_box)
-
-        self.param_gaia_sep = QDoubleSpinBox()
-        self.param_gaia_sep.setRange(0.1, 10.0)
-        self.param_gaia_sep.setDecimals(1)
-        self.param_gaia_sep.setValue(float(getattr(self.params.P, "gaia_add_max_sep_arcsec", 2.0)))
-        form.addRow("Gaia Add Max Sep (\"):", self.param_gaia_sep)
-
-        self.param_mem_overlay = QCheckBox("Enable membership color overlay")
-        self.param_mem_overlay.setChecked(bool(getattr(self.params.P, "step8_membership_overlay_enable", False)))
-        form.addRow("Membership Overlay:", self.param_mem_overlay)
-
-        self.param_mem_thr = QDoubleSpinBox()
-        self.param_mem_thr.setRange(0.0, 1.0)
-        self.param_mem_thr.setDecimals(2)
-        self.param_mem_thr.setSingleStep(0.05)
-        self.param_mem_thr.setValue(float(getattr(self.params.P, "step8_membership_threshold", 0.5)))
-        form.addRow("Membership P threshold:", self.param_mem_thr)
-
-        layout.addLayout(form)
-        layout.addStretch(1)
-        add_parameter_reset_button(
-            buttons,
-            [
-                (self.param_search, 7.0),
-                (self.param_box, 24),
-                (self.param_gaia_sep, 2.0),
-                (self.param_mem_overlay, True),
-                (self.param_mem_thr, 0.5),
-            ],
-        )
-        buttons.accepted.connect(lambda: self.save_parameters(dialog))
-        buttons.rejected.connect(dialog.reject)
-        dialog.exec_()
-
-    def save_parameters(self, dialog):
-        self.params.P.search_radius_px = self.param_search.value()
-        self.params.P.bulk_drop_box_px = self.param_box.value()
-        self.params.P.gaia_add_max_sep_arcsec = self.param_gaia_sep.value()
-        self.params.P.step8_membership_overlay_enable = self.param_mem_overlay.isChecked()
-        self.params.P.step8_membership_threshold = self.param_mem_thr.value()
-        self._membership_loaded = False
-        self._ensure_membership_map(force=True)
-        self.update_overlay()
-        self.save_state()
-        QMessageBox.information(dialog, "Success", "Parameters saved!")
-        dialog.accept()
 
     def validate_step(self) -> bool:
         return (step9_selection_dir(self.params.P.result_dir) / "master_star_ids.csv").exists()

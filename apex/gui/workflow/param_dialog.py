@@ -50,6 +50,7 @@ class ParamSpec:
     label: str
     attr: str = ""
     kind: str = "float"
+    check_text: str = ""      # kind="bool": the wording beside the box
     lo: float = 0.0
     hi: float = 100.0
     step: float = 1.0
@@ -118,7 +119,11 @@ def build_param_form(
             form.addRow(spec.label + ":", w)
 
         elif spec.kind == "bool":
-            w = QCheckBox("Enable")
+            # A checkbox that says only "Enable" leans on the row label to
+            # carry the meaning. Where a window already had a fuller wording,
+            # the map keeps it — migrating a dialog should not quietly shorten
+            # text a user reads.
+            w = QCheckBox(spec.check_text or "Enable")
             w.setChecked(bool(raw) if raw is not None else False)
             if spec.tooltip:
                 w.setToolTip(spec.tooltip)
