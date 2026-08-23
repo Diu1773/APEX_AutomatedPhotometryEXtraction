@@ -75,6 +75,24 @@ def new_run_id() -> str:
             f"-{os.getpid()}-{next(_SEQUENCE):03d}")
 
 
+_SESSION_ID: Optional[str] = None
+
+
+def session_id() -> str:
+    """One id for the life of this process, for callers that have no "run".
+
+    The desktop app does not run a plan; a person opens windows and finishes
+    steps over an evening. Minting a fresh id at each step made every one look
+    like a separate run that had been interrupted — the reader saw "no end" a
+    dozen times and learned nothing. One id per session groups the sitting,
+    which is the thing that actually happened.
+    """
+    global _SESSION_ID
+    if _SESSION_ID is None:
+        _SESSION_ID = new_run_id()
+    return _SESSION_ID
+
+
 def _plain(value: Any) -> Any:
     if isinstance(value, bool) or value is None or isinstance(value, (int, str)):
         return value
@@ -269,11 +287,17 @@ def history(result_dir: Path | str) -> list[dict]:
             runs[run_id] = {"run": run_id, "steps": [], "notes": [],
                             "started": line.get("at"), "ended": None,
                             "mode": None, "source": None, "success": None,
+                            "announced": False, "last": line.get("at"),
                             "config": {}, "environment": {}}
             order.append(run_id)
         entry = runs[run_id]
+        entry["last"] = line.get("at")
         kind = line.get("event")
         if kind == "run_start":
+            # Only a plan that announced itself can be said to have been cut
+            # short. GUI lines never announce, and calling them interrupted
+            # taught a reader the opposite of what happened.
+            entry["announced"] = True
             entry.update({"started": line.get("at"), "mode": line.get("mode"),
                           "source": line.get("source"), "plan": line.get("plan"),
                           "config": line.get("config") or {},

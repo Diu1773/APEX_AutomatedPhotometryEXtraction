@@ -14,6 +14,12 @@ Commands
     apex config init             Create apex_config.json from the bundled example.
     apex config path             Print the resolved apex_config.json path.
     apex config show             Print the active apex_config.json.
+    apex journal <result_dir>    Print what has been done in a result directory:
+                                 every run, every step, the config that was read
+                                 and its digest. `--steps` folds it to the latest
+                                 line per step, `--settings` shows the parameter
+                                 values, `--note` adds what the pipeline cannot
+                                 know (why this directory exists).
     apex gui [--mode cmd|lc]     Launch the desktop GUI (imports PyQt5 lazily).
 
 The intent is for this module to grow an ``apex run`` subcommand once the
@@ -560,6 +566,21 @@ def build_parser() -> argparse.ArgumentParser:
     p_export.add_argument("--observer", default=None, help="Observer name (ExoClock/ExoFOP).")
     p_export.add_argument("--telescope", default=None, help="Telescope name (ExoClock/ExoFOP).")
 
+    p_journal = sub.add_parser(
+        "journal",
+        help="Read a result directory's history, or add a note to it.",
+    )
+    p_journal.add_argument("result_dir", type=Path,
+                           help="The result directory to read.")
+    p_journal.add_argument("--steps", action="store_true",
+                           help="Show only the latest line per step.")
+    p_journal.add_argument("--settings", action="store_true",
+                           help="Show the parameter values each step was run with.")
+    p_journal.add_argument(
+        "--note", default=None,
+        help="Append a note. For what the pipeline cannot know — why this "
+             "directory exists, what was ablated, which run the paper cites.")
+
     p_validate = sub.add_parser(
         "validate",
         help="Run the reproducible validation harness and write a report.",
@@ -630,6 +651,75 @@ def _cmd_bench(args) -> int:
     return bench_main(args.bench_args)
 
 
+def _cmd_journal(args) -> int:
+    """Read a directory's history, or add to it.
+
+    The journal is JSON Lines so anything can read it, but "anything" should not
+    have to be a Python session when the question is "what happened here".
+    """
+    from apex.utils import run_journal as journal
+
+    target = args.result_dir
+    if not target.is_dir():
+        print(f"No such directory: {target}")
+        return 1
+
+    if args.note:
+        if journal.record_note(target, args.note):
+            print(f"Noted in {journal.journal_path(target)}")
+            return 0
+        print("Could not write the note.")
+        return 1
+
+    runs = journal.history(target)
+    if not runs:
+        print(f"No journal in {target}.")
+        print("Nothing here records what produced this directory. A run made "
+              "before 2026-08-23 left no history; re-run it to get one.")
+        return 1
+
+    if args.steps:
+        print(f"\n  {target}  —  latest run of each step\n")
+        for index, line in journal.latest_steps(target).items():
+            print(f"  step {index:>2}  {line['at']}  {line['status']:<9} "
+                  f"{line.get('source') or '?':<9} {line.get('title') or line.get('key') or ''}")
+            if args.settings and line.get("settings"):
+                scope = line.get("settings_scope") or "?"
+                print(f"           ({len(line['settings'])} settings, {scope})")
+                for name, value in line["settings"].items():
+                    print(f"             {name:<28} = {value}")
+        print()
+        return 0
+
+    print(f"\n  {target}  —  {len(runs)} entries\n")
+    for run in runs:
+        if not run.get("announced") and not run["steps"]:
+            print(f"  {run['started']}  note")
+        elif not run.get("announced"):
+            # No plan was declared, so this is a desktop sitting: someone opened
+            # windows and finished steps. Calling it an interrupted run — which
+            # an earlier version did — says the opposite of what happened.
+            print(f"  {run['started']} → {run['last']}  desktop session")
+        else:
+            ended = run["ended"] or "(no end — interrupted)"
+            print(f"  {run['started']} → {ended}  {run['mode'] or '?'} "
+                  f"[{run.get('source') or 'headless'}]  success={run['success']}")
+        cfg = run.get("config") or {}
+        if cfg.get("path"):
+            print(f"    config  {cfg['path']}  {str(cfg.get('sha256'))[:12]}")
+        for step in run["steps"]:
+            note = f"  {step['message']}" if step.get("message") else ""
+            secs = f"{step['duration_s']:.1f}s" if step.get("duration_s") else ""
+            print(f"    step {step['index']:>2} {step['status']:<9} {secs:>8}{note}")
+            if args.settings and step.get("settings"):
+                for name, value in step["settings"].items():
+                    print(f"           {name:<28} = {value}")
+        for entry in run["notes"]:
+            print(f"    note  {entry['text']}")
+    print()
+    return 0
+
+
 def main(argv: Optional[list] = None) -> int:
     # Windows consoles default to a legacy codepage (e.g. cp949) that cannot
     # encode characters that show up in dependency versions or file paths.
@@ -647,6 +737,7 @@ def main(argv: Optional[list] = None) -> int:
         "config": _cmd_config,
         "run": _cmd_run,
         "export": _cmd_export,
+        "journal": _cmd_journal,
         "validate": _cmd_validate,
         "bench": _cmd_bench,
         "gui": _cmd_gui,

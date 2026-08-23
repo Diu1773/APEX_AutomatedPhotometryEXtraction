@@ -271,7 +271,7 @@ class StepWindowBase(WindowChromeMixin, QMainWindow):
             # give the same step two names in one file. The index and the title
             # say which step this is; a reader joins the two records on index.
             journal.record_step(
-                result_dir, journal.new_run_id(), index=index, key="",
+                result_dir, journal.session_id(), index=index, key="",
                 title=self.step_name, status="ok", source="gui",
                 settings=settings, settings_scope="workspace",
                 message="창에서 마무리")

@@ -208,3 +208,49 @@ def test_skipped_and_blocked_steps_are_on_the_record_too(tmp_path):
 
     statuses = {l["index"]: l["status"] for l in journal.read(tmp_path)}
     assert statuses == {4: "skipped", 5: "blocked"}
+
+
+# ── how a reader sees it ───────────────────────────────────────────────────
+
+def test_one_desktop_sitting_is_one_entry(tmp_path):
+    """Not one entry per step.
+
+    The window mints no plan, so an id per finalised step made every step look
+    like a separate run that had been interrupted — twelve "no end" lines that
+    told a reader nothing. One id for the process groups the sitting, which is
+    what actually happened.
+    """
+    first, second = journal.session_id(), journal.session_id()
+    assert first == second
+
+    journal.record_step(tmp_path, first, index=1, key="", status="ok", source="gui")
+    journal.record_step(tmp_path, first, index=2, key="", status="ok", source="gui")
+
+    runs = journal.history(tmp_path)
+    assert len(runs) == 1
+    assert [s["index"] for s in runs[0]["steps"]] == [1, 2]
+
+
+def test_only_an_announced_run_can_be_called_interrupted(tmp_path):
+    """`announced` is what separates "a plan died" from "someone used the app".
+
+    A headless run declares its plan up front, so a missing end means it was cut
+    short. A desktop sitting never declares one, and reporting it as interrupted
+    states the opposite of what happened.
+    """
+    journal.record_run_start(tmp_path, "plan", mode="cmd", plan=[1])
+    journal.record_step(tmp_path, "plan", index=1, key="scan", status="ok")
+    journal.record_step(tmp_path, "sitting", index=2, key="", status="ok", source="gui")
+
+    by_id = {r["run"]: r for r in journal.history(tmp_path)}
+    assert by_id["plan"]["announced"] is True
+    assert by_id["sitting"]["announced"] is False
+
+
+def test_the_last_line_of_an_entry_is_tracked(tmp_path):
+    """A sitting has no end line, so its span is first line to last."""
+    journal.record_step(tmp_path, "s", index=1, key="", status="ok", source="gui")
+    journal.record_step(tmp_path, "s", index=2, key="", status="ok", source="gui")
+
+    run = journal.history(tmp_path)[0]
+    assert run["last"] >= run["started"] and run["ended"] is None
