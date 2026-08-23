@@ -17,7 +17,7 @@ from apex.pipeline.runner import PipelineRunner
 def _ctx(tmp_path: Path, **kw) -> RunContext:
     return RunContext(
         mode="cmd",
-        params=None,
+        params=kw.pop("params", None),
         result_dir=tmp_path,
         data_dir=tmp_path,
         logger=logging.getLogger("test.pipeline"),
@@ -176,3 +176,86 @@ def test_registry_shared_steps_shape():
     assert [s.key for s in get_steps("lc")][7:] == [
         "lctarget", "lclightcurve", "lcdetrend", "lcperiod"]
     assert [s.index for s in get_steps("cmd")] == list(range(1, 13))
+
+
+# ── the directory's own history ────────────────────────────────────────────
+#
+# The manifest is rewritten every run, so a later partial run erases the record
+# of an earlier full one — that is how M13's steps 1-7 lost their record on
+# 2026-08-23. These check that the journal the runner appends does not.
+
+def test_the_runner_appends_a_journal_line_per_step(tmp_path):
+    from apex.pipeline import journal
+
+    runner = PipelineRunner([_Stub(1, outs=[tmp_path / "o1.txt"]),
+                             _Stub(2, outs=[tmp_path / "o2.txt"])])
+    runner.run(_ctx(tmp_path))
+
+    run = journal.history(tmp_path)[0]
+    assert run["mode"] == "cmd" and run["success"] is True
+    assert [s["index"] for s in run["steps"]] == [1, 2]
+    assert run["environment"].get("apex")
+
+
+def test_a_second_partial_run_adds_to_the_history_instead_of_replacing_it(tmp_path):
+    """The M13 case: run 1-2, then run 2 alone, then ask what step 1 did."""
+    from apex.pipeline import journal
+
+    o1, o2 = tmp_path / "o1.txt", tmp_path / "o2.txt"
+    PipelineRunner([_Stub(1, outs=[o1]), _Stub(2, outs=[o2])]).run(_ctx(tmp_path))
+    PipelineRunner([_Stub(2, key="s2", outs=[o2])]).run(_ctx(tmp_path, force=True),
+                                                        only={2})
+
+    manifest = json.loads((tmp_path / "pipeline_run.json").read_text(encoding="utf-8"))
+    assert [s["index"] for s in manifest["steps"]] == [2], (
+        "the manifest still only describes the last run — that is what it is for")
+
+    assert len(journal.history(tmp_path)) == 2
+    assert sorted(journal.latest_steps(tmp_path)) == [1, 2], (
+        "step 1 ran, and the directory must still be able to say so")
+
+
+def test_a_failed_step_is_on_the_record(tmp_path):
+    """A run that died is the run most worth being able to read afterwards."""
+    from apex.pipeline import journal
+
+    PipelineRunner([_Stub(1, fail=True)]).run(_ctx(tmp_path))
+
+    steps = journal.latest_steps(tmp_path)
+    assert steps[1]["status"] == "failed" and steps[1]["message"]
+    assert journal.history(tmp_path)[0]["success"] is False
+
+
+def test_the_journal_records_the_values_a_step_read_while_it_ran(tmp_path):
+    """Not the names, and not the config as it stood afterwards — the values.
+
+    A step reads `detect_thresh`; the config is edited; the run ends.
+    `parameters_used.json` reports the edited value, because that is what it
+    means. The journal has to report what the step was actually given.
+    """
+    from types import SimpleNamespace
+
+    from apex.pipeline import journal
+
+    live = SimpleNamespace(detect_thresh=5.0, unread=1)
+    params = SimpleNamespace(P=live, param_file=None)
+
+    class _Reader(_Stub):
+        def run(self, ctx):
+            _ = ctx.params.P.detect_thresh     # the recorder sees this one
+            return StepResult(index=self.index, key=self.key, status=StepStatus.OK)
+
+    PipelineRunner([_Reader(1)]).run(_ctx(tmp_path, params=params))
+    live.detect_thresh = 99.0                  # the config moves on
+
+    recorded = journal.latest_steps(tmp_path)[1]["settings"]
+    assert recorded == {"detect_thresh": 5.0}, (
+        "'unread' was never asked for, and 99.0 was never used")
+
+
+def test_a_dry_run_leaves_no_trace_in_the_history(tmp_path):
+    """A dry run does nothing to the directory, so it is not part of its history."""
+    from apex.pipeline import journal
+
+    PipelineRunner([_Stub(1, outs=[tmp_path / "o.txt"])]).run(_ctx(tmp_path, dry_run=True))
+    assert not journal.journal_path(tmp_path).exists()

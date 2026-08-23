@@ -2,6 +2,12 @@
 
 Resolves a step plan, checks prerequisites, runs each step idempotently, marks
 optional ProjectState, and writes a JSON run manifest. No Qt, no GUI.
+
+Two records come out of a run, and they are not redundant. `pipeline_run.json`
+is rewritten each time and describes *this* run — useful, and the reason a
+`--steps 10` run once erased the record that steps 1-7 had ever happened.
+`apex_journal.jsonl` is appended to as the run proceeds and describes
+*everything the directory has been through*; see `apex/pipeline/journal.py`.
 """
 
 from __future__ import annotations
@@ -13,6 +19,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import List, Optional
 
+from apex.pipeline import journal
 from apex.pipeline.base import PipelineStep, StepResult, StepStatus
 from apex.pipeline.context import RunContext
 from apex.pipeline.provenance import RecordingNamespace, write_parameter_record
@@ -77,6 +84,35 @@ class PipelineRunner:
         log.info("Pipeline plan (%s): steps %s",
                  ctx.mode, ", ".join(str(s.index) for s in plan) or "(none)")
 
+        # The journal is appended to as the run goes, not assembled at the end,
+        # so a run that is killed still leaves every step it finished. A dry run
+        # changes nothing in the directory and so writes nothing to its history.
+        keep_journal = not ctx.dry_run
+        run_id = journal.new_run_id()
+        titles = {s.index: s.title for s in plan}
+        if keep_journal:
+            journal.record_run_start(
+                ctx.result_dir, run_id, mode=ctx.mode,
+                plan=[s.index for s in plan], params=ctx.params,
+                environment=self._environment(), force=ctx.force,
+                dry_run=ctx.dry_run, logger=log)
+
+        def emit(result: StepResult, settings: Optional[dict] = None) -> None:
+            """Every outcome goes to both records — blocked and skipped too.
+
+            "Step 4 was skipped because it was already complete" is the kind of
+            line that explains a directory a year later, and it is exactly what
+            a report holding only the steps that ran would leave out.
+            """
+            report.results.append(result)
+            if keep_journal:
+                journal.record_step(
+                    ctx.result_dir, run_id, index=result.index, key=result.key,
+                    title=titles.get(result.index, ""), status=result.status,
+                    message=result.message, duration_s=result.duration_s,
+                    outputs=result.outputs or (), settings=settings or {},
+                    logger=log)
+
         settings_read: dict = {}
         for step in plan:
             label = f"Step {step.index} [{step.key}] {step.title}"
@@ -87,7 +123,7 @@ class PipelineRunner:
             if missing and not ctx.dry_run:
                 log.error("%s -> BLOCKED (missing inputs: %s)",
                           label, ", ".join(str(p) for p in missing))
-                report.results.append(StepResult(
+                emit(StepResult(
                     index=step.index, key=step.key, status=StepStatus.BLOCKED,
                     message="missing inputs: " + ", ".join(str(p) for p in missing),
                 ))
@@ -95,7 +131,7 @@ class PipelineRunner:
 
             if step.is_complete(ctx) and not ctx.force:
                 log.info("%s -> skipped (already complete; use --force to rerun)", label)
-                report.results.append(StepResult(
+                emit(StepResult(
                     index=step.index, key=step.key, status=StepStatus.SKIPPED,
                     message="already complete",
                     outputs=[str(p) for p in step.outputs(ctx)],
@@ -105,7 +141,7 @@ class PipelineRunner:
             if ctx.dry_run:
                 note = " (interactive: needs config-supplied input)" if step.interactive else ""
                 log.info("%s -> would run%s", label, note)
-                report.results.append(StepResult(
+                emit(StepResult(
                     index=step.index, key=step.key, status=StepStatus.PENDING,
                     message="dry-run",
                 ))
@@ -130,21 +166,29 @@ class PipelineRunner:
             except Exception as exc:  # noqa: BLE001 - one bad step must not crash the run
                 dt = time.perf_counter() - t0
                 log.exception("%s -> FAILED", label)
+                used = {}
                 if recorder is not None:
                     ctx.params.P = real_P
                     settings_read[step.key] = recorder.seen
-                report.results.append(StepResult(
+                    used = journal.settings_snapshot(ctx.params, recorder.seen)
+                emit(StepResult(
                     index=step.index, key=step.key, status=StepStatus.FAILED,
                     message=f"{type(exc).__name__}: {exc}", duration_s=dt,
-                ))
+                ), used)
                 break
+            used = {}
             if recorder is not None:
                 ctx.params.P = real_P
                 settings_read[step.key] = recorder.seen
+                # The values, not just the names. `parameters_used.json` holds
+                # the settings as they stood when the run ended; this holds what
+                # this step read while it ran, which is the same thing only if
+                # nobody edited the config in between.
+                used = journal.settings_snapshot(ctx.params, recorder.seen)
             result.duration_s = time.perf_counter() - t0
             log.info("%s -> %s (%.2fs) %s",
                      label, result.status, result.duration_s, result.message)
-            report.results.append(result)
+            emit(result, used)
 
             if result.status == StepStatus.OK and ctx.project_state is not None:
                 try:
@@ -157,6 +201,12 @@ class PipelineRunner:
                 break
 
         report.ended = datetime.now().isoformat()
+        if keep_journal:
+            from apex.utils.constants import get_worker_decisions
+
+            journal.record_run_end(
+                ctx.result_dir, run_id, success=report.success,
+                worker_decisions=get_worker_decisions(), logger=log)
         if not ctx.dry_run:
             self._write_manifest(ctx, report)
             if getattr(ctx.params, "P", None) is None:
