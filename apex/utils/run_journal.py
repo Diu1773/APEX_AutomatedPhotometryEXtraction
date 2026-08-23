@@ -169,18 +169,50 @@ def record_run_start(result_dir, run_id, *, mode, plan, params=None,
 
 def record_step(result_dir, run_id, *, index, key, title="", status="",
                 message="", duration_s=None, outputs=(), settings=None,
+                settings_scope="read_by_step", source="headless",
                 logger=None) -> bool:
+    """One step, in whichever way it was run.
+
+    `index` is 1-based — step 1 is the file scan — because that is what the
+    pipeline, the CLI and the window titles all say. The GUI numbers its own
+    windows from zero internally, so its caller has to add one; if it forgets,
+    the two records disagree about which step made a file and the journal
+    becomes worse than nothing.
+
+    `settings_scope` says what the values mean, and the two callers mean
+    different things. Headless stands a recorder in front of the namespace and
+    records what the step *read* (`read_by_step`). The GUI has no such recorder,
+    so it records the workspace's settings as they stood (`workspace`) — a
+    weaker claim, and one a reader must be able to tell apart.
+    """
     return append(result_dir, "step", {
         "run": run_id,
         "index": index,
         "key": key,
         "title": title,
         "status": str(status),
+        "source": source,
         "message": message,
         "duration_s": round(duration_s, 3) if isinstance(duration_s, (int, float)) else None,
         "outputs": [str(p) for p in outputs],
+        "settings_scope": settings_scope,
         "settings": settings or {},
     }, logger=logger)
+
+
+def last_step(result_dir: Path | str, index: int) -> Optional[dict]:
+    """The most recent line for one step, or None.
+
+    Lets a caller that fires on something other than "the step just ran" — the
+    GUI finalises a step whenever its window closes on a valid state — skip a
+    line that would repeat the one before it. Twenty identical lines from
+    opening and closing a window would bury the runs worth reading.
+    """
+    found = None
+    for line in read(result_dir):
+        if line.get("event") == "step" and line.get("index") == index:
+            found = line
+    return found
 
 
 def record_run_end(result_dir, run_id, *, success, duration_s=None,

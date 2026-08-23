@@ -227,7 +227,56 @@ class StepWindowBase(WindowChromeMixin, QMainWindow):
         self.save_state()
         self.persist_params()
         self._mark_step_complete(notify_main=notify_main)
+        self._record_in_journal()
         return True
+
+    def _record_in_journal(self) -> None:
+        """Put this step on the result directory's permanent record.
+
+        Most of the directories behind the paper were made here, in windows, and
+        until now the window wrote nothing about what it had done: a ledger over
+        sixteen result directories found parameter records in three, all of them
+        left by headless runs. A directory that cannot say what produced it is
+        not evidence, however good the photometry inside it is.
+
+        This fires when a step is finalised — which is not the same as "the step
+        just ran": closing a window on an already-valid step finalises it too.
+        So an entry identical to the one already at the end of the record is
+        dropped, and the journal keeps changes rather than visits.
+
+        Never raises. The window's job is the step, not the bookkeeping.
+        """
+        try:
+            from apex.utils import run_journal as journal
+
+            P = getattr(self.params, "P", None)
+            result_dir = getattr(P, "result_dir", None) if P is not None else None
+            if not result_dir:
+                return
+
+            # The GUI counts its windows from zero; every other record counts
+            # steps from one. Converting here keeps the two from disagreeing
+            # about which step made a file.
+            index = self.step_index + 1
+            settings = journal.settings_snapshot(self.params)
+            previous = journal.last_step(result_dir, index)
+            if (previous is not None
+                    and previous.get("source") == "gui"
+                    and previous.get("settings") == settings):
+                return
+
+            # No `key`. The pipeline's keys ("scan", "detect", …) live in
+            # `apex.pipeline.registry`, which costs 4.7 s to import — far too
+            # much to pay on a Next click — and inventing "step4" here would
+            # give the same step two names in one file. The index and the title
+            # say which step this is; a reader joins the two records on index.
+            journal.record_step(
+                result_dir, journal.new_run_id(), index=index, key="",
+                title=self.step_name, status="ok", source="gui",
+                settings=settings, settings_scope="workspace",
+                message="창에서 마무리")
+        except Exception:  # noqa: BLE001 - a record must never break the window
+            pass
 
     def validate_step(self) -> bool:
         """

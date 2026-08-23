@@ -21,7 +21,7 @@ from types import SimpleNamespace
 
 import pytest
 
-from apex.pipeline import journal
+from apex.utils import run_journal as journal
 
 
 class _P:

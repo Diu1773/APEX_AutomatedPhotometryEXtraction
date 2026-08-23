@@ -7,7 +7,7 @@ Two records come out of a run, and they are not redundant. `pipeline_run.json`
 is rewritten each time and describes *this* run — useful, and the reason a
 `--steps 10` run once erased the record that steps 1-7 had ever happened.
 `apex_journal.jsonl` is appended to as the run proceeds and describes
-*everything the directory has been through*; see `apex/pipeline/journal.py`.
+*everything the directory has been through*; see `apex/utils/run_journal.py`.
 """
 
 from __future__ import annotations
@@ -19,10 +19,10 @@ from datetime import datetime
 from pathlib import Path
 from typing import List, Optional
 
-from apex.pipeline import journal
 from apex.pipeline.base import PipelineStep, StepResult, StepStatus
 from apex.pipeline.context import RunContext
 from apex.pipeline.provenance import RecordingNamespace, write_parameter_record
+from apex.utils import run_journal as journal
 
 
 @dataclass

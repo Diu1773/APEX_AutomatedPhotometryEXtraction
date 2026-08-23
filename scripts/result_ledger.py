@@ -42,7 +42,7 @@ ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from apex.pipeline import journal  # noqa: E402
+from apex.utils import run_journal as journal  # noqa: E402
 
 DEFAULT_ROOT = Path("E:/APEX_validation/reprocess")
 

@@ -185,7 +185,7 @@ def test_registry_shared_steps_shape():
 # 2026-08-23. These check that the journal the runner appends does not.
 
 def test_the_runner_appends_a_journal_line_per_step(tmp_path):
-    from apex.pipeline import journal
+    from apex.utils import run_journal as journal
 
     runner = PipelineRunner([_Stub(1, outs=[tmp_path / "o1.txt"]),
                              _Stub(2, outs=[tmp_path / "o2.txt"])])
@@ -199,7 +199,7 @@ def test_the_runner_appends_a_journal_line_per_step(tmp_path):
 
 def test_a_second_partial_run_adds_to_the_history_instead_of_replacing_it(tmp_path):
     """The M13 case: run 1-2, then run 2 alone, then ask what step 1 did."""
-    from apex.pipeline import journal
+    from apex.utils import run_journal as journal
 
     o1, o2 = tmp_path / "o1.txt", tmp_path / "o2.txt"
     PipelineRunner([_Stub(1, outs=[o1]), _Stub(2, outs=[o2])]).run(_ctx(tmp_path))
@@ -217,7 +217,7 @@ def test_a_second_partial_run_adds_to_the_history_instead_of_replacing_it(tmp_pa
 
 def test_a_failed_step_is_on_the_record(tmp_path):
     """A run that died is the run most worth being able to read afterwards."""
-    from apex.pipeline import journal
+    from apex.utils import run_journal as journal
 
     PipelineRunner([_Stub(1, fail=True)]).run(_ctx(tmp_path))
 
@@ -235,7 +235,7 @@ def test_the_journal_records_the_values_a_step_read_while_it_ran(tmp_path):
     """
     from types import SimpleNamespace
 
-    from apex.pipeline import journal
+    from apex.utils import run_journal as journal
 
     live = SimpleNamespace(detect_thresh=5.0, unread=1)
     params = SimpleNamespace(P=live, param_file=None)
@@ -255,7 +255,7 @@ def test_the_journal_records_the_values_a_step_read_while_it_ran(tmp_path):
 
 def test_a_dry_run_leaves_no_trace_in_the_history(tmp_path):
     """A dry run does nothing to the directory, so it is not part of its history."""
-    from apex.pipeline import journal
+    from apex.utils import run_journal as journal
 
     PipelineRunner([_Stub(1, outs=[tmp_path / "o.txt"])]).run(_ctx(tmp_path, dry_run=True))
     assert not journal.journal_path(tmp_path).exists()
