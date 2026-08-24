@@ -1,6 +1,15 @@
-# APEX A&A Section 15 submission-readiness audit
+# APEX submission-readiness audit
 
-Target: **Astronomy & Astrophysics, Section 15 — Numerical methods and codes**. The official author guide lists Section 15 under the numerical-methods/code sections; the target is not the instrumentation section. See the [A&A author guide](https://www.aanda.org/doc_journal/instructions/aadoc.pdf).
+> **Venue changed on 2026-08-24: the target is now PASP, one paper.** A&A §15
+> requires *"new numerical algorithms … emphasize the novel aspects"*, and this
+> project's own prior-art audit records that the components carry almost no
+> algorithmic novelty. See `TRACK_PAPER.md` for the evidence and the decision
+> history. **Most of the checklist below still applies** — an execution contract,
+> a reproducibility manifest, stated scope limits and a clean public release are
+> what any code paper needs. Only the items phrased as A&A-specific (§15 framing,
+> S2O page allowances) should be read as PASP's equivalents.
+
+Target (superseded): **Astronomy & Astrophysics, Section 15 — Numerical methods and codes**. The official author guide lists Section 15 under the numerical-methods/code sections; the target is not the instrumentation section. See the [A&A author guide](https://www.aanda.org/doc_journal/instructions/aadoc.pdf).
 
 ## Readiness snapshot
 
@@ -9,11 +18,11 @@ Target: **Astronomy & Astrophysics, Section 15 — Numerical methods and codes**
 | Scientific scope | **Promising, not frozen** | APEX is best framed as an integrated, parameterised photometry workflow with scoped validation, not as a new universal detector/photometry algorithm. |
 | Target fit | **Good pending reframing** | Section 15 is compatible with a code/method paper if the implementation, reproducibility contract and numerical validation are explicit. AutoPhOT is a useful precedent but is not evidence of APEX equivalence. |
 | Code path | **Amber** | Steps 0–7 shared core is clear; PSF Step 8 and zeropoint Step 10 remain GUI-worker centric. |
-| Reproducibility | **Amber/red** | Benchmarks use seeds in many places, but the normal pipeline manifest omits resolved config, package versions, input hashes, external solver/database versions and network/cache state. |
+| Reproducibility | **Amber** (was Amber/red) | **2026-08-23**: `apex_journal.jsonl` now appends, per step, the parameter values the step actually read, the config path and its SHA-256, and the package versions — from both the headless runner and the GUI. **Still missing**: git commit, input-file hashes, output-file hashes, random seed, external solver version/fallback, Gaia cache state. And no existing result directory carries a journal yet (0 of 16). |
 | Validation | **Amber** | Strong synthetic and cross-check infrastructure exists; coverage by boundary and negative controls is incomplete. Optional external suites can skip. |
 | Documentation | **Amber** | Paper, README/manual and code disagree on WCS priority and headless scope. `docs/audit` now records the discrepancies; source docs still need a controlled update. |
 | Release hygiene | **Amber** | Tracked documentation still contains local absolute paths. **The API-key blocker was a false positive — cleared 2026-08-12** (below). |
-| Tests | **Green for regression baseline** | Full oracle run on 2026-08-11: **1,039 passed** in 710 s (2026-08-07 baseline was 905). This is software regression evidence, not a substitute for paper validation. |
+| Tests | **Green for regression baseline** | Full oracle run on **2026-08-23: 1,412 passed**, 0 failed, 0 skipped, in 811 s (08-11 was 1,039; 08-07 was 905). This is software regression evidence, not a substitute for paper validation. |
 
 ## A&A Section 15 package checklist
 
