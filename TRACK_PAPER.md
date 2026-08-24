@@ -14,7 +14,7 @@ AA고"* → *"좋네, 이렇게 가자 그러면"*.
 | | 척추 | 투고처 | 상태 |
 |---|---|---|---|
 | **1 편** | **도구 + 단계별 검증.** 서론은 저자 원체험(1 학년이 HOPS 로는 결과를 냈는데 성단 CMD 는 IRAF 앞에서 막혔다) | **PASP** | **재료 있음.** 서론 재집필 · 재현성 계약 · 산출물 출처 — 몇 주 |
-| **2 편** | **이소크론 축퇴를 표준계 앵커로 푼다** (rail 해소) | **A&A §15** | **선행조사 선행.** 새로운 게 맞는지 먼저 확인 |
+| ~~**2 편**~~ | ~~이소크론 축퇴를 표준계 앵커로 푼다~~ | ~~A&A §15~~ | **같은 날 접었다** — 선행조사에서 Burke et al. 2003 이 나왔다(아래). rail 해소는 1 편의 검증 절로 |
 
 **왜 나누나.** 한 편에 넣으면 도구 설명과 방법 주장이 엉켜 **둘 다 약해진다.**
 그리고 순서가 자연스럽다 — **방법 논문이 도구 논문을 인용**하는 것이지 그 반대는
@@ -27,8 +27,45 @@ scope-out 했다. 받칠 수 있는 것은 **rail 해소**다: 모든 밴드 영
 표준계(MMJ93)에 앵커해야 U−B 가 축퇴를 푼다 — M67 [M/H] −0.83 → **+0.06(문헌값)**,
 나이 3.83 · E 0.011 복귀, M13 −1.56 · NGC6811 +0.06 에서도 서고 PSF 로도 재현.
 
-**2 편의 존폐를 정하는 확인이 하나 있다**: 이 지적이 선행연구에 이미 있는가.
-없으면 §15 후보이고, 있으면 2 편은 접고 1 편의 한 절로 들어간다.
+### 선행조사 결과 (2026-08-24, 같은 날) — **2 편은 접는다**
+
+**이미 있다. 2003 년에.** Burke et al. (`astro-ph/0312083`, NGC 1245) §3.1
+「Systematic Errors」 축자:
+
+> There are four main contributions to the systematic uncertainties in the
+> derived cluster parameters: uncertainty in R_V, **photometric calibration
+> errors**, theoretical isochrone errors, and binary star contamination.
+
+> To assess the systematic error associated with the photometric calibration
+> uncertainty, **we refit the isochrones assuming the I-band photometry is
+> fainter by 0.02 mag. The resulting best fit is [Fe/H] = 0.0, Age = 1.021
+> Gyr**, (m−M)₀ = 12.31, and A_V = 0.62.
+
+그리고 6 쪽: **"The photometric calibration and R_V uncertainty dominate the
+systematic uncertainty in metallicity."**
+
+**기전도, 정량화도, 「지배한다」는 결론까지 다 있다.** APEX 와 다른 것은 크기뿐이다
+— 저쪽은 0.02 mag 에 0.05 dex 이동, 우리 쪽은 표준계가 달라 0.89 dex 를 튀며 격자
+경계에 고착. 남는 주장은 「알려진 계통오차가 충분히 크면 완만한 열화가 아니라 경계
+고착으로 나타난다」이고, 이는 **새 수치 알고리즘이 아니라 실무 함정 보고**다.
+§15 의 「new numerical algorithms」·「novel aspects」를 못 받친다.
+
+**부수 확인**: U−B 로 축퇴를 푸는 것 자체가 고전 기법이다 — 색-색도((B−V) vs
+(U−B))에 ZAMS 를 맞춰 적색화를 먼저 정하는 전통적 절차. 「다중 밴드가 축퇴를
+완화한다」도 알려져 있다.
+
+**처분**: rail 해소는 **1 편의 검증·한계 절로 들어간다** — 「우리 이소크론 단계의
+실패 양태, 그 원인, 고치는 처방, 그리고 3 성단 문헌값 복귀」로 쓰고 기전은
+Burke et al. 을 인용한다. 정직하고 1 편의 검증 서사를 강화한다.
+
+**A&A 갈래가 통째로 죽은 것은 아니다.** 선행조사를 아직 안 한 후보가 둘 남아 있다
+— **초과검출 QC 게이트**(스코어카드가 유일하게 `N`=대조 상대 없음으로 매긴 항목,
+단 효과·문턱 독립성·하류 효과 전부 미측정)와 **구경보정의 하늘 추정기 판정**
+(IRAF `mode` 대 시그마클립 중앙값, 인공별 18,000 개로 판정). **다만 지금은 1 편에
+집중하고, 2 편 후보는 1 편이 나간 뒤에 다시 본다.**
+
+**교훈**: 이 확인에 40 분 걸렸고 몇 달을 아꼈다. **노벨티 주장은 착수 전에
+선행조사부터 한다.**
 
 ## 완료 정의
 
