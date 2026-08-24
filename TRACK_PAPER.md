@@ -51,6 +51,79 @@ amateur astronomer"*)를 2017 년에 이미 명시한 문제를 서론이 이미
    아니었다** — 창은 아무 기록도 안 남겼다. 저널(`apex_journal.jsonl`)을 붙여
    이제 참이 됐다. 새 본문에서는 그 파일을 근거로 댈 수 있다.
 
+## 2026-08-24 — 투고처 근거를 실제로 확인했다 (A&A §15 재검토)
+
+사용자 지적: *"방법·코드의 신규 요소 + 유사 코드와의 벤치마크 비교 검증 이게
+중요하다고, 내가 원래 만드려고 했던것과는 거리가 멀잖아 **사실은 AA의 관례가 뭔지도
+모르지만**"*.
+
+**맞는 지적이었고, 마지막 문장이 특히 그랬다.** 08-06 결정 당시 `aanda.org` 는
+에이전트 접근을 전부 막았고(아래 함정), 사용자가 직접 확인한 것은 **「AUTOPHOT 이
+Section 15 다」 하나**였다. **「§15 는 신규 요소 + 벤치마크를 요구한다」는 그 위에
+얹은 우리 추론이었다.**
+
+### §15 의 실제 규정 (2026-08-24 확인)
+
+A&A 온라인 전용 섹션 신설 사설 원문. 검색 두 번이 같은 문구를 냈다:
+
+> Section 15, entitled "Numerical methods and codes", is devoted to publishing
+> **new numerical algorithms and codes of interest to a sufficiently large
+> fraction of the astronomical community**. Papers submitted for this section
+> **emphasize the novel aspects** of the featured method or code … must be
+> validated either by comparing … with analytical solutions and/or by **running
+> benchmark comparisons with similar codes** …
+
+**벤치마크 요구는 우리가 적어 둔 대로 맞았다. 빠뜨린 것은 앞쪽이다** —
+「new numerical algorithms」·「novel aspects」·「충분히 큰 비율의 커뮤니티」.
+
+별도 문서(「Astronomical software articles in A&A」, roe.ac.uk)의 요지는:
+A&A 는 코드가 **천문학을 진전시키는 방법론적 기여**일 때 받고, 기존 기법을 실행
+가능한 형태로 **포장한 것만으로는 받지 않는다**. (요약본이라 축자 인용 아님.)
+
+### 08-06 판단이 자기 근거와 모순돼 있었다
+
+- `APEX_PRIOR_ART.md`: *"개별 구성요소에 알고리즘 노벨티는 **거의 없다**"*
+- 원고 초록: *"새 알고리즘 제안 안 함"*
+- **08-06 커밋 본문 자신**: *"초록의 「새 알고리즘 제안 안 함」이 Section 15에
+  **자해**라는 점 기록"*
+
+**자해라고 적어 놓고 「APEX 자산과 정면으로 맞는다」로 결론냈다.** 요구사항 요약은
+대체로 맞았고 **적합 판단이 틀렸다.** 결정이 자기 근거와 모순되면 볼 때마다 다시
+걸리며, 실제로 한 달 만에 같은 고민이 올라왔다.
+
+### 저널 비교 (2026-08-24 실측)
+
+| 저널 | IF | SCIE | 저자 부담 | 성격 |
+|---|---|---|---|---|
+| **PASP** | **6.8** | 예 | **0 원 가능** — 하이브리드라 구독 게재 가능, 투고료 없음. OA 원하면 $1,480 | ASP **기술 저널**(1889~). 기기·데이터분석 섹션 별도. **기기·소프트웨어의 "go to" 저널** |
+| **AJ** | 5.8 (Q1) | 예 | **$1,149~$2,599 필수**, AAS 기금 5~100 % 감면 | *"significant scientific results **derived from observations**"* 강조. 분석 기법도 환영 |
+| **A&A** | 미확인 | 예 | APC 없음(S2O). 무료 분량 본문 12 쪽 + 부록 8 쪽 초과 시 과금 | §15 는 신규 알고리즘 요구 |
+| RASTI | 2.5 | **미확인** | OUP OA | 신규성 불요. 단 지표 낮고 SCIE 확인 못 함 |
+
+지표는 집계 사이트 값이라 JCR 원본이 아니다. 실적에 쓸 값이면 도서관 JCR 로 재확인.
+
+### PASP 가 APEX 의 지반이다 (서지 확인 완료)
+
+| 논문 | 서지 | APEX 와의 관계 |
+|---|---|---|
+| Stetson 1987, DAOPHOT | PASP **99**, 191–222 · 10.1086/131977 | **A 축 벤치마크 상대**(ALLSTAR) |
+| Foreman-Mackey+ 2013, emcee | PASP **125**, 306–312 · 10.1086/670067 · 인용 6,249 | **step12 이소크론 MCMC 가 쓰는 샘플러** |
+| Alarcón+ 2023 | PASP | IMX455 특성화. **gain 0.689 실측이 일치** |
+
+비교 상대도, 내부에서 쓰는 샘플러도, 검출기 결과를 맞춰 본 논문도 전부 PASP 다.
+
+### 남는 판단
+
+**세 갈래고 셋 다 정직하다.**
+
+- **논문의 척추를 「접근성 + 단계별 검증」으로** → PASP · AJ. **만든 이유와 가장 가깝다**
+- **「방법 기여」로** → A&A §15 가능. 후보는 구경보정의 하늘 추정기 판정(IRAF `mode`
+  대 시그마클립 중앙값, 인공별 18,000 개로 판정). 단 **APEX 가 조연이 된다**
+- **「발견」으로** → PASP(Alarcón+2023 선례). EGAIN 14 배 등
+
+**미확인 하나**: RASTI 의 SCIE 등재 여부 — 검색으로 확인이 안 됐다는 것이지
+미등재 확정은 아니다. 후보로 남길 거면 투고 전 확인 필요.
+
 ## 오라클 — 추적가능성
 
 기계로 돌리는 테스트는 없다. 대신 이 조건을 만족해야 완료다.
