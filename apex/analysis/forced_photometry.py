@@ -52,6 +52,7 @@ from apex.utils.constants import (
     DEPTH_QC_TOLERANCE_MAG,
 )
 from apex.utils.noise_params import resolve_effective_noise_params
+from apex.utils.param_recorder import RecordingNamespace
 from apex.analysis.detection_limit import frame_depth_qc
 
 _GC_N_STEPS = 14   # number of radii in the growth curve
@@ -444,16 +445,40 @@ def _forced_phot_chunk(payload: dict) -> dict:
 
     Callbacks do not cross a process boundary, so the child is given none and
     the parent reports progress per chunk instead of per frame.
+
+    Neither does the recording proxy the runner stands in front of the
+    parameters: pickle copies it into the child, and every name the photometry
+    asks for is remembered in *that* copy, which is thrown away when the child
+    exits. So the run's record held the handful of settings the parent read
+    while planning and none of the twenty-five `_phot_frame` reads — aperture
+    scales, sky annulus, saturation, recentring — for any run that took this
+    path. The child stands up its own proxy and reports the names back.
     """
-    return run_forced_photometry(
-        payload["files"],
-        payload["params"],
-        payload["data_dir"],
-        payload["cache_dir"],
-        result_dir=payload["result_dir"],
-        output_dir=payload["output_dir"],
-        write_summary=False,
-    )
+    params = payload["params"]
+    real_P = getattr(params, "P", None)
+    recorder = None
+    if real_P is not None:
+        recorder = RecordingNamespace(real_P)
+        try:
+            params.P = recorder
+        except Exception:                       # noqa: BLE001 - frozen params
+            recorder = None
+    try:
+        summary = run_forced_photometry(
+            payload["files"],
+            params,
+            payload["data_dir"],
+            payload["cache_dir"],
+            result_dir=payload["result_dir"],
+            output_dir=payload["output_dir"],
+            write_summary=False,
+        )
+    finally:
+        if recorder is not None:
+            params.P = real_P
+    if recorder is not None and isinstance(summary, dict):
+        summary["settings_read"] = sorted(recorder.seen)
+    return summary
 
 
 def _chunk_frames(tasks: list, n_chunks: int) -> list:
@@ -507,7 +532,8 @@ def _run_tasks_in_processes(tasks, params, data_dir, cache_dir, result_dir,
         "output_dir": str(out_dir),
     } for chunk in chunks]
 
-    merged = {"index_rows": [], "apcorr_rows": [], "center_stats_rows": []}
+    merged = {"index_rows": [], "apcorr_rows": [], "center_stats_rows": [],
+              "settings_read": []}
     done = 0
     total = len(tasks)
     _say(f"[FORCED] Starting forced photometry in {workers} processes "
@@ -1520,6 +1546,7 @@ def run_forced_photometry(
     index_rows: List[dict] = []
     apcorr_rows: List[dict] = []
     center_stats_rows: List[dict] = []
+    settings_read: List[str] = []
     n_done = [0]
 
     max_workers = max(1, int(max_workers))
@@ -1625,6 +1652,10 @@ def run_forced_photometry(
             index_rows.extend(merged["index_rows"])
             apcorr_rows.extend(merged["apcorr_rows"])
             center_stats_rows.extend(merged["center_stats_rows"])
+            # The per-frame reads happened over there, so the caller's proxy
+            # never saw them. Carry the names back; `tasks = []` below is what
+            # makes that necessary — the parent runs no frame of its own.
+            settings_read[:] = sorted(set(merged["settings_read"]))
             tasks = []
 
     _log(f"[FORCED] Starting parallel forced photometry with {max_workers} workers ({len(tasks)} frames)")
@@ -1779,6 +1810,7 @@ def run_forced_photometry(
             "index_rows": index_rows,
             "apcorr_rows": apcorr_rows,
             "center_stats_rows": center_stats_rows,
+            "settings_read": settings_read,
         }
 
     index_write_ok = False
@@ -1837,6 +1869,10 @@ def run_forced_photometry(
         "index_rows": index_rows,
         "apcorr_rows": apcorr_rows,
         "center_stats_rows": center_stats_rows,
+        # Names the *children* read, for a caller whose recording proxy could
+        # not follow them there. Empty on the thread path, where the proxy in
+        # front of `params.P` saw every read itself.
+        "settings_read": settings_read,
     }
 
 

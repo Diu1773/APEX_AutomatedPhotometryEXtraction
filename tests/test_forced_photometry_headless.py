@@ -221,3 +221,97 @@ def test_forced_phot_step_blocked_without_selection(tmp_path):
     )
     result = ForcedPhotStep().run(ctx)
     assert result.status == "blocked"
+
+
+# ── what the record says this step read ────────────────────────────────────
+#
+# The runner stands a recording proxy in front of `params.P` while a step runs,
+# so the run's record can name the settings the step actually read rather than
+# the ones that happened to exist. Step 7 is the one step that splits itself
+# across processes, and pickle copies that proxy into each worker — the copy
+# remembers the reads and then dies with the worker.
+#
+# From 2026-08-09 (the process path) to 2026-08-27, a headless run therefore
+# recorded the handful of settings the parent reads while planning and none of
+# the twenty-five `_phot_frame` makes, `apcorr_small_scale` — the aperture —
+# among them. The recorder had been checked on Step 1, which does not fork.
+
+def test_step7_records_the_aperture_it_used_whichever_path_it_took(tmp_path):
+    """The invariant the runner depends on, stated once for both paths.
+
+    Threads: the parent's proxy sees every read itself. Processes: the children
+    report their names back and the step reads each one through the same proxy.
+    Either way the aperture that produced the photometry is on the record.
+    """
+    from apex.utils.constants import get_worker_decisions
+    from apex.utils.param_recorder import RecordingNamespace
+
+    params, data_dir, result_dir, cache_dir, names = _build_dataset(tmp_path)
+    sel_dir = step1_dir(result_dir)
+    sel_dir.mkdir(parents=True, exist_ok=True)
+    (sel_dir / "selection.json").write_text(
+        json.dumps({"filenames": names, "target": None}), encoding="utf-8")
+
+    # `parameters.example.toml` pins max_workers to 1, and one worker means the
+    # process path returns immediately — the case this test exists for would
+    # never run. Two is enough to fork. The thread pool stays at one either way:
+    # STAGE_WORKER_CAPS caps "forcedphot" at 1.
+    params.P.max_workers = 2
+
+    recorder = RecordingNamespace(params.P)
+    params.P = recorder
+    ctx = RunContext(
+        mode="cmd",
+        params=params,
+        result_dir=result_dir,
+        data_dir=data_dir,
+        logger=logging.getLogger("test.forcedphot"),
+    )
+
+    result = ForcedPhotStep().run(ctx)
+    assert result.ok, result.message
+
+    attempts = [d for d in get_worker_decisions() if d.get("stage") == "forcedphot_proc"]
+    assert attempts and attempts[-1]["workers"] >= 2, (
+        "the process path was never attempted, so this test proved nothing")
+
+    seen = recorder.seen
+    for name in ("apcorr_small_scale", "apcorr_large_scale",
+                 "fitsky_annulus_scale", "saturation_adu"):
+        assert name in seen, (
+            f"{name} decided the photometry but is missing from the record; "
+            f"recorded {len(seen)} settings")
+
+
+def test_a_worker_chunk_reports_the_names_it_read(tmp_path, monkeypatch):
+    """The child's half, without paying for a process spawn.
+
+    `_forced_phot_chunk` is the only code that runs on the far side, so this
+    pins its contract directly: whatever the photometry asks the namespace for
+    in there comes back under `settings_read`.
+    """
+    from apex.analysis import forced_photometry as fp
+
+    params, data_dir, result_dir, cache_dir, names = _build_dataset(tmp_path)
+
+    def _fake_run(files, params_arg, *args, **kwargs):
+        P = params_arg.P
+        _ = P.apcorr_small_scale
+        _ = P.fitsky_annulus_scale
+        return {"index_rows": [], "apcorr_rows": [], "center_stats_rows": []}
+
+    monkeypatch.setattr(fp, "run_forced_photometry", _fake_run)
+    real_P = params.P
+    out = fp._forced_phot_chunk({
+        "files": names,
+        "params": params,
+        "data_dir": str(data_dir),
+        "cache_dir": str(cache_dir),
+        "result_dir": str(result_dir),
+        "output_dir": str(result_dir / "out"),
+    })
+
+    assert "apcorr_small_scale" in out["settings_read"]
+    assert "fitsky_annulus_scale" in out["settings_read"]
+    # The proxy is a loan, not a swap — the next chunk must get the real one.
+    assert params.P is real_P

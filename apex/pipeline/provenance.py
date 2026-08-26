@@ -33,33 +33,12 @@ from pathlib import Path
 from typing import Any
 
 
-class RecordingNamespace:
-    """Delegates to the real namespace and remembers what was asked for.
-
-    Deliberately not a subclass: `SimpleNamespace` attribute access is what the
-    whole codebase uses, so wrapping it is enough, and staying out of the type
-    hierarchy means an `isinstance` check somewhere cannot change behaviour.
-    """
-
-    def __init__(self, target: Any) -> None:
-        object.__setattr__(self, "_target", target)
-        object.__setattr__(self, "_seen", set())
-
-    def __getattr__(self, name: str) -> Any:
-        target = object.__getattribute__(self, "_target")
-        if not name.startswith("_"):
-            object.__getattribute__(self, "_seen").add(name)
-        return getattr(target, name)
-
-    def __setattr__(self, name: str, value: Any) -> None:
-        setattr(object.__getattribute__(self, "_target"), name, value)
-
-    def __dir__(self):
-        return dir(object.__getattribute__(self, "_target"))
-
-    @property
-    def seen(self) -> set[str]:
-        return set(object.__getattribute__(self, "_seen"))
+# The proxy moved to `apex.utils` on 2026-08-27: forced photometry needs one
+# inside its worker processes, and `apex.analysis` cannot import from
+# `apex.pipeline` — this module already imports from there. Re-exported so the
+# existing `from apex.pipeline.provenance import RecordingNamespace` keeps
+# working.
+from apex.utils.param_recorder import RecordingNamespace  # noqa: E402,F401
 
 
 def _settings_of(params: Any) -> dict[str, Any]:

@@ -104,6 +104,17 @@ class ForcedPhotStep(PipelineStep):
             apcorr_cb=_catch_growth_curve,
         )
 
+        # Put the child processes' parameter reads back on the record. The
+        # runner stands a recording proxy in front of `ctx.params.P` for the
+        # duration of a step, but pickle copies that proxy into each worker and
+        # the copy dies with the worker — so a run that took the process path
+        # recorded the planning reads and none of the twenty-five the
+        # photometry itself makes, `apcorr_small_scale` (the aperture) among
+        # them. Reading each reported name here registers it through the same
+        # proxy, so there is still exactly one way this run records anything.
+        for name in summary.get("settings_read", ()) if isinstance(summary, dict) else ():
+            getattr(ctx.params.P, name, None)
+
         out_dir = step7_forced_phot_dir(ctx.result_dir)
         index_rows = summary.get("index_rows", []) if isinstance(summary, dict) else []
         n_ok = sum(1 for r in index_rows if r.get("status") == "ok")
