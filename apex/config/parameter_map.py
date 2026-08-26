@@ -620,7 +620,7 @@ LC_ONLY_TOML_KEY_MAP: tuple[tuple, ...] = (
     (('lightcurve', 'comparison_mode'), 'lc_comparison_mode', 'str', "auto"),
     (('lightcurve', 'comparison_count'), 'lc_comparison_count', 'int', 10),
     (('lightcurve', 'filter'), 'lc_filter', 'str', ""),
-    # Period search (LC step 11). Unlike the target above, every one of these
+    # Period search (LC step 12). Unlike the target above, every one of these
     # has a defensible default — they are the window's own starting values — so
     # a batch run uses them rather than blocking. The search window is the one
     # worth setting per object: 0.01-10 d covers δ Scuti through most eclipsing
@@ -636,7 +636,7 @@ LC_ONLY_TOML_KEY_MAP: tuple[tuple, ...] = (
     # measured this — LS alone adopts 0.0945 d, alias resolution adopts
     # 0.1042 d, and the literature period is 0.104092 d.
     (('lightcurve', 'period_resolve_aliases'), 'lc_period_resolve_aliases', 'bool', True),
-    # Detrending (LC step 10). The defaults are the window's own starting
+    # Detrending (LC step 11). The defaults are the window's own starting
     # values; `detrend_plot_view` is the one that deliberately differs — the
     # window shows one panel because its canvas shares a screen with the
     # controls, and a saved record has no such constraint.

@@ -122,7 +122,7 @@ def test_a_resolved_target_is_written_where_the_next_steps_look(tmp_path):
     assert body["source"] == "config"
 
 
-def test_the_gate_is_step_8_of_the_lc_pipeline():
+def test_the_gate_is_step_9_of_the_lc_pipeline():
     """This file is about the gate, not the pipeline's length.
 
     It used to assert the whole LC step list, and so did two other files — so
@@ -133,9 +133,9 @@ def test_the_gate_is_step_8_of_the_lc_pipeline():
     from apex.pipeline.registry import get_steps
 
     by_index = {s.index: s for s in get_steps("lc")}
-    assert 8 in by_index
-    assert by_index[8].key == "lctarget"
-    assert isinstance(by_index[8], LcTargetStep)
+    assert 9 in by_index
+    assert by_index[9].key == "lctarget"
+    assert isinstance(by_index[9], LcTargetStep)
 
 
 def test_the_new_settings_are_actually_read():
@@ -448,7 +448,7 @@ def test_the_step_uses_the_window_choice_and_says_so(tmp_path):
 
     out = LcTargetStep().run(ctx)
     assert out.status is StepStatus.OK, out.message
-    assert "Step 8 window" in out.message and "selection_g.json" in out.message
+    assert "Step 9 window" in out.message and "selection_g.json" in out.message
 
     written = json.loads(read_selection_path(tmp_path).read_text(encoding="utf-8"))
     assert written["selected_by"] == "window"
@@ -478,11 +478,11 @@ def test_the_refusal_now_points_at_the_window(tmp_path):
     ctx = _ctx(tmp_path, _params(tmp_path))
     out = LcTargetStep().run(ctx)
     assert out.status is StepStatus.BLOCKED
-    assert "Step 8 window" in out.message
+    assert "Step 9 window" in out.message
 
 
 def test_the_busiest_filter_wins_over_the_union(tmp_path, monkeypatch):
-    """The window's Step 9 seed prefers one filter instead of unioning them.
+    """The window's Step 10 seed prefers one filter instead of unioning them.
 
     It used to union every filter's picks "without silently preferring one
     filter". Every star the union adds is one that some other filter's screening
@@ -508,7 +508,7 @@ def test_the_busiest_filter_wins_over_the_union(tmp_path, monkeypatch):
 def test_the_two_sides_ask_the_same_question_about_filters(tmp_path):
     """Structural parity: one rule for "which filter stands for the workspace".
 
-    The pipeline step and the Step 9 window each had to answer it, and the
+    The pipeline step and the Step 10 window each had to answer it, and the
     window cannot import from `apex.pipeline`, so the rule lives in the analysis
     layer. Asserting they are the same object keeps holding as it changes.
     """
@@ -521,13 +521,13 @@ def test_the_two_sides_ask_the_same_question_about_filters(tmp_path):
     assert window.read_window_selection is target_config.read_window_selection
 
 
-def test_step9_reads_its_own_output_before_step8s_pick(tmp_path):
+def test_step10_reads_its_own_output_before_step9s_pick(tmp_path):
     """What was built beats what was proposed.
 
     Saving a light curve writes `comp_selection.json` with `comp_active_ids`,
-    and Step 10 already preferred it. Step 9 did not read its own output, so a
+    and Step 11 already preferred it. Step 10 did not read its own output, so a
     workspace whose UI state had been lost — copied to another machine, or
-    project_state cleared — reopened to Step 8's pick rather than the ensemble
+    project_state cleared — reopened to Step 9's pick rather than the ensemble
     the curve was actually made from.
     """
     import json
@@ -575,7 +575,7 @@ def test_a_batch_run_leaves_the_files_step_11_reads(tmp_path):
 
     Three of the four were built inline in the window, so a workspace produced
     headless had none of them — including `comparison_stability_<filter>.json`,
-    which the Step 11 period window reads to say which comparisons it is
+    which the Step 12 period window reads to say which comparisons it is
     standing on. Opening Step 11 on a batch workspace found nothing there.
     """
     import json
@@ -617,12 +617,12 @@ def test_the_window_and_the_batch_run_use_one_report_writer(tmp_path):
             is comparison_screening.write_selection_reports)
 
 
-# ── one reader for Step 8's decision, whichever half wrote it ──────────────
+# ── one reader for Step 9's decision, whichever half wrote it ──────────────
 
 def test_step8_selection_is_read_from_either_half(tmp_path):
     """The window writes `selection_<f>.json`; the step writes one file.
 
-    The Step 11 period window knew only the window's, so on a batch-built
+    The Step 12 period window knew only the window's, so on a batch-built
     workspace it held the release with "comparison selection metadata is
     missing" — about a run that had selected an ensemble and written the
     stability report right beside it.

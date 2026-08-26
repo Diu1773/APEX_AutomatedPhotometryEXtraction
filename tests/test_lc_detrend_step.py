@@ -165,7 +165,7 @@ def test_the_batch_figure_shows_every_panel_and_says_so():
 def test_it_blocks_when_no_target_was_chosen(tmp_path):
     result = LcDetrendStep().run(_ctx(tmp_path))
     assert result.status == StepStatus.BLOCKED
-    assert "Step 8" in result.message or "target_id" in result.message
+    assert "Step 9" in result.message or "target_id" in result.message
 
 
 def test_it_blocks_on_a_mode_it_does_not_have(tmp_path):
@@ -178,13 +178,13 @@ def test_it_blocks_on_a_mode_it_does_not_have(tmp_path):
     assert "detrend_mode" in result.message
 
 
-def test_it_blocks_when_step_9_has_produced_no_curve(tmp_path):
+def test_it_blocks_when_step_10_has_produced_no_curve(tmp_path):
     from apex.analysis.light_curve.target_config import LcTarget, write_selection
 
     write_selection(tmp_path, LcTarget(target_id=5), [1, 2, 3])
     result = LcDetrendStep().run(_ctx(tmp_path))
     assert result.status == StepStatus.BLOCKED
-    assert "Step 9" in result.message
+    assert "Step 10" in result.message
 
 
 def test_settings_come_across_from_the_config(tmp_path):
@@ -212,6 +212,6 @@ def test_the_lc_pipeline_has_no_deferred_step_left():
     from apex.pipeline.registry import get_steps
 
     steps = get_steps("lc")
-    assert [s.index for s in steps] == list(range(1, 12))
+    assert [s.index for s in steps] == [1, 2, 3, 4, 5, 6, 7, 9, 10, 11, 12]
     deferred = [s.key for s in steps if isinstance(s, DeferredStep)]
     assert not deferred, f"still deferred: {deferred}"

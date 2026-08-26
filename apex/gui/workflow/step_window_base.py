@@ -109,7 +109,7 @@ class StepWindowBase(WindowChromeMixin, QMainWindow):
         # Content area (to be filled by subclasses).  stretch=1 so the
         # content fills the window whenever the user resizes — without
         # this, subclasses whose inner widgets have small sizeHint() values
-        # (e.g. LC step8) render in a tiny corner of an otherwise empty
+        # (e.g. LC target selection) render in a tiny corner of an otherwise empty
         # window.
         self.content_widget = QWidget()
         self.content_layout = QVBoxLayout(self.content_widget)

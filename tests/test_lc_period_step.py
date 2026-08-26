@@ -70,14 +70,14 @@ def _curve(tmp_path, target_id=5, period=0.1, n=200):
 def test_it_blocks_when_no_target_was_chosen(tmp_path):
     result = LcPeriodStep().run(_ctx(tmp_path))
     assert result.status == StepStatus.BLOCKED
-    assert "Step 8" in result.message or "target_id" in result.message
+    assert "Step 9" in result.message or "target_id" in result.message
 
 
-def test_it_blocks_when_step_9_has_produced_no_curve(tmp_path):
+def test_it_blocks_when_step_10_has_produced_no_curve(tmp_path):
     write_selection(tmp_path, LcTarget(target_id=5), [1, 2, 3])
     result = LcPeriodStep().run(_ctx(tmp_path))
     assert result.status == StepStatus.BLOCKED
-    assert "Step 9" in result.message
+    assert "Step 10" in result.message
 
 
 def test_it_blocks_on_an_empty_search_window(tmp_path):
@@ -198,7 +198,7 @@ def test_the_lc_pipeline_now_reaches_step_11():
     from apex.pipeline.registry import get_steps
 
     steps = get_steps("lc")
-    assert [s.index for s in steps] == list(range(1, 12))
+    assert [s.index for s in steps] == [1, 2, 3, 4, 5, 6, 7, 9, 10, 11, 12]
     assert [s.key for s in steps][-4:] == [
         "lctarget", "lclightcurve", "lcdetrend", "lcperiod"]
 
@@ -208,7 +208,7 @@ def test_the_detrend_recognises_a_window_produced_result(tmp_path):
     from apex.pipeline.registry import get_steps
     from apex.utils.step_paths_lc import step10_detrend_dir
 
-    step = {s.index: s for s in get_steps("lc")}[10]
+    step = {s.index: s for s in get_steps("lc")}[11]
     ctx = _ctx(tmp_path)
     assert not step.is_complete(ctx)
     out = step10_detrend_dir(tmp_path)

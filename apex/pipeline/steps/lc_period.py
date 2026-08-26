@@ -1,4 +1,4 @@
-"""LC Step 11 (headless): find the period.
+"""LC Step 12 (headless): find the period.
 
 This one needed almost nothing. The window's `PeriodAnalysisWorker` is a pure
 pass-through — it takes arrays in, calls `run_period_analysis()`, and emits the
@@ -228,7 +228,7 @@ def _resolve_aliases(lc_data, results, min_period, max_period, samples, log=None
 
 
 class LcPeriodStep(PipelineStep):
-    index = 11
+    index = 12
     key = "lcperiod"
     name = "Period analysis"
 
@@ -247,7 +247,7 @@ class LcPeriodStep(PipelineStep):
         if not selection:
             return StepResult(
                 index=self.index, key=self.key, status=StepStatus.BLOCKED,
-                message=("no target selection — run LC Step 8, or set "
+                message=("no target selection — run LC Step 9, or set "
                          "lightcurve.target_id in the config"),
             )
         target_id = int(selection.get("target_id") or 0)
@@ -262,7 +262,7 @@ class LcPeriodStep(PipelineStep):
             return StepResult(
                 index=self.index, key=self.key, status=StepStatus.BLOCKED,
                 message=(f"no light curve for target ID {target_id} — run LC "
-                         f"Step 9 first ({step9_lc_dir(ctx.result_dir)})"),
+                         f"Step 10 first ({step9_lc_dir(ctx.result_dir)})"),
             )
 
         import pandas as pd

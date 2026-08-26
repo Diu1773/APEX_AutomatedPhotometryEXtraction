@@ -1,6 +1,6 @@
-"""LC Step 9 (headless): the raw differential light curve.
+"""LC Step 10 (headless): the raw differential light curve.
 
-Step 8 wrote down which star this is of. This builds the curve — target minus
+Step 9 wrote down which star this is of. This builds the curve — target minus
 comparison ensemble, frame by frame — and it does so by inheriting the window's
 build rather than reimplementing it: `HeadlessLightCurveBuilder` supplies the
 state a window would have set from widgets, and the calculation underneath is
@@ -59,7 +59,7 @@ def _diagnose_empty(ctx, builder, target_id: int, summary: dict) -> str:
 
 
 class LcLightCurveStep(PipelineStep):
-    index = 9
+    index = 10
     key = "lclightcurve"
     name = "Light curve"
 
@@ -82,7 +82,7 @@ class LcLightCurveStep(PipelineStep):
         if not selection:
             return StepResult(
                 index=self.index, key=self.key, status=StepStatus.BLOCKED,
-                message=("no target selection — run LC Step 8, or set "
+                message=("no target selection — run LC Step 9, or set "
                          "lightcurve.target_id in the config"),
             )
 

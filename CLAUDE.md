@@ -7,7 +7,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 APEX is a PyQt5 desktop app for astronomical aperture and PSF photometry. It has two operational modes:
 
 - **CMD mode** (`apex/cmd/`): Cluster photometry — source detection through CMD diagram and isochrone fitting, 12 steps.
-- **LC mode** (`apex/lightcurve/`): Light curve analysis — multi-night photometry, detrending, and period analysis, 11 steps.
+- **LC mode** (`apex/lightcurve/`): Light curve analysis — multi-night photometry, detrending, and period analysis, 12 steps (Step 8 PSF is optional and window-only).
 
 Both modes share a common pipeline through Step 7: file selection, crop, sky
 preview, source detection, WCS plate solving, master catalog build, and forced
@@ -70,7 +70,7 @@ apex/
     main_window.py          — Unified main window; dispatches step windows by mode
     workflow/               — Step windows (step_window_base.py + stepN_*.py)
       cmd/                  — CMD-specific steps (8–12)
-      lc/                   — LC-specific steps (8–11)
+      lc/                   — LC-specific steps (9–12; Step 8 PSF is shared with CMD)
     widgets/                — Reusable widgets (e.g. image_viewer.py for zoomable FITS display)
     tools/                  — Standalone analysis dialogs (extinction fit, Gaia 3D viewer, transit fitting, …)
   resources/   — SVG assets (logo_base.svg, logo_cmd.svg, logo_lc.svg)
@@ -87,7 +87,7 @@ main.py        — Root launcher; spawns subprocess for chosen mode
   Shared steps write `step1_file_selection/` through `step7_forced_phot/`;
   mode-specific steps use `cmd_*/` or `lc_*/` directories.
 - Path helpers in `apex/utils/step_paths.py` (shared Step 1-7),
-  `step_paths_cmd.py` (CMD Step 8-12), and `step_paths_lc.py` (LC Step 8-11)
+  `step_paths_cmd.py` (CMD Step 8-12), and `step_paths_lc.py` (LC Step 9-12)
   are the canonical source for output paths — always use them instead of
   constructing paths manually.
 - Caches (header scan, detection, WCS) live under `result_dir/cache/` and are managed by `cache_utils.py` and `header_cache.py`.
@@ -96,8 +96,15 @@ main.py        — Root launcher; spawns subprocess for chosen mode
 
 - 4-space indentation; `snake_case` for functions/modules, `PascalCase` for classes, `UPPER_CASE` for constants.
 - Use `pathlib.Path` for all filesystem work.
-- Step files are named by current UI step index and purpose, for example
-  `step7_forced_aperture_phot.py` and `lc/step9_lightcurve_builder.py`.
+- Step files are named `step<UI step number>_<purpose>.py`, so the class inside
+  carries `step_index = N - 1` — `step7_forced_aperture_phot.py` holds
+  `step_index=6`. **The four LC files are the exception and their names are one
+  low**: `lc/step8_target_selection.py` is UI Step 9, `step9_lightcurve_builder`
+  is 10, `step10_detrend_merge` is 11, `step11_period_analysis` is 12. An
+  optional PSF window was inserted at LC Step 8 on 2026-07-15 and the files were
+  not renamed. **Read `step_index=` inside the file; never infer the step number
+  from an LC file name** — doing exactly that gave the headless LC steps numbers
+  one below the app's for five weeks.
 - GUI changes must follow existing PyQt5 patterns in `main_window.py` and `step_window_base.py`.
 
 ### GUI layout rules (`apex/gui/layout_rules.py`)
@@ -177,7 +184,7 @@ Domain facts for code review (the generic `/review-math`, `/review-deps`,
 ### Architecture / dependencies
 
 - **Layers**: `gui/` (presentation: Qt, workflow steps, tools) → `analysis/` (pure science calc), `core/` (state/config/files), `utils/` (shared), `config/` (TOML param models). Allowed: gui→analysis/core/utils, analysis→utils, core→utils. Forbidden: analysis/utils/config/core → gui.
-- **Path helpers**: `step_paths.py` (shared Step 1–7), `step_paths_cmd.py` (CMD 8–12), `step_paths_lc.py` (LC 8–11). Never build output paths by string concat.
+- **Path helpers**: `step_paths.py` (shared Step 1–7), `step_paths_cmd.py` (CMD 8–12), `step_paths_lc.py` (LC 9–12 — its `step8_selection_dir`-style function names are pre-2026-07-15 historical names, not step numbers; the module docstring holds the current table). Never build output paths by string concat.
 - **Filter keys**: always via `normalize_filter_key()`. Johnson = uppercase (B,V,R,I), SDSS = lowercase (g,r,i,z), narrowband = title case (Ha, OIII).
 - **source_id**: int64; convert via `coerce_int64_source_id()` (direct casts risk sign errors).
 - **ProjectState**: `store_step_data(key, dict)` / `get_step_data(key)`; a mistyped key silently returns None.

@@ -68,7 +68,7 @@ def missing_target_settings(params) -> list[str]:
     target = read_target(params)
     missing = []
     if not target.is_resolved:
-        missing.append("lightcurve.target_id (Step 8 에서 고른 별의 ID)")
+        missing.append("lightcurve.target_id (Step 9 에서 고른 별의 ID)")
     if target.comparison_mode == "manual" and not target.comparison_ids:
         missing.append("lightcurve.comparison_ids "
                        "(comparison_mode=manual 이면 비교성을 적어야 한다)")
@@ -81,7 +81,7 @@ def resolve_comparisons(target: LcTarget, catalog: pd.DataFrame,
 
     `manual` takes the config's list verbatim — the user chose those stars and a
     batch run must not quietly substitute others. `auto` ranks by the stability
-    metrics Step 8 already computes when they are available, and falls back to
+    metrics Step 9 already computes when they are available, and falls back to
     the catalogue order when they are not, so a run without a stability table
     still produces something reproducible rather than nothing.
     """
@@ -192,7 +192,7 @@ def filters_by_frame_count(result_dir) -> list[str]:
 
 def read_window_selection(result_dir, filter_key: str = "",
                           prefer: list[str] | None = None) -> dict | None:
-    """What the Step 8 window saved, in the shape the pipeline step wants.
+    """What the Step 9 window saved, in the shape the pipeline step wants.
 
     The window and the batch run kept their choices in different files, so a
     user who picked a star in the window and then ran `apex run --mode lc` was
@@ -257,12 +257,15 @@ def read_window_selection(result_dir, filter_key: str = "",
 
 
 def read_step8_selection(result_dir, filter_key: str = "") -> dict | None:
-    """Step 8's decision for one filter, from whichever half recorded it.
+    """Step 9's decision for one filter, from whichever half recorded it.
+
+    The `step8` in this function's name is the window's pre-2026-07-15 number,
+    kept as a stable API; the step itself is 9.
 
     The window writes `selection_<filter>.json`; the pipeline step writes
     `lc_target_selection.json`. Both are "which star, and which comparisons",
     and a reader that knows only one of them sees nothing on half the
-    workspaces. The Step 11 period window knew only the window's, so on a batch
+    workspaces. The Step 12 period window knew only the window's, so on a batch
     workspace it held the release with "comparison selection metadata is
     missing" — about a run that had selected an ensemble and written the
     stability report right beside it.

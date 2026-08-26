@@ -146,7 +146,7 @@ def step5_photometry_dir(result_dir: PathLike) -> Path:
 # ── LC short-name aliases used by analysis modules ───────────────────────────
 
 def step10_dir(result_dir: PathLike) -> Path:
-    """DEPRECATED — misleading name; resolves to lc_lightcurve/ (step9). Use step9_lc_dir()."""
+    """DEPRECATED — misleading name; resolves to lc_lightcurve/. Use step9_lc_dir()."""
     import warnings
     warnings.warn(
         "step10_dir is deprecated; use step9_lc_dir()",
@@ -156,7 +156,7 @@ def step10_dir(result_dir: PathLike) -> Path:
 
 
 def step11_dir(result_dir: PathLike) -> Path:
-    """DEPRECATED — misleading name; resolves to lc_detrend/ (step10). Use step10_detrend_dir()."""
+    """DEPRECATED — misleading name; resolves to lc_detrend/. Use step10_detrend_dir()."""
     import warnings
     warnings.warn(
         "step11_dir is deprecated; use step10_detrend_dir()",
@@ -166,7 +166,7 @@ def step11_dir(result_dir: PathLike) -> Path:
 
 
 def step10_current_meta_path(result_dir: PathLike, target_id: int) -> Path:
-    """Path to current Step 11 detrend metadata; name retained for compatibility."""
+    """Path to the current lc_detrend/ metadata; name retained for compatibility."""
     return step10_detrend_dir(result_dir) / f"result_ID{int(target_id)}_current.json"
 
 
@@ -207,12 +207,12 @@ def step10_history_dir(result_dir: PathLike) -> Path:
 
 
 def step11_current_meta_path(result_dir: PathLike, target_id: int) -> Path:
-    """Legacy alias for Step 10 detrend metadata."""
+    """Legacy alias for step10_current_meta_path() (lc_detrend/)."""
     return step10_current_meta_path(result_dir, target_id)
 
 
 def step11_current_lc_path(result_dir: PathLike, target_id: int) -> Path:
-    """Legacy alias for Step 10 detrend light curve."""
+    """Legacy alias for step10_current_lc_path() (lc_detrend/)."""
     return step10_current_lc_path(result_dir, target_id)
 
 
@@ -221,42 +221,42 @@ def _step11_current_lc_path(result_dir: PathLike, target_id: int) -> Path:
 
 
 def step11_current_params_path(result_dir: PathLike, target_id: int) -> Path:
-    """Legacy alias for Step 10 detrend parameters."""
+    """Legacy alias for step10_current_params_path() (lc_detrend/)."""
     return step10_current_params_path(result_dir, target_id)
 
 
 def step11_current_summary_path(result_dir: PathLike, target_id: int) -> Path:
-    """Legacy alias for Step 10 detrend summary."""
+    """Legacy alias for step10_current_summary_path() (lc_detrend/)."""
     return step10_current_summary_path(result_dir, target_id)
 
 
 def step11_current_plot_path(result_dir: PathLike, target_id: int) -> Path:
-    """Legacy alias for Step 10 detrend plot."""
+    """Legacy alias for step10_current_plot_path() (lc_detrend/)."""
     return step10_current_plot_path(result_dir, target_id)
 
 
 def step11_current_global_zp_path(result_dir: PathLike, target_id: int) -> Path:
-    """Legacy alias for Step 10 global zeropoints."""
+    """Legacy alias for step10_current_global_zp_path() (lc_detrend/)."""
     return step10_current_global_zp_path(result_dir, target_id)
 
 
 def step11_current_global_mean_path(result_dir: PathLike, target_id: int) -> Path:
-    """Legacy alias for Step 10 global mean table."""
+    """Legacy alias for step10_current_global_mean_path() (lc_detrend/)."""
     return step10_current_global_mean_path(result_dir, target_id)
 
 
 def step11_current_global_diag_path(result_dir: PathLike, target_id: int) -> Path:
-    """Legacy alias for Step 10 global diagnostics."""
+    """Legacy alias for step10_current_global_diag_path() (lc_detrend/)."""
     return step10_current_global_diag_path(result_dir, target_id)
 
 
 def step11_history_dir(result_dir: PathLike) -> Path:
-    """Legacy alias for Step 10 detrend history."""
+    """Legacy alias for step10_history_dir() (lc_detrend/_history)."""
     return step10_history_dir(result_dir)
 
 
 def load_detrend_preference(result_dir: PathLike, target_id: int | None = None) -> str | None:
-    """Read the adopted correction mode from Step 10 detrend metadata."""
+    """Read the adopted correction mode from the lc_detrend/ metadata."""
     import json as _json
     d = _as_path(result_dir)
     if target_id is not None:

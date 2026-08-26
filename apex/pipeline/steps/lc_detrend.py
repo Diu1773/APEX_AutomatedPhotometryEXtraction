@@ -1,4 +1,4 @@
-"""LC Step 10 (headless): detrending, and the figures that come with it.
+"""LC Step 11 (headless): detrending, and the figures that come with it.
 
 This was the one LC stage still marked deferred, and the reason given was that
 its calculation read from widgets and wrote to them — a refactor rather than a
@@ -62,7 +62,7 @@ def _settings(params) -> dict:
 
 
 class LcDetrendStep(PipelineStep):
-    index = 10
+    index = 11
     key = "lcdetrend"
     name = "Detrend & night merge"
 
@@ -81,7 +81,7 @@ class LcDetrendStep(PipelineStep):
         if not selection:
             return StepResult(
                 index=self.index, key=self.key, status=StepStatus.BLOCKED,
-                message=("no target selection — run LC Step 8, or set "
+                message=("no target selection — run LC Step 9, or set "
                          "lightcurve.target_id in the config"),
             )
         target_id = int(selection.get("target_id") or 0)
@@ -114,7 +114,7 @@ class LcDetrendStep(PipelineStep):
             return StepResult(
                 index=self.index, key=self.key, status=StepStatus.BLOCKED,
                 message=(f"no raw light curve for target ID {target_id} — run "
-                         f"LC Step 9 first ({step9_lc_dir(ctx.result_dir)})"),
+                         f"LC Step 10 first ({step9_lc_dir(ctx.result_dir)})"),
                 duration_s=time.perf_counter() - started,
             )
 

@@ -1,4 +1,4 @@
-"""LC Step 8 (headless): resolve the target and its comparison ensemble.
+"""LC Step 9 (headless): resolve the target and its comparison ensemble.
 
 The LC branch stopped at Step 7 — the pipeline registry lists steps 1-7 for LC
 and nothing after. Not because the science needs a window: fourteen Qt-free
@@ -30,7 +30,7 @@ measured star and the stage that dropped it.
 The third was the gate refusing work that had already been done. The window
 saves its choice as `selection_<filter>.json`, one per filter; this step read
 the config and nothing else. So `apex run --mode lc` on a workspace where the
-user had just picked YZ Boo in Step 8 answered that it "needs to know which star
+user had just picked YZ Boo in Step 9 answered that it "needs to know which star
 it is of". Reading their choice is not guessing — the step now does, reports
 which file it came from, and records `selected_by: window` in the output. The
 config still wins wherever it speaks; the window fills its silence.
@@ -135,7 +135,7 @@ def _screen(
 
 
 class LcTargetStep(PipelineStep):
-    index = 8
+    index = 9
     key = "lctarget"
     name = "Light-curve target"
 
@@ -154,7 +154,7 @@ class LcTargetStep(PipelineStep):
         from_window = None
 
         # The window keeps its choice in `selection_<filter>.json`; this step
-        # reads the config. So a user who picked a star in Step 8 and then ran
+        # reads the config. So a user who picked a star in Step 9 and then ran
         # `apex run --mode lc` was told the run "needs to know which star it is
         # of" about a workspace where they had just said which. Reading what
         # they chose is not a guess — and it is announced, not assumed.
@@ -179,7 +179,7 @@ class LcTargetStep(PipelineStep):
                 index=self.index, key=self.key, status=StepStatus.BLOCKED,
                 message=("a light curve needs to know which star it is of, and "
                          "no default is defensible: " + "; ".join(missing)
-                         + " — or pick one in the Step 8 window, whose "
+                         + " — or pick one in the Step 9 window, whose "
                            "selection_<filter>.json this step reads"),
             )
 
@@ -215,7 +215,7 @@ class LcTargetStep(PipelineStep):
         if from_window is not None:
             comparisons = list(from_window["comparison_ids"])
             check_id = from_window.get("check_id")
-            notes.append(f"from the Step 8 window, filter {from_window['filter']}")
+            notes.append(f"from the Step 9 window, filter {from_window['filter']}")
             notes.append(f"{Path(from_window['source_path']).name}")
         elif target.comparison_mode == "manual":
             comparisons = resolve_comparisons(target, catalog)

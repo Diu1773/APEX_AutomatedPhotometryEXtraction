@@ -51,7 +51,27 @@ def _sel(rd):
 
 
 def _lc_steps() -> List[PipelineStep]:
-    """LC's own steps — 8 through 11, all of them running headless."""
+    """LC's own steps — 9 through 12, all of them running headless.
+
+    **9, not 8, and there is no LC step 8 here.** LC gained an optional PSF
+    window at step 8 on 2026-07-15, which pushed target selection to 9 and the
+    rest after it; the app, `ProjectState` and `step_paths_lc`'s layout table
+    have counted that way ever since. These steps were written later and took
+    their numbers from the *helper function names* (`step8_selection_dir`),
+    which `step_paths_lc` keeps only for backward compatibility and says so.
+
+    The two numberings then disagreed for four steps, and nothing noticed until
+    both were written into one field: the run journal records the window's
+    number and the runner's number in the same `index`, so a window line landed
+    on the step after the one it described. `runner.run()` also maps
+    `step.index - 1` onto `ProjectState`, so a headless LC run was marking the
+    PSF slot complete instead of target selection.
+
+    LC's headless chain therefore has a hole at 8 — the optional PSF step is a
+    CMD registration and LC does not run it in batch. The gap is correct: do
+    not pull these numbers down to close it, which is the shape the original
+    mistake took.
+    """
     return [
         LcTargetStep(),
         LcLightCurveStep(),

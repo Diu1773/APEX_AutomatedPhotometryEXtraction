@@ -172,10 +172,82 @@ def test_registry_shared_steps_shape():
         assert steps[0].key == "scan"
     # The one place that pins both full lists. Two other files used to pin the
     # LC one as well, so adding a step broke three tests instead of this one.
-    assert [s.index for s in get_steps("lc")] == list(range(1, 12))
+    assert [s.index for s in get_steps("lc")] == [1, 2, 3, 4, 5, 6, 7, 9, 10, 11, 12]
     assert [s.key for s in get_steps("lc")][7:] == [
         "lctarget", "lclightcurve", "lcdetrend", "lcperiod"]
     assert [s.index for s in get_steps("cmd")] == list(range(1, 13))
+
+
+# The window's step number and the runner's step number are the same number.
+# `step_window_base._record_in_journal` writes `step_index + 1` and
+# `runner.run()` maps `step.index - 1` onto ProjectState, so both records join
+# on it — and when they disagree a window line lands on the step *after* the one
+# it describes, silently.
+#
+# They did disagree, for LC steps 9-12, from 2026-07-15 (an optional PSF window
+# was inserted at LC step 8, pushing the four after it down) until 2026-08-26.
+# Nothing caught it because the GUI journal tests only used steps 1 and 4, where
+# the two modes agree. Read the window list out of the source rather than
+# importing it — the check must not need Qt or a workspace.
+WINDOW_TO_STEP_KEY = {
+    "File Selection": "scan",
+    "Image Crop": "crop",
+    "Sky Preview & QC": "sky",
+    "Source Detection": "detect",
+    "WCS Plate Solving": "wcs",
+    "Master Catalog Build": "refbuild",
+    "Forced Aperture Phot": "forcedphot",
+    "PSF Photometry": "psf",
+    "Master ID Editor": "masterid",
+    "Zeropoint Calibration": "zeropoint",
+    "CMD Plot": "cmdplot",
+    "Isochrone Model": "isochrone",
+    "Target/Comparison Selection": "lctarget",
+    "Light Curve Builder": "lclightcurve",
+    "Detrend & Night Merge": "lcdetrend",
+    "Period Analysis": "lcperiod",
+}
+
+
+def _window_step_names() -> dict:
+    """The two `self.step_names` literals in main_window.py, in order."""
+    import ast
+
+    source = Path(__file__).resolve().parents[1] / "apex" / "gui" / "main_window.py"
+    found = []
+    for node in ast.walk(ast.parse(source.read_text(encoding="utf-8"))):
+        if (isinstance(node, ast.Assign) and isinstance(node.value, ast.List)
+                and any(isinstance(t, ast.Attribute) and t.attr == "step_names"
+                        for t in node.targets)):
+            found.append([e.value for e in node.value.elts])
+    assert len(found) == 2, f"expected one step list per mode, found {len(found)}"
+    return {"cmd": found[0], "lc": found[1]}
+
+
+def test_the_window_and_the_runner_number_the_same_step_the_same_way():
+    names = _window_step_names()
+    for mode in ("cmd", "lc"):
+        window_names = names[mode]
+        for step in get_steps(mode):
+            position = step.index - 1
+            assert 0 <= position < len(window_names), (
+                f"{mode} step {step.index} ({step.key}) has no window at "
+                f"position {position}")
+            label = window_names[position]
+            assert WINDOW_TO_STEP_KEY[label] == step.key, (
+                f"{mode}: the window at step {step.index} is {label!r} but the "
+                f"runner runs {step.key!r} there — the two records would "
+                f"disagree about which step made a file")
+
+
+def test_lc_step_8_is_a_window_only_step():
+    """LC's optional PSF step has a window and no headless registration.
+
+    That hole is why LC's headless indices are 9-12 with nothing at 8. Pinned so
+    a future closing of the gap is a deliberate edit, not a renumber.
+    """
+    assert 8 not in {s.index for s in get_steps("lc")}
+    assert _window_step_names()["lc"][7] == "PSF Photometry"
 
 
 # ── the directory's own history ────────────────────────────────────────────
