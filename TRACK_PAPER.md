@@ -1157,6 +1157,23 @@ Claude 의 오류 경위: 레포 전체 grep 이 타임아웃되자 `apex/` 로 
 
 ## 함정
 
+- **PASP 는 저자를 가리고 심사한다 — 그리고 소프트웨어 논문을 콕 집어 말한다
+  (2026-08-27 확인).** 저널 안내 원문: *"PASP operates a double-anonymous peer
+  review process, in which authors remain anonymous to the reviewers throughout
+  the review process. Authors are responsible for anonymizing their manuscript
+  before submitting their paper."* 선택이 아니라 **투고자 의무**다. 그리고
+  **소프트웨어 이름이 논문 주제이거나 초록에 나올 때, 또는 초록에 GitHub 같은
+  공개 저장소 링크가 있을 때 추가 익명화가 필요하다**고 따로 적어 두었다.
+  우리 논문이 정확히 그 경우다. 지금 확인 안 된 것: APEX 라는 이름을 심사본에서
+  써도 되는지, 저장소를 익명 Zenodo 로 갈음해야 하는지. **투고 전에 저널
+  안내문 원문을 직접 읽어야 한다** — IOP 페이지가 봇을 막아 2026-08-27 에는
+  못 읽었다. 곁가지로, 원체험을 서론에서 뺀 것이 이 제약과 맞아떨어졌다.
+- **미게재 프리프린트는 인용해도 된다.** AAS 서지 규정: *"References to
+  preprints are accepted only for manuscripts not yet published."* 형식은
+  `저자 연도, arXiv e-prints, arXiv:번호, doi:10.48550/arXiv.번호`.
+  **교정 단계에서 게재됐는지 다시 확인해 갱신하는 것이 저자 의무다** —
+  지금 §1.2 의 PhoPS(Erece & Kilic 2026, arXiv:2607.27414)가 그 대상이다.
+
 - **HTML 판면과 Chromium 인쇄는 같은 DOM이어도 flex를 다시 분할한다.** 발치
   그림·표가 다음 물리 쪽 머리로 이동하면서 화면에는 없던 겹침·빈 공간이 생길 수
   있다. `?print=build`에서는 머리 float·두 단·발치 float의 좌표를 조판 완료 뒤
