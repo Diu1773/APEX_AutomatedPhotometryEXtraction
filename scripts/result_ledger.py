@@ -100,7 +100,10 @@ def read_headers(result_dir: Path) -> tuple[int | None, list[str]]:
     try:
         with path.open("r", encoding="utf-8", newline="") as handle:
             rows = list(csv.DictReader(handle))
-    except OSError:
+    except (OSError, UnicodeDecodeError, csv.Error):
+        # The JSON readers below have always caught their parse errors; this one
+        # caught only OSError, so a hand-edited cp949 `headers.csv` raised out
+        # of describe() and stopped the ledger on that one directory.
         return None, []
     field = next((f for f in ("filter", "FILTER", "filter_key") if rows and f in rows[0]), None)
     filters = sorted({str(r[field]).strip() for r in rows if r.get(field)}) if field else []
@@ -117,11 +120,15 @@ def describe(result_dir: Path) -> dict:
 
     runs = journal.history(result_dir)
     out["runs"] = runs
-    out["journal_runs"] = len(runs)
+    # One entry per *thing that happened here*, and a note is one of those.
+    # Only the ones that ran a step, or announced a plan, are runs.
+    out["journal_runs"] = sum(1 for r in runs if r.get("steps") or r.get("announced"))
+    out["journal_entries"] = len(runs)
     out["journal_steps"] = sorted(journal.latest_steps(result_dir))
     out["notes"] = [n["text"] for r in runs for n in r["notes"]]
 
     manifest = result_dir / "pipeline_run.json"
+    out["manifest_readable"] = True
     out["manifest_steps"] = []
     out["manifest_started"] = None
     out["manifest_packages"] = 0
@@ -131,11 +138,13 @@ def describe(result_dir: Path) -> dict:
             out["manifest_steps"] = [s.get("index") for s in data.get("steps") or []]
             out["manifest_started"] = data.get("started")
             out["manifest_packages"] = len((data.get("environment") or {}).get("packages") or {})
-        except (OSError, json.JSONDecodeError):
+        except (OSError, json.JSONDecodeError, UnicodeDecodeError):
+            out["manifest_readable"] = False
             out["manifest_steps"] = ["<읽을 수 없음>"]
 
     record = result_dir / "parameters_used.json"
     out["parameters"] = None
+    out["parameters_unreadable"] = False
     out["config_match"] = None
     if record.exists():
         try:
@@ -145,8 +154,12 @@ def describe(result_dir: Path) -> dict:
             recorded, path = cfg.get("sha256"), cfg.get("path")
             if recorded and path and Path(path).exists():
                 out["config_match"] = (sha256_of(Path(path)) == recorded)
-        except (OSError, json.JSONDecodeError):
-            out["parameters"] = -1
+        except (OSError, json.JSONDecodeError, UnicodeDecodeError):
+            # Was -1, which is true, so a file nobody can read counted as a
+            # parameter record and the directory was reported as explaining
+            # itself. An unreadable record is not evidence.
+            out["parameters"] = None
+            out["parameters_unreadable"] = True
 
     # Inputs. The config beside the workspace is the only pointer to them, and
     # it may have been edited since — so this reports what is there now and
@@ -168,13 +181,22 @@ def describe(result_dir: Path) -> dict:
 
 
 def provenance_verdict(entry: dict) -> str:
-    """One phrase for "can this directory explain itself"."""
+    """One phrase for "can this directory explain itself".
+
+    A journal entry is not a run. `apex journal <dir> --note "…"` makes one, and
+    a note is a person's sentence about the directory rather than a record of
+    what produced it. Counting it as provenance turned the one command meant for
+    labelling the unexplained folders into a way of making them look explained —
+    which is exactly what the next planned use of that command would have done.
+    """
     if entry["journal_runs"]:
         return "저널"
     if entry["parameters"]:
         return "파라미터만"
-    if entry["manifest_steps"]:
+    if entry["manifest_readable"] and entry["manifest_steps"]:
         return "스텝목록만"
+    if entry["notes"]:
+        return "메모만"
     return "미상"
 
 
@@ -216,28 +238,34 @@ def print_detail(entry: dict) -> None:
     if entry["data_dir"]:
         print(f"                {entry['data_dir']}")
 
-    if entry["runs"]:
-        print(f"     저널       실행 {len(entry['runs'])}회")
-        for run in entry["runs"]:
+    actual_runs = [r for r in entry["runs"] if r.get("steps") or r.get("announced")]
+    if actual_runs:
+        print(f"     저널       실행 {len(actual_runs)}회")
+        for run in actual_runs:
             steps = ",".join(str(s.get("index")) for s in run["steps"])
             print(f"       {run['started']}  {run['mode'] or '?':<4} "
                   f"스텝 [{steps}] 성공={run['success']}")
             cfg = run["config"] or {}
             if cfg.get("path"):
                 print(f"         설정 {cfg['path']}  {str(cfg.get('sha256'))[:12]}")
+    elif entry["runs"]:
+        print("     저널       메모만 있다 — 실행 기록은 없다")
     else:
         print("     저널       없음 — 이 폴더는 자기 역사를 못 말한다")
 
     if entry["manifest_steps"]:
         print(f"     매니페스트 스텝 {entry['manifest_steps']} "
               f"({entry['manifest_started']}) · 패키지 {entry['manifest_packages']}개")
-        if entry["journal_steps"] and len(entry["manifest_steps"]) < len(entry["journal_steps"]):
+        if (entry["manifest_readable"] and entry["journal_steps"]
+                and len(entry["manifest_steps"]) < len(entry["journal_steps"])):
             print("                ↑ 저널보다 적다 — 나중 부분 실행이 덮어썼다")
 
     if entry["parameters"]:
         match = {True: "일치", False: "달라짐 — 기록된 뒤 설정을 고쳤다",
                  None: "대조 불가 — 그 설정 파일이 지금 없다"}[entry["config_match"]]
         print(f"     파라미터   {entry['parameters']}개 기록 · 설정 대조 {match}")
+    elif entry["parameters_unreadable"]:
+        print("     파라미터   parameters_used.json 이 있으나 읽히지 않는다 — 근거가 못 된다")
     else:
         print("     파라미터   없음")
 
@@ -267,15 +295,20 @@ def main() -> int:
     print(f"\n  {args.root}  —  결과 디렉터리 {len(entries)}개\n")
     print_table(entries)
 
-    unknown = [e for e in entries if provenance_verdict(e) == "미상"]
-    partial = [e for e in entries if provenance_verdict(e) in ("파라미터만", "스텝목록만")]
-    print(f"\n  출처: 저널 {len(entries) - len(unknown) - len(partial)}개 · "
-          f"부분 {len(partial)}개 · 미상 {len(unknown)}개")
-    if unknown:
-        print("  미상 — 어떤 설정으로 만들었는지 남은 게 없다. 소급 복원은 불가하며,")
-        print("        근거로 쓰려면 다시 돌려야 한다:")
-        for e in unknown:
-            print(f"    {e['workspace']}/{e['name']}")
+    verdicts = [provenance_verdict(e) for e in entries]
+    journalled = verdicts.count("저널")
+    partial = verdicts.count("파라미터만") + verdicts.count("스텝목록만")
+    unexplained = [(e, v) for e, v in zip(entries, verdicts)
+                   if v in ("미상", "메모만")]
+    print()
+    print(f"  출처: 저널 {journalled}개 · 부분 {partial}개 · "
+          f"설명 없음 {len(unexplained)}개")
+    if unexplained:
+        print("  어떤 설정으로 만들었는지 남은 게 없다. 소급 복원은 불가하며,")
+        print("  근거로 쓰려면 다시 돌려야 한다:")
+        for e, v in unexplained:
+            tail = "  ← 메모는 있으나 실행 기록이 아니다" if v == "메모만" else ""
+            print(f"    {e['workspace']}/{e['name']}{tail}")
 
     if args.detail is not None:
         wanted = [w.lower() for w in args.detail]

@@ -161,30 +161,43 @@ class PipelineRunner:
                     ctx.params.P = recorder
                 except Exception:                   # noqa: BLE001 - frozen params
                     recorder = None
+            failure = None
             try:
                 result = step.run(ctx)
             except Exception as exc:  # noqa: BLE001 - one bad step must not crash the run
-                dt = time.perf_counter() - t0
                 log.exception("%s -> FAILED", label)
-                used = {}
+                failure = exc
+            finally:
+                # A `finally`, which the comment above claimed since 2026-08-18
+                # and the code never had: the restore lived in the two ordinary
+                # branches, so anything that is not an `Exception` walked past
+                # it. `KeyboardInterrupt` is the one that matters — stopping a
+                # twelve-hour reprocess is the case this module is built for —
+                # and it left the proxy standing in front of the parameters for
+                # whatever ran next.
                 if recorder is not None:
-                    ctx.params.P = real_P
-                    settings_read[step.key] = recorder.seen
-                    used = journal.settings_snapshot(ctx.params, recorder.seen)
-                emit(StepResult(
-                    index=step.index, key=step.key, status=StepStatus.FAILED,
-                    message=f"{type(exc).__name__}: {exc}", duration_s=dt,
-                ), used)
-                break
+                    try:
+                        ctx.params.P = real_P
+                    except Exception:       # noqa: BLE001 - frozen params
+                        log.debug("Could not restore the parameters after %s", label)
+
             used = {}
             if recorder is not None:
-                ctx.params.P = real_P
                 settings_read[step.key] = recorder.seen
                 # The values, not just the names. `parameters_used.json` holds
                 # the settings as they stood when the run ended; this holds what
                 # this step read while it ran, which is the same thing only if
                 # nobody edited the config in between.
                 used = journal.settings_snapshot(ctx.params, recorder.seen)
+
+            if failure is not None:
+                emit(StepResult(
+                    index=step.index, key=step.key, status=StepStatus.FAILED,
+                    message=f"{type(failure).__name__}: {failure}",
+                    duration_s=time.perf_counter() - t0,
+                ), used)
+                break
+
             result.duration_s = time.perf_counter() - t0
             log.info("%s -> %s (%.2fs) %s",
                      label, result.status, result.duration_s, result.message)

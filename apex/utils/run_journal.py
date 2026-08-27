@@ -153,7 +153,22 @@ def settings_snapshot(params: Any, names: Optional[Iterable[str]] = None) -> dic
 
 def append(result_dir: Path | str, event: str, payload: dict[str, Any],
            *, logger=None) -> bool:
-    """Add one line. Returns whether it landed; never raises."""
+    """Add one line. Returns whether it landed; never raises.
+
+    **One writer per result directory.** Windows opens an append handle by
+    seeking to the end and then writing, and those two steps are not atomic:
+    measured with two processes appending 150 lines each, 300 attempts left
+    261-281 lines on disk, every `append` having returned True. Nothing is
+    corrupted — whole lines overwrite whole lines — so there is no signal at
+    all. A single process is lossless (300/300).
+
+    No lock is taken, deliberately. This module's first rule is that recording
+    must never break a run, and a lock adds a way for it to: contention, a stale
+    file after a kill, a new exception path in the one place that must not have
+    one. The realistic collision is a desktop window and `apex run` on the same
+    workspace at once, and nothing prevents that — so if you start doing it,
+    this is what it costs.
+    """
     try:
         target = Path(result_dir)
         target.mkdir(parents=True, exist_ok=True)

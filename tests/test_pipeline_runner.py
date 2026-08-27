@@ -331,3 +331,34 @@ def test_a_dry_run_leaves_no_trace_in_the_history(tmp_path):
 
     PipelineRunner([_Stub(1, outs=[tmp_path / "o.txt"])]).run(_ctx(tmp_path, dry_run=True))
     assert not journal.journal_path(tmp_path).exists()
+
+
+def test_a_stopped_step_does_not_leave_the_proxy_in_front_of_the_parameters(tmp_path):
+    """Ctrl+C on a twelve-hour reprocess is the case this module is built for.
+
+    The runner stands a recording proxy in front of `params.P` while a step runs
+    and takes it down afterwards. That restore lived in the two ordinary
+    branches — the normal return and `except Exception` — while the comment
+    above it said `finally`, so anything that is not an `Exception` walked past
+    it and left the proxy standing for whatever ran next.
+    """
+    from types import SimpleNamespace
+
+    from apex.utils.param_recorder import RecordingNamespace
+
+    class _Interrupted(_Stub):
+        def run(self, ctx):
+            self.ran = True
+            raise KeyboardInterrupt
+
+    real_P = SimpleNamespace(aperture=0.8)
+    params = SimpleNamespace(P=real_P)
+    ctx = _ctx(tmp_path, params=params)
+
+    step = _Interrupted(1, outs=[tmp_path / "never.txt"])
+    with pytest.raises(KeyboardInterrupt):
+        PipelineRunner([step]).run(ctx)
+
+    assert step.ran, "the step never got far enough to prove anything"
+    assert params.P is real_P
+    assert not isinstance(params.P, RecordingNamespace)
