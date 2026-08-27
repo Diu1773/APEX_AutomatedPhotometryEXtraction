@@ -1157,17 +1157,46 @@ Claude 의 오류 경위: 레포 전체 grep 이 타임아웃되자 `apex/` 로 
 
 ## 함정
 
-- **PASP 는 저자를 가리고 심사한다 — 그리고 소프트웨어 논문을 콕 집어 말한다
-  (2026-08-27 확인).** 저널 안내 원문: *"PASP operates a double-anonymous peer
-  review process, in which authors remain anonymous to the reviewers throughout
-  the review process. Authors are responsible for anonymizing their manuscript
-  before submitting their paper."* 선택이 아니라 **투고자 의무**다. 그리고
-  **소프트웨어 이름이 논문 주제이거나 초록에 나올 때, 또는 초록에 GitHub 같은
-  공개 저장소 링크가 있을 때 추가 익명화가 필요하다**고 따로 적어 두었다.
-  우리 논문이 정확히 그 경우다. 지금 확인 안 된 것: APEX 라는 이름을 심사본에서
-  써도 되는지, 저장소를 익명 Zenodo 로 갈음해야 하는지. **투고 전에 저널
-  안내문 원문을 직접 읽어야 한다** — IOP 페이지가 봇을 막아 2026-08-27 에는
-  못 읽었다. 곁가지로, 원체험을 서론에서 뺀 것이 이 제약과 맞아떨어졌다.
+- **PASP 익명 심사는 선택이다 (2026-08-27 안내문 원문 확인).**
+  **앞서 이 자리에 「의무」라고 적었던 것은 틀렸다.** 저널 소개 페이지의
+  *"PASP operates a double-anonymous peer review process"* 한 줄만 보고 그렇게
+  적었는데, 정작 투고 안내문은 다섯 곳에서 조건문으로 쓴다 —
+  *"**If** you are submitting your article as dual-anonymous…"* ·
+  *"For authors who **choose to** submit their articles using our double anonymous
+  peer review capabilities…"* · *"for articles which are **not** submitted
+  double-anonymous"* · *"For articles that are **not** submitted as dual-anonymous,
+  the title page should include the names and affiliations for all authors…"*.
+  **고르는 것이고, 안 고르면 표지에 저자를 적는다.** AASTeX 6.2 이상이 익명 투고를
+  돕는 기능을 갖고 있다.
+- **PASP 는 소프트웨어 논문을 명시적으로 받는다 — 그리고 요구 사항을 적어 두었다
+  (2026-08-27).** *"PASP encourages developers of software used for research in
+  astronomy and astrophysics to submit articles which describe the functionality
+  and design of their software packages."* 최소 요구: 소프트웨어 설명 · 기능과
+  특징 · **천문학 맥락에서의 사용 설명**. 그리고 *"Normally articles which describe
+  a software package also provide an example of its use, often derived from actual
+  research results."* — 우리 목차의 §4(실측 자료 재현)가 그 자리다.
+  **공개 라이선스와 Zenodo·FigShare 보관(DOI)을 강하게 권한다.** 안 할 거면
+  *"at a minimum authors must provide a clear statement to their readers indicating
+  how to access their source code"*. → `CITATION.cff` 실명·ORCID·Zenodo DOI 작업이
+  선택이 아니라 저널 요구다.
+- **쓴 소프트웨어의 인용은 심사에서 점검한다 (2026-08-27).**
+  *"As part of the refereeing process, your article will be assessed for proper
+  citation of the major software packages used in the research results you
+  present."* 인용 형식은 **논문 인용과 소프트웨어 DOI 둘 다** 권한다.
+  2026-08-27 에 bib 를 5 개에서 22 개로 올린 것이 이 요구에 해당한다.
+- **생성 AI 정책 (2026-08-27).** AI 는 저자가 될 수 없다(COPE). 사용은 허용하되
+  **투명하게 밝히기를 권하고, 이전 초안과 사용한 프롬프트 기록을 남기기를 권한다.**
+  금지: *"Generative AI tools cannot be used to create, alter or manipulate
+  original research data and results such as plots or measurements."*
+  우리 그림은 전부 스크립트가 실데이터에서 뽑으므로 이 금지에 안 걸린다.
+  **다만 AI 로 만든 그림은 캡션에 밝혀야 한다** — 우리는 해당 없음.
+- **그 밖에 확인된 형식 요건**: 초록 250 단어 미만 · **키워드 필수** ·
+  AASTeX 권장(Overleaf 에 PASP 판형 있음) · 투고는 PDF 만, 원본 파일은 수정 단계에
+  낸다 · 그림과 표는 본문 해당 위치에 넣는다(끝에 몰지 않는다).
+- **서지는 AAS 형식을 따른다 (2026-08-27).** *"PASP follows the AAS style for
+  references."* 그리고 *"Private communications and papers still in preparation
+  should only be cited in text"* — **준비 중인 논문은 본문에서만 언급하고 서지에
+  넣지 않는다.** arXiv 프리프린트는 여기 해당하지 않는다(아래 항목).
 - **미게재 프리프린트는 인용해도 된다.** AAS 서지 규정: *"References to
   preprints are accepted only for manuscripts not yet published."* 형식은
   `저자 연도, arXiv e-prints, arXiv:번호, doi:10.48550/arXiv.번호`.
