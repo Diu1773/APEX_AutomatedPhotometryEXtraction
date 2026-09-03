@@ -3,10 +3,11 @@
 투고처 PASP. 이 파일이 원고 자체다. 절마다 「쓸 것 · 근거 · 없는 것」을 적어 두었고,
 글을 그 자리에 바로 채워 넣으면 된다.
 
-**본문은 영어로 쓴다 (2026-09-03).** 투고처가 PASP 이므로 어차피 영어다. 한국어로
-초안을 쓰면 용어를 놓고 다투게 되는데, 그 다툼이 번역 시점에 전부 사라진다. 실제로
-2.1 에서 「마스터 천체목록」·「측성 해 산출」·「좌표계 결정」을 세 번 고쳤다.
-작업 문서(목차·심사·조사 기록)는 한국어를 유지한다.
+**용어는 영어를 그대로 쓴다 (2026-09-03).** 문장은 한국어로, 이 분야의 용어는
+영어로 쓴다. 한국어로 옮기려다 「마스터 천체목록」·「측성 해 산출」·「좌표계 결정」을
+세 번 고쳤는데, 셋 다 master source list 와 plate solving 으로 한 번에 끝난다.
+다만 전문 용어가 아닌 일반 낱말까지 영어로 쓰지는 않는다 — 인터넷 연결, 작업 폴더,
+색인 파일은 한국어로 쓴다.
 
 목차 근거는 `OUTLINE_20260828.md`, 심사 종합은 `ARS_REVIEW_20260828.md`,
 선행 확인은 `PRIOR_ART_CHECK_20260828.md`.
@@ -127,61 +128,58 @@ Sect. 2에서는 APEX의 구조와 각 처리단계를 설명한다. Sect. 3에�
 
 # 2. APEX (8.5쪽)
 
-## 2.1 Overview and Modes of Operation (1.5 pages)
+## 2.1 전체 구조와 실행 방식 (1.5쪽)
 
-APEX comprises thirteen processing steps, the first eight of which are shared
-between cluster and time-series analysis: detector calibration, frame selection,
-cropping, frame quality assessment, source detection, plate solving, construction
-of a master source list, and forced photometry. Figure 1 shows the full sequence.
+APEX 의 처리 단계는 모두 열세 개이며, 그중 앞의 여덟 개는 성단 분석과 시계열 분석이
+동일하게 수행한다. detector calibration, frame selection, cropping, frame quality
+assessment, source detection, plate solving, master source list 구성, forced
+photometry 순이다. 전체 흐름은 그림 1 에 제시하였다.
 
-Processing then branches. For cluster data APEX proceeds through PSF photometry,
-zero-point and colour-term calibration, colour--magnitude diagram construction,
-and isochrone fitting. For time-series data it proceeds through target selection,
-light-curve construction, detrending with multi-night combination, and period
-analysis.
+이후 처리는 두 갈래로 나뉜다. 성단 자료는 PSF photometry 와 zero point·color term
+보정을 거쳐 color–magnitude diagram 작성과 isochrone fitting 으로 이어진다. 시계열
+자료는 target selection, light curve 구성, detrending 과 다중밤 결합, period
+analysis 로 이어진다.
 
-By the time forced photometry completes, the master source list is already in
-place and every frame has been measured at the positions it records. The same
-object therefore carries the same identifier along either branch. This is how
-APEX ties measurements from many nights and many filters into a single data set.
+forced photometry 가 끝난 시점에는 master source list 가 이미 완성되어 있고, 모든
+프레임의 측광이 이 목록에 등록된 좌표에서 수행된 상태다. 따라서 이후 어느 갈래로
+진행하더라도 같은 천체는 같은 식별번호를 갖는다. **여러 밤과 여러 필터에서 얻은
+측정을 하나의 자료로 묶는 것이 이 구조다.**
 
-APEX can be operated in two ways. The user may work through the stepwise GUI,
-inspecting intermediate products and settings at each stage, or run the same
-processing from the command line:
+실행 방식은 두 가지다. 사용자는 단계별 GUI 에서 중간 결과와 설정값을 확인하며 진행할
+수 있고, 동일한 처리를 command line 에서 일괄 수행할 수도 있다.
 
-    apex run --mode cmd --params <workspace>
-    apex run --mode lc  --params <workspace> --steps 9-12
+    apex run --mode cmd --params <작업폴더>
+    apex run --mode lc  --params <작업폴더> --steps 9-12
     apex gui --mode cmd
 
-The two paths agree because the GUI does not carry out the computation itself.
-Section 2.2 describes that arrangement.
+두 방식이 같은 결과를 내는 것은 GUI 가 계산을 직접 수행하지 않기 때문이며, 그 구조는
+2.2 에서 다룬다.
 
-### Requirements
+### 실행에 필요한 것
 
-The distribution bundles a Python runtime together with the principal scientific
-packages, so a typical analysis requires no separately installed programs.
-Table 1 sets this alongside IRAF and AstroImageJ.
+배포본에는 Python runtime 과 주요 과학 계산 패키지가 포함되어 있다. 따라서 일반적인
+분석에서 사용자가 별도로 설치해야 하는 프로그램은 없다. IRAF 및 AstroImageJ 와의
+대조는 표 1 에 정리하였다.
 
-This should not be read as a claim of few dependencies. The distribution contains
-some ninety packages, among them Astropy, Photutils, SEP, SciPy and NumPy. It
-means that the user installs nothing, not that little is installed.
+다만 이를 「의존하는 패키지가 적다」로 읽어서는 안 된다. 배포본에는 Astropy,
+Photutils, SEP, SciPy, NumPy 를 포함해 아흔 개 남짓이 들어 있다. 사용자가 설치할
+것이 없다는 뜻이지 의존하는 것이 적다는 뜻은 아니다.
 
-Network access is required at one point. The built-in plate solver queries Gaia
-for the observed field, so a connection is needed the first time a field is
-processed. The retrieved list is cached in the workspace and reused thereafter.
-No large index files need to be downloaded in advance.
+인터넷 연결이 필요한 지점은 한 곳이다. 내장 plate solver 가 관측 영역에 해당하는
+Gaia 목록을 조회하므로, 해당 영역을 처음 처리할 때 연결이 필요하다. 조회한 목록은
+작업 폴더에 보관되어 이후 실행에서 재사용된다. 사전에 내려받아야 하는 대용량 색인
+파일은 없다.
 
-### Run records
+### 실행 기록
 
-Each workspace records what has been executed within it. Records are append-only;
-existing entries are never modified or removed. A command-line run records the
-settings that each step actually read, whereas a GUI run records the workspace
-settings as they stood when the step completed. These are claims of different
-strength and are labelled as such.
+각 작업 폴더는 그 안에서 수행된 처리를 자체적으로 기록한다. 기록은 추가만 가능하며
+기존 항목을 수정하거나 삭제하지 않는다. command line 실행에서는 각 단계가 실제로
+참조한 설정값을 기록하고, GUI 에서 실행한 경우에는 해당 단계를 완료한 시점의 작업
+폴더 설정을 기록한다. 두 기록은 근거의 강도가 다르므로 구분하여 표시한다.
 
-We also state what is not recorded. Content hashes of the input frames, random
-seeds, and the epoch at which the Gaia list was retrieved are currently omitted.
-Appendix B gives the record format and a worked example.
+기록하지 않는 항목도 함께 밝힌다. 입력 프레임의 content hash, random seed, 그리고
+Gaia 목록의 조회 시점은 현재 기록하지 않는다. 기록 형식과 예시는 부록 B 에
+수록하였다.
 
 ## 2.2 창과 명령줄이 같은 계산을 부른다 (1.0쪽)
 
