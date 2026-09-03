@@ -157,3 +157,79 @@ testing 의 원 출처(Chen 등). 지금은 검색 요약만 봤고 **DOI 조작
 
 **「한 프로그램에 다 넣으면 새로 생기는 위험」도 이 문헌군에서 찾아야 한다.**
 소프트웨어 공학 쪽에 monolithic 대 modular 의 결함률 비교가 있을 수 있다.
+
+---
+
+# 서지 확인과 천문 쪽 선례 — 2026-09-03 추가
+
+## 서지 넷을 확인했다
+
+| 문헌 | 서지 | 상태 |
+|---|---|---|
+| Kanewala & Bieman | *Testing scientific software: A systematic literature review*, Information and Software Technology **56**(10), 1219–1232 (2014), doi:10.1016/j.infsof.2014.05.006, arXiv:1804.01954 | **확인** |
+| Chen, Cheung & Yiu | *Metamorphic Testing: A New Approach for Generating Next Test Cases*, Technical Report **HKUST-CS98-01**, Dept. of Computer Science, HKUST (1998) | **확인**. metamorphic testing 의 원 출처 |
+| Hatton | *The T-experiments: errors in scientific software*, IEEE Computational Science and Engineering, 1997 년 4 월 | **확인**. 1990~94 년에 수행, T1 이 「수백만 줄의 과학 소프트웨어의 일관성」을 쟀다 |
+| Oberkampf & Roy | *Verification and Validation in Scientific Computing*, Cambridge University Press (2010) | **확인** |
+
+Chen 등의 것은 technical report 이므로 학술지 인용이 필요하면 후속 논문을 찾아야
+한다. 지금은 이 보고서가 정본이다.
+
+## 천문 쪽은 이미 시험을 하고 있다 — 내 예상이 틀렸다
+
+앞 절에서 「이 틀을 천문에 처음 가져오는 것일 수 있다」고 적었는데, 찾아보니
+**천문 쪽에 시험 관행이 이미 여럿 있다.**
+
+**ALMA 간섭계 파이프라인** (arXiv:2306.07420). regression test 두 벌이 있고, 파이프라인
+전체 recipe 를 입력 자료에 돌려서 특정 값을 뽑아 **미리 저장해 둔 기준값과 비교**한다.
+주 분기에 변경이 들어간 날 밤마다 자동으로 돈다.
+
+**중력파 탐색 파이프라인** (arXiv:0904.4394). 자동 시험 세 벌을 쓴다 — 모듈 단위를
+보는 unit test, 통제된 입력으로 파이프라인 전체를 돌려 출력을 확인하는 end-to-end
+test, 그리고 **백색잡음에 대한 성능을 이론 예측과 대조하는 시험.**
+
+**Corral framework** (arXiv:1701.05566)은 unit testing 을 품질 명세로 삼고,
+**Astroalign** (arXiv:1909.02946)은 unit test 와 code coverage 를 쓴다.
+
+**그러므로 「천문에는 소프트웨어 시험이 없다」고 쓰면 안 된다.** 특히 ALMA 의
+regression test 는 APEX 가 3.12 에서 하려는 것과 사실상 같다.
+
+## 그러면 무엇이 남는가
+
+찾은 범위에서 **천문 쪽 사례에 없는 것**은 셋이다.
+
+**첫째, 검증을 세 갈래로 나누는 어휘가 없다.** 위 논문들은 unit test·regression
+test·end-to-end test 라고 부르지 code verification·solution verification·validation
+으로 나누지 않는다.
+
+**둘째, metamorphic testing 을 그 이름으로 쓴 천문 사례를 못 찾았다.** 검색에서
+나온 「astronomical tide」 건은 해양학이다 — 조석이 달과 해에 끌려서 그렇게 불릴
+뿐이고 천문 소프트웨어가 아니다.
+
+**셋째, 단계 오차를 최종 천체물리량까지 잇고 그 허용 한계를 같은 방법의 선행 연구
+에서 가져온 사례를 못 찾았다.** 중력파 쪽이 가장 가까운데(백색잡음 성능을 이론
+예측과 대조), 그건 한 단계의 성능이지 사슬 전체의 예산이 아니다.
+
+**셋 중 셋째가 가장 좁고 가장 방어하기 쉽다.**
+
+## 「못 찾았다」와 「없다」는 다르다
+
+위 셋은 전부 **내가 찾은 범위에서 없다**는 것이지 존재하지 않는다는 뜻이 아니다.
+천문 소프트웨어 논문은 수가 많고, 검증 방식은 대개 본문 안쪽에 있어서 제목·초록
+검색으로는 안 걸린다.
+
+**원고에 쓸 때는 「우리가 조사한 범위에서 찾지 못했다」로 쓴다.** 서론의 도구
+지형에서 이미 같은 표현을 쓰고 있으므로 일관된다.
+
+## 신규성 주장을 좁힌다
+
+앞 절에서 「소프트웨어 공학의 확립된 틀을 이 분야에 처음 가져왔다」가 될 수 있다고
+적었는데, **그건 못 쓴다.** 천문 쪽에 시험 관행이 이미 있고 ALMA 의 것은 우리
+것과 겹친다.
+
+쓸 수 있는 것은 이것이다.
+
+> 천문 파이프라인의 검증은 대개 단계별 시험과 참조 구현 대조로 이루어진다.
+> 우리는 여기에 단계 오차가 최종 천체물리량에 남는 양을 더하고, 그 허용 한계를
+> 같은 방법을 쓰는 선행 연구에서 가져온다.
+
+**이건 「처음」이라는 말을 안 쓰고도 무엇이 다른지 말한다.**
