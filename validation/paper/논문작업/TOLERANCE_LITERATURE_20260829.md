@@ -145,3 +145,92 @@ NGC 6811 의 나이가 0.64 에서 1.05 Gyr 로 갈리는데, 그 차이를 만�
 **M5 와 M3 의 거리지수·나이 문헌값을 채운다.** 지금은 M13 만 범위가 있다.
 
 **적색화를 구상성단에서도 확인한다.** 지금 E(B−V) 근거가 M67 하나다.
+
+---
+
+# Oliveira+2013 본문을 읽었다 — 2026-09-03
+
+서지: A. F. Oliveira, H. Monteiro, W. S. Dias, T. C. Caetano, A&A,
+doi:10.1051/0004-6361/201321157, arXiv:1307.2182. 22 쪽.
+
+## 갈렸던 두 숫자가 정리됐다
+
+**0.1 dex 는 이 논문 방법의 값이다.** 초록: *"Our results show that the typical
+precision is about 0.1 dex."*
+
+**0.15~0.50 dex 는 기존 방식의 값이고, 그나마 여섯 건뿐이다.** 서론 원문:
+*"Note that in general there are no estimates of the errors in [Fe/H] values
+obtained from isochrone fitting, and for the six existing cases, the uncertainty
+varies from 0.15 dex to 0.50 dex. Unfortunately, the subjectivity of the
+isochrone fitting makes it difficult to estimate a reliable error."*
+
+그리고 이 분야의 형편을 보여 주는 수치가 하나 더 있다. **DAML02 목록의 산개성단
+2,174 개 중 [Fe/H] 가 있는 것이 9 % 다.**
+
+## 측광 등시선 적합과 분광 관측의 차이
+
+*"the average difference is 0.08 dex with a standard deviation of 0.07 dex, with
+no significant difference between regular or high-resolution spectroscopy."*
+
+즉 **측광으로 낸 금속량은 분광 관측과 평균 0.08 dex 차이, 흩어짐 0.07 dex 다.**
+
+## 기기 차이만 떼어낸 값 — 사용자가 물은 것
+
+이 논문은 성단 아홉 개를 **자료 열다섯 벌**로 처리했다. 같은 방법으로 같은 성단을
+서로 다른 관측 자료에 적용한 결과가 Table 2·3 에 있다.
+
+| 성단 | 자료 수 | [Fe/H] 값들 | 폭 |
+|---|---|---|---|
+| NGC 2682 (M67) | 3 | 0.00 · 0.04 · 0.04 | **0.04 dex** |
+| NGC 2506 | 2 | −0.13 · −0.13 | 0.00 dex |
+| Melotte 105 | 2 | −0.05 · 0.00 | 0.05 dex |
+| Trumpler 1 | 2 | 0.10 · 0.15 | 0.05 dex |
+| NGC 2355 | 2 | −0.32 · −0.23 | **0.09 dex** |
+
+**같은 방법에서 자료만 바꿨을 때 금속량은 0.04~0.09 dex 갈린다.** 이 방법의 정밀도
+0.1 dex 보다 작다. 그러므로 **자료(기기) 차이가 방법의 한계 안에 들어간다.**
+
+같은 M67 세 자료의 다른 값들도 적어 둔다.
+
+| 물리량 | 세 자료의 값 | 폭 |
+|---|---|---|
+| E(B−V) | 0.09 · 0.06 · 0.03 mag | 0.06 mag |
+| 거리 | 930 · 803 · 900 pc | 거리지수로 **0.32 mag** |
+| log(Age) | 9.30 · 9.40 · 9.45 | 2.00 · 2.51 · 2.82 Gyr, **41 %** |
+
+**거리지수와 나이는 금속량보다 훨씬 크게 갈린다.** 앞서 문헌값 범위에서 얻은
+0.15 mag·15 % 보다 두 배 이상이다. 문헌값은 여러 연구가 각자 최선으로 고른 값이고,
+이 표는 한 방법이 자료만 바꿔 얻은 값이라 후자가 더 크다.
+
+## 자료가 갈릴 때의 원인 — APEX 의 발견과 같은 자리다
+
+NGC 2355 에서 두 자료가 가장 크게 갈렸는데, 저자들이 원인을 짚었다.
+
+*"the discrepancy in this case seems to be due to a systematic difference in the
+photometry of the two sets. The data from Ann et al. (1999) are systematically
+redder than the one from Kaluzny & Mazur (1991c)."*
+
+그리고 결론을 이렇게 적었다.
+
+*"the quality of the [Fe/H] estimate obtained by fitting is directly linked to the
+quality of the data, even considering the improved statistical fitting
+procedures."*
+
+**한쪽 자료가 계통적으로 붉으면 금속량이 밀린다.** APEX 가 찾은 것 —
+U·B·V 의 영점을 서로 다른 표준계에 두면 M67 금속량이 −0.83 이 되고 한 표준계로
+맞추면 +0.06 이 된다 — 이 **기전이 같다.** 독립적으로 만들어진 두 파이프라인이 같은
+자리에서 걸렸다는 뜻이므로, APEX 의 3.9 절이 이 논문을 인용하면 강해진다.
+
+## 허용 한계 표 (개정)
+
+| 물리량 | 허용 한계 | 근거 |
+|---|---|---|
+| [Fe/H] | **0.1 dex** | Oliveira+2013 초록. 자료 차이(0.04~0.09)가 이 안에 든다 |
+| 거리지수 | **0.3 mag** | M67 세 자료의 폭 0.32. 문헌값 범위 0.15 보다 크지만 이쪽이 같은 방법 기준이라 더 맞다 |
+| 나이 | **40 %** | M67 세 자료의 폭 41 %. 앞서 제안한 15 % 는 너무 빡빡했다 |
+| E(B−V) | **0.06 mag** | M67 세 자료의 폭 |
+| 주기 | 미조사 | |
+
+**앞 판에서 제안한 나이 15 %·거리지수 0.15 mag 는 철회한다.** 그 값들은 여러 연구의
+최선값이 흩어진 폭이었는데, 우리가 비교할 대상은 「한 방법이 자료를 바꿨을 때
+흩어지는 폭」이다. 후자가 옳은 기준이고 더 크다.
