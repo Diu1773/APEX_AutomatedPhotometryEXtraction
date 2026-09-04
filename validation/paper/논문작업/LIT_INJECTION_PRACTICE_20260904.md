@@ -282,7 +282,7 @@ M67i 는 `completeness_fit.json` 이 없어 이 표에서 빠졌다(일곱 장 �
 
 | 논문 | 검증 방법 |
 |---|---|
-| **Stetson & Harris (1988)**, AJ 96, 909 | M92 프레임 7 장에 250 개짜리 인공별 6 벌을 더해 합성 프레임 42 장을 만들고 되찾음 — **[미확인] 원문을 열지 않고 검색 요약으로 적음** |
+| **Stetson & Harris (1988)**, AJ 96, 909 | M92 깊은 이미지 7 장에 인공별 1,500 개를 여섯 벌로 나눠 넣어 합성 프레임 42 장을 만들고, 되찾은 952 개의 (관측 − 입력) 차로 **계통 오차를 보정하고 우연 오차를 추정** — **[원문 확인]** |
 | **Stetson**, *User’s Manual for DAOPHOT II* (2006 Apr 21판) | ADDSTAR 로 합성별을 넣고 되찾아 **star-finding efficiency 와 photometric accuracy 를 둘 다** 추정 — **[원문 확인]** |
 | **Bertin & Arnouts (1996)**, A&AS 117, 393 — SExtractor | **완전 합성 이미지**를 만들어 시험. 하늘 밝기 + Poisson 잡음 + Moffat 별 + 은하. 19 등급 별에 동반성을 거리별로 붙여 등급 오차를 잼 — **[미확인] 원문을 열지 않고 검색 요약으로 적음** |
 | **Dolphin (2000)**, PASP 112, 1383 — HSTphot | 같은 시야 반복 관측(IC 1613 의 F555W 2400 s 8 장 합성)과 DoPHOT 대조. **인공별 시험은 안 한다** |
@@ -427,3 +427,85 @@ Astrophysics. 이 판은 **2006 April 21**. 총 75 쪽, ADDSTAR 는 §XX (52 쪽
 Classic 논문이다. IOPscience 는 그 논문의 초록만 공개한다. 초록에는 FIND ·
 PHOT · GROUP · NSTAR 만 나오고 **ADDSTAR 도 검증 절도 언급되지 않는다.**
 그러므로 「1987 년 논문이 ADDSTAR 를 기술한다」고는 아직 쓸 수 없다.
+
+
+---
+
+## 관행의 원본 — Stetson & Harris (1988) §b) Artificial-Star Tests (2026-09-04 원문 확인)
+
+ADS 스캔 PDF(79 쪽, 텍스트층 있음)를 직접 열었다. 이 절이 인공별 시험이 무엇을
+위한 것인지, 그리고 **어떻게 해야 유효한지**를 다 적어 놓았다.
+
+### 무엇을 위해 하는가
+
+> *"the differences between the “observed” magnitudes and colors derived for the
+> artificial stars and their known input values will be used to calibrate the
+> systematic errors and to estimate the random errors that invariably accompany
+> attempts to perform deep photometry in such a crowded field."*
+
+**계통 오차를 보정하고 우연 오차를 추정하는 것**이 목적이라고 명시한다.
+완전도만이 아니다.
+
+### 왜 필요한가 — 코드의 내부 오차가 너무 작아서
+
+> *"it will be shown from the artificial-star tests ... that these internal error
+> estimates are still systematically too small, and accordingly we multiply this
+> figure by the factor of 1.19 obtained below."*
+
+**1988 년에 이미 같은 결론이 나와 있었다.** 소프트웨어가 계산한 오차가 계통적으로
+작아서 **1.19 배**를 곱해 쓴다. Jang (2023) 의 1.25~2.9 배와 같은 이야기이고,
+35 년 사이에 값만 달라졌다.
+
+### 유효한 시험의 요건 셋 — 이게 이 논문의 진짜 값어치다
+
+**첫째, 원본과 합성 프레임을 똑같이 처리해야 한다.**
+
+> *"The original and artificial frames must be reduced identically for the
+> comparisons to be valid"*
+
+**둘째, 처리하는 동안 어느 것이 넣은 별인지 몰라야 한다.**
+
+> *"A second requirement for a valid artificial-star test is that the reductions
+> be performed without knowing which stars in the synthetic frames are added and
+> which are real."*
+
+그래서 이들은 profile-fitting 을 다 끝내고 표준 BV 계로 변환까지 마친 **뒤에야**
+어느 검출이 넣은 별인지 대조했다.
+
+**셋째, 넣는 양이 혼잡을 바꾸면 안 된다.**
+
+> *"The principal difference is that the artificial frames contain of order 10%
+> more stars than the original ones."*
+
+원본보다 10 % 정도만 늘렸다. 많이 넣으면 재려는 그 혼잡 자체가 달라진다.
+
+### 어떻게 묶어서 보고했나
+
+되찾은 952 개를 **관측 등급으로**(입력 등급이 아니라) 정렬해 79 개씩 열한 묶음과
+83 개 한 묶음으로 나눴다. 그 결과가 Table VII 「Artificial-star (observed − input)
+comparisons」다.
+
+> *"The actual data for the 952 recovered artificial stars were sorted by observed
+> (not input) magnitude and divided into 11 groups of 79 and one group of 83."*
+
+**입력이 아니라 관측 등급으로 묶는다는 점이 중요하다.** 어느 쪽으로 묶느냐에 따라
+답이 달라진다.
+
+### 결과의 방향
+
+> *"stars at all observed magnitude levels tend, on average, to have been measured
+> too bright—although for the brighter artificial stars the effect is only on the
+> order of a few millimagnitudes, at fainter levels it becomes quite important."*
+
+모든 등급에서 평균적으로 **실제보다 밝게** 측정되고, 밝은 쪽에서는 몇 mmag 이지만
+어두워질수록 커진다.
+
+### 저자들이 스스로 밝힌 함정
+
+넣은 인공별의 광도함수가 F_input = 24.6 에서 잘려 있어서, 가장 어두운 묶음의
+편차가 **과소평가되었을 수 있다**고 적었다. 더 어두운 별이 그 묶음으로 흘러들어올
+자리가 없기 때문이다.
+
+> *"it is possible that the effect of fainter artificial stars being scattered into
+> the last bin is somewhat underestimated, due to the unphysical truncation of
+> their luminosity function."*
