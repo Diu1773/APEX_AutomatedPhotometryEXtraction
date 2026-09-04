@@ -283,7 +283,7 @@ M67i 는 `completeness_fit.json` 이 없어 이 표에서 빠졌다(일곱 장 �
 | 논문 | 검증 방법 |
 |---|---|
 | **Stetson & Harris (1988)**, AJ 96, 909 | M92 프레임 7 장에 250 개짜리 인공별 6 벌을 더해 합성 프레임 42 장을 만들고 되찾음 — **[미확인] 원문을 열지 않고 검색 요약으로 적음** |
-| **Stetson (1987)**, PASP 99, 191 — DAOPHOT | 주입 도구 `ADDSTAR` 를 소프트웨어에 넣어 배포. 표준 사용법은 「넣은 등급 대 되찾은 등급 + 잃은 것」 — **[미확인] 원문을 열지 않고 검색 요약으로 적음** |
+| **Stetson**, *User’s Manual for DAOPHOT II* (2006 Apr 21판) | ADDSTAR 로 합성별을 넣고 되찾아 **star-finding efficiency 와 photometric accuracy 를 둘 다** 추정 — **[원문 확인]** |
 | **Bertin & Arnouts (1996)**, A&AS 117, 393 — SExtractor | **완전 합성 이미지**를 만들어 시험. 하늘 밝기 + Poisson 잡음 + Moffat 별 + 은하. 19 등급 별에 동반성을 거리별로 붙여 등급 오차를 잼 — **[미확인] 원문을 열지 않고 검색 요약으로 적음** |
 | **Dolphin (2000)**, PASP 112, 1383 — HSTphot | 같은 시야 반복 관측(IC 1613 의 F555W 2400 s 8 장 합성)과 DoPHOT 대조. **인공별 시험은 안 한다** |
 | **Becker et al. (2007)**, PASP 119, 1462 | **주입 없음.** 여러 밤의 실자료로 알고리즘끼리 비교 |
@@ -389,3 +389,41 @@ Jang (2023) 이 이 시험을 한 이유는 소프트웨어 평가가 아니라 
 - **SExtractor** 가 완전 합성 이미지를 고른 이유 (A&AS PDF 가 403 으로 막힘)
 - **Dolphin (2000)** 은 반복 관측과 DoPHOT 대조를 쓰면서 **이유를 명시하지 않는다**
 - **AutoPhOT** 이 주입을 한계등급에만 쓴 이유
+
+
+---
+
+## ADDSTAR 의 목적 — Stetson 본인의 매뉴얼에서 (2026-09-04 원문 확인)
+
+앞서 이 줄을 검색 요약으로 적고 [미확인] 을 달아 뒀다. PDF 를 직접 열어
+확인했다.
+
+**출처**: *User’s Manual for DAOPHOT II: The Next Generation*,
+Peter B. Stetson, Dominion Astrophysical Observatory / Herzberg Institute of
+Astrophysics. 이 판은 **2006 April 21**. 총 75 쪽, ADDSTAR 는 §XX (52 쪽).
+
+전문 그대로다.
+
+> *"This routine is used to add synthetic stars, either placed at random by the
+> computer, or in accordance with positions and magnitudes specified by you, to
+> your picture. They can then be found by FIND, reduced by PHOTOMETRY and the
+> rest, and the star-finding efficiency and the photometric accuracy can be
+> estimated by comparing the output data for these stars to what was put in."*
+
+**두 가지를 다 하라고 적혀 있다** — star-finding efficiency(찾는 효율, 즉
+완전도)와 **photometric accuracy(측광 정확도)**. 방법은 「넣은 것과 나온 것을
+견주어서」다.
+
+즉 **측광 소프트웨어를 만든 사람이 자기 도구의 설명서에, 주입한 별의 등급을
+되찾는 정확도를 재라고 써 놓았다.** 이 관행의 출처를 더 거슬러 올라갈 곳이
+없다.
+
+곁들여, 같은 절이 재현성도 다룬다. 난수 씨앗을 사용자가 지정하게 해서
+**어느 컴퓨터에서든 똑같은 인공 이미지가 만들어지도록** 했다.
+
+### 다만 1987 년 논문은 아직 확인 못 했다
+
+이것은 **DAOPHOT II 매뉴얼**이고, Stetson (1987) PASP 99, 191 은 DAOPHOT
+Classic 논문이다. IOPscience 는 그 논문의 초록만 공개한다. 초록에는 FIND ·
+PHOT · GROUP · NSTAR 만 나오고 **ADDSTAR 도 검증 절도 언급되지 않는다.**
+그러므로 「1987 년 논문이 ADDSTAR 를 기술한다」고는 아직 쓸 수 없다.
