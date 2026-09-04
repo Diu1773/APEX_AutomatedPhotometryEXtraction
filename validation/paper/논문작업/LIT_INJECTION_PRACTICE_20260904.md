@@ -277,7 +277,7 @@ M67i 는 `completeness_fit.json` 이 없어 이 표에서 빠졌다(일곱 장 �
 | **Stetson & Harris (1988)**, AJ 96, 909 | M92 프레임 7 장에 250 개짜리 인공별 6 벌을 더해 합성 프레임 42 장을 만들고 되찾음 |
 | **Stetson (1987)**, PASP 99, 191 — DAOPHOT | 주입 도구 `ADDSTAR` 를 소프트웨어에 넣어 배포. 표준 사용법은 「넣은 등급 대 되찾은 등급 + 잃은 것」 |
 | **Bertin & Arnouts (1996)**, A&AS 117, 393 — SExtractor | **완전 합성 이미지**를 만들어 시험. 하늘 밝기 + Poisson 잡음 + Moffat 별 + 은하. 19 등급 별에 동반성을 거리별로 붙여 등급 오차를 잼 |
-| **Dolphin (2000)**, PASP — HSTphot/DOLPHOT | 내부 일관성은 같은 시야 반복 관측으로, 외부 신뢰도는 DoPHOT 대조로. 인공별로 완전도와 편차를 잼 |
+| **Dolphin (2000)**, PASP 112, 1383 — HSTphot | 같은 시야 반복 관측(IC 1613 의 F555W 2400 s 8 장 합성)과 DoPHOT 대조. **인공별 시험은 안 한다** |
 | **Becker et al. (2007)**, PASP 119, 1462 | **주입 없음.** 여러 밤의 실자료로 알고리즘끼리 비교 |
 | **Hu et al. (2010)**, PASP, doi:10.1086/658162 | 인공별을 이미지가 아니라 카탈로그에 더하는 계산 절약법 |
 | **Brennan & Fraser (2022)**, A&A 667, A62 — AutoPhOT | 주입은 **한계등급 계산에만**. 정확도는 DAOPHOT 대조 |
@@ -302,5 +302,82 @@ M67i 는 `completeness_fit.json` 이 없어 이 표에서 빠졌다(일곱 장 �
 
 코드가 스스로 보고하는 오차가 실제보다 작다.
 
-- **Dolphin (2000)**: 코드가 매기는 통계 오차가 인공별로 잰 오차보다 **25~50 % 작다**
+- **(정정) Dolphin (2000) 은 이 발견의 출처가 아니다.** 검색 조각을 원문 확인 없이 옮겼던 것이고, 원문은 인공별 시험 자체를 안 한다. 「25~50 %」는 DOLPHOT 을 쓴 후대 논문의 값으로 보이며 출처 미확정이다
 - **Jang (2023)**: 코드 오차가 실제를 **1.25~2.68 배 과소평가**한다
+
+---
+
+# 왜 그 방법을 골랐나 — 논문이 밝힌 이유
+
+앞의 표는 **무엇을 했나**만 적었다. 사용자 지적대로 논문들은 **왜 그것을
+골랐는지**도 적어 놓는데, 그 이유가 방법 자체보다 중요하다.
+
+## 인공별을 넣는 이유 — 코드가 매기는 오차는 혼잡을 못 담는다
+
+Jang (2023) 이 명시적이다.
+
+> *"artificial star experiments are critical to properly estimate photometric
+> errors; using the errors computed directly from photometry codes underestimates
+> the true errors, especially in crowded fields"*
+
+> *"the internally computed errors are smaller than the errors determined from
+> the artificial star experiments in all cases"*
+
+즉 **주입은 「정확도를 자랑하려고」 하는 것이 아니라 「코드가 보고하는 오차를
+믿을 수 없어서」 한다.** 소프트웨어가 계산하는 오차는 Poisson 통계에서 나오는데,
+별이 겹쳐서 생기는 오차는 거기 안 들어간다. 넣어 보는 것 말고는 잴 방법이 없다.
+
+Stetson & Harris (1988) 이 이 관행을 시작한 이유도 같다 — 광자 통계와 별 혼잡을
+**둘 다** 반영하는 오차 추정을 얻으려고.
+
+## 대조를 함께 하는 이유 — 주입은 모델 PSF 를 쓰기 때문에 못 보는 것이 있다
+
+**이것이 이번 조사에서 가장 중요한 문장이다.**
+
+> *"One example is the error associated with the use of incomplete PSF models...
+> It is not possible to measure this bias from artificial star tests alone, since
+> the artificial stars are injected using the model PSF, which differs from the
+> real sources"*
+
+인공별은 **코드가 가진 모델 PSF 로 그려서 넣는다.** 그러니 그 모델이 실제 별과
+다를 때 생기는 편차는 주입으로 절대 안 보인다. 넣을 때 쓴 모양으로 다시 재니
+잘 맞을 수밖에 없다. **주입에도 자기만의 순환이 있다.**
+
+그 편차를 드러내는 것은 **독립적으로 처리한 다른 구현**뿐이다.
+
+### 이것이 내가 앞서 적은 것을 뒤집는다
+
+이 문서 앞부분과 `MAG_ACCURACY_20260903.md` 에서 나는 이렇게 적었다 —
+「대조 상대가 없다는 것이 이 값의 힘이다. 참값을 우리가 넣었으므로 둘이 같은
+방향으로 틀려서 일치하는 문제가 성립하지 않는다.」
+
+**절반만 맞다.** 배경·잡음·혼잡에 대해서는 맞지만, **PSF 모델에 대해서는 주입이
+바로 그 순환에 빠진다.** 그러니 주입이 대조보다 강한 것이 아니라 **둘이 서로의
+사각지대를 덮는다.** Jang 이 둘 다 한 이유가 이것이다.
+
+## 참값이 없을 때만 대조하는 경우
+
+Becker et al. (2007) 은 주입을 아예 안 하는데, 그 이유를 이렇게 적었다.
+
+> *"Because the absolute 'truth' is not known here, these comparisons are by
+> necessity relative."*
+
+이들이 다룬 것은 실제 하늘의 천체들이라 참값이 없었다. **참값을 만들 수 있으면
+주입하고, 없으면 대조한다**는 선택 기준이 여기서 나온다.
+
+## 연구 자체의 동기
+
+Jang (2023) 이 이 시험을 한 이유는 소프트웨어 평가가 아니라 **거리 측정**이다.
+
+> *"the mean photometric error for a single TRGB star at ∼20 Mpc is
+> σ_F814W ∼ 0.15 mag in HST imaging...These individual errors are much larger
+> than the final error of the Hubble constant"*
+
+개별 별의 오차가 최종 결과의 오차보다 훨씬 크니, 그 오차가 어떻게 줄어드는지를
+정확히 알아야 한다는 것이다.
+
+## 아직 이유를 못 찾은 것
+
+- **SExtractor** 가 완전 합성 이미지를 고른 이유 (A&AS PDF 가 403 으로 막힘)
+- **Dolphin (2000)** 은 반복 관측과 DoPHOT 대조를 쓰면서 **이유를 명시하지 않는다**
+- **AutoPhOT** 이 주입을 한계등급에만 쓴 이유
