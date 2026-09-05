@@ -175,14 +175,21 @@ Step 12 enables an SNR 20 display and fitting threshold by default. Fainter
 low-SNR points remain available by lowering or disabling the filter, but they
 should not be used to infer the lower-main-sequence slope.
 
-### LC Steps 8-11
+### LC Steps 9-12
+
+Step 8(PSF 측광)은 두 모드가 공유합니다. CMD 에서는 필수이고 LC 에서는 선택이며
+창에서만 돕니다. 두 모드는 그 뒤에 갈립니다.
 
 | Step | Name | 역할 | 출력 폴더 |
 | ---: | --- | --- | --- |
-| 8 | Target/Comparison Selection | target, comparison, check star 선택 | `lc_selection/` |
-| 9 | Light Curve Builder | differential light curve와 comparison QC | `lc_lightcurve/` |
-| 10 | Detrend & Night Merge | detrending, ensemble correction, night merge | `lc_detrend/` |
-| 11 | Period Analysis | LS/PDM/BLS, FAP, phase-folded curve | `lc_period/` |
+| 9 | Target/Comparison Selection | target, comparison, check star 선택 | `lc_selection/` |
+| 10 | Light Curve Builder | differential light curve와 comparison QC | `lc_lightcurve/` |
+| 11 | Detrend & Night Merge | detrending, ensemble correction, night merge | `lc_detrend/` |
+| 12 | Period Analysis | LS/PDM/BLS, FAP, phase-folded curve | `lc_period/` |
+
+**LC 네 파일의 이름은 실제 단계 번호보다 하나 낮습니다.** 2026-07-15 에 선택형 PSF
+창이 8 번 자리에 들어갔는데 파일 이름을 안 바꿨습니다. 파일 안의 `step_index=` 를
+읽고 하나를 더하십시오.
 
 상세한 데이터 흐름과 모듈 경계는
 [Architecture](ARCHITECTURE.md)를 참조하십시오.
