@@ -6,6 +6,10 @@ on:
   pull_request:
     branches: [main]
   workflow_dispatch:
+  # Runs itself once a week so a quiet repo still notices a broken dependency
+  # release. Monday 02:00 UTC = Monday 11:00 KST.
+  schedule:
+    - cron: "0 2 * * 1"
 
 jobs:
   # Headless core on every platform/Python: proves `pip install apex-photometry`
