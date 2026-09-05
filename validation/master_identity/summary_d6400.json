@@ -1,0 +1,13 @@
+{
+  "levels": [
+    {
+      "scatter_px": 0.1,
+      "n": 3,
+      "n_master_med": 6400.0,
+      "n_split_med": 2.0,
+      "n_unclaimed_med": 2.0,
+      "sep_med_arcsec": 0.0594,
+      "sep_max_arcsec": 0.2249
+    }
+  ]
+}

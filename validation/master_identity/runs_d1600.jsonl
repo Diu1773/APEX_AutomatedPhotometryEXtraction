@@ -1,0 +1,3 @@
+{"scatter_px": 0.1, "seed": 101, "seconds": 2.93, "n_sources_reported": 1600, "n_master": 1600, "n_true": 1600, "n_split": 0, "n_extra_rows": 0, "n_unclaimed_true": 0, "sep_med_arcsec": 0.0582, "sep_p90_arcsec": 0.1075, "sep_max_arcsec": 0.1994}
+{"scatter_px": 0.1, "seed": 102, "seconds": 1.04, "n_sources_reported": 1600, "n_master": 1600, "n_true": 1600, "n_split": 1, "n_extra_rows": 1, "n_unclaimed_true": 1, "sep_med_arcsec": 0.0555, "sep_p90_arcsec": 0.1081, "sep_max_arcsec": 0.2134}
+{"scatter_px": 0.1, "seed": 103, "seconds": 1.52, "n_sources_reported": 1600, "n_master": 1600, "n_true": 1600, "n_split": 0, "n_extra_rows": 0, "n_unclaimed_true": 0, "sep_med_arcsec": 0.0588, "sep_p90_arcsec": 0.106, "sep_max_arcsec": 0.1825}
