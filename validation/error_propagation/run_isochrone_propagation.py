@@ -100,7 +100,29 @@ def _provenance() -> dict:
     }
 
 
-def main() -> int:
+def main(argv: list[str] | None = None) -> int:
+    import argparse
+    ap = argparse.ArgumentParser(description="등급 오차 → 성단 파라미터 전파 측정")
+    ap.add_argument("--f-bin", type=float, default=0.3,
+                    help="적합이 가정하는 쌍성 비율 (기본 0.3). 합성의 실제 값은 40/390=0.103")
+    ap.add_argument("--f-field", type=float, default=0.1,
+                    help="적합이 가정하는 배경별 비율 (기본 0.1). 합성의 실제 값은 25/415=0.060")
+    ap.add_argument("--phot-errs", type=float, nargs="+", default=list(PHOT_ERRS),
+                    help="잴 등급 오차들")
+    ap.add_argument("--tag", default="",
+                    help="산출 파일 이름 꼬리표. 다른 설정의 실행이 섞이지 않게 한다")
+    a = ap.parse_args(argv)
+
+    phot_errs = tuple(a.phot_errs)
+    tag = ("_" + a.tag) if a.tag else ""
+    settings = {**SETTINGS,
+                "phot_errs": list(phot_errs),
+                "mcmc": {**SETTINGS["mcmc"], "f_bin": a.f_bin, "f_field": a.f_field},
+                "fraction_note": (
+                    "합성의 실제 비율은 쌍성 40/390=0.103, 배경별 25/415=0.060 이다. "
+                    "적합에 주는 값이 이와 다르면 그 자체가 계통 오차의 원인이 된다."
+                )}
+
     grid = _make_synthetic_grid()
     fitter = IsochroneFitterV2(
         "synthetic.dat", col_mh=1, col_age=2, col_g=3, col_r=4,
@@ -111,7 +133,7 @@ def main() -> int:
         distance_mod=(9.0, 10.2), extinction_gr=(0.0, 0.20),
     )
 
-    jsonl = OUT / "runs.jsonl"
+    jsonl = OUT / f"runs{tag}.jsonl"
     done = set()
     if jsonl.exists():                    # resume an interrupted sweep
         for line in jsonl.open(encoding="utf-8"):
@@ -122,15 +144,18 @@ def main() -> int:
                 pass
         print(f"이미 끝난 것 {len(done)} 개 — 건너뛴다", flush=True)
 
-    total = len(PHOT_ERRS) * len(SEEDS)
+    total = len(phot_errs) * len(SEEDS)
     n = 0
     t_start = time.perf_counter()
 
     run_id = run_journal.new_run_id()
-    run_journal.record_note(OUT, WHY, run_id=run_id, author="isochrone-propagation")
+    run_journal.record_note(
+        OUT, WHY + f"  [이번 실행] f_bin={a.f_bin} f_field={a.f_field} "
+        f"phot_errs={list(phot_errs)} 산출=runs{tag}.jsonl",
+        run_id=run_id, author="isochrone-propagation")
     run_journal.record_run_start(
         OUT, run_id, mode="experiment", source="validation",
-        plan=[f"phot_err={pe}" for pe in PHOT_ERRS],
+        plan=[f"phot_err={pe}" for pe in phot_errs],
         environment=_provenance(),
     )
     print(f"저널 {run_journal.journal_path(OUT)}  run={run_id}", flush=True)
@@ -144,7 +169,7 @@ def main() -> int:
             "없다: " + ", ".join(f"err={pe} seed={sd}" for pe, sd in sorted(done)),
             run_id=run_id, author="isochrone-propagation")
     with jsonl.open("a", encoding="utf-8") as fh:
-        for pe in PHOT_ERRS:
+        for pe in phot_errs:
             for seed in SEEDS:
                 n += 1
                 if (pe, seed) in done:
@@ -158,7 +183,7 @@ def main() -> int:
                     imf_fn=fitter._imf_weight,
                     n_walkers=24, n_burn=150, n_steps=450,
                     init_from_gridscan=list(TRUTH),
-                    f_bin=0.3, f_field=0.1, seed=2024,
+                    f_bin=a.f_bin, f_field=a.f_field, seed=2024,
                 )
                 med = (res.log_age_med, res.mh_med, res.dm_med, res.e_color_med)
                 row = {
@@ -178,7 +203,7 @@ def main() -> int:
                     OUT, run_id, index=n, key=f"fit_err{pe}_seed{seed}",
                     title=f"phot_err={pe} seed={seed}", status="ok",
                     source="validation", duration_s=row["fit_seconds"],
-                    outputs=[jsonl], settings={**SETTINGS, "this_fit": row},
+                    outputs=[jsonl], settings={**settings, "this_fit": row},
                     settings_scope="read_by_step",
                 )
                 el = time.perf_counter() - t_start
@@ -187,7 +212,7 @@ def main() -> int:
                       f"Δdm={row['dm_med'] - TRUTH[2]:+.4f} "
                       f"({el/60:.1f}분 경과)", flush=True)
 
-    summarize(jsonl)
+    summarize(jsonl, tag)
     run_journal.record_run_end(
         OUT, run_id, success=True,
         duration_s=time.perf_counter() - t_start,
@@ -195,7 +220,7 @@ def main() -> int:
     return 0
 
 
-def summarize(jsonl: Path) -> None:
+def summarize(jsonl: Path, tag: str = "") -> None:
     rows = [json.loads(l) for l in jsonl.open(encoding="utf-8") if l.strip()]
     if not rows:
         print("결과 없음")
@@ -216,7 +241,7 @@ def summarize(jsonl: Path) -> None:
             cells.append(f"{np.median(e):+.4f}±{np.std(e):.4f}")
         out["levels"].append(entry)
         print(f"{pe:8.3f} {len(sel):3d} " + " ".join(f"{c:>16}" for c in cells))
-    (OUT / "summary.json").write_text(
+    (OUT / f"summary{tag}.json").write_text(
         json.dumps(out, indent=2, ensure_ascii=False), encoding="utf-8")
     print(f"\n요약 저장: {OUT / 'summary.json'}")
 
