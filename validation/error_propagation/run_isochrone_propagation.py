@@ -243,7 +243,7 @@ def summarize(jsonl: Path, tag: str = "") -> None:
         print(f"{pe:8.3f} {len(sel):3d} " + " ".join(f"{c:>16}" for c in cells))
     (OUT / f"summary{tag}.json").write_text(
         json.dumps(out, indent=2, ensure_ascii=False), encoding="utf-8")
-    print(f"\n요약 저장: {OUT / 'summary.json'}")
+    print(f"\n요약 저장: {OUT / ('summary' + tag + '.json')}")
 
 
 if __name__ == "__main__":
