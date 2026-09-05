@@ -846,3 +846,55 @@ WASP-12b 와 Qatar-1b 트랜싯 잔차의 RMS 가 183 · 255 ppm, 트랜싯 시�
 이것은 AIJ 를 깎는 말이 아니라 **이 갈래의 관행이 그렇다**는 사실이다. 그리고
 앞에서 본 붐비는 시야 관행(Stetson & Harris 이래)과 이 갈래 사이에 **큰 간격이
 있다**는 뜻이기도 하다.
+
+
+## STDWeb — Karpov (2024/2025), Acta Polytechnica 65(1), 50–64
+
+**확인 경로**: arXiv:2411.16470 전문(ar5iv). 2024-11-25 투고.
+
+**대상 독자가 사용자가 말한 그 대상이다.**
+
+> *"It is intended to be used both as a simple user-level tool, and as a part of
+> data infrastructure of projects involving diverse sets of images from various
+> sources, like telescope networks."*
+
+본문이 이용자 집단으로 GRANDMA 같은 망원경 연합, Kilonova-Catcher 같은
+프로-아마 협업, 그리고 **전용 파이프라인이 없는 소규모 후속관측 망원경**을 든다.
+
+### 검증 절이 없다
+
+절 구성이 이렇다 — Introduction · Implementation and workflow · Image
+calibration(초기 검사와 마스킹 · 천체 검출 · 측성 보정 · 참조 카탈로그와 측광
+보정 · 검출 한계) · Transient detection(카탈로그 기반 · 이미지 차감) ·
+Conclusions.
+
+**측광이 옳다는 것을 보이는 절이 없다.** 인공별 주입도, 다른 소프트웨어와의
+대조도, 카탈로그 대조 수치도, 반복 측정도 없다. 가장 가까운 것이 측광 보정 절의
+진단 그림 언급인데, 정량적 정확도 수치는 없다.
+
+> *"The fitting produces an extensive set of diagnostic plots...that may be used
+> for checking the fit quality."*
+
+---
+
+# 이 갈래의 관행 — 정리
+
+목적이 APEX 와 같은 도구들만 모으면 이렇다.
+
+| 도구 | 밝힌 대상 | 논문의 검증 |
+|---|---|---|
+| **AstroImageJ** (2017) | 학부생 · 고교생 · 아마추어 | IRAF·IDL·MaxIm DL 과 맞췄다고 **선언만**(수치 없음) + 별도 논문의 과학 결과(183·255 ppm) + 채택 실적(KELT 30 명, 행성 10 개). **주입 없음** |
+| **AutoPhOT** (2022) | 자동 트랜지언트 측광 | 주입은 **한계등급 계산에만** + DAOPHOT 대조(그림만, 본문에 수치 없음) |
+| **STDWeb** (2024) | 망원경 연합 · 프로아마 협업 · **전용 파이프라인 없는 소규모 망원경** | **검증 절 없음** |
+
+**셋 중 어느 것도 주입한 등급을 되찾는 정확도를 보고하지 않는다.**
+
+## 그리고 이어지는 일이 하나 더 있다
+
+STDWeb 논문이 남긴 자리를 **다른 사람이 나중에 채웠다.** Lechapelain (2026,
+arXiv:2608.10017) 이 14 밤 캠페인으로 STDWeb 의 경험적 오차 예산을 잰 것이 그
+논문이다. 도구 논문에는 없던 것을 두 해 뒤에 남이 냈다.
+
+**이 갈래의 관행이 이렇게 요약된다 — 도구 논문은 기능을 기술하고, 검증은
+나중에 다른 사람이 한다.** 붐비는 시야 쪽(Stetson & Harris 1988 이래)이 도구를
+쓰는 사람이 매번 인공별을 넣어 오차를 재는 것과 정확히 반대다.
