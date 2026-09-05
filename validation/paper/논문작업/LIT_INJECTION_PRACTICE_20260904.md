@@ -583,3 +583,91 @@ PSF 파라미터는 무작위다 — seeing FWHM 0.025~5.5 초각, Moffat β 2~4
 **부록 A(402~403 쪽)에서 그 서술을 찾지 못했다.** 부록은 은하 모형과 PSF 합성곱
 까지만 다룬다. 잡음 모형이 본문 다른 절에 있는지 아직 확인 못 했으므로
 이 항목은 쓰지 않는다.
+
+
+---
+
+## 네 번째 방법 — 같은 별을 여러 밤 다시 재기 (2026-09-04 원문 확인)
+
+**Lechapelain (2026)**, *Multi-night photometric repeatability of STDWeb: an
+empirical error budget from a 14-night campaign on a single field*,
+arXiv:2608.10017 (2026-08-08 투고).
+
+앞서 「Dolphin (2000) 은 반복 관측을 쓰면서 이유를 명시하지 않는다」고 적었다.
+이 논문이 그 이유를 정면으로 적어 놓았다.
+
+> *"The formal magnitude uncertainty they report describes a single reduction of
+> a single frame; campaign science instead requires the scatter of the same star,
+> same field, night after night."*
+
+**파이프라인이 내놓는 오차는 한 프레임을 한 번 처리한 것에 대한 값인데, 실제
+연구는 같은 별을 밤마다 다시 잰 흩어짐을 필요로 한다.** 그래서 반복 관측으로
+잰다.
+
+### 방법과 결과
+
+Einstein Probe 트리거 시야를 2026 년 7 월 **14 밤**에 걸쳐 관측한 **157 장**을
+STDWeb 으로 똑같이 처리하고, 변하지 않는 비교별 **101 개**(10.5 < G < 14.5)를
+분석했다.
+
+| 양 | 값 |
+|---|---|
+| 파이프라인이 보고한 오차의 중앙값 | 8.1 mmag (밝은 절반은 6.7) |
+| 하룻밤 안의 실제 흩어짐 | 보고값과 일치 (χ_within ≈ 1) |
+| 밤마다 생기는 별별 영점 어긋남 | 7~9 mmag |
+| 전 캠페인 흩어짐 | 11~12 mmag |
+| **보고 오차 대 실제 오차** | **χ_camp = 1.5~1.7 (보고값이 실제의 약 절반)** |
+
+**하룻밤 안에서는 맞는데 밤을 건너면 안 맞는다**는 것이 이 논문의 핵심이다.
+
+### 원인과 처방
+
+원인 전체가 **시각에 따라 달라지는 색항(epoch-dependent colour term)** 이었다.
+카탈로그 계 등급 `m_sys = mag_calib + 색항 × (BP−RP)` 로 바꾸면 밤 항이
+3.4 mmag 로 줄고, χ_camp 가 1.0~1.1 로 돌아오고, Gaia 기준 별별 재현성이
+**43 → 9.5 mmag**, 밤별 영점의 최대-최소가 **130 → 11 mmag** 로 준다.
+
+그리고 색을 광도곡선 자체에서 적합해도 Gaia BP−RP 를 0.027 등급(r = 0.98)으로
+재현하므로, **외부 색 카탈로그 없이도 이 보정이 된다**고 적었다.
+
+### 「보고 오차가 실제보다 작다」의 네 번째 확인
+
+| 출처 | 값 |
+|---|---|
+| Merline & Howell (1995) | CCD equation 이 S/N 을 과대평가한다 (예측) |
+| Stetson & Harris (1988) | 내부 오차가 작아 **1.19 배**를 곱해 씀 |
+| Jang (2023) | 내부 오차가 실제를 **1.25~2.9 배** 과소평가 |
+| Lechapelain (2026) | 캠페인 규모에서 **χ = 1.5~1.7** |
+
+방법이 서로 다르다 — 하나는 이론, 둘은 인공별 주입, 하나는 반복 관측이다.
+**서로 다른 네 경로가 같은 방향을 가리킨다.**
+
+---
+
+## 저널이 요구하는 것 — AAS 정책 원문 (2026-09-04 확인)
+
+**출처**: *Policy Statement on Software*, AAS Journals, 2024 년 2 월 갱신.
+
+> *"Such articles should contain a description of the software, its novel
+> features and its intended use."*
+
+> *"Such articles need not include research results produced using the software,
+> although including examples of applications can be helpful."*
+
+**검증이나 정확성 증명을 요구하는 조항이 없다.** 요구하는 것은 소프트웨어의
+설명, 새로운 기능, 의도된 용도 셋이다. 연구 결과는 **넣지 않아도 된다**고
+명시한다.
+
+공개 방식은 권고이지 의무가 아니다 — 오픈소스 라이선스와 Zenodo/FigShare 아카이빙을
+권하지만, *"any articles which provide a clear statement on how to access the code
+– for example, by contacting the author – are acceptable"* 이라고 적혀 있다.
+
+### 이것이 내가 앞서 한 말과 어긋난다
+
+이 세션에서 나는 「PASP 소프트웨어 논문은 astrophysical use 와 실제 연구 결과의
+예를 요구한다」고 적었고, 그것을 근거로 「과정 경험 중점만으로는 PASP 를 통과하지
+못한다」고 말했다. **AAS 정책 원문은 정반대를 말한다.**
+
+PASP 자체 안내문에 별도 조항이 있을 가능성은 남아 있으나,
+`journals.aas.org/pasp-author-instructions/` 가 404 라 아직 확인하지 못했다.
+**확인 전까지 위의 「PASP 가 연구 결과를 요구한다」는 주장은 근거 없음으로 둔다.**
