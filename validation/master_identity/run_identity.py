@@ -227,15 +227,22 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--scatters", type=float, nargs="+", default=list(SCATTERS_PX),
                     help="얹을 측성 오차 (픽셀)")
     ap.add_argument("--seeds", type=int, default=N_SEEDS)
+    ap.add_argument("--n-stars", type=int, default=N_TRUE,
+                    help="참 별 개수. 밀도 축을 넓힐 때 쓴다 (기본 400)")
     ap.add_argument("--tag", default="")
     a = ap.parse_args(argv)
+
+    global N_TRUE
+    N_TRUE = int(a.n_stars)
 
     tag = ("_" + a.tag) if a.tag else ""
     jsonl = OUT / f"runs{tag}.jsonl"
     settings = {
         "field": {"nx": NX, "ny": NY, "pix_arcsec": PIX_ARCSEC,
                   "ra0": RA0, "dec0": DEC0},
-        "truth": {"n_stars": N_TRUE, "layout": "시야 안쪽 80 % 에 균일"},
+        "truth": {"n_stars": N_TRUE, "layout": "시야 안쪽 80 % 에 균일",
+                  "mean_separation_arcsec": round(
+                      (0.80 * NX * PIX_ARCSEC) / max(np.sqrt(N_TRUE), 1.0), 2)},
         "frames": {"n": N_FRAMES, "dither_px": DITHER_PX, "roll_deg": "+-0.5"},
         "scatters_px": list(a.scatters),
         "n_seeds": a.seeds,
