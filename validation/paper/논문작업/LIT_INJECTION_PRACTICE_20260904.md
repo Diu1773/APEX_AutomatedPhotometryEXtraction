@@ -715,3 +715,77 @@ PASP 의 실제 투고 안내문(`iopscience.iop.org/1538-3873/page/instructions
 
 **그러므로 이 주장은 「2026-08-27 에 읽었으나 재확인 불가」 상태로 둔다.**
 논문 전략의 근거로 쓰기 전에 안내문을 다시 열어야 한다.
+
+
+---
+
+## photutils 는 심사받은 논문이 없다 (2026-09-04 원문 확인)
+
+공식 인용 안내(`photutils.readthedocs.io/en/latest/getting_started/citation.html`)
+가 이렇게 적는다.
+
+> *"This research made use of Photutils, an Astropy package for detection and
+> photometry of astronomical sources (Bradley et al. <YEAR>)."*
+> *"...where (Bradley et al. <YEAR>) is a citation to the Zenodo record of the
+> Photutils version that was used."*
+
+**심사받은 저널 논문이 없고 Zenodo 기록만 있다.** 개념 DOI 는
+`10.5281/zenodo.596036` 이고, 판마다 별도 DOI 가 붙는다(3.0.0 은
+`10.5281/zenodo.19636730`, 2026-04-17 공개).
+
+그러므로 **파이썬에서 가장 널리 쓰이는 측광 패키지에 「검증 절」이라는 것이
+아예 없다.** 대조할 상대로 삼을 발표된 정확도 수치가 없다는 뜻이기도 하다.
+
+---
+
+## 인접 분야 — 의료영상은 같은 구조를 규격으로 써 놓았다 (2026-09-04 원문 확인)
+
+**Choi, Kim, Ko, Cho, Jang, Ahn, Kim & Kim (2024)**, *Whole Process of
+Standardization of Diffusion-Weighted Imaging: Phantom Validation and Clinical
+Application According to the QIBA Profile*, **Diagnostics** 14(6), 583,
+doi:10.3390/diagnostics14060583.
+
+### 두 축을 요구한다
+
+> *"imaging biomarkers for treatment response assessment should be validated for
+> both accuracy (i.e., how close the ADCs are to the true values) and precision
+> (i.e., how close the ADCs are between repeatable measurements)."*
+
+**정확도(참값에 얼마나 가까운가)와 정밀도(다시 재면 얼마나 같은가) 둘 다**를
+검증해야 한다고 적는다. 앞에서 문헌이 넷으로 나뉜다고 정리했는데, 그 넷 중
+주입 계열이 정확도이고 반복 관측 계열이 정밀도다. **의료영상은 이 둘을 나란히
+요구 조항으로 써 놓았다.**
+
+### 참값은 팬텀에서 온다
+
+실제 조직의 참 ADC 값은 알 수 없으므로, **알려진 값을 담은 물리 팬텀**을 찍어서
+잰다.
+
+> *"The QIBA developed the QIBA diffusion phantom to validate the accuracy and
+> repeatability of DWI acquisition and ADC measurement."*
+
+**인공별 주입과 같은 자리다** — 참값을 아는 대상을 일부러 만들어 넣고 되찾는다.
+
+### 허용 한계가 «측정 전에» 문서로 정해져 있다
+
+이것이 천문 측광에 없는 것이다. QIBA Profile 이 정한 값들이다.
+
+| 양 | 허용 한계 |
+|---|---|
+| ADC 편차(bias) | ≤ 3.6 % |
+| 단기 재현성 wCV | ≤ 0.5 % |
+| 장기 재현성 wCV | < 2.2 % |
+| 선형성 | R² > 0.90, 기울기 0.95~1.05 |
+| b 값 의존성 | ≤ 2 % |
+| 무작위 측정 오차 | ≤ 2 % |
+| 신호대잡음비 | ≥ 45 |
+
+**profile 이라는 문서가 「무엇을 재고 어느 선을 넘지 말아야 하는가」를 미리
+정해 놓는다.** 측정한 뒤에 그 값을 보고 기준을 정하는 것이 아니다.
+
+### 확인하지 못한 것
+
+검색 요약에 QIBA 가 물리 팬텀 외에 **digital reference object(DRO)** 도 쓴다는
+서술이 있었는데, **이 논문은 DRO 를 다루지 않는다.** DRO 는 QIBA Profile 원문
+(Radiology, doi:10.1148/radiol.233055)에 있을 것으로 보이나 그 쪽은 403 이라
+확인하지 못했다. 그러므로 DRO 는 쓰지 않는다.
