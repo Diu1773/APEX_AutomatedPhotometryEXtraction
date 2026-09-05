@@ -42,9 +42,34 @@ S/N_50 = 4.05 ± 0.18).
 **끝난 것으로 치는 조건**: 다른 기기 자료로 Step 1–7 과 CMD 또는 LC 한 갈래를
 끝까지 돌리고, 등급 회수 편차를 위와 같은 방식으로 낸다.
 
-**막힌 곳**: 가진 LCO 자료는 Proxima Centauri 단일 프레임이라 성단도 시계열도
-없다. `E:\APEX_validation\external\stetson\` 폴더가 만들어져 있고 **비어 있다** —
-Stetson 표준성야가 그 자리에 들어갈 자료다.
+**길이 열렸다 (2026-09-05).** 갤럭시북이 놀고 있어서 내려받기와 다른 기기 대조를
+그쪽에서 돌릴 수 있다. 그리고 **LCO 공개 아카이브에 M67 raw 프레임이 있다.**
+
+APEX 는 이미 M67 을 Moravian C3-61000 으로 처리해 두었다
+(`validation/paper/data_realframe_M67g_broad` · `M67r_mid` · `M67i`).
+LCO 의 `sq30`(0.4 m, QHY600 계열)이 같은 M67 을 **V 와 rp** 로 찍어 두었고,
+`rp` 가 APEX 의 `r` 과 겹친다. **같은 성단 · 같은 필터 · 다른 기기**이므로
+표준성야보다 직접적인 대조다.
+
+가져오는 법은 확인해 두었다. 인증 없이 되고, 질의 인자는 이렇다.
+
+    https://archive-api.lco.global/frames/?public=true&target_name=M67
+        &reduction_level=0&limit=100
+
+`reduction_level=0` 이 raw 이고 `91` 이 BANZAI 가 처리한 것이다. 쓸 만한 필드는
+`primary_optical_element`(필터) · `instrument_id` · `telescope_id` · `site_id` ·
+`exposure_time` · `url`(내려받기 주소)다.
+
+**크기 어림**: 이미 받아 둔 QHY600 raw 한 장이 14 MB 였으므로, 두 필터에 40 장이면
+약 600 MB 다. BANZAI 처리본까지 같이 받아도 1.5 GB 안쪽이다.
+
+**하는 순서**: raw 와 보정 프레임을 받는다 → Step 0 으로 보정한다(이미 QHY600 에서
+BANZAI 와 0.06 e- 로 맞은 경로다) → Step 1–7 을 돌린다 → CMD 10 까지 간다 →
+등급 회수 편차를 Moravian M67 과 같은 방식으로 낸다.
+
+**남는 자리**: `E:\APEX_validation\external\stetson\` 이 비어 있다. Stetson
+표준성야는 여러 망원경의 발표 등급이 있어 절대 영점까지 물을 수 있으므로, LCO
+대조가 끝난 뒤의 다음 단계로 둔다.
 
 ### 셋 — 남이 받아서 쓰는가
 
