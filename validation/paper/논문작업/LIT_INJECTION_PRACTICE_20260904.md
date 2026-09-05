@@ -898,3 +898,85 @@ arXiv:2608.10017) 이 14 밤 캠페인으로 STDWeb 의 경험적 오차 예산�
 **이 갈래의 관행이 이렇게 요약된다 — 도구 논문은 기능을 기술하고, 검증은
 나중에 다른 사람이 한다.** 붐비는 시야 쪽(Stetson & Harris 1988 이래)이 도구를
 쓰는 사람이 매번 인공별을 넣어 오차를 재는 것과 정확히 반대다.
+
+
+---
+
+# 「IRAF 는 검증이 많다」를 확인했다 — 등급은 맞고 오차막대는 안 맞는다 (2026-09-05)
+
+사용자 지적: *"iraf는 구식이긴해도 수 많은 검증이 있잖아"*
+
+맞는 말이다. 다만 **그 검증이 무엇을 확정했고 무엇을 확정 못 했는지**가 갈린다.
+원문 둘을 더 읽었다.
+
+## 등급 정확도 — 참값 대비로 잰 것이 있다
+
+**Annunziatella, Mercurio, Brescia, Cavuoti & Longo (2013)**, *Inside Catalogs:
+A Comparison of Source Extraction Software*, PASP **125**(923), 68,
+doi:10.1086/669333.
+
+기준을 왜 합성 이미지로 잡았는지 저자들이 적어 놓았다.
+
+> *"Image simulations are suitable in testing performances of various software
+> packages. Simulations, in fact, allow us to know exactly the percentage and
+> the type of input sources and their photometric properties."*
+
+**참값을 알기 위해서 합성을 골랐다.** SExtractor+PSFEx 와 DAOPHOT/ALLSTAR 를
+같은 합성 이미지에 돌렸고, 19~20 등급 구간의 결과가 이렇다.
+
+| 측광 방식 | DAOPHOT/ALLSTAR | SExtractor/PSFEx |
+|---|---|---|
+| 구경 | Δm = +0.007 ± 0.005 | Δm = −0.001 ± 0.003 |
+| PSF | Δm = +0.002 ± 0.006 | Δm = +0.003 ± 0.003 |
+
+PSF 측광에서 둘 다 표준편차 0.03 등급 아래다.
+
+**이것이 「IRAF 는 검증이 많다」의 citable 한 형태다.** DAOPHOT 의 등급이 참값에서
+몇 mmag 안이라는 것을 참값을 아는 자료로 잰 논문이 있다.
+
+## 오차막대 — 여기는 결론이 안 났다
+
+같은 도구의 **보고 오차**에 대해서는 문헌이 갈린다.
+
+| 출처 | DAOPHOT 의 보고 오차에 대한 판정 |
+|---|---|
+| Stetson & Harris (1988) | 계통적으로 **너무 작다** — 1.19 배를 곱해 씀 |
+| Becker et al. (2007) | **약 20 % 과소평가** |
+| **Sonnett et al. (2013)** | *"small χ²ν value may indicate that the magnitude uncertainty is still **overestimated**"* |
+| Jang (2023) | DOLPHOT·DAOPHOT 둘 다 **1.25~2.9 배 과소평가** |
+
+**Sonnett 만 방향이 반대다.** 그리고 그 논문이 자기가 Becker 와 어긋난다는 것을
+직접 적었다.
+
+> *"Becker et al. (2007) noted that systematic errors stem from inadequate
+> correction factors in the wings of the model PSF, and that DAOPHOT consistently
+> underestimated the uncertainties by ~20%."*
+
+**Sonnett, Meech, Jedicke, Bus, Tonry & Hainaut (2013)**, *Testing Accuracy and
+Precision of Existing Photometry Algorithms on Moving Targets*, PASP **125**(926),
+456, doi:10.1086/670593. 이 논문은 참값을 합성이 아니라 **여러 해 여러 망원경으로
+쌓은 TNO 1996 TO66 의 알려진 광도곡선**으로 잡았다. 대상이 움직이는 천체라
+조건이 다르다는 점은 감안해야 한다.
+
+덧붙여 SExtractor 쪽 판정도 적어 두었는데, 그 원인이 1996 년 원논문에 이미
+있었다고 한다.
+
+> *"SExtractor generally underestimates magnitude uncertainties, likely because
+> of exclusion of error in the background determination."*
+> *"Bertin and Arnouts (1996) pointed out that the uncertainty in the local
+> background estimate (which is notably complex) was not included in the final
+> reported magnitude."*
+
+## 그래서 「IRAF 를 기준으로 삼는다」가 무엇을 주고 무엇을 안 주는가
+
+**준다** — 등급의 정확도. 참값 대비로 잰 수치가 문헌에 있고(몇 mmag),
+40 년치 사용 실적이 그 뒤에 있다.
+
+**안 준다** — 오차막대의 정당성. 같은 도구의 보고 오차를 두고 네 논문이 갈리고,
+그중 하나는 방향까지 반대다. **IRAF 와 등급이 맞는다고 해서 오차막대가 맞다는
+말이 되지 않는다.**
+
+그리고 이건 새 발견이 아니라 **DAOPHOT 이 처음부터 그렇게 설계됐다는 뜻이다.**
+Stetson 이 ADDSTAR 를 도구 안에 넣어 두고 매뉴얼에 「넣은 것과 나온 것을 견주어
+photometric accuracy 를 추정하라」고 적은 이유가 이것이다. **도구를 믿으라는 게
+아니라 쓸 때마다 자기 오차를 재라는 설계다.**
