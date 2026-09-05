@@ -36,12 +36,68 @@ sys.path.insert(0, str(REPO / "tests"))
 from test_isochrone_mcmc import _make_synthetic_grid, _simulate_cluster  # noqa: E402
 from apex.analysis.cmd.isochrone_fitter_v2 import FitBounds, IsochroneFitterV2  # noqa: E402
 from apex.analysis.cmd.isochrone_mcmc import fit_isochrone_mcmc  # noqa: E402
+from apex.utils import run_journal  # noqa: E402
 
 OUT = Path(__file__).absolute().parent
 TRUTH = (9.20, 0.0, 9.60, 0.06)          # log_age, [M/H], (m-M), E(g-r)
 PHOT_ERRS = (0.005, 0.010, 0.020, 0.030, 0.050, 0.080)
 SEEDS = tuple(range(11, 21))             # 10 draws per error level
 NAMES = ("log_age", "mh", "dm", "e_color")
+
+WHY = (
+    "RESEARCH_FRAME.md 의 「그 단계의 오차가 최종 결과에 얼마나 남는가」를 CMD "
+    "갈래에 대해 잰다. 단계마다의 참값 회수 시험은 이미 있으나(주기·SYSREM·"
+    "등시선) 통과와 실패만 내고, 그 오차가 최종 성단 파라미터에 얼마나 남는지를 "
+    "잰 것이 없다. 파이프라인 전체가 아니라 이소크론 적합 층 하나만 돈다."
+)
+
+# 이 실험이 실제로 쓰는 값 전부. 저널에 이대로 들어간다.
+SETTINGS = {
+    "truth": dict(zip(NAMES, TRUTH)),
+    "phot_errs": list(PHOT_ERRS),
+    "seeds": list(SEEDS),
+    "phot_err_basis": (
+        "인공별 10,993 개를 되찾아 잰 등급별 MAD 범위 0.005~0.076 에 맞췄다 "
+        "(validation/paper/논문작업/MAG_ACCURACY_20260903.md)"
+    ),
+    "simulate": {"n_members": 350, "n_binaries": 40, "n_field": 25,
+                 "source": "tests/test_isochrone_mcmc.py::_simulate_cluster"},
+    "mcmc": {"n_walkers": 24, "n_burn": 150, "n_steps": 450,
+             "f_bin": 0.3, "f_field": 0.1, "seed": 2024,
+             "init_from_gridscan": "truth"},
+    "bounds": {"log_age": [8.6, 9.7], "metallicity": [-0.3, 0.3],
+               "distance_mod": [9.0, 10.2], "extinction_gr": [0.0, 0.20]},
+    "grid": "tests/test_isochrone_mcmc.py::_make_synthetic_grid (합성 격자)",
+    "measures": "옳은 골짜기 안의 흔들림. 격자 훑기가 엉뚱한 골짜기에 앉을 위험은 안 잰다.",
+}
+
+
+def _provenance() -> dict:
+    """어느 판의 코드가, 어떤 환경에서 돌았는지."""
+    import platform
+    import subprocess
+
+    def _git(*args: str) -> str:
+        try:
+            return subprocess.run(["git", *args], cwd=str(REPO), capture_output=True,
+                                  text=True, timeout=20).stdout.strip()
+        except Exception:
+            return ""
+
+    versions = {}
+    for name in ("numpy", "scipy", "emcee", "astropy"):
+        try:
+            versions[name] = __import__(name).__version__
+        except Exception:
+            versions[name] = "없음"
+    return {
+        "git_commit": _git("rev-parse", "HEAD"),
+        "git_dirty": bool(_git("status", "--porcelain")),
+        "python": sys.version.split()[0],
+        "platform": platform.platform(),
+        "packages": versions,
+        "script": "validation/error_propagation/run_isochrone_propagation.py",
+    }
 
 
 def main() -> int:
@@ -69,6 +125,24 @@ def main() -> int:
     total = len(PHOT_ERRS) * len(SEEDS)
     n = 0
     t_start = time.perf_counter()
+
+    run_id = run_journal.new_run_id()
+    run_journal.record_note(OUT, WHY, run_id=run_id, author="isochrone-propagation")
+    run_journal.record_run_start(
+        OUT, run_id, mode="experiment", source="validation",
+        plan=[f"phot_err={pe}" for pe in PHOT_ERRS],
+        environment=_provenance(),
+    )
+    print(f"저널 {run_journal.journal_path(OUT)}  run={run_id}", flush=True)
+    if done:
+        # 이 실행이 다시 계산하지 않는 것들. 저널이 60 회 전부를 설명하게 하려고 남긴다.
+        run_journal.record_note(
+            OUT,
+            "이어 돌린다. 아래 조합은 이 실행이 다시 계산하지 않고 runs.jsonl 의 "
+            "기존 줄을 그대로 쓴다. 같은 스크립트가 만든 것이고 파라미터는 이 파일의 "
+            "상수라 같으나, 저널 기능을 붙이기 전에 돌아서 그 회차의 step 기록은 "
+            "없다: " + ", ".join(f"err={pe} seed={sd}" for pe, sd in sorted(done)),
+            run_id=run_id, author="isochrone-propagation")
     with jsonl.open("a", encoding="utf-8") as fh:
         for pe in PHOT_ERRS:
             for seed in SEEDS:
@@ -100,6 +174,13 @@ def main() -> int:
                 fh.write(json.dumps(row, ensure_ascii=False) + "\n")
                 fh.flush()
                 os.fsync(fh.fileno())
+                run_journal.record_step(
+                    OUT, run_id, index=n, key=f"fit_err{pe}_seed{seed}",
+                    title=f"phot_err={pe} seed={seed}", status="ok",
+                    source="validation", duration_s=row["fit_seconds"],
+                    outputs=[jsonl], settings={**SETTINGS, "this_fit": row},
+                    settings_scope="read_by_step",
+                )
                 el = time.perf_counter() - t_start
                 print(f"[{n:3d}/{total}] err={pe:.3f} seed={seed} "
                       f"Δage={row['log_age_med'] - TRUTH[0]:+.4f} "
@@ -107,6 +188,10 @@ def main() -> int:
                       f"({el/60:.1f}분 경과)", flush=True)
 
     summarize(jsonl)
+    run_journal.record_run_end(
+        OUT, run_id, success=True,
+        duration_s=time.perf_counter() - t_start,
+    )
     return 0
 
 
