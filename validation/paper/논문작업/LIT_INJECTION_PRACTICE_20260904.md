@@ -671,3 +671,47 @@ STDWeb 으로 똑같이 처리하고, 변하지 않는 비교별 **101 개**(10.
 PASP 자체 안내문에 별도 조항이 있을 가능성은 남아 있으나,
 `journals.aas.org/pasp-author-instructions/` 가 404 라 아직 확인하지 못했다.
 **확인 전까지 위의 「PASP 가 연구 결과를 요구한다」는 주장은 근거 없음으로 둔다.**
+
+
+---
+
+## 정정 — 방금 인용한 AAS 정책은 PASP 에 적용되지 않는다 (2026-09-04)
+
+바로 위에서 AAS 소프트웨어 정책을 인용하면서 「저널이 요구하는 것」이라고 적었다.
+**그 정책이 PASP 를 규율하지 않는다.**
+
+AAS 의 Scope Statements 페이지가 다루는 저널은 여섯이다 — **AJ · ApJ · ApJL ·
+ApJS · PSJ · RNAAS.** **PASP 는 그 목록에 없다.**
+
+IOPscience 의 PASP 저널 페이지가 관계를 명시한다.
+
+> *"the technical journal of the Astronomical Society of the Pacific (ASP)"*
+
+**PASP 는 IOP 가 태평양천문학회(ASP)를 위해 내는 저널이고, AAS(미국천문학회)의
+저널이 아니다.** 두 학회가 다르다. 그러므로 AAS 의 소프트웨어 정책 원문
+(「검증 요구 없음」·「연구 결과 넣지 않아도 됨」)은 **PASP 투고의 근거가 될 수
+없다.** 위 절은 AAS 저널에 투고할 때의 기준으로만 읽어야 한다.
+
+### PASP 자체가 밝힌 것 — 여기까지는 확인했다
+
+IOPscience 의 PASP 저널 소개에서 논문 범주를 확인했다.
+
+> *"Astronomical Software, Data Analysis, and Techniques"* — *"Original research
+> that describes the software, data analysis, and research techniques used in all
+> astrophysical contexts."*
+
+**범주가 존재하고 그 정의가 「소프트웨어·자료분석·연구기법을 기술하는 원저
+연구」다.** 다만 이 페이지는 검증이나 응용 사례를 요구하는지 말하지 않는다.
+
+### 확인하지 못한 것 — 그리고 이 세션에서 내가 한 주장
+
+PASP 의 실제 투고 안내문(`iopscience.iop.org/1538-3873/page/instructions_for_authors`)
+은 **오늘 Radware 봇 검사(CAPTCHA)에 막혀 열지 못했다.** CAPTCHA 는 풀지 않는다.
+
+이 세션에서 나는 「PASP 소프트웨어 논문은 astrophysical use 와 실제 연구 결과의
+예를 요구한다」고 말했고, 그 근거로 2026-08-27 에 그 안내문을 읽은 것을 들었다.
+그때 같은 문서에서 「익명 심사는 선택」을 확인했고 그 확인은 지금도 유효하다.
+**그러나 「연구 결과의 예를 요구한다」는 부분은 오늘 다시 확인하지 못했다.**
+
+**그러므로 이 주장은 「2026-08-27 에 읽었으나 재확인 불가」 상태로 둔다.**
+논문 전략의 근거로 쓰기 전에 안내문을 다시 열어야 한다.
