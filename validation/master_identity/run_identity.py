@@ -104,7 +104,7 @@ def _frame_wcs(dx_px: float, dy_px: float, roll_deg: float) -> WCS:
     return w
 
 
-def _build(tmp: Path, scatter_px: float, seed: int):
+def _build(tmp: Path, scatter_px: float, seed: int, n_true: int = N_TRUE):
     """참 별 목록과, 그 별들을 담은 합성 Step 4·5 산출물을 만든다."""
     rng = np.random.default_rng(seed)
     data_dir, result_dir = tmp / "data", tmp / "result"
@@ -115,8 +115,8 @@ def _build(tmp: Path, scatter_px: float, seed: int):
 
     # 참값: 시야 안쪽에 고르게 뿌린 별. 이 좌표가 정답이다.
     half = 0.40 * NX * PIX_DEG        # 가장자리는 비워 둔다 (겨눔이 흔들리므로)
-    t_ra = RA0 + rng.uniform(-half, half, N_TRUE) / np.cos(np.deg2rad(DEC0))
-    t_dec = DEC0 + rng.uniform(-half, half, N_TRUE)
+    t_ra = RA0 + rng.uniform(-half, half, n_true) / np.cos(np.deg2rad(DEC0))
+    t_dec = DEC0 + rng.uniform(-half, half, n_true)
     truth = np.column_stack([t_ra, t_dec])
 
     # Gaia 목록은 비운다 — local 모드라 안 쓰지만 파일은 있어야 한다.
@@ -164,7 +164,7 @@ def _build(tmp: Path, scatter_px: float, seed: int):
             "median_elongation": 1.1, "median_roundness": 0.05,
             "sky_med": 100.0, "sky_sigma": 5.0}), encoding="utf-8")
         rows.append({"file": name, "wcs_ok": True, "match_n": n, "n_match": n,
-                     "n_catalog_in_fov": N_TRUE, "match_rate": 0.95,
+                     "n_catalog_in_fov": n_true, "match_rate": 0.95,
                      "match_rate_cat": 0.9, "match_rate_eff": 0.95,
                      "resid_med": 0.3, "resid_max": 0.8, "rms_px": 0.2,
                      "wcs_qc_pass": True, "wcs_qc_reason": "",
@@ -232,17 +232,16 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--tag", default="")
     a = ap.parse_args(argv)
 
-    global N_TRUE
-    N_TRUE = int(a.n_stars)
+    n_true = int(a.n_stars)
 
     tag = ("_" + a.tag) if a.tag else ""
     jsonl = OUT / f"runs{tag}.jsonl"
     settings = {
         "field": {"nx": NX, "ny": NY, "pix_arcsec": PIX_ARCSEC,
                   "ra0": RA0, "dec0": DEC0},
-        "truth": {"n_stars": N_TRUE, "layout": "시야 안쪽 80 % 에 균일",
+        "truth": {"n_stars": n_true, "layout": "시야 안쪽 80 % 에 균일",
                   "mean_separation_arcsec": round(
-                      (0.80 * NX * PIX_ARCSEC) / max(np.sqrt(N_TRUE), 1.0), 2)},
+                      (0.80 * NX * PIX_ARCSEC) / max(np.sqrt(n_true), 1.0), 2)},
         "frames": {"n": N_FRAMES, "dither_px": DITHER_PX, "roll_deg": "+-0.5"},
         "scatters_px": list(a.scatters),
         "n_seeds": a.seeds,
@@ -286,7 +285,7 @@ def main(argv: list[str] | None = None) -> int:
                     continue
                 tmp = Path(tempfile.mkdtemp(prefix="apex_ident_"))
                 try:
-                    params, names, truth, result_dir = _build(tmp, sc, seed)
+                    params, names, truth, result_dir = _build(tmp, sc, seed, n_true)
                     t0 = time.perf_counter()
                     summary = run_refbuild(**_kwargs(params, names))
                     dt = time.perf_counter() - t0
