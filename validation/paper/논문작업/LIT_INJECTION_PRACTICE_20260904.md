@@ -789,3 +789,60 @@ doi:10.3390/diagnostics14060583.
 서술이 있었는데, **이 논문은 DRO 를 다루지 않는다.** DRO 는 QIBA Profile 원문
 (Radiology, doi:10.1148/radiol.233055)에 있을 것으로 보이나 그 쪽은 403 이라
 확인하지 못했다. 그러므로 DRO 는 쓰지 않는다.
+
+
+---
+
+# 목적이 APEX 와 가장 가까운 논문들은 어떻게 검증했나 (2026-09-05)
+
+여기까지는 「측광 소프트웨어 일반」을 봤다. 이제 범위를 좁힌다 — **파이프라인이
+없는 관측자가 raw 부터 결과까지 한 도구로 끝내게 해 주는 소프트웨어**의 논문들이다.
+
+## AstroImageJ — Collins, Kielkopf, Stassun & Hessman (2017), AJ 153, 77
+
+**확인 경로**: arXiv:1701.04817 전문(ar5iv).
+
+**목적이 거의 같다.** 저자들이 밝힌 대상 독자가 이렇다.
+
+> *"new users, even at the level of undergraduate student, high school student,
+> or amateur astronomer, to quickly start processing, modeling, and plotting
+> astronomical image data"*
+
+### 검증은 셋인데 셋 다 얇다
+
+**첫째, 기존 도구와 맞춰 봤다고 적는다. 그런데 수치가 없다.**
+
+> *"We and the KELT follow-up team have verified the accuracy of AIJ against a
+> number of traditional scientific and commercial photometric extraction
+> packages, including IRAF, IDL, and MaxIm DL."*
+
+IRAF · IDL · MaxIm DL 셋과 맞췄다고만 하고, **얼마나 맞았는지는 논문에 없다.**
+
+**둘째, 이 도구로 낸 과학 결과를 든다.**
+
+> *"AIJ’s ultra-precise photometric capabilities are demonstrated by Collins et al.
+> 2017a, where they achieved an RMS of 183 and 255 parts per million for the
+> transit model residuals of the combined and five minute binned ground-based
+> light curves of WASP-12b and Qatar-1b, respectively, and transit timing
+> residuals from a linear ephemeris of less than ~30 s."*
+
+WASP-12b 와 Qatar-1b 트랜싯 잔차의 RMS 가 183 · 255 ppm, 트랜싯 시각 잔차가
+30 초 미만이다. **다만 이 수치는 별도 논문(Collins et al. 2017a)의 것이고,
+「소프트웨어가 옳다」가 아니라 「이 소프트웨어로 이만큼 정밀한 결과가 나왔다」다.**
+
+**셋째, 쓰이고 있다는 사실을 든다.**
+
+> *"AIJ is currently used by most of the ~30 member Kilo-degree Extremely Little
+> Telescope (KELT) transit survey photometric follow-up team, so far resulting in
+> 10 planets published."*
+
+**인공별 주입은 없다.** 알려진 밝기의 천체를 넣고 되찾는 시험을 하지 않는다.
+
+### 이것이 뜻하는 것
+
+**APEX 와 목적이 가장 가까운 논문이 검증에서는 가장 얇다.** 대조는 수치 없이
+선언하고, 정밀도는 다른 논문의 과학 결과로 대신하고, 나머지는 채택 실적이다.
+
+이것은 AIJ 를 깎는 말이 아니라 **이 갈래의 관행이 그렇다**는 사실이다. 그리고
+앞에서 본 붐비는 시야 관행(Stetson & Harris 이래)과 이 갈래 사이에 **큰 간격이
+있다**는 뜻이기도 하다.
