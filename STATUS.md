@@ -73,21 +73,42 @@ LCO 의 `sq30`(0.4 m, QHY600 계열)이 같은 M67 을 **V 와 rp** 로 찍어 �
 `rp` 가 APEX 의 `r` 과 겹친다. **같은 성단 · 같은 필터 · 다른 기기**이므로
 표준성야보다 직접적인 대조다.
 
-가져오는 법은 확인해 두었다. 인증 없이 되고, 질의 인자는 이렇다.
+**받는 도구를 만들어 두었다** — `scripts/fetch_lco.py`. 인증이 필요 없고 표준
+라이브러리만 쓰므로 갤럭시북에 레포만 있으면 그대로 돈다.
 
-    https://archive-api.lco.global/frames/?public=true&target_name=M67
-        &reduction_level=0&limit=100
+**가장 좋은 후보는 MuSCAT3 다.** 2 m 망원경(ogg 2m0a)에 붙은 `ep02`~`ep05` 가
+**gp · rp · ip · zs 네 밴드를 동시에** 찍는다. APEX 의 Moravian M67 이 g · r · i
+이므로 **세 밴드가 겹친다.** 2021-03 에 M67 을 찍은 raw 가 밴드마다 131 장 있다
+(proposal `MuSCAT Commissioning`).
 
-`reduction_level=0` 이 raw 이고 `91` 이 BANZAI 가 처리한 것이다. 쓸 만한 필드는
-`primary_optical_element`(필터) · `instrument_id` · `telescope_id` · `site_id` ·
-`exposure_time` · `url`(내려받기 주소)다.
+보정 프레임도 다 있다 — `ep02` 기준 BIAS 31,360 · DARK 9,694 · SKYFLAT 17,580 이
+공개되어 있고, 그 밤의 master bias 도 이름이 붙어 있다
+(`ogg2m001-ep02-20210322-bias-MUSCAT_SLOW-bin1x1.fits.fz`).
 
-**크기 어림**: 이미 받아 둔 QHY600 raw 한 장이 14 MB 였으므로, 두 필터에 40 장이면
-약 600 MB 다. BANZAI 처리본까지 같이 받아도 1.5 GB 안쪽이다.
+무엇이 있는지 먼저 본다.
 
-**하는 순서**: raw 와 보정 프레임을 받는다 → Step 0 으로 보정한다(이미 QHY600 에서
-BANZAI 와 0.06 e- 로 맞은 경로다) → Step 1–7 을 돌린다 → CMD 10 까지 간다 →
-등급 회수 편차를 Moravian M67 과 같은 방식으로 낸다.
+    python -X utf8 scripts/fetch_lco.py --target M67 --level 0 --limit 300 --list
+
+과학 프레임을 받는다(밴드마다 한 번씩).
+
+    python -X utf8 scripts/fetch_lco.py --target M67 --instrument ep02         --level 0 --start 2021-03-01 --end 2021-04-01 --limit 40         --out E:/APEX_validation/external/LCO_M67_muscat3/rp
+
+보정 프레임을 받는다.
+
+    python -X utf8 scripts/fetch_lco.py --instrument ep02 --config-type BIAS         --level 91 --start 2021-03-20 --end 2021-03-23 --limit 5         --out E:/APEX_validation/external/LCO_M67_muscat3/cal
+
+`--level 0` 이 raw 이고 `91` 이 BANZAI 가 처리한 것이다. **둘 다 받아 두면** APEX 의
+Step 0 을 BANZAI 와 화소 단위로 견줄 수 있다(Fig 13 이 그 방식이고 QHY600 에서
+0.06 e- 로 맞았다).
+
+**크기 어림**: MuSCAT3 는 2048×2048 이라 raw 한 장이 8 MB 안팎이다. 세 밴드 40 장씩
+이면 약 1 GB 이고 보정까지 더해도 1.5 GB 안쪽이다.
+
+**하는 순서**: raw 와 보정을 받는다 → Step 0 으로 보정한다 → Step 1–7 을 돌린다 →
+CMD 10 까지 간다 → 등급 회수 편차를 Moravian M67 과 같은 방식으로 낸다.
+
+**미리 볼 것 하나**: 2 m 망원경의 10 초 노출은 M67 의 밝은 별을 포화시킬 수 있다.
+60 초짜리도 밴드마다 10 장 있으니 둘 다 받아 보고 포화 상태를 먼저 확인한다.
 
 **남는 자리**: `E:\APEX_validation\external\stetson\` 이 비어 있다. Stetson
 표준성야는 여러 망원경의 발표 등급이 있어 절대 영점까지 물을 수 있으므로, LCO
