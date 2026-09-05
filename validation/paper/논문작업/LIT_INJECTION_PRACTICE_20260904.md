@@ -284,7 +284,7 @@ M67i 는 `completeness_fit.json` 이 없어 이 표에서 빠졌다(일곱 장 �
 |---|---|
 | **Stetson & Harris (1988)**, AJ 96, 909 | M92 깊은 이미지 7 장에 인공별 1,500 개를 여섯 벌로 나눠 넣어 합성 프레임 42 장을 만들고, 되찾은 952 개의 (관측 − 입력) 차로 **계통 오차를 보정하고 우연 오차를 추정** — **[원문 확인]** |
 | **Stetson**, *User’s Manual for DAOPHOT II* (2006 Apr 21판) | ADDSTAR 로 합성별을 넣고 되찾아 **star-finding efficiency 와 photometric accuracy 를 둘 다** 추정 — **[원문 확인]** |
-| **Bertin & Arnouts (1996)**, A&AS 117, 393 — SExtractor | **완전 합성 이미지**를 만들어 시험. 하늘 밝기 + Poisson 잡음 + Moffat 별 + 은하. 19 등급 별에 동반성을 거리별로 붙여 등급 오차를 잼 — **[미확인] 원문을 열지 않고 검색 요약으로 적음** |
+| **Bertin & Arnouts (1996)**, A&AS 117, 393–404 — SExtractor | B 등급 10~27 의 별과 은하를 넣은 **완전 합성 이미지** 600 장(512×512)으로 **deblending · photometry · star/galaxy separation 셋을 시험** — **[원문 확인]** |
 | **Dolphin (2000)**, PASP 112, 1383 — HSTphot | 같은 시야 반복 관측(IC 1613 의 F555W 2400 s 8 장 합성)과 DoPHOT 대조. **인공별 시험은 안 한다** |
 | **Becker et al. (2007)**, PASP 119, 1462 | **주입 없음.** 여러 밤의 실자료로 알고리즘끼리 비교 |
 | **Hu et al. (2010)**, PASP, doi:10.1086/658162 | 인공별을 이미지가 아니라 카탈로그에 더하는 계산 절약법 |
@@ -509,3 +509,77 @@ comparisons」다.
 > *"it is possible that the effect of fainter artificial stars being scattered into
 > the last bin is somewhat underestimated, due to the unphysical truncation of
 > their luminosity function."*
+
+
+---
+
+## SExtractor 가 합성 이미지를 고른 이유 (2026-09-04 원문 확인)
+
+A&AS PDF 는 403 이고 ADS 스캔은 JBIG2 순수 이미지라 텍스트층이 없었다.
+PyMuPDF 로 12 쪽을 이미지로 렌더해 눈으로 읽었다.
+
+**서지**: Bertin, E. & Arnouts, S., *SExtractor: Software for source extraction*,
+Astron. Astrophys. Suppl. Ser. **117**, 393–404 (1996). 접수 1995-07-18,
+게재확정 1995-08-17. Institut d’Astrophysique de Paris · ESO.
+
+### 무엇을 시험했나 — 셋이다
+
+부록 A 첫 문단이 명시한다.
+
+> *"The simulated images we have used to test deblending, photometry and
+> star/galaxy separation contain galaxies and stars with B magnitudes ranging
+> from 10 to 27."*
+
+**분리(deblending) · 측광 · 별은하 판별 셋을 다 합성 이미지로 시험했다.**
+신경망 훈련용만이 아니다.
+
+### 왜 합성인가 — 개수가 필요했고, 속도와 현실성을 맞바꿨다
+
+> *"In order to simulate the large number of images needed for the neural network
+> training, we have tried to find a compromise between realism and speed.
+> Our concern was not to build a cosmological tool, but simply a fast code
+> capable of producing convincing sky images."*
+
+**우주론 도구를 만들려는 게 아니라 그럴듯한 하늘 이미지를 빨리 찍어내는 코드가
+필요했다**고 스스로 적었다. 512×512 짜리 **600 장**을 만들어 훈련했고,
+각 이미지를 8 가지 검출 문턱으로 돌려 **약 100 만 개** 항목의 목록을 얻었다.
+
+### 합성이 실제보다 «더 어렵게» 되어 있다
+
+> *"the crowding in the simulated images is higher than what one sees on real
+> images of the field, allowing for the presence of many “difficult cases”
+> (close double stars, truncated profiles, etc...) that the neural network
+> classifier will have to deal with."*
+
+혼잡도를 실제보다 **일부러 높였다.** 가까운 이중성이나 잘린 프로파일 같은 어려운
+경우를 훈련에 넣기 위해서다.
+
+### 무엇을 어떻게 만들었나
+
+은하는 Schechter (1976) 광도함수에서 절대등급을 뽑고, 구형 성분은 de Vaucouleurs
+법칙, 원반은 지수 프로파일을 쓴다. Hubble type 을 −5 에서 +10 사이에서 무작위로
+고르고, 적색이동에 놓고 거리로 어둡게 한 뒤, **Moffat (1969) 함수로 PSF 를
+씌운다.** 화소마다 3×3 으로 과표본화해 만들고 마지막 화소 크기로만 합성곱한다.
+
+별은 **은하와 같은 등급-개수 분포**를 주어서, 훈련에 들어오는 어떤 패턴이든
+별일 확률과 은하일 확률이 각각 50 % 가 되게 했다.
+
+PSF 파라미터는 무작위다 — seeing FWHM 0.025~5.5 초각, Moffat β 2~4.
+화소 크기는 항상 FWHM 의 0.7 배보다 작게 두어 표본화가 깨지지 않게 했다.
+
+### 저자들이 밝힌 한계와 전망
+
+> *"real data unavoidably differ a bit from simulated ones"*
+
+합성과 실제가 다를 수밖에 없다는 것을 인정한다. 그러면서 이 접근을 확장할 수
+있다고 적었는데, 확장 대상으로 **측정 과정 자체**를 꼽았다.
+
+> *"could be advantageously extended to ... even to the measurement process itself
+> (optimal determination of positions, magnitudes, etc.)"*
+
+### 확인하지 못한 것
+
+앞서 검색 요약으로 「하늘 밝기와 Poisson 잡음을 Gaussian 으로 더했다」고 적었는데,
+**부록 A(402~403 쪽)에서 그 서술을 찾지 못했다.** 부록은 은하 모형과 PSF 합성곱
+까지만 다룬다. 잡음 모형이 본문 다른 절에 있는지 아직 확인 못 했으므로
+이 항목은 쓰지 않는다.
