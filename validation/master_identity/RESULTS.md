@@ -156,3 +156,76 @@ APEX 의 실측 측성 잔차는 M13 여덟 장에서 0.346 화소였다
 
 **남은 축.** 검출이 완전하다고 가정한 것은 그대로다. 프레임마다 다른 별을 놓치고
 잡음이 검출로 섞이는 경우는 아직 안 쟀다.
+
+---
+
+# local 과 hybrid 는 무엇이 다른가 (2026-09-06)
+
+앞의 표들은 `ref_build_mode="local"` 로 돌리고 「hybrid 는 따로 재야 한다」고 남겨
+두었다. 그 자리를 채운다. 실행은 `run_mode_compare.py`, 원자료는
+`mode_compare.jsonl`, 기록은 같은 폴더의 `apex_journal.jsonl`.
+
+## 코드에서 갈라지는 자리는 한 곳뿐이다
+
+`apex/analysis/refbuild.py` 에서 `ref_build_mode` 를 보는 곳은 **1396 줄 하나**다.
+
+    # Apply hybrid source_id assignment if mode is "hybrid"
+    if ref_build_mode == "hybrid":
+        master_df, sid_map, id_map = _apply_hybrid_source_ids(master_df, gaia_mag_limit)
+
+**마스터 목록을 다 만든 뒤**에 온다. 프레임을 건너 별을 묶는 일은 그 위에서 이미
+끝나 있고, 두 모드가 같은 코드를 지난다. 그러니 모드가 바꾸는 것은 완성된 목록에
+**어떤 번호를 붙이는가**뿐이다.
+
+## 재서 확인했다
+
+측성 오차 0.10 화소, 참 별 400 개, 프레임 여덟 장, 씨앗 둘. 실제 `run_refbuild` 다.
+
+| 경우 | 마스터 줄 | 분할 | 미청구 | 중앙 편차 | 양수 sid | 음수 sid | 1..N 순번인가 |
+|---|---|---|---|---|---|---|---|
+| local · Gaia 목록 비어 있음 | **400** | 0 | 0 | 0.0598 | 400 | 0 | 그렇다 |
+| hybrid · Gaia 목록 비어 있음 | **400** | 0 | 0 | 0.0598 | 400 | 0 | **그렇다** |
+| hybrid · 참 별의 80 % 가 Gaia 에 | **400** | 0 | 0 | 0.0570 | 320 | 80 | 아니다 |
+| local · 참 별의 80 % 가 Gaia 에 | **400** | 0 | 0 | 0.0570 | 400 | 0 | 그렇다 |
+
+**정체성 품질은 네 경우가 같다.** 마스터 줄 400, 분할 0, 미청구 0. 코드를 읽고 낸
+예상과 맞는다. 그러므로 앞의 두 표(오차 축·밀도 축)는 hybrid 에도 그대로 선다.
+
+Gaia 목록이 있을 때 중앙 편차가 0.0598 에서 0.0570 으로 조금 줄어드는데, **이것은
+모드와 무관하다** — 같은 조건의 local 과 hybrid 가 똑같이 0.0570 이다. Step 6 이
+Gaia 목록을 좌표 대조에도 쓰기 때문이고, 여기서 묻는 것과는 다른 이야기다.
+
+## Gaia 가 없으면 hybrid 는 local 이 된다
+
+표의 둘째 줄이 그것이다. `_attach_gaia_photometry` 는 네 경우에 원본을 그대로
+돌려준다 — Gaia 표가 없을 때, 표에 좌표가 없을 때, 검출에 좌표가 없을 때, 반경
+안에 맞는 것이 하나도 없을 때. 그러면 `gaia_source_id` 열이 안 생기고,
+`_apply_hybrid_source_ids` 는 「hybrid mode not applied」를 찍고 물러난다.
+남는 것은 양수 순번 1..N 이다.
+
+**이것이 왜 중요한가.** 다중 관측일 병합기(`apex/analysis/merge/id_match.py`)가
+`source_id` 가 양수면 Gaia 번호라고 해석하기 때문이다.
+
+    data["gaia_id"] = int(merged_source_id) if int(merged_source_id) > 0 else np.nan
+    data["match_status"] = "matched" if int(merged_source_id) > 0 else "no_gaia_match"
+
+그리고 두 워크스페이스의 `source_id` 가 같으면 **위치를 보지 않고** 같은 별로
+묶는다. 하늘의 정반대를 찍은 두 폴더로 확인했더니 5 + 5 개가 5 줄로 합쳐졌고,
+떨어진 거리 칸은 `nan` 이었다 — 잰 적이 없다는 뜻이다. 자세한 것은
+`Main/FAILURES.md` F-285.
+
+**부호만 고쳐도 안 닫힌다.** 매칭 안 된 별에 음수를 주면 두 워크스페이스가 각각
+−1..−N 을 쓰게 되고, 이번엔 −1 끼리 묶인다. 확인했다.
+
+**지금 안 터진 이유는 자료가 좋아서다.** `E:` 의 YZ Boo 두 밤은 양수 96 개가 전부
+`source_id == gaia_source_id` 다. 실제로 Gaia 번호였으니 병합도 옳았다.
+
+## 그래서 모드를 하나로 합칠 수 있다 — 다만 방향이 있다
+
+**hybrid 쪽으로 합쳐야 한다.** hybrid 를 없애면 Gaia 매칭된 별까지 워크스페이스
+순번을 받게 되어 병합기의 전제가 완전히 무너진다. 반대로 local 을 없애도 잃는
+것이 없다. Gaia 를 못 쓰는 상황에서 hybrid 는 이미 local 과 똑같이 동작한다.
+
+**합치는 것만으로는 위의 병합 문제가 안 풀린다.** 전역으로 뜻이 있는 열은
+`gaia_source_id` 이고 그 열은 두 모드 모두에 있다. 병합기가 `source_id` 대신
+그것으로 묶으면 부호 규약 자체가 필요 없어진다.
