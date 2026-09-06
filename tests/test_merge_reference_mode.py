@@ -40,7 +40,8 @@ def _make_input_workspace(root: Path, name: str, source_ids, mags, night_id=1):
         s7 / "photometry_index.csv", index=False)
 
     pd.DataFrame([
-        {"ID": i + 1, "source_id": sid, "ra_deg": 250.0 + i * 0.01, "dec_deg": 36.0}
+        {"ID": i + 1, "source_id": sid, "gaia_source_id": sid,
+         "ra_deg": 250.0 + i * 0.01, "dec_deg": 36.0}
         for i, sid in enumerate(source_ids)
     ]).to_csv(s8 / "master_catalog_V.tsv", sep="\t", index=False)
     (s8 / "selection_V.json").write_text(json.dumps({

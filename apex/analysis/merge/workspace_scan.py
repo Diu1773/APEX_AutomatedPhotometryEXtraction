@@ -8,7 +8,11 @@ from pathlib import Path
 import pandas as pd
 
 from apex.utils.common_helpers import normalize_filter_key as _canonical_filter_key
-from apex.utils.io_utils import coerce_int64_source_id, read_csv_int64_source_id
+from apex.utils.io_utils import (
+    coerce_int64_source_id,
+    normalize_id_columns,
+    read_csv_int64_source_id,
+)
 from apex.utils.run_workspace import (
     build_merged_workspace_dir,
     infer_workspace_date_range,
@@ -89,10 +93,11 @@ def load_master_catalogs_by_filter(result_dir: Path) -> dict[str, pd.DataFrame]:
         if df is None or df.empty or "ID" not in df.columns:
             continue
         df = df.copy()
-        if "source_id" in df.columns:
-            df["source_id"] = coerce_int64_source_id(df["source_id"]).astype("Int64")
+        # Identifier columns go through Int64, never pd.to_numeric: a float
+        # column cannot hold a 19-digit Gaia id (see io_utils.ID_LIKE_COLUMNS).
+        normalize_id_columns(df)
         df["ID"] = pd.to_numeric(df["ID"], errors="coerce").astype("Int64")
-        for col in ("ra_deg", "dec_deg", "gaia_G", "gaia_id"):
+        for col in ("ra_deg", "dec_deg", "gaia_G"):
             if col in df.columns:
                 df[col] = pd.to_numeric(df[col], errors="coerce")
         catalogs[flt] = df

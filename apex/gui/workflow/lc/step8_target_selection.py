@@ -99,7 +99,11 @@ from apex.utils.step_paths_lc import (
     refbuild_input_dir,
     wcs_input_dir,
 )
-from apex.utils.io_utils import read_csv_int64_source_id, coerce_int64_source_id
+from apex.utils.io_utils import (
+    coerce_int64_source_id,
+    normalize_id_columns,
+    read_csv_int64_source_id,
+)
 from apex.utils.photometry_loader import load_frame_photometry
 
 
@@ -2375,6 +2379,9 @@ class TargetComparisonSelectionWindow(StepWindowBase):
         df_out = df_out[[c for c in output_cols if c in df_out.columns]]
 
         out_path = step9_out / f"master_catalog_{flt}.tsv"
+        # Int64 before writing, so to_csv prints 814859719594028032
+        # rather than the 8.14859719594028e+17 a float column gives.
+        normalize_id_columns(df_out)
         df_out.to_csv(out_path, sep="\t", index=False, na_rep="NaN", encoding="utf-8-sig")
 
         # ID 매핑 파일도 저장 (다른 Step에서 참조용)

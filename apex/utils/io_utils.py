@@ -134,17 +134,49 @@ def parse_int64_scalar(value):
     return pd.NA if pd.isna(out) else int(out)
 
 
+#: Every column that can hold a 19-digit Gaia DR3 identifier. float64 runs out
+#: of mantissa at ~9e15, so any of these landing in a float column loses its
+#: last three digits — that is how ``8.14859719594028e+17`` was written into
+#: master_catalog_*.tsv instead of ``814859719594028032``.
+ID_LIKE_COLUMNS = ("source_id", "gaia_source_id", "gaia_id", "star_id")
+
+
+def normalize_id_columns(df: pd.DataFrame, columns=ID_LIKE_COLUMNS) -> pd.DataFrame:
+    """Cast identifier columns back to nullable Int64, in place.
+
+    Call it right before writing a table so ``to_csv`` prints whole digits, and
+    after building one from row dicts (a dict column holding ``np.nan`` becomes
+    float64 at construction time and the ids are already rounded by then; use
+    ``pd.NA`` there instead).
+
+    This stops further loss — it cannot recover digits a float column has
+    already dropped.
+    """
+    if df is None or len(df) == 0:
+        return df
+    for col in columns:
+        if col in df.columns:
+            df[col] = coerce_int64_source_id(df[col]).astype("Int64")
+    return df
+
+
 def read_csv_int64_source_id(path: Union[str, Path], sep: str = ",", **kwargs) -> pd.DataFrame:
     """Read a CSV/TSV file preserving 19-digit Gaia source_id precision.
 
     pandas default read_csv promotes a column with mixed integer/NaN to float64,
     silently rounding the last 3-4 digits of 19-digit Gaia source_ids.
-    This function reads source_id as string then converts to Int64.
+    Every identifier column is read as string and converted to Int64.
     """
-    df = pd.read_csv(path, sep=sep, dtype={"source_id": str}, **kwargs)
-    if "source_id" in df.columns:
-        df["source_id"] = coerce_int64_source_id(df["source_id"])
-    return df
+    dtype = dict(kwargs.pop("dtype", None) or {})
+    for col in ID_LIKE_COLUMNS:
+        dtype.setdefault(col, str)
+    try:
+        df = pd.read_csv(path, sep=sep, dtype=dtype, **kwargs)
+    except ValueError:
+        # A dtype for a column the file does not have is fine on modern pandas;
+        # fall back for any reader that rejects the mapping outright.
+        df = pd.read_csv(path, sep=sep, dtype={"source_id": str}, **kwargs)
+    return normalize_id_columns(df)
 
 
 def _fast_read_ecsv(path: Union[str, Path]) -> Optional[pd.DataFrame]:

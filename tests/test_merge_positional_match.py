@@ -52,8 +52,11 @@ def test_one_source_per_row_and_one_row_per_source():
 # --- end-to-end through the reconciler -------------------------------------
 
 def _catalog(rows):
+    """``sid`` is the Gaia id: identity across folders runs on that column, and
+    source_id mirrors it the way Step 6 writes it in hybrid mode."""
     return pd.DataFrame(
-        [{"ID": i + 1, "source_id": sid, "ra_deg": ra, "dec_deg": dec}
+        [{"ID": i + 1, "source_id": sid if sid is not None else -(i + 1),
+          "gaia_source_id": sid, "ra_deg": ra, "dec_deg": dec}
          for i, (sid, ra, dec) in enumerate(rows)]
     )
 
@@ -95,15 +98,15 @@ def test_crowded_field_does_not_invent_a_duplicate(tmp_path):
     assert len(result["canonical_by_filter"]["V"]) == 2
 
 
-def test_source_id_match_is_never_stolen_by_a_positional_candidate(tmp_path):
-    """An exact Gaia source_id match outranks any positional claim on it."""
+def test_gaia_id_match_is_never_stolen_by_a_positional_candidate(tmp_path):
+    """An exact Gaia id match outranks any positional claim on it."""
     base = tmp_path / "base"
     other = tmp_path / "other"
     ra, dec = 250.0, 36.0
 
     base_cat = _catalog([(4242, ra, dec)])
     other_cat = _catalog([
-        (None, ra, dec + _offset_deg(0.2)),       # very close, but no source_id
+        (None, ra, dec + _offset_deg(0.2)),       # very close, but no Gaia id
         (4242, ra, dec + _offset_deg(1.0)),       # same star by identity
     ])
 
@@ -115,7 +118,7 @@ def test_source_id_match_is_never_stolen_by_a_positional_candidate(tmp_path):
     )
     by_local = {r["local_id"]: r for r in result["match_records"]
                 if r["folder"] == other.name}
-    assert by_local[2]["method"] == "source_id"
+    assert by_local[2]["method"] == "gaia_id"
     assert by_local[2]["merged_source_id"] == 4242
     assert by_local[1]["method"] == "new"         # the 0.2" row could not take it
 

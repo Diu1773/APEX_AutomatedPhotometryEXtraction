@@ -2,8 +2,11 @@
 
 Locks the behaviour of ``reconcile_workspace_catalogs`` (id_match) and
 ``materialize_merged_workspace`` (workspace_build) before/after the H3/H4
-performance refactors. Covers all three match outcomes — exact source_id,
+performance refactors. Covers all three match outcomes — exact Gaia id,
 positional, and brand-new source — across two folders and one filter.
+
+Identity across folders runs on ``gaia_source_id``, so the fixtures carry it
+next to ``source_id`` the way Step 6 writes them in hybrid mode.
 """
 
 from __future__ import annotations
@@ -50,9 +53,9 @@ def merge_workspace(tmp_path):
 
     # Base folder A: three Gaia-matched stars.
     _write_master_catalog(folder_a, "V", [
-        {"ID": 1, "source_id": 1001, "ra_deg": 10.0000, "dec_deg": 20.0000, "x_ref": 100.0, "y_ref": 100.0},
-        {"ID": 2, "source_id": 1002, "ra_deg": 10.0010, "dec_deg": 20.0010, "x_ref": 110.0, "y_ref": 110.0},
-        {"ID": 3, "source_id": 1003, "ra_deg": 10.0020, "dec_deg": 20.0020, "x_ref": 120.0, "y_ref": 120.0},
+        {"ID": 1, "source_id": 1001, "gaia_source_id": 1001, "ra_deg": 10.0000, "dec_deg": 20.0000, "x_ref": 100.0, "y_ref": 100.0},
+        {"ID": 2, "source_id": 1002, "gaia_source_id": 1002, "ra_deg": 10.0010, "dec_deg": 20.0010, "x_ref": 110.0, "y_ref": 110.0},
+        {"ID": 3, "source_id": 1003, "gaia_source_id": 1003, "ra_deg": 10.0020, "dec_deg": 20.0020, "x_ref": 120.0, "y_ref": 120.0},
     ])
     _write_frame(folder_a, "frameA1.fits", "V", 1, [
         {"ID": 1, "source_id": 1001, "mag": 15.0},
@@ -61,13 +64,13 @@ def merge_workspace(tmp_path):
     ])
 
     # Folder B:
-    #  ID 1 -> exact source_id match (1001)
+    #  ID 1 -> exact Gaia id match (1001)
     #  ID 2 -> no gaia (source_id -5), positional match to A's star 1002
-    #  ID 3 -> new star with its own positive source_id 2001 (far away)
+    #  ID 3 -> new star with its own Gaia id 2001 (far away)
     _write_master_catalog(folder_b, "V", [
-        {"ID": 1, "source_id": 1001, "ra_deg": 10.00000, "dec_deg": 20.00000, "x_ref": 101.0, "y_ref": 101.0},
-        {"ID": 2, "source_id": -5, "ra_deg": 10.00101, "dec_deg": 20.00101, "x_ref": 111.0, "y_ref": 111.0},
-        {"ID": 3, "source_id": 2001, "ra_deg": 10.50000, "dec_deg": 20.50000, "x_ref": 500.0, "y_ref": 500.0},
+        {"ID": 1, "source_id": 1001, "gaia_source_id": 1001, "ra_deg": 10.00000, "dec_deg": 20.00000, "x_ref": 101.0, "y_ref": 101.0},
+        {"ID": 2, "source_id": -5, "gaia_source_id": pd.NA, "ra_deg": 10.00101, "dec_deg": 20.00101, "x_ref": 111.0, "y_ref": 111.0},
+        {"ID": 3, "source_id": 2001, "gaia_source_id": 2001, "ra_deg": 10.50000, "dec_deg": 20.50000, "x_ref": 500.0, "y_ref": 500.0},
     ])
     _write_frame(folder_b, "frameB1.fits", "V", 1, [
         {"ID": 1, "source_id": 1001, "mag": 15.1},
@@ -154,14 +157,18 @@ def test_reconcile_positional_collision_and_tolerance():
     folder_tags = {str(f): folder_tag(i, f) for i, f in enumerate(folders)}
 
     df_a = pd.DataFrame([
-        {"ID": 1, "source_id": 1001, "ra_deg": 10.0, "dec_deg": 20.0},
+        {"ID": 1, "source_id": 1001, "gaia_source_id": 1001,
+         "ra_deg": 10.0, "dec_deg": 20.0},
     ])
     # Row order matters: ID 10 is processed first and claims star 1001;
     # ID 11 is also nearest 1001 but it's taken -> new; ID 12 is far -> new.
     df_b = pd.DataFrame([
-        {"ID": 10, "source_id": -1, "ra_deg": 10.00001, "dec_deg": 20.00001},
-        {"ID": 11, "source_id": -2, "ra_deg": 10.00002, "dec_deg": 20.00002},
-        {"ID": 12, "source_id": 3003, "ra_deg": 10.10000, "dec_deg": 20.10000},
+        {"ID": 10, "source_id": -1, "gaia_source_id": pd.NA,
+         "ra_deg": 10.00001, "dec_deg": 20.00001},
+        {"ID": 11, "source_id": -2, "gaia_source_id": pd.NA,
+         "ra_deg": 10.00002, "dec_deg": 20.00002},
+        {"ID": 12, "source_id": 3003, "gaia_source_id": 3003,
+         "ra_deg": 10.10000, "dec_deg": 20.10000},
     ])
     catalogs_by_folder = {
         str(folder_a): {"V": df_a},

@@ -15,6 +15,7 @@ from apex.utils.io_utils import (
     load_file_path_map,
     load_headers_table,
     load_night_assignments,
+    normalize_id_columns,
 )
 from apex.utils.photometry_loader import _load_source_to_id_map, load_frame_photometry
 from apex.utils.run_workspace import (
@@ -129,6 +130,9 @@ def write_selection_outputs(
         df_out = df_out.sort_values("ID")
 
         cat_path = s9 / f"master_catalog_{flt}.tsv"
+        # Int64 before writing, so to_csv prints 814859719594028032
+        # rather than the 8.14859719594028e+17 a float column gives.
+        normalize_id_columns(df_out)
         df_out.to_csv(cat_path, sep="\t", index=False, na_rep="NaN", encoding="utf-8-sig")
 
         id_map_path = s9 / f"id_mapping_{flt}.csv"

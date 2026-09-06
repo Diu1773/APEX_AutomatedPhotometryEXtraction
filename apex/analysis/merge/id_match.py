@@ -9,7 +9,7 @@ import pandas as pd
 from astropy.coordinates import SkyCoord
 import astropy.units as u
 
-from apex.utils.io_utils import coerce_int64_source_id
+from apex.utils.io_utils import coerce_int64_source_id, normalize_id_columns
 
 
 def extract_row_float(row: pd.Series, *cols: str) -> float:
@@ -164,6 +164,35 @@ def _nearest_canon_matches(
     return nn_sid, nn_sep
 
 
+#: Columns that hold a Gaia DR3 identifier, in the order they are trusted.
+#: ``gaia_source_id`` is written by Step 6; ``gaia_id`` is what a previously
+#: merged workspace carries.
+GAIA_ID_COLUMNS = ("gaia_source_id", "gaia_id")
+
+
+def global_identity_series(df: pd.DataFrame) -> pd.Series:
+    """Return the per-row identifier that means the same thing in every folder.
+
+    ``source_id`` does not qualify. Step 6 puts the Gaia DR3 identifier there
+    only when the source matched Gaia; otherwise it is a counter that means
+    nothing outside its own workspace. Keying the merge on it made two folders
+    pointing at opposite halves of the sky bind row 5 to row 5 without ever
+    measuring a separation (``Main/FAILURES.md`` F-285). The Gaia columns are
+    the only globally valid key, and Step 6 writes them in both build modes.
+    """
+    empty = pd.Series(pd.array([pd.NA] * len(df), dtype="Int64"), index=df.index)
+    if df is None or df.empty:
+        return empty
+    out = empty
+    for col in GAIA_ID_COLUMNS:
+        if col not in df.columns:
+            continue
+        vals = coerce_int64_source_id(df[col]).astype("Int64")
+        vals = vals.where(vals.notna() & (vals > 0))   # a Gaia DR3 id is positive
+        out = out.where(out.notna(), vals)
+    return out
+
+
 def canonicalize_catalog_row(
     row: pd.Series,
     merged_id: int,
@@ -173,7 +202,15 @@ def canonicalize_catalog_row(
     data = row.to_dict()
     data["ID"] = int(merged_id)
     data["source_id"] = int(merged_source_id)
-    data["gaia_id"] = int(merged_source_id) if int(merged_source_id) > 0 else np.nan
+    # pd.NA, not np.nan: a dict column mixing ints with np.nan becomes float64
+    # when the rows are turned into a DataFrame, and a 19-digit Gaia id does not
+    # survive that. pd.NA keeps the column object-typed and the digits intact.
+    data["gaia_id"] = int(merged_source_id) if int(merged_source_id) > 0 else pd.NA
+    # Rewrite gaia_source_id from the merged id rather than trusting what the
+    # row carried. `df.iterrows()` casts an all-numeric row to one dtype, so the
+    # value in `row` may already be a rounded float; `merged_source_id` came
+    # from the DataFrame column and is exact.
+    data["gaia_source_id"] = data["gaia_id"]
     data["match_status"] = "matched" if int(merged_source_id) > 0 else "no_gaia_match"
     data["folder_count"] = 1
     data["folder_tags"] = folder_tag
@@ -236,6 +273,11 @@ def reconcile_workspace_catalogs(
             df = filter_catalogs.get(flt)
             if df is None or df.empty:
                 continue
+            # Work on a copy whose identifier columns are Int64. A caller that
+            # built the table itself may have string ids; this makes those
+            # exact. It cannot undo a float64 column — those digits are already
+            # gone before the reconciler sees them.
+            df = normalize_id_columns(df.copy())
 
             if flt not in canonical_by_filter:
                 canonical_by_filter[flt] = pd.DataFrame()
@@ -250,11 +292,15 @@ def reconcile_workspace_catalogs(
             if folder == base_folder and canon.empty:
                 seeded_rows = []
                 max_id = 0
-                for _, row in df.iterrows():
+                base_gaia = global_identity_series(df)
+                for row_pos, (_, row) in enumerate(df.iterrows()):
                     local_id = pd.to_numeric(pd.Series([row.get("ID")]), errors="coerce").iloc[0]
                     if not np.isfinite(local_id):
                         continue
-                    sid_val = coerce_int64_source_id(pd.Series([row.get("source_id")])).iloc[0]
+                    # The canonical id is the Gaia one when the source has it;
+                    # a workspace-local counter must not survive into the merged
+                    # catalogue, where a positive id is read back as a Gaia id.
+                    sid_val = base_gaia.iloc[row_pos]
                     if pd.isna(sid_val):
                         sid = next_negative_sid
                         next_negative_sid -= 1
@@ -301,6 +347,12 @@ def reconcile_workspace_catalogs(
                     if pd.notna(sid_val) and int(sid_val) not in canon_sid_map:
                         canon_sid_map[int(sid_val)] = idx_row
 
+            # Identity across folders runs on the Gaia id, never on source_id.
+            canon_gaia_map: dict[int, int] = {}
+            for idx_row, gid in enumerate(global_identity_series(canon)):
+                if pd.notna(gid) and int(gid) not in canon_gaia_map:
+                    canon_gaia_map[int(gid)] = idx_row
+
             used_canonical_sids: set[int] = set()
             # Collect new rows in a list; concat once at the end to avoid O(N²) copies
             new_canon_rows: list[dict] = []
@@ -309,13 +361,22 @@ def reconcile_workspace_catalogs(
             # so positionally match every incoming row against it in a single
             # vectorized pass instead of one SkyCoord build per row.
             pos_nn_sid, pos_nn_sep = _nearest_canon_matches(df, canon)
-            # Rows that already match a canonical source by Gaia source_id take
-            # it before the positional pass runs, so a positional candidate can
+            # Rows that already match a canonical source by Gaia id take it
+            # before the positional pass runs, so a positional candidate can
             # never steal a source out from under an exact identity match.
-            exact_sids = {
-                int(sid) for sid in coerce_int64_source_id(df["source_id"]).dropna()
-                if int(sid) in canon_sid_map
-            } if "source_id" in df.columns else set()
+            df_gaia = global_identity_series(df)
+            canon_sids = (coerce_int64_source_id(canon["source_id"]).astype("Int64")
+                          if not canon.empty and "source_id" in canon.columns
+                          else pd.Series(dtype="Int64"))
+            gaia_to_canon_sid: dict[int, int] = {}
+            for gid in df_gaia.dropna():
+                idx_row = canon_gaia_map.get(int(gid))
+                if idx_row is None or idx_row >= len(canon_sids):
+                    continue
+                csid = canon_sids.iloc[idx_row]
+                if pd.notna(csid):
+                    gaia_to_canon_sid[int(gid)] = int(csid)
+            exact_sids = set(gaia_to_canon_sid.values())
             pos_assigned = resolve_positional_pairs(
                 pos_nn_sid, pos_nn_sep, pos_tol_arcsec, taken=exact_sids)
 
@@ -326,14 +387,16 @@ def reconcile_workspace_catalogs(
                 local_id = int(local_id)
                 sid_val = coerce_int64_source_id(pd.Series([row.get("source_id")])).iloc[0]
                 sid_int = None if pd.isna(sid_val) else int(sid_val)
+                gid_val = df_gaia.iloc[pos]
+                gid_int = None if pd.isna(gid_val) else int(gid_val)
 
                 matched_sid = None
                 match_method = ""
                 sep_arcsec = float("nan")
 
-                if sid_int is not None and sid_int in canon_sid_map:
-                    matched_sid = sid_int
-                    match_method = "source_id"
+                if gid_int is not None and gid_int in gaia_to_canon_sid:
+                    matched_sid = gaia_to_canon_sid[gid_int]
+                    match_method = "gaia_id"
                 else:
                     sep_arcsec = pos_nn_sep.get(pos, float("nan"))
                     cand_sid = pos_assigned.get(pos)
@@ -351,7 +414,7 @@ def reconcile_workspace_catalogs(
                         "merged_source_id": int(matched_sid),
                     }
                     used_canonical_sids.add(int(matched_sid))
-                    if match_method == "source_id":
+                    if match_method == "gaia_id":
                         n_exact += 1
                     else:
                         n_pos += 1
@@ -374,8 +437,11 @@ def reconcile_workspace_catalogs(
                 merged_id = next_id_by_filter.get(flt, 1)
                 next_id_by_filter[flt] = merged_id + 1
 
-                if sid_int is not None and sid_int not in canon_sid_map:
-                    merged_source_id = sid_int
+                # A new canonical row keeps the Gaia id when the source has
+                # one. Without it the row gets a fresh negative id, because a
+                # positive id in the merged catalogue is read back as Gaia's.
+                if gid_int is not None and gid_int not in canon_sid_map:
+                    merged_source_id = gid_int
                 else:
                     merged_source_id = next_negative_sid
                     next_negative_sid -= 1
