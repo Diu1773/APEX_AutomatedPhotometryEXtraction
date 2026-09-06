@@ -278,7 +278,7 @@ CMD·LC 어느 모드든 **Step 1~7은 똑같습니다.** "측광을 위한 준�
 | Ref catalog min sources | `refbuild.ref_cat_min_sources` | 50 |
 | WCS match radius(arcsec) | `refbuild.wcs_match_radius_arcsec` | 2.0 |
 | WCS min match rate | `refbuild.wcs_min_match_rate` | 0.2 |
-| Gaia G limit (hybrid ID) | `idmatch.gaia_g_limit` | 18.0 |
+| Gaia G limit (별 번호용) | `idmatch.gaia_g_limit` | 18.0 |
 
 ### 출력
 `step6_refbuild/` → `master_catalog.tsv`, `ref_catalog_<필터>.tsv`, `ref_frame_stats.csv`, `ref_build_meta.json`

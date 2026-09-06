@@ -114,7 +114,6 @@ class RefBuildStep(PipelineStep):
             wcs_max_sep_p90_arcsec=float(getattr(P, "ref_wcs_max_sep_p90_arcsec", 2.5)),
             wcs_max_dup_rate=float(getattr(P, "ref_wcs_max_dup_rate", 0.1)),
             ref_per_date=bool(getattr(P, "ref_per_date", True)),
-            ref_build_mode=str(getattr(P, "ref_build_mode", "hybrid")),
             gaia_mag_limit=float(
                 getattr(P, "idmatch_gaia_g_limit", getattr(P, "gaia_mag_max", 18.0))
             ),

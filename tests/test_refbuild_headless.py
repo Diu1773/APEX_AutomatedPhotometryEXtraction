@@ -170,7 +170,6 @@ def _run_kwargs(params, names):
         ref_per_date=True,
         ref_master_union=True,
         ref_union_min_frames=1,
-        ref_build_mode="hybrid",
         gaia_mag_limit=18.0,
     )
 

@@ -1,35 +1,24 @@
 """Unit tests for the Step 6 union master-catalog build (B1).
 
-Exercises ``_build_union_master`` orchestration (per-frame collection, sky-position
-dedup via ``_merge_ref_catalogs``, ``n_det_frames`` counting, the min-frames
-filter, and dense re-numbering) without Qt or FITS fixtures by constructing a
-bare worker via ``__new__`` and stubbing the per-frame catalog/WCS helpers.
+Exercises ``build_union_master`` orchestration (per-frame collection, sky-position
+dedup via ``merge_ref_catalogs``, ``n_det_frames`` counting, the min-frames
+filter, and dense re-numbering) without Qt or FITS fixtures, by passing stubs
+for the per-frame catalog and WCS lookups.
+
+Until 2026-09-06 these tests reached into ``RefBuildWorker`` and drove a copy of
+this logic that no longer ran: the engine had moved to ``apex.analysis.refbuild``
+and the Qt worker only forwards to it. The functions now live at module level so
+the code under test is the code that runs.
 """
 
 import numpy as np
 import pandas as pd
-import pytest
 
-# step6_ref_build pulls in PyQt5 (RefBuildWorker is a QThread); skip on the
-# no-GUI CI where PyQt5 isn't installed, matching the project convention.
-pytest.importorskip("PyQt5")
-
-from apex.gui.workflow.step6_ref_build import RefBuildWorker
-
-
-def _make_worker(min_frames=1):
-    w = RefBuildWorker.__new__(RefBuildWorker)
-    w._stop_requested = False
-    w.ref_union_min_frames = int(min_frames)
-    w._log = lambda *a, **k: None
-    # Real merge logic; no WCS reprojection in these tests.
-    w._merge_ref_catalogs = RefBuildWorker._merge_ref_catalogs.__get__(w)
-    w._load_wcs_for_frame = lambda fname: None
-    return w
+from apex.analysis.refbuild import build_union_master
 
 
 def _cat(rows):
-    """rows: list of (ra, dec). Returns a per-frame catalog like _build_master_catalog."""
+    """rows: list of (ra, dec). Returns a per-frame catalog like the single-frame build."""
     df = pd.DataFrame(rows, columns=["ra_deg", "dec_deg"])
     df["x_ref"] = df["ra_deg"] * 1000.0
     df["y_ref"] = df["dec_deg"] * 1000.0
@@ -44,11 +33,11 @@ def test_union_dedups_and_counts_detections():
         "A": _cat([(10.0, 20.0), (10.0100, 20.0)]),   # ~34" apart -> distinct
         "B": _cat([(10.0, 20.0), (10.0200, 20.0)]),   # first matches A, second new
     }
-    w = _make_worker()
-    w._build_master_catalog = lambda f: (cats[f].copy(), {"n_ref_used": len(cats[f])})
-
     group = pd.DataFrame({"file": ["A", "B"]})
-    master, stats = w._build_union_master(group, anchor_fname="A", match_radius_arcsec=2.0)
+    master, stats = build_union_master(
+        group, anchor_fname="A", match_radius_arcsec=2.0,
+        build_master_catalog=lambda f: (cats[f].copy(), {"n_ref_used": len(cats[f])}),
+    )
 
     # 3 unique stars: shared(10.0), A-only(10.01), B-only(10.02)
     assert len(master) == 3
@@ -72,11 +61,12 @@ def test_union_min_frames_filter_drops_singletons():
         "A": _cat([(10.0, 20.0), (10.0100, 20.0)]),
         "B": _cat([(10.0, 20.0), (10.0200, 20.0)]),
     }
-    w = _make_worker(min_frames=2)
-    w._build_master_catalog = lambda f: (cats[f].copy(), {})
-
     group = pd.DataFrame({"file": ["A", "B"]})
-    master, _ = w._build_union_master(group, anchor_fname="A", match_radius_arcsec=2.0)
+    master, _ = build_union_master(
+        group, anchor_fname="A", match_radius_arcsec=2.0,
+        build_master_catalog=lambda f: (cats[f].copy(), {}),
+        min_frames=2,
+    )
 
     # Only the star detected in >= 2 frames survives.
     assert len(master) == 1
@@ -86,11 +76,6 @@ def test_union_min_frames_filter_drops_singletons():
 
 
 def test_union_falls_back_when_all_frames_fail():
-    w = _make_worker()
-
-    def _raise(_f):
-        raise RuntimeError("missing detections")
-
     # union build raises for every frame -> falls back to single-frame build,
     # which we stub to succeed for the anchor.
     anchor_cat = _cat([(10.0, 20.0)])
@@ -104,7 +89,32 @@ def test_union_falls_back_when_all_frames_fail():
             raise RuntimeError("missing detections")
         return anchor_cat.copy(), {"n_ref_used": 1}
 
-    w._build_master_catalog = _build
     group = pd.DataFrame({"file": ["A"]})
-    master, _ = w._build_union_master(group, anchor_fname="A", match_radius_arcsec=2.0)
+    master, _ = build_union_master(
+        group, anchor_fname="A", match_radius_arcsec=2.0,
+        build_master_catalog=_build,
+    )
     assert len(master) == 1
+
+
+def test_union_stops_when_asked():
+    """A stop request between frames leaves the frames already merged in place."""
+    cats = {
+        "A": _cat([(10.0, 20.0)]),
+        "B": _cat([(10.0200, 20.0)]),
+    }
+    seen = []
+
+    def _build(f):
+        seen.append(f)
+        return cats[f].copy(), {}
+
+    group = pd.DataFrame({"file": ["A", "B"]})
+    master, stats = build_union_master(
+        group, anchor_fname="A", match_radius_arcsec=2.0,
+        build_master_catalog=_build,
+        should_stop=lambda: len(seen) >= 1,       # stop after the anchor
+    )
+    assert seen == ["A"]
+    assert len(master) == 1
+    assert stats["n_union_frames"] == 1

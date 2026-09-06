@@ -334,8 +334,8 @@ COMMON_TOML_KEY_MAP: tuple[tuple, ...] = (
     (('gaia', 'hard_deadline_s'), 'gaia_hard_deadline_s', 'float', 0.0),
     (('gaia', 'backoff_s'), 'gaia_backoff_s', 'float', 6.0),
     (('gaia', 'allow_no_cache'), 'gaia_allow_no_cache', 'bool', True),
-    (('gaia', 'g_limit'), 'idmatch_gaia_g_limit', 'float', 18.0, {'label': 'Gaia G limit (hybrid ID)', 'lo': 10.0, 'hi': 25.0, 'step': 0.5, 'decimals': 2}),
-    (('idmatch', 'gaia_g_limit'), 'idmatch_gaia_g_limit', 'float', 18.0, {'label': 'Gaia G limit (hybrid ID)', 'lo': 10.0, 'hi': 25.0, 'step': 0.5, 'decimals': 2}),
+    (('gaia', 'g_limit'), 'idmatch_gaia_g_limit', 'float', 18.0, {'label': 'Gaia G limit (star id)', 'lo': 10.0, 'hi': 25.0, 'step': 0.5, 'decimals': 2}),
+    (('idmatch', 'gaia_g_limit'), 'idmatch_gaia_g_limit', 'float', 18.0, {'label': 'Gaia G limit (star id)', 'lo': 10.0, 'hi': 25.0, 'step': 0.5, 'decimals': 2}),
     (('idmatch', 'tol_arcsec'), 'idmatch_tol_arcsec', 'float_or_none', None),
     (('idmatch', 'use_qc_pass_only'), 'idmatch_use_qc_pass_only'),
     (('idmatch', 'use_wcs_qc_gate'), 'idmatch_use_wcs_qc_gate'),
@@ -388,7 +388,11 @@ COMMON_TOML_KEY_MAP: tuple[tuple, ...] = (
     (('extinction_fit', 'varstar_min_frames'), 'extinction_varstar_min_frames', 'int', 5),
     (('extinction_fit', 'varstar_sigma'), 'extinction_varstar_sigma', 'float', 3.0),
     # --- Reference build and airmass windows, same shape.
-    (('refbuild', 'build_mode'), 'ref_build_mode', 'str', "hybrid"),
+    # ('refbuild', 'build_mode') was removed on 2026-09-06: its two values
+    # differed only in the number written into source_id, never in how frames
+    # were merged, and only "hybrid" was reachable from the GUI. Step 6 now
+    # always assigns the Gaia id where there is one. An old key in a saved
+    # JSON is simply ignored.
     (('refbuild', 'compare_exclude_split'), 'step6_compare_exclude_split', 'bool', True),
     (('airmass', 'update_source'), 'airmass_update_source', 'str', "auto"),
     # --- Step 6 (master catalogue) is a shared step, and these lived in the

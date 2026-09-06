@@ -166,6 +166,164 @@ def neighbor_distances(xy, n_det_frames=None):
     return np.where(trusted, dists[:, 1], dists[:, 0]), int(trusted.sum())
 
 
+# ── The two pieces the Step 6 unit tests exercise ───────────────────────────
+# They live at module level so the tested function is the one that runs. Until
+# 2026-09-06 the tests reached into a never-called copy inside the Qt worker.
+
+def merge_ref_catalogs(
+    base_df: Optional[pd.DataFrame],
+    new_df: pd.DataFrame,
+    match_radius_arcsec: float,
+) -> tuple[pd.DataFrame, pd.DataFrame]:
+    if base_df is None or base_df.empty:
+        out = new_df.copy()
+        out = out.reset_index(drop=True)
+        out["source_id"] = np.arange(1, len(out) + 1, dtype=int)
+        out["ID"] = out["source_id"]
+        return out, out
+
+    base = base_df.copy().reset_index(drop=True)
+    new = new_df.copy().reset_index(drop=True)
+
+    base_ra = pd.to_numeric(base.get("ra_deg"), errors="coerce")
+    base_dec = pd.to_numeric(base.get("dec_deg"), errors="coerce")
+    new_ra = pd.to_numeric(new.get("ra_deg"), errors="coerce")
+    new_dec = pd.to_numeric(new.get("dec_deg"), errors="coerce")
+    base_mask = base_ra.notna() & base_dec.notna()
+    new_mask = new_ra.notna() & new_dec.notna()
+    if not base_mask.any() or not new_mask.any():
+        return base, new
+
+    base_sky = SkyCoord(base_ra[base_mask].to_numpy(float) * u.deg,
+                        base_dec[base_mask].to_numpy(float) * u.deg,
+                        frame="icrs")
+    new_sky = SkyCoord(new_ra[new_mask].to_numpy(float) * u.deg,
+                       new_dec[new_mask].to_numpy(float) * u.deg,
+                       frame="icrs")
+    idx, sep2d, _ = new_sky.match_to_catalog_sky(base_sky)
+    ok = sep2d.arcsec <= match_radius_arcsec
+
+    new["source_id"] = np.nan
+    new["ID"] = np.nan
+
+    base_ids = coerce_int64_source_id(base.loc[base_mask, "source_id"]).to_numpy(dtype=np.int64, na_value=0)
+    match_idx = np.where(new_mask)[0]
+    ok_idx = match_idx[ok]
+    if len(ok_idx):
+        new.loc[ok_idx, "source_id"] = base_ids[idx[ok]]
+        new.loc[ok_idx, "ID"] = base_ids[idx[ok]]
+
+    base_sid = coerce_int64_source_id(base["source_id"]).dropna()
+    next_id = int(base_sid.max() if not base_sid.empty else 0) + 1
+    new_rows = []
+    for i in match_idx[~ok]:
+        sid = next_id
+        next_id += 1
+        new.loc[i, "source_id"] = sid
+        new.loc[i, "ID"] = sid
+        new_rows.append(new.loc[i:i])
+
+    if new_rows:
+        base = pd.concat([base] + new_rows, ignore_index=True)
+
+    new["source_id"] = coerce_int64_source_id(new["source_id"])
+    new["ID"] = pd.to_numeric(new["ID"], errors="coerce").astype("Int64")
+    return base, new
+
+
+def build_union_master(
+    group_metrics: pd.DataFrame,
+    anchor_fname: str,
+    match_radius_arcsec: float,
+    *,
+    build_master_catalog,
+    load_wcs_for_frame=lambda _fname: None,
+    min_frames: int = 1,
+    should_stop=lambda: False,
+    log=lambda _msg: None,
+) -> tuple[pd.DataFrame, dict]:
+    """Union per-frame detections into one position-deduped master catalog.
+
+    Each frame's detections (after the same per-frame quality cuts as the
+    single-frame build) are matched to the accumulating master by sky
+    position; matches reuse the existing source_id, new sources are added.
+    ``n_det_frames`` records how many frames each source was detected in.
+    """
+    files = [str(f) for f in group_metrics["file"].tolist()]
+    # Anchor first: its detections seed the source_ids and the union x_ref/
+    # y_ref share the anchor's pixel system.
+    ordered = [anchor_fname] + [f for f in files if f != anchor_fname]
+
+    master: Optional[pd.DataFrame] = None
+    det_counts: Counter = Counter()
+    last_stats: dict = {}
+    n_used = 0
+    for fname in ordered:
+        if should_stop():
+            break
+        try:
+            cat, stats = build_master_catalog(fname)
+        except RuntimeError as e:
+            log(f"[REF][UNION] skip {fname}: {e}")
+            continue
+        last_stats = stats
+        n_used += 1
+        master, merged = merge_ref_catalogs(master, cat, match_radius_arcsec)
+        sids = coerce_int64_source_id(merged.get("source_id")).dropna()
+        if len(sids):
+            det_counts.update(int(s) for s in sids.to_numpy(dtype=np.int64))
+
+    if master is None or master.empty:
+        log("[REF][UNION] union produced no sources; falling back to anchor frame.")
+        return build_master_catalog(anchor_fname)
+
+    master = master.copy().reset_index(drop=True)
+    sid_int = coerce_int64_source_id(master["source_id"])
+    master["n_det_frames"] = [
+        int(det_counts.get(int(s), 0)) if pd.notna(s) else 0 for s in sid_int
+    ]
+
+    if min_frames > 1:
+        before = len(master)
+        master = master[master["n_det_frames"] >= min_frames].copy()
+        log(
+            f"[REF][UNION] min_frames>={min_frames}: "
+            f"{before}->{len(master)} sources"
+        )
+
+    # Express x_ref/y_ref in a single (anchor) pixel system so neighbor /
+    # crowding geometry is consistent across stars added from different frames.
+    anchor_wcs = load_wcs_for_frame(anchor_fname)
+    if anchor_wcs is not None and {"ra_deg", "dec_deg"} <= set(master.columns):
+        try:
+            xr, yr = anchor_wcs.all_world2pix(
+                master["ra_deg"].to_numpy(float),
+                master["dec_deg"].to_numpy(float),
+                0,
+            )
+            master["x_ref"] = xr
+            master["y_ref"] = yr
+        except Exception as e:
+            log(f"[REF][UNION] anchor reprojection failed: {e}")
+
+    # Dense, position-ordered IDs (matches the single-frame build contract).
+    sort_cols = [c for c in ("y_ref", "x_ref") if c in master.columns]
+    if sort_cols:
+        master = master.sort_values(sort_cols).reset_index(drop=True)
+    master["source_id"] = np.arange(1, len(master) + 1, dtype=int)
+    master["ID"] = master["source_id"]
+
+    stats = dict(last_stats)
+    stats["n_master_union"] = int(len(master))
+    stats["n_union_frames"] = int(n_used)
+    log(
+        f"[REF][UNION] {n_used} frames -> {len(master)} master sources "
+        f"(anchor={anchor_fname}, match_r={match_radius_arcsec:.2f}\")"
+    )
+    return master, stats
+
+
+
 def run_refbuild(
     params,
     data_dir,
@@ -189,7 +347,6 @@ def run_refbuild(
     wcs_max_sep_p90_arcsec,
     wcs_max_dup_rate,
     ref_per_date,
-    ref_build_mode="hybrid",
     gaia_mag_limit=18.0,
     ref_master_union=True,
     ref_union_min_frames=1,
@@ -227,7 +384,6 @@ def run_refbuild(
     wcs_max_sep_p90_arcsec = float(wcs_max_sep_p90_arcsec)
     wcs_max_dup_rate = float(wcs_max_dup_rate)
     ref_per_date = bool(ref_per_date)
-    ref_build_mode = str(ref_build_mode).lower()
     gaia_mag_limit = float(gaia_mag_limit)
     ref_master_union = bool(ref_master_union)
     ref_union_min_frames = max(1, int(ref_union_min_frames))
@@ -591,22 +747,38 @@ def run_refbuild(
             pass
         return out
 
-    def _apply_hybrid_source_ids(df: pd.DataFrame, gaia_mag_limit: float = 18.0) -> tuple[pd.DataFrame, dict[int, int], dict[int, int]]:
-        """Apply hybrid source_id assignment: Gaia ID for matched sources, negative ID for non-Gaia.
+    def _assign_gaia_source_ids(df: pd.DataFrame, gaia_mag_limit: float = 18.0) -> tuple[pd.DataFrame, dict[int, int], dict[int, int]]:
+        """Number the master catalogue: the Gaia id where there is one.
 
-        In hybrid mode:
-        - Sources matched to Gaia: use gaia_source_id (positive, from Gaia DR3)
-        - Sources not matched: assign negative local IDs (-1, -2, ...)
+        - Matched to Gaia: use gaia_source_id (positive, from Gaia DR3)
+        - Not matched: a negative id (-1, -2, ...), meaningful only here
 
-        This ensures consistent source_id across all frames for Gaia-matched sources.
+        The sign is a contract, not a convenience: everything downstream reads a
+        positive source_id as a Gaia DR3 identifier. Without a Gaia catalogue no
+        source matches and the whole catalogue is negative, which is correct —
+        those numbers do mean nothing outside this workspace.
         """
         out = df.copy()
         old_ids = coerce_int64_source_id(out["source_id"]) if "source_id" in out.columns else None
 
         # Check if gaia_source_id column exists
         if "gaia_source_id" not in out.columns:
-            _log("[REF] No gaia_source_id column; hybrid mode not applied.")
-            return out, {}, {}
+            # No Gaia catalogue reached this build. Number everything negative
+            # rather than leaving the positive counter in place, because
+            # downstream a positive id claims to be a Gaia id.
+            _log("[REF] No Gaia match column; every source gets a local (negative) id.")
+            out["source_id"] = pd.Series(
+                pd.array(list(range(-1, -len(out) - 1, -1)), dtype="Int64"),
+                index=out.index)
+            out["ID"] = range(1, len(out) + 1)
+            sid_map, id_map = {}, {}
+            if old_ids is not None:
+                for o, n, i in zip(old_ids, out["source_id"], out["ID"]):
+                    if pd.isna(o):
+                        continue
+                    sid_map[int(o)] = int(n)
+                    id_map[int(o)] = int(i)
+            return out, sid_map, id_map
 
         # Filter by magnitude limit if gaia_G is available
         n_trimmed = 0
@@ -656,7 +828,7 @@ def run_refbuild(
         n_local = len(out) - n_gaia
         if n_trimmed > 0:
             _log(f"[REF] Gaia IDs excluded by mag limit (G>{gaia_mag_limit:.2f}): {n_trimmed}")
-        _log(f"[REF] Hybrid IDs assigned: {n_gaia} Gaia, {n_local} local (negative)")
+        _log(f"[REF] IDs assigned: {n_gaia} Gaia, {n_local} local (negative)")
 
         return out, sid_map, id_map
 
@@ -665,60 +837,7 @@ def run_refbuild(
         new_df: pd.DataFrame,
         match_radius_arcsec: float,
     ) -> tuple[pd.DataFrame, pd.DataFrame]:
-        if base_df is None or base_df.empty:
-            out = new_df.copy()
-            out = out.reset_index(drop=True)
-            out["source_id"] = np.arange(1, len(out) + 1, dtype=int)
-            out["ID"] = out["source_id"]
-            return out, out
-
-        base = base_df.copy().reset_index(drop=True)
-        new = new_df.copy().reset_index(drop=True)
-
-        base_ra = pd.to_numeric(base.get("ra_deg"), errors="coerce")
-        base_dec = pd.to_numeric(base.get("dec_deg"), errors="coerce")
-        new_ra = pd.to_numeric(new.get("ra_deg"), errors="coerce")
-        new_dec = pd.to_numeric(new.get("dec_deg"), errors="coerce")
-        base_mask = base_ra.notna() & base_dec.notna()
-        new_mask = new_ra.notna() & new_dec.notna()
-        if not base_mask.any() or not new_mask.any():
-            return base, new
-
-        base_sky = SkyCoord(base_ra[base_mask].to_numpy(float) * u.deg,
-                            base_dec[base_mask].to_numpy(float) * u.deg,
-                            frame="icrs")
-        new_sky = SkyCoord(new_ra[new_mask].to_numpy(float) * u.deg,
-                           new_dec[new_mask].to_numpy(float) * u.deg,
-                           frame="icrs")
-        idx, sep2d, _ = new_sky.match_to_catalog_sky(base_sky)
-        ok = sep2d.arcsec <= match_radius_arcsec
-
-        new["source_id"] = np.nan
-        new["ID"] = np.nan
-
-        base_ids = coerce_int64_source_id(base.loc[base_mask, "source_id"]).to_numpy(dtype=np.int64, na_value=0)
-        match_idx = np.where(new_mask)[0]
-        ok_idx = match_idx[ok]
-        if len(ok_idx):
-            new.loc[ok_idx, "source_id"] = base_ids[idx[ok]]
-            new.loc[ok_idx, "ID"] = base_ids[idx[ok]]
-
-        base_sid = coerce_int64_source_id(base["source_id"]).dropna()
-        next_id = int(base_sid.max() if not base_sid.empty else 0) + 1
-        new_rows = []
-        for i in match_idx[~ok]:
-            sid = next_id
-            next_id += 1
-            new.loc[i, "source_id"] = sid
-            new.loc[i, "ID"] = sid
-            new_rows.append(new.loc[i:i])
-
-        if new_rows:
-            base = pd.concat([base] + new_rows, ignore_index=True)
-
-        new["source_id"] = coerce_int64_source_id(new["source_id"])
-        new["ID"] = pd.to_numeric(new["ID"], errors="coerce").astype("Int64")
-        return base, new
+        return merge_ref_catalogs(base_df, new_df, match_radius_arcsec)
 
     def _load_wcs_meta(fname: str) -> dict:
         meta_path = Path(cache_dir) / "wcs_solve" / f"wcs_{fname}.json"
@@ -1165,85 +1284,14 @@ def run_refbuild(
     def _build_union_master(
         group_metrics: pd.DataFrame, anchor_fname: str, match_radius_arcsec: float
     ) -> tuple[pd.DataFrame, dict]:
-        """Union per-frame detections into one position-deduped master catalog.
-
-        Each frame's detections (after the same per-frame quality cuts as the
-        single-frame build) are matched to the accumulating master by sky
-        position; matches reuse the existing source_id, new sources are added.
-        ``n_det_frames`` records how many frames each source was detected in.
-        """
-        files = [str(f) for f in group_metrics["file"].tolist()]
-        # Anchor first: its detections seed the source_ids and the union x_ref/
-        # y_ref share the anchor's pixel system.
-        ordered = [anchor_fname] + [f for f in files if f != anchor_fname]
-
-        master: Optional[pd.DataFrame] = None
-        det_counts: Counter = Counter()
-        last_stats: dict = {}
-        n_used = 0
-        for fname in ordered:
-            if _stop_requested():
-                break
-            try:
-                cat, stats = _build_master_catalog(fname)
-            except RuntimeError as e:
-                _log(f"[REF][UNION] skip {fname}: {e}")
-                continue
-            last_stats = stats
-            n_used += 1
-            master, merged = _merge_ref_catalogs(master, cat, match_radius_arcsec)
-            sids = coerce_int64_source_id(merged.get("source_id")).dropna()
-            if len(sids):
-                det_counts.update(int(s) for s in sids.to_numpy(dtype=np.int64))
-
-        if master is None or master.empty:
-            _log("[REF][UNION] union produced no sources; falling back to anchor frame.")
-            return _build_master_catalog(anchor_fname)
-
-        master = master.copy().reset_index(drop=True)
-        sid_int = coerce_int64_source_id(master["source_id"])
-        master["n_det_frames"] = [
-            int(det_counts.get(int(s), 0)) if pd.notna(s) else 0 for s in sid_int
-        ]
-
-        if ref_union_min_frames > 1:
-            before = len(master)
-            master = master[master["n_det_frames"] >= ref_union_min_frames].copy()
-            _log(
-                f"[REF][UNION] min_frames>={ref_union_min_frames}: "
-                f"{before}->{len(master)} sources"
-            )
-
-        # Express x_ref/y_ref in a single (anchor) pixel system so neighbor /
-        # crowding geometry is consistent across stars added from different frames.
-        anchor_wcs = _load_wcs_for_frame(anchor_fname)
-        if anchor_wcs is not None and {"ra_deg", "dec_deg"} <= set(master.columns):
-            try:
-                xr, yr = anchor_wcs.all_world2pix(
-                    master["ra_deg"].to_numpy(float),
-                    master["dec_deg"].to_numpy(float),
-                    0,
-                )
-                master["x_ref"] = xr
-                master["y_ref"] = yr
-            except Exception as e:
-                _log(f"[REF][UNION] anchor reprojection failed: {e}")
-
-        # Dense, position-ordered IDs (matches the single-frame build contract).
-        sort_cols = [c for c in ("y_ref", "x_ref") if c in master.columns]
-        if sort_cols:
-            master = master.sort_values(sort_cols).reset_index(drop=True)
-        master["source_id"] = np.arange(1, len(master) + 1, dtype=int)
-        master["ID"] = master["source_id"]
-
-        stats = dict(last_stats)
-        stats["n_master_union"] = int(len(master))
-        stats["n_union_frames"] = int(n_used)
-        _log(
-            f"[REF][UNION] {n_used} frames -> {len(master)} master sources "
-            f"(anchor={anchor_fname}, match_r={match_radius_arcsec:.2f}\")"
+        return build_union_master(
+            group_metrics, anchor_fname, match_radius_arcsec,
+            build_master_catalog=_build_master_catalog,
+            load_wcs_for_frame=_load_wcs_for_frame,
+            min_frames=ref_union_min_frames,
+            should_stop=_stop_requested,
+            log=_log,
         )
-        return master, stats
 
     # ── Orchestration (verbatim relocation of RefBuildWorker._run_impl) ──────────
 
@@ -1392,22 +1440,30 @@ def run_refbuild(
         master_df, ref_catalog_stats = _build_master_for_group(metrics, ref_fname, match_r)
         master_df = _attach_gaia_photometry(master_df, gaia_df)
 
-    # Apply hybrid source_id assignment if mode is "hybrid"
-    if ref_build_mode == "hybrid":
-        master_df, sid_map, id_map = _apply_hybrid_source_ids(master_df, gaia_mag_limit)
-        # Also apply to date catalogs if ref_per_date (map to master IDs for consistency)
-        if ref_per_date and sid_map:
-            for date_key in ref_catalogs_by_date:
-                df_date = ref_catalogs_by_date[date_key].copy()
-                old_sid = coerce_int64_source_id(df_date["source_id"]) if "source_id" in df_date.columns else None
-                if old_sid is not None:
-                    mapped_sid = old_sid.map(sid_map).astype("Int64")
-                    mapped_id = old_sid.map(id_map).astype("Int64")
-                    # Fallback to original IDs if mapping missing
-                    df_date["source_id"] = mapped_sid.where(mapped_sid.notna(), old_sid).astype("Int64")
-                    fallback_id = coerce_int64_source_id(df_date["ID"]) if "ID" in df_date.columns else old_sid
-                    df_date["ID"] = mapped_id.where(mapped_id.notna(), fallback_id).astype("Int64")
-                ref_catalogs_by_date[date_key] = df_date
+    # Give every source its Gaia DR3 identifier where it has one. Sources with
+    # no Gaia match get a negative id, so a positive source_id is a Gaia id and
+    # nothing else — the merge across observing runs relies on that
+    # (apex/analysis/merge/id_match.py).
+    #
+    # This used to be one of two `ref_build_mode` values. The other, "local",
+    # left the per-workspace counter in place; it changed no merging, only the
+    # number printed, and it was reachable only by hand-editing the JSON. The
+    # two settings measured identical on 2026-09-06 —
+    # validation/master_identity/RESULTS.md — so there is one path now.
+    master_df, sid_map, id_map = _assign_gaia_source_ids(master_df, gaia_mag_limit)
+    # Carry the same numbers into the per-date catalogues.
+    if ref_per_date and sid_map:
+        for date_key in ref_catalogs_by_date:
+            df_date = ref_catalogs_by_date[date_key].copy()
+            old_sid = coerce_int64_source_id(df_date["source_id"]) if "source_id" in df_date.columns else None
+            if old_sid is not None:
+                mapped_sid = old_sid.map(sid_map).astype("Int64")
+                mapped_id = old_sid.map(id_map).astype("Int64")
+                # Fallback to original IDs if mapping missing
+                df_date["source_id"] = mapped_sid.where(mapped_sid.notna(), old_sid).astype("Int64")
+                fallback_id = coerce_int64_source_id(df_date["ID"]) if "ID" in df_date.columns else old_sid
+                df_date["ID"] = mapped_id.where(mapped_id.notna(), fallback_id).astype("Int64")
+            ref_catalogs_by_date[date_key] = df_date
 
     if "phot_g_mean_mag" in master_df.columns:
         try:

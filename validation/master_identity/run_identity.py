@@ -12,8 +12,10 @@
 **왜 이소크론이 아니라 여기인가.** 이소크론 적합은 어느 등시선 모형을 쓰느냐에
 답이 딸려 온다. 여기는 그런 선택이 없다 — 별이 거기 있거나 없다.
 
-**모드.** ref_build_mode="local" 로 돈다. hybrid 는 Gaia 목록과 맞춰 번호를 주므로
-프레임 사이 병합이 아니라 Gaia 매칭을 재게 된다.
+**번호.** Gaia 목록을 비운 채 돌린다. 그러면 Step 6 이 모든 별에 음수 번호를
+주므로, 재는 것이 Gaia 매칭이 아니라 프레임 사이 병합 그 자체가 된다.
+(2026-09-06 까지는 `ref_build_mode="local"` 로 같은 일을 했다. 그 설정은
+두 값이 붙이는 번호만 다르고 병합은 같아서 없앴다 — RESULTS.md 참조.)
 
 실행:
     .venv-deploy/Scripts/python.exe -X utf8 validation/master_identity/run_identity.py
@@ -189,7 +191,7 @@ def _kwargs(params, names):
         wcs_max_sep_med_arcsec=1.5, wcs_max_sep_p90_arcsec=2.5,
         wcs_max_dup_rate=0.5,
         ref_per_date=True, ref_master_union=True, ref_union_min_frames=1,
-        ref_build_mode="local", gaia_mag_limit=18.0,
+        gaia_mag_limit=18.0,
     )
 
 
