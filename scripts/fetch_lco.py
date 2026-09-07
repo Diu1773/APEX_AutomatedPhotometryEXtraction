@@ -40,8 +40,19 @@ def _get(url: str) -> dict:
 
 def query(target: str | None, level: int, limit: int, instrument: str | None,
           filt: str | None, config_type: str | None = None,
-          start: str | None = None, end: str | None = None) -> list[dict]:
-    """Walk the paginated frame list, newest first, up to `limit` rows."""
+          start: str | None = None, end: str | None = None,
+          dayobs: str | None = None) -> list[dict]:
+    """Walk the paginated frame list, newest first, up to `limit` rows.
+
+    **한 밤을 고르려면 `start`/`end` 가 아니라 `dayobs` 를 쓴다.** 관측소가
+    UTC 와 시차가 크면(하와이는 UT-10) 한 밤의 프레임이 이튿날 UTC 에 찍히므로
+    날짜 구간으로는 그 밤이 통째로 빠지거나 이웃 밤이 섞인다. 실제로 2026-09-07
+    에 창을 넓혔더니 결과가 320 장에서 111 장으로 **줄었다**. `dayobs` 는
+    아카이브가 한 밤에 하나로 붙여 주는 값이라 그런 일이 없다.
+
+    응답의 `count` 는 믿지 않는다 — 위 시험에서 실제 줄 수와 맞지 않았다.
+    페이지를 `next` 가 없을 때까지 따라가고 받은 줄을 센다.
+    """
     params = {"public": "true", "reduction_level": str(level),
               "limit": "100"}  # 익명 사용자는 한 쪽에 100 이 상한이다
     if target:
@@ -56,6 +67,8 @@ def query(target: str | None, level: int, limit: int, instrument: str | None,
         params["start"] = start
     if end:
         params["end"] = end
+    if dayobs:
+        params["dayobs"] = dayobs
     url = API + "?" + urllib.parse.urlencode(params)
     rows: list[dict] = []
     while url and len(rows) < limit:
@@ -121,6 +134,7 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--instrument", help="기기 코드 (예: sq30)")
     ap.add_argument("--filter", dest="filt", help="필터 (예: rp, V)")
     ap.add_argument("--limit", type=int, default=200, help="최대 프레임 수")
+    ap.add_argument("--dayobs", help="관측 밤 (예: 2021-03-17). 날짜 구간보다 정확하다")
     ap.add_argument("--list", action="store_true", help="받지 않고 목록만 본다")
     ap.add_argument("--out", type=Path, help="저장 폴더 (받을 때 필요)")
     a = ap.parse_args(argv)
@@ -128,7 +142,7 @@ def main(argv: list[str] | None = None) -> int:
     if not a.target and not a.config_type:
         ap.error("--target 이나 --config-type 중 하나는 있어야 한다")
     rows = query(a.target, a.level, a.limit, a.instrument, a.filt,
-                 a.config_type, a.start, a.end)
+                 a.config_type, a.start, a.end, a.dayobs)
     if a.list or not a.out:
         show(rows)
         if not a.list:

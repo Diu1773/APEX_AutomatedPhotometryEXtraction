@@ -34,11 +34,11 @@ APEX 의 g·r·i 와 겹친다. **같은 성단 · 같은 필터 · 다른 기�
 
 **크기.** 한 장 3.4 MB 로 재서 확인했다.
 
-    과학 gp·rp·ip (네 밤 전부)   228 장   0.78 GB
+    과학 gp·rp·ip · 03-17       180 장   0.61 GB   (한 장 3.4 MB)
     BIAS  03-17 · 세 카메라      192 장   0.65 GB
     DARK  03-17 · 세 카메라       60 장   0.20 GB
     SKYFLAT 03-18 · 세 카메라     36 장   0.12 GB
-    BANZAI 03-17 · 세 밴드       180 장   (level 91 은 더 크다)
+    BANZAI 03-17 · 세 밴드       180 장   1.75 GB   (한 장 9.7 MB)
 
 인증이 필요 없고 표준 라이브러리만 쓴다. 이미 받은 파일은 건너뛰므로 끊겨도 다시
 돌리면 이어진다.
@@ -58,25 +58,16 @@ sys.path.insert(0, str(Path(__file__).absolute().parent))
 
 from fetch_lco import download, query  # noqa: E402
 
-# 과학 프레임은 네 밤을 다 받아 둔다(작다). 실제로 쓸 밤은 03-17 이다.
-SCIENCE_WINDOW = ("2021-03-01", "2021-04-01")
+# 쓰는 밤은 03-17 하나다. 밤은 반드시 `dayobs` 로 고른다 — 날짜 구간으로 고르면
+# 하와이의 UT-10 시차 때문에 그 밤이 통째로 빠진다(fetch_lco.query 의 설명 참조).
 SCIENCE_NIGHT = "2021-03-17"
 
 # 보정: bias·dark 는 같은 밤, skyflat 은 그 밤에 없어 다음 날 아침 것을 쓴다.
-CALIB_PLAN = (
-    ("BIAS", "2021-03-17", "2021-03-18"),
-    ("DARK", "2021-03-17", "2021-03-18"),
-    ("SKYFLAT", "2021-03-18", "2021-03-19"),
-)
 CALIB_NIGHT = {"BIAS": "2021-03-17", "DARK": "2021-03-17", "SKYFLAT": "2021-03-18"}
 
 # MuSCAT3 은 카메라마다 밴드가 고정이다. APEX 의 g·r·i 와 겹치는 셋이 앞의 셋.
 CAMERAS = (("ep04", "gp"), ("ep02", "rp"), ("ep03", "ip"), ("ep05", "zs"))
 DEFAULT_BANDS = ("gp", "rp", "ip")
-
-
-def _night_of(row: dict) -> str:
-    return str(row.get("observation_day") or "")
 
 
 def _run(label: str, out: Path, rows: list) -> tuple[int, int]:
@@ -112,11 +103,9 @@ def main(argv: list[str] | None = None) -> int:
     t0 = time.perf_counter()
 
     if "science" in parts:
-        print(f"== M67 원본 (level 0, {SCIENCE_WINDOW[0]} ~ {SCIENCE_WINDOW[1]}) ==",
-              flush=True)
+        print(f"== M67 원본 (level 0, {SCIENCE_NIGHT} 밤) ==", flush=True)
         for cam, band in cams:
-            rows = query("M67", 0, 300, cam, None,
-                         start=SCIENCE_WINDOW[0], end=SCIENCE_WINDOW[1])
+            rows = query("M67", 0, 300, cam, None, dayobs=SCIENCE_NIGHT)
             n, b = _run(f"{cam} {band}", out / "science" / band, rows)
             total_n += n
             total_b += b
@@ -124,13 +113,10 @@ def main(argv: list[str] | None = None) -> int:
     if "calib" in parts:
         print(f"\n== 보정 프레임 (bias·dark {CALIB_NIGHT['BIAS']} · "
               f"skyflat {CALIB_NIGHT['SKYFLAT']}) ==", flush=True)
-        for ctype, start, end in CALIB_PLAN:
-            night = CALIB_NIGHT[ctype]
+        for ctype, night in CALIB_NIGHT.items():
             for cam, band in cams:
-                rows = query(None, 0, 500, cam, None, config_type=ctype,
-                             start=start, end=end)
-                # 질의 창이 하루를 넘겨 잡히므로 밤으로 한 번 더 거른다.
-                rows = [r for r in rows if _night_of(r) == night]
+                rows = query(None, 0, 800, cam, None, config_type=ctype,
+                             dayobs=night)
                 n, b = _run(f"{ctype} {cam} {band}",
                             out / "calib" / ctype.lower() / band, rows)
                 total_n += n
@@ -139,9 +125,7 @@ def main(argv: list[str] | None = None) -> int:
     if "banzai" in parts:
         print(f"\n== BANZAI 처리본 (level 91, {SCIENCE_NIGHT} 밤) ==", flush=True)
         for cam, band in cams:
-            rows = query("M67", 91, 300, cam, None,
-                         start=SCIENCE_WINDOW[0], end=SCIENCE_WINDOW[1])
-            rows = [r for r in rows if _night_of(r) == SCIENCE_NIGHT]
+            rows = query("M67", 91, 300, cam, None, dayobs=SCIENCE_NIGHT)
             n, b = _run(f"{cam} {band}", out / "banzai" / band, rows)
             total_n += n
             total_b += b
