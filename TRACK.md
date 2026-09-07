@@ -16,24 +16,34 @@
 ```
 
 - **통과 기준:** 1,444 passed, 0 failed, 0 skipped  (2026-09-06)
-- **경고 하나 (F-288).** `test_forced_photometry_headless.py` 의
-  `test_step7_records_the_aperture_it_used_whichever_path_it_took` 는 **그 순간
-  남은 RAM 에 따라 실패한다.** 남은 메모리가 적으면 일꾼이 1 로 깎여 프로세스
-  갈래가 안 갈라지고, 시험은 「증명한 게 없다」며 실패한다. 이 노트북이 2.26 GB
-  남았을 때 실패했고 여유가 생기자 통과했다. **같은 코드에서 두 번 재현했다** —
-  14:30 실행 `1 failed, 1425 passed`(남은 메모리 2.26 GB) · 16:00 실행
-  `1 failed, 1443 passed`(954 MB) · 그 사이 15:00 실행 `1436 passed, 0 failed`.
-  **오라클을 돌리기 전에 다른 무거운 것을 닫을 것.**
+- **깨끗한 상태에서 돌릴 것 (F-288).** 이 오라클은 **다른 무거운 것이 도는
+  중에 재면 값이 안 맞는다.** `test_forced_photometry_headless.py` 의
+  `test_step7_records_the_aperture_it_used_whichever_path_it_took` 가 남은 RAM 이
+  적으면 실패한다 — 일꾼이 1 로 깎여 프로세스 갈래가 안 갈라지고, 시험이 자기
+  전제를 assert 로 세워 두었기 때문이다.
 
-  **무엇이 메모리를 가져가는지 실측했다 (2026-09-06 15:45).** 가장 큰 것은 이
-  프로젝트가 아니라 `kmtnet-warehouse-sync` 작업(3 시간마다)이 부르는
-  `git gc --prune=now` 였다 — `gefs-collector-c` 의 `.git` 이 **커밋 하나에
-  4.4 GB** 라서 `git pack-objects` 가 커밋 메모리 **4.9 GB** 를 잡는다. 여기에
-  전체 스위트(3.5 GB)와 Claude Code 48 프로세스(2.9 GB)가 겹치면 15.7 GB 가
-  모자란다. 오라클은 **0·3·6·9·12·15·18·21 시를 피해서** 돌릴 것.
+  **이것은 APEX 의 결함이 아니다.** `get_parallel_workers` 는 남은 RAM 에 맞춰
+  일꾼을 줄이도록 만들어져 있다(`constants.py`: *"the difference between a policy
+  and a promise on a 16 GB laptop"*). 실제 실행은 느려질 뿐 결과가 나온다.
+  깨지는 것은 시험 하나뿐이고, 그것도 환경 탓이다.
 
-  고치려면 실패가 아니라 건너뜀이어야 하고, 그러면 위의 「0 skipped」도 같이
-  바꿔야 한다 — 사용자 판단 대기.
+  **문턱은 남은 메모리 672 MB 다.** 손으로 계산하지 말고 이렇게 잰다.
+
+  ```bash
+  .venv-deploy/Scripts/python.exe -X utf8 -c "from apex.utils.constants import available_ram_mb, workers_for_memory; m=available_ram_mb(); print(m, workers_for_memory(262144, m))"
+  ```
+
+  둘째 값이 2 이상이면 오라클을 돌려도 된다. 672 MB 라는 문턱은 프레임 크기가
+  아니라 **고정 몫에서 나온다** — `WORKER_MEM_BASE_MB`(400) 를
+  `RAM_BUDGET_FRACTION`(0.6) 으로 나눈 667 MB 에 일꾼 둘의 5 MB 가 붙는다.
+  실패했을 때 남은 메모리가 **671 MB** 였으니 1 MB 가 모자랐다.
+
+  **막아 두는 것.** 3 시간마다(0·3·6·9·12·15·18·21 시) 도는
+  `kmtnet-warehouse-sync` 가 `gefs-collector-c` 의 4.4 GB `.git` 을 다시 묶으며
+  `git pack-objects` 로 커밋 메모리 4.9 GB 를 잡는다. 그 창을 피한다. 병렬로 켜 둔
+  Claude Code 세션들도 크다(2026-09-07 09:22 에 45 프로세스 10 GB).
+  **정리 전에 잰 값은 결과로 쓰지 않는다** (`Main/OPERATOR.md` C-192).
+
 - **산수가 맞는지 같이 본다:** 1,312 → +20(선별 14 · 파이프라인 6) = 1,332
   → +10(2 차 색항) = 1,342 → +13(창 선택 8 · 후보 표 5) = 1,355
   → +1(식쌍성 P/2) = 1,356 → +2(필터 규칙 공유) = 1,358
