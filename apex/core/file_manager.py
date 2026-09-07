@@ -20,6 +20,7 @@ from apex.utils.astro_utils import (
     compute_airmass_from_header,
     normalize_filter_name,
 )
+from apex.utils.io_utils import is_fits_filename
 from apex.utils.step_paths import step1_dir
 
 log = get_logger("aperture_phot.core.file_manager")
@@ -93,7 +94,7 @@ class FileManager:
             file_items: List[tuple[str, Path]] = []
             collected: List[tuple[str, Path, Path]] = []
             prefix_lower = str(prefix).lower()
-            suffixes = (".fit", ".fits", ".fit.fz", ".fits.fz")
+            # 확장자 판정은 io_utils.is_fits_filename 하나로 모았다.
             for subdir in selected_dirs:
                 if not subdir.exists():
                     continue
@@ -102,7 +103,7 @@ class FileManager:
                     lower = name.lower()
                     if prefix_lower and not lower.startswith(prefix_lower):
                         continue
-                    if not lower.endswith(suffixes):
+                    if not is_fits_filename(name):
                         continue
                     try:
                         rel = fpath.relative_to(root_dir)
@@ -129,7 +130,7 @@ class FileManager:
             # Find all FITS files matching prefix (case-insensitive)
             self.filenames = sorted([
                 f for f in os.listdir(data_dir)
-                if f.lower().startswith(prefix.lower()) and f.lower().endswith((".fit", ".fits", ".fit.fz", ".fits.fz"))
+                if f.lower().startswith(prefix.lower()) and is_fits_filename(f)
             ])
             self.path_map = {fn: data_dir / fn for fn in self.filenames}
 

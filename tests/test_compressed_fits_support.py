@@ -15,6 +15,8 @@ Both were found by actually running APEX on LCO MuSCAT3 data
 
 from __future__ import annotations
 
+from pathlib import Path
+
 import numpy as np
 import pytest
 from astropy.io import fits
@@ -140,3 +142,58 @@ def test_the_scanner_reads_a_compressed_bias_too(tmp_path):
     info = read_frame_info(str(p))
     assert info is not None
     assert info.ftype == "bias"
+
+
+# --- discovery: a frame you cannot read is bad, one you never list is worse ---
+#
+# 읽기(F-302)를 고친 뒤에도 Step 0 은 아카이브 자료로 「빛 프레임이 없다」를 냈다.
+# 폴더를 훑는 쪽이 `os.path.splitext("x.fits.fz")[1]` == ".fz" 로 걸러서 파일을
+# 하나도 못 세었기 때문이다. Step 1 은 자기 목록을 따로 갖고 있어서 찾았다 —
+# 규칙이 두 군데에 따로 있었고 한쪽만 압축본을 알았다 (F-303).
+
+@pytest.mark.parametrize("name", [
+    "a.fits", "a.fit", "a.fts", "a.FITS", "a.FIT",
+    "ogg2m001-ep04-20210317-0059-e00.fits.fz", "b.fit.fz", "c.fts.fz",
+])
+def test_every_fits_spelling_is_recognised(name):
+    from apex.utils.io_utils import is_fits_filename
+    assert is_fits_filename(name), name
+
+
+@pytest.mark.parametrize("name", ["x.txt", "y.fz", "z.csv", "w.fits.gz", "nope"])
+def test_non_fits_names_are_not(name):
+    from apex.utils.io_utils import is_fits_filename
+    assert not is_fits_filename(name), name
+
+
+def test_the_folder_scan_finds_a_compressed_frame(tmp_path):
+    """Step 0 이 폴더를 훑을 때 압축본을 세는가 — 고치기 전에는 0 장이었다."""
+    from apex.analysis.calibration_scan import find_fits
+
+    _write_compressed(tmp_path / "ogg2m001-ep04-20210317-0043-e00.fits.fz")
+    (tmp_path / "sub").mkdir()
+    _write_compressed(tmp_path / "sub" / "ogg2m001-ep04-20210317-0001-b00.fits.fz",
+                      obstype="BIAS", exptime=0.0, filt="gp")
+    (tmp_path / "notes.txt").write_text("not a frame", encoding="utf-8")
+
+    found = find_fits(str(tmp_path))
+    assert len(found) == 2, found
+
+
+def test_step1_and_step0_agree_on_what_a_frame_is(tmp_path):
+    """두 단계가 같은 판정을 쓰는지. 따로 두었다가 갈라졌던 자리다."""
+    from apex.utils.io_utils import is_fits_filename
+    from apex.analysis.calibration_scan import find_fits
+
+    names = ["ogg2m001-ep04-20210317-0043-e00.fits.fz", "plain.fits", "no.txt"]
+    for n in names:
+        if n.endswith(".txt"):
+            (tmp_path / n).write_text("x", encoding="utf-8")
+        elif n.endswith(".fz"):
+            _write_compressed(tmp_path / n)
+        else:
+            fits.PrimaryHDU(np.zeros((4, 4), dtype=np.float32)).writeto(tmp_path / n)
+
+    by_scan = {Path(p).name for p in find_fits(str(tmp_path))}
+    by_rule = {n for n in names if is_fits_filename(n)}
+    assert by_scan == by_rule, (by_scan, by_rule)

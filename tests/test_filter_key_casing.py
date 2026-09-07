@@ -54,3 +54,41 @@ def test_get_filter_from_fits_returns_canonical_filter_case(tmp_path):
     fits.PrimaryHDU(header=fits.Header({"FILTER": "v"})).writeto(path)
 
     assert get_filter_from_fits(path) == "V"
+
+
+# --- LCO·MuSCAT 계열의 프라임 표기 -------------------------------------------
+#
+# 이 관측소들은 g' 를 `gp` 로 적는다. 별칭표에 `g'` 와 `gprime` 은 있었지만 이
+# 철자가 없어서, MuSCAT3 자료를 넣으면 필터가 `gp` 로 그대로 흘러 SDSS 로
+# 인식되지 않았다 (2026-09-07, 목표 둘 착수 중 발견).
+
+import pytest
+
+from apex.utils.common_helpers import (
+    normalize_filter_key,
+    photometric_system_label,
+)
+
+
+@pytest.mark.parametrize("raw,want", [
+    ("gp", "g"), ("rp", "r"), ("ip", "i"), ("up", "u"), ("zp", "z"),
+    ("GP", "g"), ("Rp", "r"),
+])
+def test_prime_p_spelling_maps_to_sdss(raw, want):
+    assert normalize_filter_key(raw) == want
+
+
+def test_z_short_is_not_folded_into_z():
+    """z-short 는 z' 와 다른 대역이다. 같은 키로 묶으면 없는 등가를 주장한다."""
+    assert normalize_filter_key("zs") == "zs"
+
+
+def test_muscat3_bands_are_recognised_as_sdss():
+    keys = [normalize_filter_key(f) for f in ("gp", "rp", "ip")]
+    assert keys == ["g", "r", "i"]
+    assert photometric_system_label(*keys) == "SDSS"
+
+
+def test_the_existing_spellings_still_work():
+    for raw in ("g'", "gprime", "SDSS-G", "sdss_g"):
+        assert normalize_filter_key(raw) == "g", raw

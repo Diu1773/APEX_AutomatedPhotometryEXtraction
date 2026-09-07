@@ -195,6 +195,21 @@ def parse_int64_scalar(value):
 ID_LIKE_COLUMNS = ("source_id", "gaia_source_id", "gaia_id", "star_id")
 
 
+def is_fits_filename(name) -> bool:
+    """이 이름이 FITS 파일인가 — 압축본(.fits.fz)도 참이다.
+
+    확장자 판정이 두 군데에 따로 있었고 한쪽만 `.fz` 를 알았다. Step 1 은
+    압축본을 찾는데 Step 0 은 못 찾아서, 아카이브 자료로 보정을 돌리면
+    「빛 프레임이 없다」로 건너뛰었다. 규칙은 여기 하나만 둔다.
+    """
+    from apex.utils.constants import FITS_COMPRESSED_SUFFIX, FITS_EXTENSIONS
+
+    low = str(name).lower()
+    if low.endswith(FITS_COMPRESSED_SUFFIX):
+        low = low[: -len(FITS_COMPRESSED_SUFFIX)]
+    return any(low.endswith(ext.lower()) for ext in FITS_EXTENSIONS)
+
+
 def normalize_id_columns(df: pd.DataFrame, columns=ID_LIKE_COLUMNS) -> pd.DataFrame:
     """Cast identifier columns back to nullable Int64, in place.
 

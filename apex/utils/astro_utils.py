@@ -35,6 +35,11 @@ _FILTER_ALIAS_MAP: dict[str, str] = {
     "sdss-i": "i", "sdss_i": "i", "i'": "i", "iprime": "i",
     "sdss-z": "z", "sdss_z": "z", "z'": "z", "zprime": "z",
     "sdss-u": "u", "sdss_u": "u", "u'": "u", "uprime": "u",
+    # LCO·MuSCAT 계열은 프라임을 `p` 로 적는다 (gp = g'). 이 철자가 없어서
+    # MuSCAT3 자료가 필터 `gp` 로 그대로 흘러 SDSS 로 인식되지 않았다.
+    # `zs` 는 여기 없다 — z-short 는 z' 와 다른 대역이라 같은 키로 묶으면
+    # 없는 등가를 주장하게 된다.
+    "gp": "g", "rp": "r", "ip": "i", "up": "u", "zp": "z",
     # ── Johnson-Cousins — explicit variants ─────────────────────────────────
     "rc":  "R", "r_c": "R", "r_cousins": "R", "rc_j": "R", "rj": "R", "r_j": "R",
     "ic":  "I", "i_c": "I", "i_cousins": "I", "ic_j": "I", "ij": "I", "i_j": "I",

@@ -262,8 +262,16 @@ ASTROMETRY = AstrometryConstants()
 # File Patterns
 # =============================================================================
 
-# FITS file extensions
+# FITS file extensions.
+#
+# **압축본(.fz)까지 세어야 한다.** 공개 아카이브는 프레임을 `.fits.fz` 로 준다.
+# `os.path.splitext("x.fits.fz")[1]` 은 `.fz` 라서 아래 목록으로 거르면 하나도
+# 안 걸린다 — 그래서 파일 이름은 `apex.utils.io_utils.is_fits_filename()` 으로
+# 판정하고, 이 목록은 「압축 아닌 확장자」로만 쓴다.
 FITS_EXTENSIONS = ('.fits', '.fit', '.fts', '.FITS', '.FIT', '.FTS')
+
+#: 압축 FITS 의 꼬리. 위 확장자에 붙는다.
+FITS_COMPRESSED_SUFFIX = '.fz'
 
 # Common FITS header keys for filter
 FILTER_HEADER_KEYS = ('FILTER', 'FILT', 'FILTNAM', 'FILTER1')

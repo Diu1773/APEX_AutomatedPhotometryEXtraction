@@ -25,7 +25,7 @@ from typing import Callable, Dict, List, Optional, Tuple
 from astropy.io import fits
 
 from apex.utils.common_helpers import normalize_filter_key
-from apex.utils.io_utils import read_fits_header
+from apex.utils.io_utils import is_fits_filename, read_fits_header
 from apex.utils.constants import (
     FITS_EXTENSIONS, FILTER_HEADER_KEYS, EXPTIME_HEADER_KEYS,
 )
@@ -274,7 +274,7 @@ def find_fits(root: str) -> List[str]:
     out: List[str] = []
     for dirpath, _dirs, files in os.walk(root):
         for f in files:
-            if os.path.splitext(f)[1] in FITS_EXTENSIONS:
+            if is_fits_filename(f):
                 out.append(os.path.join(dirpath, f))
     return sorted(out)
 
