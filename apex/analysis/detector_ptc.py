@@ -174,7 +174,7 @@ def _default_box(shape: tuple[int, ...], radius: int = _DEFAULT_BOX_RADIUS):
     return (cy - r, cy + r, cx - r, cx + r)
 
 
-def read_box(path, radius: int = _DEFAULT_BOX_RADIUS, hdu_index: int = 0) -> np.ndarray:
+def read_box(path, radius: int = _DEFAULT_BOX_RADIUS, hdu_index: int | None = None) -> np.ndarray:
     """Read only a centred square from a FITS image.
 
     Uses ``HDU.section``, which pulls just the requested slice off disk instead
@@ -189,8 +189,13 @@ def read_box(path, radius: int = _DEFAULT_BOX_RADIUS, hdu_index: int = 0) -> np.
     """
     from astropy.io import fits  # local import keeps the module import light
 
+    from apex.utils.io_utils import science_hdu_index
+
     with fits.open(path, memmap=True, do_not_scale_image_data=True) as hdul:
-        hdu = hdul[hdu_index]
+        # 압축(.fz) 파일은 HDU 0 이 비어 있다. 아카이브 자료를 그대로 재려면
+        # 이미지가 있는 확장을 골라야 한다 (Main/FAILURES.md F-302).
+        idx = science_hdu_index(hdul) if hdu_index is None else int(hdu_index)
+        hdu = hdul[idx]
         bzero = float(hdu.header.get("BZERO", 0.0) or 0.0)
         bscale = float(hdu.header.get("BSCALE", 1.0) or 1.0)
         h, w = hdu.shape[:2]
@@ -491,25 +496,34 @@ class FrameInfo:
 
 def scan_calibration_frames(paths: Iterable[str]) -> list[FrameInfo]:
     """Read headers only — cheap enough to run over a whole calibration folder."""
-    from astropy.io import fits
+    from apex.utils.io_utils import read_fits_header
 
     out: list[FrameInfo] = []
     for p in paths:
         try:
-            header = fits.getheader(str(p))
+            header = read_fits_header(str(p))
         except Exception:  # noqa: BLE001 — an unreadable frame is simply skipped
             continue
-        try:
-            egain = float(header.get("EGAIN"))
-        except (TypeError, ValueError):
-            egain = None
+        # EGAIN 은 이 사용자의 Moravian 이 쓰는 이름이고, 아카이브 자료는 GAIN 을
+        # 쓴다. 둘 다 「헤더가 주장하는 값」이며 PTC 는 그것과 무관하게 잰다.
+        egain = None
+        for key in ("EGAIN", "GAIN"):
+            try:
+                val = float(header.get(key))
+            except (TypeError, ValueError):
+                continue
+            if val > 0:
+                egain = val
+                break
         try:
             binning = int(header.get("XBINNING", 1) or 1)
         except (TypeError, ValueError):
             binning = 1
         out.append(FrameInfo(
             path=str(p),
-            image_type=str(header.get("IMAGETYP", "")).strip(),
+            # IMAGETYP 은 카메라 소프트웨어가, OBSTYPE 은 아카이브가 쓴다.
+            image_type=str(header.get("IMAGETYP")
+                           or header.get("OBSTYPE") or "").strip(),
             filter_name=str(header.get("FILTER", "")).strip(),
             exptime=float(header.get("EXPTIME", header.get("EXPOSURE", 0)) or 0),
             binning=binning,
