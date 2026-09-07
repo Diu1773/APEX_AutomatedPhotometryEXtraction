@@ -26,7 +26,8 @@ from PyQt5.QtWidgets import (
     QCheckBox, QComboBox, QDialogButtonBox, QDoubleSpinBox, QFileDialog,
     QFormLayout, QGroupBox, QHBoxLayout, QInputDialog, QLabel, QLineEdit,
     QMenu, QMessageBox, QProgressBar, QPushButton, QScrollArea, QSpinBox,
-    QTreeWidget, QTreeWidgetItem, QVBoxLayout, QWidget,
+    QTableWidget, QTableWidgetItem, QTreeWidget, QTreeWidgetItem, QVBoxLayout,
+    QWidget,
 )
 
 from apex.analysis import calibration_scan as scan
@@ -37,6 +38,11 @@ from apex.config.calibration_section import calibration_toml_sections
 from apex.gui.layout_rules import FittedDialog
 from apex.gui.theme import ICON, Tokens, style_button
 from apex.gui.tools.tool_window_base import ToolWindowBase
+from apex.utils.astro_utils import (
+    filter_aliases_in_effect,
+    normalize_filter_name,
+    register_filter_aliases,
+)
 from apex.utils.param_file import update_param_file
 from apex.utils.step_paths import step0_calibration_dir
 
@@ -189,6 +195,33 @@ class DetectorCalibrationWindow(ToolWindowBase):
         self.tree.setToolTip("Right-click a row to correct its frame type, "
                              "filter or night when the FITS header is wrong.")
         v.addWidget(self.tree, 1)
+
+        # 필터 이름 — 관측소마다 FILTER 헤더를 자기 방식으로 적는다. 스캔이
+        # 찾아낸 값을 그대로 보여 주고 그 자리에서 고치게 한다. 설정 파일을
+        # 직접 열게 하는 것은 자료를 앞에 둔 사람에게 할 일이 아니다.
+        self.filter_box = QGroupBox("Filter names in these headers")
+        fb = QVBoxLayout(self.filter_box)
+        fb.setContentsMargins(Tokens.S3, Tokens.S3, Tokens.S3, Tokens.S3)
+        fb.setSpacing(Tokens.GAP)
+        hint = QLabel(
+            "Left is what the FITS header says, right is the key APEX uses. "
+            "Edit the right column when this observatory spells a filter its "
+            "own way. Johnson is upper case (B V R I), SDSS lower (g r i z).")
+        hint.setWordWrap(True)
+        fb.addWidget(hint)
+        self.filter_table = QTableWidget(0, 3)
+        self.filter_table.setHorizontalHeaderLabels(
+            ["FILTER header", "Frames", "APEX key"])
+        self.filter_table.verticalHeader().setVisible(False)
+        self.filter_table.setEditTriggers(
+            QTableWidget.DoubleClicked | QTableWidget.SelectedClicked)
+        self.filter_table.horizontalHeader().setStretchLastSection(True)
+        self.filter_table.setColumnWidth(0, 200)
+        self.filter_table.setColumnWidth(1, 70)
+        self.filter_table.itemChanged.connect(self._on_filter_edited)
+        fb.addWidget(self.filter_table)
+        self.filter_box.setVisible(False)
+        v.addWidget(self.filter_box)
 
         # process-night row (all tunables live in the Parameters dialog)
         proc_row = QHBoxLayout()
@@ -447,7 +480,99 @@ class DetectorCalibrationWindow(ToolWindowBase):
         self._refresh_scan_label()
         self.log(f"Scanned {len(frames)} new frames ({len(self._frames)} total)")
         self._populate_nights()
+        self._rebuild_filter_table()
         self._rebuild_tree()
+
+    # -- filter-name mapping ------------------------------------------------
+
+    def _rebuild_filter_table(self):
+        """스캔이 찾은 FILTER 값을 그대로 보여 준다 (많은 것부터)."""
+        counts: dict[str, int] = {}
+        for f in self._frames:
+            # FrameInfo.filt 은 헤더에 적힌 값 그대로다(정규화는 뒤 단계의 일).
+            raw = str(f.filt or "").strip()
+            if raw:
+                counts[raw] = counts.get(raw, 0) + 1
+        rows = sorted(counts.items(), key=lambda kv: (-kv[1], kv[0].lower()))
+
+        self.filter_table.blockSignals(True)
+        self.filter_table.setSortingEnabled(False)
+        try:
+            self.filter_table.setRowCount(len(rows))
+            for i, (raw, n) in enumerate(rows):
+                left = QTableWidgetItem(raw)
+                left.setFlags(left.flags() & ~Qt.ItemIsEditable)
+                count = QTableWidgetItem(str(n))
+                count.setFlags(count.flags() & ~Qt.ItemIsEditable)
+                count.setTextAlignment(Qt.AlignRight | Qt.AlignVCenter)
+                key = QTableWidgetItem(normalize_filter_name(raw))
+                key.setData(Qt.UserRole, raw)
+                self.filter_table.setItem(i, 0, left)
+                self.filter_table.setItem(i, 1, count)
+                self.filter_table.setItem(i, 2, key)
+        finally:
+            self.filter_table.blockSignals(False)
+        # 줄 수에 맞춰 키우되 여섯 줄에서 멈춘다 — 필터가 많은 자료에서 이 표가
+        # 창을 다 먹으면 안 된다. 행 높이는 defaultSectionSize 로 잡는다.
+        # sizeHintForRow 는 배치 전에 부르면 작은 값을 돌려줘서 표가 잘린다.
+        vh = self.filter_table.verticalHeader()
+        row_h = vh.defaultSectionSize() or 24
+        wanted = (self.filter_table.horizontalHeader().sizeHint().height()
+                  + row_h * min(max(len(rows), 1), 6)
+                  + 2 * self.filter_table.frameWidth())
+        self.filter_table.setMinimumHeight(wanted)
+        self.filter_table.setMaximumHeight(wanted)
+        self.filter_box.setVisible(bool(rows))
+
+    def _on_filter_edited(self, item):
+        if item is None or item.column() != 2:
+            return
+        raw = str(item.data(Qt.UserRole) or "").strip()
+        new_key = str(item.text()).strip()
+        if not raw:
+            return
+        if not new_key:
+            # 빈 칸으로 지우면 그 별칭을 없애고 기본 판정으로 되돌린다.
+            aliases = {k: v for k, v in self._filter_aliases().items()
+                       if k.lower() != raw.lower()}
+        else:
+            aliases = dict(self._filter_aliases())
+            aliases[raw] = new_key
+        self._persist_filter_aliases(aliases)
+        self.filter_table.blockSignals(True)
+        item.setText(normalize_filter_name(raw))
+        self.filter_table.blockSignals(False)
+        self.log(f"Filter '{raw}' now reads as '{normalize_filter_name(raw)}'")
+        self._rebuild_tree()
+
+    def _filter_aliases(self) -> dict:
+        P = getattr(self.params, "P", None)
+        return dict(getattr(P, "filter_aliases", None) or {})
+
+    def _persist_filter_aliases(self, aliases: dict) -> None:
+        # 지운 별칭은 「빠진 키」가 아니라 None 으로 보내야 파일에서도 없어진다.
+        # 새 표만 쓰면 파일에는 옛 줄이 그대로 남아, 다음에 열 때 되살아난다.
+        previous = self._filter_aliases()
+        payload = dict(aliases)
+        for key in previous:
+            if key not in payload:
+                payload[key] = None
+
+        register_filter_aliases(aliases)
+        P = getattr(self.params, "P", None)
+        if P is not None:
+            try:
+                P.filter_aliases = dict(aliases)
+            except Exception:
+                pass
+        saved = update_param_file(
+            getattr(self.params, "param_file", None),
+            {("filters", "aliases"): payload},
+            params=self.params,
+        )
+        if not saved:
+            self.log("Filter names updated (this session only — "
+                     "no writable parameter file).")
 
     def _refresh_scan_label(self):
         by_type = {t: sum(1 for f in self._frames if f.ftype == t)
