@@ -61,19 +61,60 @@ _FILTER_ALIAS_MAP: dict[str, str] = {
 }
 
 
+#: 사용자가 설정에서 준 별칭. 위의 기본표보다 **먼저** 본다.
+#:
+#: 관측소마다 필터를 자기 방식으로 적는다. 위 표는 흔한 철자를 모아 둔 것일 뿐
+#: 세상의 모든 이름을 담을 수 없고, 담으려 드는 것 자체가 틀린 설계다. 그래서
+#: 설정의 `[filters].aliases` 로 얼마든지 더할 수 있게 해 두었다.
+#: 기본표를 **덮어쓸 수도 있다** — 어떤 관측소가 `V` 를 다른 뜻으로 쓴다면
+#: 우리가 아니라 그쪽이 옳다.
+_USER_FILTER_ALIASES: dict[str, str] = {}
+
+
+def register_filter_aliases(mapping, replace: bool = True) -> dict[str, str]:
+    """설정에서 읽은 필터 별칭을 등록한다. 키는 대소문자를 안 가린다.
+
+    설정을 불러올 때 한 번 부른다(`apex/config/parameters_*.py`). 값이 빈
+    문자열이면 그 항목은 무시한다 — 설정에서 지우다 만 줄이 필터 이름을
+    빈칸으로 만들면 안 된다.
+    """
+    global _USER_FILTER_ALIASES
+    clean: dict[str, str] = {}
+    for key, value in dict(mapping or {}).items():
+        k, v = str(key).strip().lower(), str(value).strip()
+        if k and v:
+            clean[k] = v
+    if replace:
+        _USER_FILTER_ALIASES = clean
+    else:
+        _USER_FILTER_ALIASES.update(clean)
+    return dict(_USER_FILTER_ALIASES)
+
+
+def filter_aliases_in_effect() -> dict[str, str]:
+    """지금 쓰이는 별칭 전부 — 기본표 위에 사용자 것을 얹은 결과."""
+    out = dict(_FILTER_ALIAS_MAP)
+    out.update(_USER_FILTER_ALIASES)
+    return out
+
+
 def normalize_filter_name(value: str | None) -> str:
     """Map a raw FITS FILTER header value to the canonical APEX filter key.
 
-    Tries the alias table first (case-insensitive).  If no alias is found the
-    value is returned as-is (case preserved), so unknown filters like "Ha" or
-    custom names pass through unchanged.
+    Looks in the user's aliases first (config ``[filters].aliases``), then the
+    built-in table, both case-insensitively.  If no alias is found the value is
+    returned as-is (case preserved), so unknown filters like "Ha" or custom
+    names pass through unchanged.
     """
     if value is None:
         return ""
     v = str(value).strip()
     if not v:
         return ""
-    alias = _FILTER_ALIAS_MAP.get(v.lower())
+    key = v.lower()
+    alias = _USER_FILTER_ALIASES.get(key)
+    if alias is None:
+        alias = _FILTER_ALIAS_MAP.get(key)
     return alias if alias is not None else v
 
 

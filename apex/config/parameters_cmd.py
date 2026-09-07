@@ -10,6 +10,8 @@ import hashlib
 import types
 
 from apex.config.calibration_section import read_calibration_section
+from apex.config.filters_section import read_filters_section
+from apex.utils.astro_utils import register_filter_aliases
 from apex.config.parameter_map import (
     build_settings,
     CANONICAL_SCHEMA_VERSION,
@@ -153,6 +155,12 @@ def _read_toml(path: Path) -> Dict[str, Any]:
     if calibration:
         raw["_calibration"] = calibration
 
+    # [filters].aliases — 관측소마다 필터 이름이 다르므로 코드에 박지 않고
+    # 설정에서 받는다. 등록은 여기서 한 번, 판정은 normalize_filter_name 이 한다.
+    filter_aliases = read_filters_section(data)
+    raw["_filter_aliases"] = filter_aliases
+    register_filter_aliases(filter_aliases)
+
     extra = _get_path(data, ("parameters",)) or {}
     if isinstance(extra, dict):
         for key, value in extra.items():
@@ -239,6 +247,9 @@ class Parameters:
 
             # Detector calibration (Step 0); CalibrationOptions owns the defaults
             calibration=dict(raw.get("_calibration") or {}),
+            # 필터 별칭 (설정 [filters].aliases). 읽는 시점에 이미
+            # register_filter_aliases 로 등록돼 있고, 이 사본은 기록·표시용이다.
+            filter_aliases=dict(raw.get("_filter_aliases") or {}),
 
             # 5X HUD viewer parameters
             _hud5={
