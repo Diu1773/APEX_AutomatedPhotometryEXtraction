@@ -26,7 +26,7 @@ from scipy.ndimage import gaussian_filter, median_filter
 from scipy.spatial import cKDTree as KDTree
 
 from apex.utils.constants import get_parallel_workers
-from apex.utils.io_utils import frame_bytes_from_header
+from apex.utils.io_utils import frame_bytes_from_header, read_fits_image
 from apex.utils.fast_stats import finite_nanmedian, finite_nanstd, robust_median_mad
 from apex.utils.step_paths import (
     step2_cropped_dir,
@@ -313,9 +313,8 @@ def run_detection(file_list, params, data_dir, cache_dir, use_cropped=False,
                 # Load FITS. float32, not float64: halves per-frame RAM (244 MB
                 # vs 488 MB for a 61 MP frame) and the SEP path downcasts to
                 # float32 anyway, so this also drops the float64 intermediate.
-                with fits.open(file_path) as hdul:
-                    data = hdul[0].data.astype(np.float32)
-                    header = hdul[0].header
+                # HDU 0 고정 금지: 압축(.fz) 파일은 거기가 비어 있다.
+                data, header = read_fits_image(file_path, dtype=np.float32)
 
                 # Get filter - preserve original case from header
                 filt = header.get('FILTER', '').strip()

@@ -38,7 +38,7 @@ from apex.utils.step_paths import (
 )
 from apex.utils.common_helpers import normalize_filter_key, safe_float as _safe_float
 from apex.utils.gaia_columns import carry_through_columns
-from apex.utils.io_utils import coerce_int64_source_id
+from apex.utils.io_utils import coerce_int64_source_id, read_fits_header
 from apex.utils.cache_utils import (
     norm_path_key,
     build_file_signature,
@@ -610,7 +610,7 @@ def run_refbuild(
                 if path_key in _wcs_header_cache:
                     hdr = _wcs_header_cache[path_key]
                 else:
-                    hdr = fits.getheader(path)
+                    hdr = read_fits_header(path)
                     _wcs_header_cache[path_key] = hdr
                 w = WCS(hdr, relax=True)
                 if w.has_celestial:

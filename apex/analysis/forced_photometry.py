@@ -37,7 +37,7 @@ from apex.utils.step_paths import (
     crop_is_active,
 )
 from apex.utils.qc_utils import filter_files_by_qc  # noqa: F401
-from apex.utils.io_utils import frame_bytes_from_header
+from apex.utils.io_utils import frame_bytes_from_header, read_fits_header
 from apex.utils.photometry_utils import (
     phot_vectorized,
     refine_local_centroid,
@@ -625,7 +625,7 @@ def run_forced_photometry(
         if hdr is not None:
             return hdr
         try:
-            hdr = fits.getheader(path)
+            hdr = read_fits_header(path)
         except Exception:
             return None
         with _wcs_cache_lock:
@@ -650,7 +650,7 @@ def run_forced_photometry(
                 with _wcs_cache_lock:
                     hdr = _wcs_header_cache.get(key)
                 if hdr is None:
-                    hdr = fits.getheader(path)
+                    hdr = read_fits_header(path)
                     with _wcs_cache_lock:
                         _wcs_header_cache[key] = hdr
                 w = WCS(hdr, relax=True)
@@ -1493,7 +1493,7 @@ def run_forced_photometry(
         fits_path = _resolve_fits_path(fname)
         if fits_path is not None and fits_path.exists():
             try:
-                hdr = fits.getheader(fits_path)
+                hdr = read_fits_header(fits_path)
                 for key in ("FILTER", "FILTER1", "FILTER2", "FILTNAM", "FILTERID"):
                     filt = _normalize_filter_value(hdr.get(key))
                     if filt:

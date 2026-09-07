@@ -39,6 +39,60 @@ def frame_bytes_from_header(path, dtype_bytes: int = 4) -> Optional[int]:
     return None
 
 
+def science_hdu_index(hdul) -> int:
+    """Index of the HDU that carries the image and its keywords.
+
+    A ``.fits.fz`` file — how public archives serve frames — keeps an **empty**
+    ``PrimaryHDU`` at index 0 and the image in a ``CompImageHDU`` at index 1.
+    A multi-extension file does the same. Reading index 0 there returns a
+    header with no ``OBSTYPE``, ``EXPTIME``, ``FILTER``, ``DATE-OBS`` or
+    ``GAIN`` at all, so every keyword lookup silently returns the default.
+    Measured on LCO MuSCAT3 frames, 2026-09-07 (``Main/FAILURES.md`` F-302).
+
+    The choice is made from ``NAXIS`` alone, so no pixel data is read.
+    """
+    for i, hdu in enumerate(hdul):
+        try:
+            if int(hdu.header.get("NAXIS") or 0) > 0:
+                return i
+        except (TypeError, ValueError):
+            continue
+    return 0
+
+
+def read_fits_header(path, ext=None):
+    """Header of the image-bearing HDU. Use instead of ``fits.getheader(path)``.
+
+    ``fits.getheader`` defaults to HDU 0, which is empty in a compressed file.
+    Pass ``ext`` to force a particular index.
+    """
+    from astropy.io import fits
+
+    with fits.open(path, memmap=False) as hdul:
+        i = science_hdu_index(hdul) if ext is None else int(ext)
+        return hdul[i].header.copy()
+
+
+def read_fits_image(path, dtype=None, ext=None):
+    """``(data, header)`` of the image-bearing HDU.
+
+    Use instead of ``hdul[0].data`` / ``hdul[0].header`` so a compressed or
+    multi-extension frame reads the same as a plain one.
+    """
+    from astropy.io import fits
+
+    with fits.open(path, memmap=False) as hdul:
+        i = science_hdu_index(hdul) if ext is None else int(ext)
+        data = hdul[i].data
+        if data is None:
+            raise ValueError(f"no image data in {path}")
+        if dtype is not None:
+            data = data.astype(dtype, copy=False)
+        else:
+            data = data.copy()
+        return data, hdul[i].header.copy()
+
+
 def load_toml(path: Union[str, Path]) -> dict:
     """Parse a TOML file, tolerating a UTF-8 BOM.
 

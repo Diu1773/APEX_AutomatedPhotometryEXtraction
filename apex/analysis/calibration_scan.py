@@ -25,6 +25,7 @@ from typing import Callable, Dict, List, Optional, Tuple
 from astropy.io import fits
 
 from apex.utils.common_helpers import normalize_filter_key
+from apex.utils.io_utils import read_fits_header
 from apex.utils.constants import (
     FITS_EXTENSIONS, FILTER_HEADER_KEYS, EXPTIME_HEADER_KEYS,
 )
@@ -64,7 +65,11 @@ def classify_type(imagetyp: Optional[str], filename: str) -> Optional[str]:
         return "dark"
     if "FLAT" in t:
         return "flat"
-    if "LIGHT" in t or "SCIENCE" in t or "OBJECT" in t:
+    # EXPOSE 는 LCO 아카이브가 과학 프레임에 쓰는 값이다. 이것이 없어서
+    # MuSCAT3 자료로 Step 0 을 돌리면 「빛 프레임이 없다」로 건너뛰었다
+    # (Main/FAILURES.md F-302). SCI 는 여러 파이프라인이 쓰는 줄임말이다.
+    if ("LIGHT" in t or "SCIENCE" in t or "OBJECT" in t
+            or "EXPOSE" in t or t == "SCI" or "TARGET" in t):
         return "light"
     name = os.path.basename(str(filename)).lower()
     for key in ("bias", "dark", "flat", "light"):
@@ -243,7 +248,9 @@ def read_frame_info(path: str,
     site longitude — see :func:`resolve_night`.
     """
     try:
-        header = fits.getheader(path)
+        # 압축(.fz)·다중확장 파일은 HDU 0 이 비어 있다. 거기서 읽으면
+        # OBSTYPE 도 EXPTIME 도 없어서 모든 판정이 조용히 기본값이 된다.
+        header = read_fits_header(path)
     except Exception:
         return None
     # An unreadable IMAGETYP yields TYPE_UNKNOWN rather than dropping the frame:
