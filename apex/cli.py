@@ -298,10 +298,22 @@ def _cmd_run(args: argparse.Namespace) -> int:
     Step 0 (detector calibration) is an off-chain pre-stage: ``get_steps`` never
     returns it, so ``--steps 0`` used to be parsed and then silently dropped and
     the run started at Step 1 on uncalibrated frames. Two external-instrument
-    runs worked around that with a hand-written ``run_step0.py`` beside the
-    job folder; the second time is when a workaround stops being one. It is
-    prepended here when the spec asks for it (or when no spec is given and the
-    config turns calibration on), so `raw -> CMD` really is one command.
+    runs worked around that with a hand-written ``run_step0.py`` beside the job
+    folder; the second time is when a workaround stops being one.
+
+    **This does not yet make `raw -> CMD` a single command.** Step 0 writes its
+    calibrated frames to ``step0_calibration/calibrated/<night>/`` and Step 1
+    still reads ``[io].data_dir``, which is the *raw* tree — nothing hands the
+    one to the other. So a calibrated run is two invocations::
+
+        apex run --mode cmd --steps 0
+        apex run --mode cmd --steps 1-7,10 \\
+            --data-dir <result_dir>/step0_calibration/calibrated/<night>
+
+    Passing ``--steps 0,1-7`` in one go now runs Step 0 and then Step 1 against
+    the raw frames again, which is not what the spec looks like it means.
+    Closing that gap means deciding whether Step 1 should prefer Step 0's output
+    when it exists, and that changes what every existing workspace does.
     """
     try:
         from apex.pipeline import (RunContext, PipelineRunner, get_steps,
