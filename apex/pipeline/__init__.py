@@ -12,7 +12,8 @@ workers. Pure, Qt-free helpers that happen to live under ``apex.gui`` (e.g.
 from apex.pipeline.base import PipelineStep, StepResult, StepStatus, DeferredStep
 from apex.pipeline.context import RunContext
 from apex.pipeline.runner import PipelineRunner, RunReport
-from apex.pipeline.registry import get_steps, parse_step_range
+from apex.pipeline.registry import (get_calibration_step, get_steps,
+                                    parse_step_range)
 
 __all__ = [
     "PipelineStep",
@@ -23,5 +24,6 @@ __all__ = [
     "PipelineRunner",
     "RunReport",
     "get_steps",
+    "get_calibration_step",
     "parse_step_range",
 ]

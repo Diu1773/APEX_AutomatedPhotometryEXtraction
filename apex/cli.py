@@ -293,9 +293,19 @@ def _setup_pipeline_logger():
 
 
 def _cmd_run(args: argparse.Namespace) -> int:
-    """Run the headless pipeline: shared Steps 1-7, plus CMD 8 and 10."""
+    """Run the headless pipeline: optional Step 0, shared 1-7, plus CMD 8 and 10.
+
+    Step 0 (detector calibration) is an off-chain pre-stage: ``get_steps`` never
+    returns it, so ``--steps 0`` used to be parsed and then silently dropped and
+    the run started at Step 1 on uncalibrated frames. Two external-instrument
+    runs worked around that with a hand-written ``run_step0.py`` beside the
+    job folder; the second time is when a workaround stops being one. It is
+    prepended here when the spec asks for it (or when no spec is given and the
+    config turns calibration on), so `raw -> CMD` really is one command.
+    """
     try:
-        from apex.pipeline import RunContext, PipelineRunner, get_steps, parse_step_range
+        from apex.pipeline import (RunContext, PipelineRunner, get_steps,
+                                   get_calibration_step, parse_step_range)
     except Exception as exc:  # noqa: BLE001
         print(f"{_FAIL} Could not load the pipeline: {exc}")
         return 1
@@ -317,7 +327,15 @@ def _cmd_run(args: argparse.Namespace) -> int:
         return 1
 
     only = parse_step_range(args.steps) if args.steps else None
-    runner = PipelineRunner(get_steps(args.mode))
+    steps = list(get_steps(args.mode))
+    # Step 0 is off-chain, so `get_steps` never returns it and `--steps 0` was
+    # parsed and then dropped without a word. Prepend it only when the spec
+    # names it: `CalibrationStep.run` does not consult `[calibration].enabled`,
+    # so adding it to the default plan would start calibrating workspaces that
+    # have bias frames lying around and calibration deliberately switched off.
+    if only is not None and 0 in only:
+        steps.insert(0, get_calibration_step())
+    runner = PipelineRunner(steps)
     report = runner.run(ctx, only=only)
 
     print("\nPipeline summary:")

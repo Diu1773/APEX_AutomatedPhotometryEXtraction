@@ -203,7 +203,13 @@ class PipelineRunner:
                      label, result.status, result.duration_s, result.message)
             emit(result, used)
 
-            if result.status == StepStatus.OK and ctx.project_state is not None:
+            # `step.index - 1` is the GUI's 0-based slot for the numbered chain
+            # (Step 1 -> 0). Detector calibration is off-chain with index 0, so
+            # the same arithmetic would append -1 to `completed_steps` — no
+            # crash, but a slot the windows cannot read, written into the
+            # workspace's saved progress. Off-chain steps keep their own state.
+            if (result.status == StepStatus.OK and ctx.project_state is not None
+                    and step.index >= 1):
                 try:
                     ctx.project_state.mark_step_completed(step.index - 1)
                 except Exception:  # noqa: BLE001 - state bookkeeping must not break the run

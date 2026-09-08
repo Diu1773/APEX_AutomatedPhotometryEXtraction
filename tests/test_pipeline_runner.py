@@ -157,6 +157,27 @@ def test_project_state_marked_on_ok(tmp_path):
     assert marked == [0]  # 1-based step index -> 0-based ProjectState
 
 
+def test_off_chain_step_zero_is_not_marked_in_project_state(tmp_path):
+    """Detector calibration has index 0, and `index - 1` would write -1.
+
+    That is not a crash — `mark_step_completed` just appends whatever it is
+    given — so it would have shipped as a silently corrupted progress list
+    that no window can map back to a step. The guard is `index >= 1`.
+    """
+    marked = []
+
+    class _PS:
+        def mark_step_completed(self, idx):
+            marked.append(idx)
+
+    zero = _Stub(0, key="calibration", outs=[tmp_path / "cal.json"])
+    one = _Stub(1, outs=[tmp_path / "o1.txt"])
+    PipelineRunner([zero, one]).run(_ctx(tmp_path, project_state=_PS()))
+
+    assert zero.ran and one.ran, "both steps must have run for this to prove anything"
+    assert marked == [0], f"-1 must never be recorded; got {marked}"
+
+
 # ── registry wiring ──────────────────────────────────────────────────────────
 
 def test_registry_shared_steps_shape():
