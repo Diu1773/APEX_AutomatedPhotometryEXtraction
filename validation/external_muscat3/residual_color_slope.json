@@ -1,0 +1,97 @@
+{
+  "n_common": 236,
+  "slopes": [
+    {
+      "band": "g",
+      "instrument": "MuSCAT3",
+      "n": 203,
+      "total": 0.13290624151118058,
+      "fit_residual": 0.04352636484781779,
+      "reference": 0.08937987666336279
+    },
+    {
+      "band": "g",
+      "instrument": "Moravian",
+      "n": 230,
+      "total": 0.038724851679394975,
+      "fit_residual": -0.05601748913052472,
+      "reference": 0.09474234080991967
+    },
+    {
+      "band": "r",
+      "instrument": "MuSCAT3",
+      "n": 206,
+      "total": -0.16009045786767545,
+      "fit_residual": -0.18264639137321684,
+      "reference": 0.022555933505541404
+    },
+    {
+      "band": "r",
+      "instrument": "Moravian",
+      "n": 233,
+      "total": 0.06364541156579363,
+      "fit_residual": 0.02790897009862676,
+      "reference": 0.035736441467166855
+    },
+    {
+      "band": "i",
+      "instrument": "MuSCAT3",
+      "n": 218,
+      "total": 0.026038344132551815,
+      "fit_residual": -0.01340586752456084,
+      "reference": 0.03944421165711268
+    },
+    {
+      "band": "i",
+      "instrument": "Moravian",
+      "n": 220,
+      "total": 0.038791319473917694,
+      "fit_residual": -0.0009198518528741787,
+      "reference": 0.03971117132679191
+    }
+  ],
+  "axes": [
+    {
+      "band": "g",
+      "instrument": "MuSCAT3",
+      "axis": "color_g_r",
+      "slope_own_axis": 0.06397021389859425,
+      "slope_ps1_axis": 0.04352636484781779
+    },
+    {
+      "band": "g",
+      "instrument": "Moravian",
+      "axis": "color_g_r",
+      "slope_own_axis": -0.08256159772340319,
+      "slope_ps1_axis": -0.05601748913052472
+    },
+    {
+      "band": "r",
+      "instrument": "MuSCAT3",
+      "axis": "color_g_r",
+      "slope_own_axis": -0.25962593250212357,
+      "slope_ps1_axis": -0.1765903136483206
+    },
+    {
+      "band": "r",
+      "instrument": "Moravian",
+      "axis": "color_g_r",
+      "slope_own_axis": 0.03978310414714082,
+      "slope_ps1_axis": 0.029499562613333495
+    },
+    {
+      "band": "i",
+      "instrument": "MuSCAT3",
+      "axis": "color_r_i",
+      "slope_own_axis": -0.041326025182332096,
+      "slope_ps1_axis": -0.01340586752456084
+    },
+    {
+      "band": "i",
+      "instrument": "Moravian",
+      "axis": "color_r_i",
+      "slope_own_axis": -0.0014839355424773263,
+      "slope_ps1_axis": -0.0009198518528741787
+    }
+  ]
+}
