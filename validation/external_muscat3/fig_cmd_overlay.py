@@ -7,14 +7,13 @@ APEX 를 지나면 같은 자리에 오는가. 왼쪽은 영점을 붙이기 전
 **같은 별만 그린다.** 두 워크스페이스에서 `gaia_source_id` 로 이어진 별만 쓴다.
 서로 다른 별을 그려 놓고 「겹친다」고 하면 그림이 거짓말을 한다.
 
-**기기 등급은 되돌려 계산한다.** MuSCAT3 쪽 원본 표가 갤럭시북에 있고 그 기계가
-꺼져 있어서, APEX 의 영점 모형을 거꾸로 풀었다.
+**기기 등급은 APEX 가 낸 표에서 그대로 읽는다** (`median_by_ID_filter_wide_raw.csv`).
 
-    mag_inst = mag_cal − zp − ct·(색) − ct2·(색)²
-
-이 식이 맞는지 Moravian 에서 확인했다 — 원본 표가 있는 쪽이라 대조가 된다.
-되돌린 값이 실제 기기 등급과 **1 ~ 6 밀리등급** 안에서 맞는다(프레임마다의 영점
-흔들림이 평균되며 남는 몫). 그리는 값이 0.01 등급 단위이므로 무해하다.
+처음 그릴 때는 MuSCAT3 쪽 원본 표가 갤럭시북에 있고 그 기계가 꺼져 있어서 영점
+모형을 거꾸로 풀어 되돌렸다(`mag_inst = mag_cal − zp − ct·색 − ct2·색²`).
+2026-09-08 에 원본 표를 가져와 **되돌린 값을 실제 값으로 바꿨다.** 되돌린 값은
+실제와 1~6 밀리등급 안에서 맞았지만, 되돌리는 식에 그때의 `ct2` 가 들어가 있어서
+**그림이 영점 계수의 선택에 딸려 움직이는 것이 문제였다.** 이제 안 그렇다.
 
 실행:
     python -X utf8 validation/external_muscat3/fig_cmd_overlay.py
@@ -35,6 +34,7 @@ import matplotlib
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt  # noqa: E402
 
+from apex.utils.io_utils import read_csv_int64_source_id  # noqa: E402
 from compare_magnitudes import join, load_workspace  # noqa: E402
 
 M3 = HERE / "results"
@@ -46,29 +46,23 @@ STYLE = {
 }
 
 
-def instrumental(cal: pd.DataFrame, coeff_path: Path) -> pd.DataFrame:
-    """보정된 등급에서 기기 등급을 되돌린다 (APEX 영점 모형의 역)."""
-    co = pd.read_csv(coeff_path).set_index("filter")
-    out = cal.copy()
-    for b in ("g", "r", "i"):
-        if b not in co.index or f"mag_cal_{b}" not in cal.columns:
-            continue
-        c = co.loc[b]
-        if str(c.get("color_col")) == "r_i":
-            x = cal["mag_cal_r"] - cal["mag_cal_i"]
-        else:
-            x = cal["mag_cal_g"] - cal["mag_cal_r"]
-        ct2 = float(c.get("ct2") or 0.0)
-        out[f"mag_inst_{b}"] = (cal[f"mag_cal_{b}"] - float(c["zp"])
-                                - float(c["ct"]) * x - ct2 * x ** 2)
+def instrumental(cal: pd.DataFrame, result_dir: Path, label: str) -> pd.DataFrame:
+    """APEX 가 낸 기기 등급 표를 `ID` 로 붙인다."""
+    p = result_dir / "cmd_zeropoint" / "median_by_ID_filter_wide_raw.csv"
+    if not p.exists():
+        raise SystemExit(f"{label}: 기기 등급 표가 없다 — {p}")
+    raw = read_csv_int64_source_id(p)
+    cols = ["ID"] + [f"mag_inst_{b}" for b in ("g", "r", "i")
+                     if f"mag_inst_{b}" in raw.columns]
+    out = cal.merge(raw[cols], on="ID", how="left")
+    n = int(out["mag_inst_i"].notna().sum()) if "mag_inst_i" in out else 0
+    print(f"[{label}] 기기 등급이 붙은 별 {n} / {len(out)}")
     return out
 
 
 def main() -> int:
-    m3 = instrumental(load_workspace(M3, "MuSCAT3"),
-                      M3 / "cmd_zeropoint" / "zp_fit_coefficients.csv")
-    mv = instrumental(load_workspace(MOR, "Moravian"),
-                      MOR / "cmd_zeropoint" / "zp_fit_coefficients.csv")
+    m3 = instrumental(load_workspace(M3, "MuSCAT3"), M3, "MuSCAT3")
+    mv = instrumental(load_workspace(MOR, "Moravian"), MOR, "Moravian")
     j = join(m3, mv)
     num = lambda c: pd.to_numeric(j[c], errors="coerce").to_numpy(float)
 
@@ -136,8 +130,9 @@ def main() -> int:
              "     ·     둘 다 APEX 로 원본부터 처리",
              ha="center", fontsize=8.4, color="#444444")
     fig.text(0.5, 0.013,
-             "별은 gaia_source_id 로 이었다     ·     기기 등급은 영점 모형의 역으로"
-             " 되돌린 값 (원본 표가 있는 Moravian 에서 1~6 밀리등급 안에서 확인)",
+             "별은 gaia_source_id 로 이었다     ·     양쪽 값 모두 APEX 산출물에서"
+             " 그대로 읽었다 (기기 등급 median_by_ID_filter_wide_raw.csv,"
+             " 표준 등급 median_by_ID_filter_wide.csv)",
              ha="center", fontsize=8.4, color="#666666")
     fig.tight_layout(rect=(0, 0.065, 1, 0.955))
 
