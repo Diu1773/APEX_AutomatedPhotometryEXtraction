@@ -266,7 +266,7 @@ Step 0 으로 보정하고, 같은 프레임의 BANZAI 산출(level 91)과 화�
 전(03-14) 것을 썼다.** 서로 다른 밤의 플랫으로도 0.19 % 안에서 맞았다.
 자세한 것은 `validation/external_muscat3/STEP0_VS_BANZAI.md`.
 
-**설정은 헤더에서 만들었다** (`scripts/make_muscat3_config.py`). 오버스캔은
+**설정은 헤더에서 만들었다** (`scripts/make_lco_config.py`). 오버스캔은
 `BIASSEC` 를 파싱해 오른쪽 32 열로 스스로 정했고, 실제로 2080 → 2048 로 잘렸다.
 
 **가는 길에 결함 셋을 고쳤다.**

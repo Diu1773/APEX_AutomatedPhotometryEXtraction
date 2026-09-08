@@ -1,8 +1,13 @@
-"""MuSCAT3 워크스페이스의 apex_config.json 을 헤더에서 읽어 만든다.
+"""LCO 아카이브 워크스페이스의 apex_config.json 을 헤더에서 읽어 만든다.
 
 **값을 손으로 적지 않는다.** 기기 상수는 프레임 헤더에 있고, 그것이 정본이다.
 이 스크립트는 과학 프레임 한 장을 열어 필요한 값을 꺼내고, 나머지는
 `parameters.example.json` 의 기본값을 그대로 쓴다.
+
+**밴드 폴더 이름을 박지 않는다.** 처음에는 `gp·rp·ip` 를 박아 두었는데, 그러면
+기기가 바뀔 때마다 이 파일을 고쳐야 한다 — 하드코딩을 고치면서 하드코딩을 늘리는
+일이다(2026-09-08 교정 C-201). `inputs/science/` 밑에 있는 폴더를 그대로 훑는다.
+kb26 은 `B·V·rp·ip·zs`, MuSCAT3 는 `gp·rp·ip` 인데 코드는 같다.
 
 **헤더에서 가져오는 것**
 
@@ -16,7 +21,7 @@
     BIASSEC        오버스캔 자리. 있으면 오버스캔을 켜고 폭을 여기서 정한다.
 
 실행:
-    python -X utf8 scripts/make_muscat3_config.py --job <작업폴더> [--dry-run]
+    python -X utf8 scripts/make_lco_config.py --job <작업폴더> [--dry-run]
 """
 from __future__ import annotations
 
@@ -34,11 +39,21 @@ REPO = Path(__file__).absolute().parents[1]
 
 
 def _first_science_frame(job: Path) -> Path:
-    for band in ("gp", "rp", "ip"):
-        hits = sorted((job / "inputs" / "science" / band).glob("*.fits*"))
-        if hits:
-            return hits[0]
-    raise SystemExit(f"과학 프레임을 못 찾았다: {job / 'inputs' / 'science'}")
+    """`inputs/science/` 밑을 훑어 첫 과학 프레임을 찾는다.
+
+    밴드 폴더 이름을 목록으로 갖고 있지 않다 — 기기마다 다르기 때문이다.
+    폴더가 없이 파일이 바로 놓인 경우도 받는다.
+    """
+    root = job / "inputs" / "science"
+    if not root.is_dir():
+        raise SystemExit(f"과학 프레임 폴더가 없다: {root}")
+    hits = sorted(root.rglob("*.fits*"))
+    if not hits:
+        raise SystemExit(f"과학 프레임을 못 찾았다: {root}")
+    bands = sorted({p.parent.name for p in hits if p.parent != root})
+    if bands:
+        print(f"밴드 폴더: {' · '.join(bands)}")
+    return hits[0]
 
 
 def _parse_biassec(value) -> tuple[str, int] | None:
@@ -121,7 +136,7 @@ def build(job: Path) -> dict:
 
 
 def main(argv: list[str] | None = None) -> int:
-    ap = argparse.ArgumentParser(description="MuSCAT3 워크스페이스 설정을 만든다")
+    ap = argparse.ArgumentParser(description="LCO 워크스페이스 설정을 헤더에서 만든다")
     ap.add_argument("--job", required=True, help="작업 폴더 (inputs/ 를 담고 있는)")
     ap.add_argument("--dry-run", action="store_true", help="쓰지 않고 보여만 준다")
     a = ap.parse_args(argv)
