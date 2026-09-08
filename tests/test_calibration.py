@@ -242,3 +242,41 @@ def test_prebuilt_master_used_directly(tmp_path):
                         np.full((32, 32), 1000.0, np.float32), "Master Flat", filt="V")
     outf2, _ = cal.build_master_flat([pf2], opts)
     assert float(np.median(outf2)) == pytest.approx(1.0, abs=1e-3)
+
+
+def test_master_dark_exposure_is_read_from_a_compressed_frame(tmp_path):
+    """An ``.fits.fz`` keeps its header in HDU 1; ``fits.getheader`` reads HDU 0.
+
+    ``build_master_dark`` used ``fits.getheader``, so every compressed dark
+    reported EXPTIME = 1.0 — the ``_header_exptime`` default — and the master
+    was tagged a one-second rate while holding a full-length exposure. The
+    caller then scaled it by ``light_exp / 1.0``.
+
+    Nothing raised. On LCO kb26 (300 s darks, 40 s lights) the dark and its own
+    read noise were multiplied by 300 instead of 0.134, which put 367 ADU of
+    pure noise into every science frame: the sky came out ~35x noisier and the
+    median calibrator SNR read 22 where the same stars measure ~400.
+
+    Every other test in this file writes a plain ``PrimaryHDU``, which is why
+    the whole suite stayed green.
+    """
+    rng = np.random.default_rng(11)
+    dark_exp_true = 300.0
+    paths = []
+    for i in range(3):
+        data = (_true_dark_rate() * dark_exp_true
+                + rng.normal(0.0, 3.0, size=(SIZE, SIZE)))
+        p = tmp_path / f"dark_{i}.fits.fz"
+        hdr = fits.Header()
+        hdr["EXPTIME"] = dark_exp_true
+        hdr["OBSTYPE"] = "DARK"
+        fits.HDUList([fits.PrimaryHDU(),
+                      fits.CompImageHDU(data.astype(np.float32), hdr)]).writeto(p)
+        paths.append(str(p))
+
+    _master, dark_exp, prov = cal.build_master_dark(paths, CalibrationOptions())
+
+    assert dark_exp == pytest.approx(dark_exp_true), (
+        f"compressed dark read as {dark_exp} s, not {dark_exp_true} s — "
+        "the master would be scaled by 300x at calibration time")
+    assert prov["exptime"] == pytest.approx(dark_exp_true)

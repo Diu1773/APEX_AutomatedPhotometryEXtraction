@@ -35,6 +35,7 @@ from astropy.io import fits
 
 from apex.utils import fast_stats
 from apex.utils.constants import MAD_TO_SIGMA, EXPTIME_HEADER_KEYS
+from apex.utils.io_utils import read_fits_header
 from apex.analysis.overscan import (
     correct_overscan,
     correct_overscan_from_header,
@@ -494,7 +495,15 @@ def build_master_dark(paths: Sequence[PathLike], opts: CalibrationOptions,
             "source": Path(src).name, "exptime": dark_exp,
             "bias_subtracted": True,
             "median": float(fast_stats.finite_nanmedian(data, 0.0))}
-    exps: List[float] = [_header_exptime(fits.getheader(p)) for p in paths]
+    # `read_fits_header`, never `fits.getheader`: the latter reads HDU 0, which
+    # in an fpack-compressed frame holds eight structural keys and no EXPTIME,
+    # so `_header_exptime` fell back to its 1.0 default. The dark was then
+    # scaled by `light_exp / 1.0` instead of `light_exp / dark_exp` — on LCO
+    # kb26 (300 s darks, 40 s lights) that is 300x, and it injected 367 ADU of
+    # the dark's own read noise into every science frame. Nothing failed; the
+    # frames just came out ~35x noisier, which surfaced as a median SNR of 22
+    # where the same stars measure ~400.
+    exps: List[float] = [_header_exptime(read_fits_header(p)) for p in paths]
     if can_stream_combine(opts):
         def _prepare_dark(values, _index, y0, y1):
             # Bias subtraction is elementwise, so the band of the difference
@@ -549,7 +558,7 @@ def build_master_flat(paths: Sequence[PathLike], opts: CalibrationOptions,
                       "dark_subtracted": True,
                       "median": float(fast_stats.finite_nanmedian(data, 0.0))}
     ratios = [
-        (_header_exptime(fits.getheader(p)) / dark_exp)
+        (_header_exptime(read_fits_header(p)) / dark_exp)   # HDU 0 is empty when compressed
         if (opts.dark_scale and dark_exp > 0) else 1.0
         for p in paths
     ]
