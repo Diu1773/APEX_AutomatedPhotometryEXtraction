@@ -195,6 +195,17 @@ def parse_quadratic_color_terms(raw) -> dict[str, float]:
     return out
 
 
+#: Ceiling on the color fixed-point, so a divergent map cannot spin forever.
+#: Each pass is a handful of vector operations over the star table, so the cap
+#: can sit far above what any real instrument needs (kb26, the worst measured,
+#: converges in eight).
+_MAX_COLOR_PASSES = 60
+
+#: Step below which the color is called settled. Well under the 1e-3 the
+#: acceptance test uses, so a star that reaches this is unambiguously in.
+_COLOR_STEP_TOL = 1e-6
+
+
 def solve_standard_colors(
     inst_mags: dict[str, np.ndarray],
     fit_params: dict[str, dict],
@@ -207,8 +218,12 @@ def solve_standard_colors(
     two standard magnitudes). Substituting the model into each color gives a
     small linear system across the filter chain (e.g. B,V use B-V while R uses
     V-R); it is solved by fixed-point iteration, which contracts by a factor
-    ~max|ct| per pass (|ct| <~ 0.15 in practice, so ``iters=6`` converges to
-    <1e-5 mag). No external catalog is used at application time — the only
+    ~|ct_fa - ct_fb| per pass. This used to say "|ct| <~ 0.15 in practice, so
+    ``iters=6`` converges to <1e-5 mag" and ran exactly six passes on that
+    basis; LCO kb26 has a B/V gap of 0.346, where the sixth pass is still
+    moving by more than the acceptance test allows, so ``iters`` is now a floor
+    and the loop runs until the step settles. No external catalog is used at
+    application time — the only
     inputs are the star's own instrumental magnitudes and the already-fitted
     constants, so faint-star catalog systematics cannot leak in, and (unlike
     feeding the raw instrumental color through the color term) the applied
@@ -293,10 +308,28 @@ def solve_standard_colors(
             return base + _coef(f, "ct") * c + _coef(f, "ct2") * c * c
         return base
 
+    # How many passes a color needs is set by its own contraction factor,
+    # |ct_fa - ct_fb|, so it is a property of the instrument and not a constant.
+    # Six was chosen while "|ct| <~ 0.15 in practice" held. LCO kb26 breaks it:
+    # its B and V color terms differ by 0.346, the sixth pass still moves the
+    # color by more than the millimagnitude the acceptance test below allows,
+    # and 457 of the 541 stars that had both magnitudes were thrown away as
+    # non-converged. Eight passes keep all 541. So iterate until the step stops
+    # moving, with `iters` as the floor so a caller still gets what it asked
+    # for, and a hard cap so a genuinely divergent map cannot spin.
     previous = dict(colors)
-    for _ in range(max(1, int(iters))):
+    for n_pass in range(1, _MAX_COLOR_PASSES + 1):
         previous = colors
         colors = {name: _std_mag(fa) - _std_mag(fb) for name, (fa, fb) in pairs.items()}
+        if n_pass < int(iters):
+            continue
+        moved = 0.0
+        for name in colors:
+            step = np.abs(colors[name] - previous[name])
+            if step.size and np.isfinite(step).any():
+                moved = max(moved, float(np.nanmax(step)))
+        if moved <= _COLOR_STEP_TOL:
+            break
 
     # A converged star moves by ~1e-5 mag on the final pass; anything still
     # moving by more than a milli-magnitude is diverging and has no calibration.

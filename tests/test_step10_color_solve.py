@@ -182,3 +182,38 @@ def test_unfitted_band_pair_excluded():
     colors = solve_standard_colors(inst, fit)
     assert "B_V" in colors
     assert "V_R" not in colors
+
+
+def test_slowly_contracting_color_still_converges():
+    """A wide gap between the pair's color terms needs more than six passes.
+
+    The fixed point contracts by ``|ct_a - ct_b|`` per pass, so how many passes
+    a color needs is a property of the instrument. ``iters`` was pinned at 6,
+    chosen while "``|ct|`` <~ 0.15 in practice" held.
+
+    LCO kb26 broke that: its B and V color terms are -0.244 and +0.102, a gap
+    of 0.346, and 0.346**6 = 1.7e-3 leaves the sixth pass still moving by more
+    than the millimagnitude the acceptance test allows. 457 of the 541 stars
+    that had both magnitudes were returned as NaN — not wrong values, no
+    warning, simply 84 stars where 541 had been measured. Eight passes keep
+    all 541.
+
+    The loop now runs until the step settles, so this must recover the truth.
+    """
+    b, v, _ = _make_truth()
+    bv_true = b - v
+    fit = {
+        "B": {"zp": -5.485, "ct": -0.2444, "color_col": "B_V"},
+        "V": {"zp": -4.741, "ct": +0.1018, "color_col": "B_V"},
+    }
+    assert abs(fit["B"]["ct"] - fit["V"]["ct"]) > 0.3, "the gap is the point"
+
+    inst = {f: _inst_from_truth(m, fit[f]["zp"], fit[f]["ct"], bv_true)
+            for f, m in (("B", b), ("V", v))}
+    colors = solve_standard_colors(inst, fit)
+
+    n_ok = int(np.isfinite(colors["B_V"]).sum())
+    assert n_ok == len(bv_true), (
+        f"{len(bv_true) - n_ok} of {len(bv_true)} stars came back NaN; "
+        "the color loop stopped before it settled")
+    assert np.allclose(colors["B_V"], bv_true, atol=1e-5)
