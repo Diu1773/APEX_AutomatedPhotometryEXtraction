@@ -1,0 +1,31 @@
+{
+  "generated": "2026-09-09T04:37:50",
+  "comparisons": [
+    {
+      "pair": "MuSCAT3 - Moravian",
+      "n_joined": 545,
+      "bands": [
+        {
+          "band": "r",
+          "n": 540,
+          "median": 0.031025852108659713,
+          "mad": 0.1758239228005519,
+          "median_bright": -0.0736482864487904,
+          "median_faint": 0.1723892430061884,
+          "mag_split": 14.391131771832715,
+          "colour_slope": NaN
+        },
+        {
+          "band": "i",
+          "n": 540,
+          "median": 0.050246227800093024,
+          "mad": 0.19073601598363712,
+          "median_bright": -0.07615262397880151,
+          "median_faint": 0.18302150053024135,
+          "mag_split": 14.234320919782721,
+          "colour_slope": NaN
+        }
+      ]
+    }
+  ]
+}

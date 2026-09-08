@@ -50,10 +50,12 @@ from apex.analysis.cmd.zeropoint_runner import robust_weighted_polyfit  # noqa: 
 
 ROOTS = ("E:/APEX_validation/reprocess/*/result",
          "E:/observed_Analysis/*/*/result")
-EXTRA = {"MuSCAT3": Path("validation/external_muscat3/results")}
+EXTRA = {"MuSCAT3": Path("validation/external_muscat3/results"),
+         "kb26": Path("validation/external_kb26/results")}
 
 KIND = {"M13": "구상", "M3": "구상", "M5": "구상",
-        "M67": "산개", "NGC6811": "산개", "M37": "산개", "NGC457": "산개"}
+        "M67": "산개", "NGC6811": "산개", "M37": "산개", "NGC457": "산개",
+        "MuSCAT3": "산개", "kb26": "산개"}   # 둘 다 M67 을 다른 기기로 찍은 것
 BAND_COLOUR = {"g": "g_r", "r": "g_r", "i": "r_i",
                "B": "B_V", "V": "B_V", "R": "V_R", "I": "V_R"}
 

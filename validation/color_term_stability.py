@@ -52,10 +52,12 @@ from apex.utils.gaia_quality import gaia_quality_report  # noqa: E402
 
 ROOTS = ("E:/APEX_validation/reprocess/*/result",
          "E:/observed_Analysis/*/*/result")
-EXTRA = {"MuSCAT3": Path("validation/external_muscat3/results")}
+EXTRA = {"MuSCAT3": Path("validation/external_muscat3/results"),
+         "kb26": Path("validation/external_kb26/results")}
 
 KIND = {"M13": "구상", "M3": "구상", "M5": "구상",
-        "M67": "산개", "NGC6811": "산개", "M37": "산개", "NGC457": "산개"}
+        "M67": "산개", "NGC6811": "산개", "M37": "산개", "NGC457": "산개",
+        "MuSCAT3": "산개", "kb26": "산개"}   # 둘 다 M67 을 다른 기기로 찍은 것
 
 #: APEX 가 밴드마다 쓰는 색지수 (`_FILTER_COLOR_PREF` 의 첫 후보).
 BAND_COLOUR = {"g": "g_r", "r": "g_r", "i": "r_i",
@@ -90,12 +92,20 @@ def rows_for(field: str, result_dir: Path) -> list[dict]:
         d = pd.read_csv(cal_p)
     except Exception:  # noqa: BLE001
         return []
-    recorded = {}
+    # **색축은 산출물에서 읽는다.** APEX 는 밴드마다 후보 목록(`FILTER_COLOR_PREF`)
+    # 을 순서대로 보고 자료에 있는 첫 색을 쓴다. 그래서 같은 r 밴드라도 g 가 있으면
+    # g−r, 없으면 r−i 로 맞춘다 — kb26 이 그 경우다. 여기에 표를 박아 두면 그런
+    # 워크스페이스를 조용히 건너뛴다(실제로 한 번 그렇게 건너뛰었다).
+    recorded: dict[str, float] = {}
+    axis: dict[str, str] = {}
     co_p = zp_dir / "zp_fit_coefficients.csv"
     if co_p.exists():
         try:
             co = pd.read_csv(co_p).set_index("filter")
             recorded = {str(k): float(v) for k, v in co["ct"].items()}
+            if "color_col" in co.columns:
+                axis = {str(k): str(v) for k, v in co["color_col"].items()
+                        if isinstance(v, str) or pd.notna(v)}
         except Exception:  # noqa: BLE001
             pass
     try:
@@ -104,11 +114,18 @@ def rows_for(field: str, result_dir: Path) -> list[dict]:
         qual = np.ones(len(d), bool)
 
     out = []
-    for band, colour in BAND_COLOUR.items():
+    for band, fallback in BAND_COLOUR.items():
+        # 산출물이 적어 둔 축이 정본. 없을 때만 표의 첫 후보로 간다.
+        colour = axis.get(band, fallback)
         dc, cc, ec, sc = (f"delta_{band}", f"color_{colour}",
                           f"mag_inst_err_{band}", f"snr_{band}")
-        if dc not in d.columns or cc not in d.columns or ec not in d.columns:
+        if dc not in d.columns or ec not in d.columns:
             continue
+        if cc not in d.columns:      # 적어 둔 축의 열이 표에 없으면 물러선다
+            colour = fallback
+            cc = f"color_{colour}"
+            if cc not in d.columns:
+                continue
         x = pd.to_numeric(d[cc], errors="coerce").to_numpy(float)
         y = pd.to_numeric(d[dc], errors="coerce").to_numpy(float)
         e = pd.to_numeric(d[ec], errors="coerce").to_numpy(float)
