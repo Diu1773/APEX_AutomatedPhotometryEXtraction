@@ -23,6 +23,8 @@ import argparse
 import json
 import os
 import sys
+import time
+import urllib.error
 import urllib.parse
 import urllib.request
 from collections import Counter
@@ -32,10 +34,33 @@ API = "https://archive-api.lco.global/frames/"
 UA = {"User-Agent": "APEX-fetch/1.0 (photometry pipeline validation)"}
 
 
-def _get(url: str) -> dict:
-    req = urllib.request.Request(url, headers=UA)
-    with urllib.request.urlopen(req, timeout=60) as r:
-        return json.loads(r.read().decode("utf-8"))
+#: 아카이브가 느릴 때 몇 번 더 두드릴지. **재시도가 없으면 한 번의 지연으로
+#: 통째로 끝난다** — 2026-09-09 에 갤럭시북에서 첫 질의부터 60 초 타임아웃으로
+#: 죽었고, 같은 시각 다른 기계에서는 얕은 질의가 통했다. 아카이브 쪽 부하이므로
+#: 기다렸다 다시 물으면 대개 된다.
+RETRIES = 5
+BACKOFF = 4.0   # 초. 시도마다 곱절로 늘린다 (4 · 8 · 16 · 32)
+
+
+def _sleep(attempt: int) -> None:
+    time.sleep(BACKOFF * (2 ** attempt))
+
+
+def _get(url: str, timeout: float = 120) -> dict:
+    last: Exception | None = None
+    for attempt in range(RETRIES):
+        try:
+            req = urllib.request.Request(url, headers=UA)
+            with urllib.request.urlopen(req, timeout=timeout) as r:
+                return json.loads(r.read().decode("utf-8"))
+        except (urllib.error.URLError, TimeoutError, OSError,
+                json.JSONDecodeError) as exc:
+            last = exc
+            if attempt < RETRIES - 1:
+                print(f"  질의 실패({attempt + 1}/{RETRIES}): {exc} — 다시 시도",
+                      flush=True)
+                _sleep(attempt)
+    raise RuntimeError(f"아카이브 질의가 {RETRIES} 번 다 실패했다: {last}")
 
 
 def query(target: str | None, level: int, limit: int, instrument: str | None,
@@ -107,19 +132,37 @@ def download(rows: list[dict], out: Path) -> int:
             print(f"[{i}/{len(rows)}] 내려받기 주소 없음 {name}")
             continue
         tmp = dest.with_suffix(dest.suffix + ".part")
-        req = urllib.request.Request(url, headers=UA)
-        with urllib.request.urlopen(req, timeout=300) as resp, tmp.open("wb") as fh:
-            while True:
-                chunk = resp.read(1 << 20)
-                if not chunk:
-                    break
-                fh.write(chunk)
-        tmp.replace(dest)
+        # 한 장이 실패해도 나머지는 계속 받는다. 끊긴 자리는 `.part` 로 남고
+        # 다음 실행이 처음부터 다시 받는다 — 이어받기는 아카이브가 Range 를
+        # 보장하지 않아 넣지 않았다.
+        ok = False
+        for attempt in range(RETRIES):
+            try:
+                req = urllib.request.Request(url, headers=UA)
+                with urllib.request.urlopen(req, timeout=300) as resp, \
+                        tmp.open("wb") as fh:
+                    while True:
+                        chunk = resp.read(1 << 20)
+                        if not chunk:
+                            break
+                        fh.write(chunk)
+                tmp.replace(dest)
+                ok = True
+                break
+            except (urllib.error.URLError, TimeoutError, OSError) as exc:
+                print(f"[{i}/{len(rows)}] 실패({attempt + 1}/{RETRIES}) {name}: {exc}",
+                      flush=True)
+                tmp.unlink(missing_ok=True)
+                if attempt < RETRIES - 1:
+                    _sleep(attempt)
+        if not ok:
+            print(f"[{i}/{len(rows)}] 포기 {name}", flush=True)
+            continue
         mb = dest.stat().st_size / 1e6
         total += dest.stat().st_size
         print(f"[{i}/{len(rows)}] {name}  {mb:.1f} MB", flush=True)
     print(f"\n받은 양 {total/1e9:.2f} GB → {out}")
-    return 0
+    return total
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -150,7 +193,11 @@ def main(argv: list[str] | None = None) -> int:
         return 0
     show(rows)
     print()
-    return download(rows, a.out)
+    # `download` 은 받은 바이트를 돌려준다. 그것을 그대로 반환하면 프로세스
+    # 종료 코드가 되어 버리므로(1 GB 를 받으면 종료 코드가 쓰레기가 된다)
+    # 여기서는 성공을 뜻하는 0 을 낸다.
+    download(rows, a.out)
+    return 0
 
 
 if __name__ == "__main__":
