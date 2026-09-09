@@ -15,7 +15,7 @@
 .venv-deploy/Scripts/python.exe -m pytest tests/ -q
 ```
 
-- **통과 기준:** 1,512 passed, 0 failed, 0 skipped  (2026-09-09 · 압축 다크 · off-chain step 0 · 느린 색 고리 · Gaia 변환식 선택 시험이 더해졌다)
+- **통과 기준:** 1,517 passed, 0 failed, 0 skipped  (2026-09-09 · 재현성 바닥 시험 다섯이 더해졌다)
 - **깨끗한 상태에서 돌릴 것 (F-288).** 이 오라클은 **다른 무거운 것이 도는
   중에 재면 값이 안 맞는다.** `test_forced_photometry_headless.py` 의
   `test_step7_records_the_aperture_it_used_whichever_path_it_took` 가 남은 RAM 이
@@ -127,6 +127,14 @@
 
 **남은 0.028 등급은 아직 이름이 없다.** 플랫 잔차나 위치 의존 조리개 보정이 다음
 후보이고 아직 안 쟀다.
+
+**고친 것 — 재현성 바닥을 등급 오차에 연결했다 (같은 날).** kb26 을 다시 돌리니
+보고되는 오차가 밴드마다 3.0·12.1·16.7·11.5 배 커졌다(0.007~0.034 → 0.10~0.12).
+광자만의 값은 `mag_cal_err_phot_*` 로 남겼다. **√N 으로 나누지 않는 것**이 핵심이라
+그것을 시험으로 묶었다(`tests/test_step10_repeatability_floor.py`).
+
+**남은 것 둘.** 색항의 불확실도를 산출물에 내는 것, 그리고 아직 이름 없는
+0.028 등급.
 
 근거: `validation/ERROR_BUDGET.md` · `validation/error_budget.py`
 
