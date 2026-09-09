@@ -304,6 +304,12 @@ class Parameters:
             std_anchor_min_stars=_geti(raw, "std_anchor_min_stars", 20),
             # enabling it changes every globular-cluster zero point.
             gaia_cstar_cut=bool(raw.get("gaia_cstar_cut", False)),
+            # Which published Gaia->band relation to use. "auto" keeps the
+            # merged table (Pancino+2022 for B, Riello+2021 for V/R/I/U,
+            # Jordi+2010 for g/r/i/z); a named key restricts every band to that
+            # one paper, and bands it does not cover lose their reference.
+            gaia_transform_source=str(
+                raw.get("gaia_transform_source", "auto") or "auto").strip().lower(),
 
             # PSF photometry (CMD Step 8)
             psf_mode=str(raw.get("psf_mode", "normal")).strip().lower() or "normal",

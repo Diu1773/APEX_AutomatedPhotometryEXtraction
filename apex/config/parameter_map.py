@@ -326,6 +326,15 @@ COMMON_TOML_KEY_MAP: tuple[tuple, ...] = (
     (('gaia', 'mag_max'), 'gaia_mag_max', 'float', 18.0),
     (('gaia', 'wcs_mag_max'), 'gaia_wcs_mag_max', 'float', 18.0),
     (('refbuild', 'wcs_match_radius_arcsec'), 'ref_wcs_match_radius_arcsec', 'float', 2.0, {'label': 'WCS match radius (arcsec)', 'lo': 0.1, 'hi': 30.0, 'step': 0.1, 'decimals': 2}),
+    # Gaia→표준 변환식. 'auto' 는 밴드마다 가장 좋은 것을 쓰는 병합 표이고,
+    # 이름을 주면 모든 밴드가 그 논문 하나로 간다 (apex.utils.gaia_transforms).
+    (('gaia', 'transform_source'), 'gaia_transform_source', 'str', 'auto'),
+    # **이 줄이 없어서 `gaia.cstar_cut = true` 가 아무 일도 안 했다.**
+    # 파라미터는 `raw.get("gaia_cstar_cut", False)` 로 읽는데 맵에 행이 없으니
+    # raw 에 값이 들어갈 길이 없었다 — 코드 주석은 「사용자가 설정에서 켜라」고
+    # 안내하고 있었는데도 그렇다. 켜 둔 워크스페이스는 없어서(9 개 확인) 지금
+    # 넣어도 기존 결과는 안 바뀐다.
+    (('gaia', 'cstar_cut'), 'gaia_cstar_cut', 'bool', False),
     (('gaia', 'snr_calib_min'), 'gaia_snr_calib_min', 'float', 20.0),
     (('gaia', 'gi_min'), 'gaia_gi_min', 'float', -0.5),
     (('gaia', 'gi_max'), 'gaia_gi_max', 'float', 4.5),

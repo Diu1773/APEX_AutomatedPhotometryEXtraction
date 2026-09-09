@@ -32,7 +32,8 @@ from PyQt5.QtCore import Qt, QThread, pyqtSignal
 from PyQt5.QtWidgets import (
     QVBoxLayout, QHBoxLayout, QPushButton, QLabel, QGroupBox, QMessageBox,
     QTextEdit, QDialog, QFormLayout, QDialogButtonBox, QDoubleSpinBox,
-    QSpinBox, QCheckBox, QComboBox, QWidget, QTabWidget, QFileDialog, QLineEdit
+    QSpinBox, QCheckBox, QComboBox, QWidget, QTabWidget, QFileDialog, QLineEdit,
+    QSizePolicy
 )
 
 
@@ -117,6 +118,7 @@ from apex.utils.photometry_provenance import (
 
 from apex.utils.gaia_transforms import (
     GAIA_TO_BAND       as _GAIA_TO_BAND,
+    gaia_transform_choices,
     FILTER_COLOR_PREF  as _FILTER_COLOR_PREF,
     BAND_ALIASES       as _BAND_ALIASES,
     build_color_pairs  as _build_color_pairs,
@@ -134,6 +136,7 @@ _ZP_SIGNATURE_PARAMS = (
     "frame_zp_min_n",
     "cmd_apply_extinction",
     "cmd_extinction_mode",
+    "gaia_transform_source",
     "zp_clip_sigma",
     "zp_fit_iters",
     "zp_slope_absmax",
@@ -2567,6 +2570,37 @@ class ZeropointCalibrationWindow(StepWindowBase):
         gaia_form = QFormLayout(gaia_container)
         gaia_form.setContentsMargins(0, 0, 0, 0)
 
+        # 어느 논문의 Gaia→표준 변환식을 쓸지. 목록은 코드가 아니라
+        # gaia_transform_choices() 에서 온다 — 새 표를 GAIA_TRANSFORM_TABLES 에
+        # 넣으면 이 창을 안 고쳐도 나타난다.
+        self.param_gaia_transform = QComboBox()
+        # 항목 글이 길면 콤보가 대화상자보다 넓어지겠다고 우겨서 가로 스크롤이
+        # 생기고 왼쪽 라벨이 잘린다(처음 판이 그랬다). auto 는 밴드를 다 적지
+        # 않고, 콤보는 제 내용이 아니라 칸에 맞춘다.
+        self.param_gaia_transform.setSizeAdjustPolicy(QComboBox.AdjustToMinimumContentsLength)
+        self.param_gaia_transform.setMinimumContentsLength(18)
+        self.param_gaia_transform.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Fixed)
+        _cur = str(getattr(self.params.P, "gaia_transform_source", "auto") or "auto").lower()
+        for _key, _label, _bands in gaia_transform_choices():
+            _text = _label if _key == "auto" else f"{_label} ({'·'.join(_bands)})"
+            self.param_gaia_transform.addItem(_text, _key)
+            self.param_gaia_transform.setItemData(
+                self.param_gaia_transform.count() - 1,
+                f"{_label} — 다루는 밴드: {'·'.join(_bands)}", Qt.ToolTipRole)
+            if _key == _cur:
+                self.param_gaia_transform.setCurrentIndex(
+                    self.param_gaia_transform.count() - 1)
+        self.param_gaia_transform.setToolTip(
+            "Gaia 등급을 각 필터의 표준 등급으로 옮기는 관계식.\n\n"
+            "auto — 밴드마다 가장 좋은 것을 쓴다 (B 는 Pancino+2022, "
+            "V·R·I·U는 Riello+2021, g·r·i·z는 Jordi+2010).\n\n"
+            "하나를 고르면 모든 밴드가 그 논문 하나로 간다. "
+            "괄호 안이 그 논문이 다루는 밴드이고, "
+            "거기 없는 밴드는 참조가 아예 사라진다 — 예를 들어 Johnson B·V 만 찍은 "
+            "밤에 Jordi+2010 을 고르면 영점을 붙일 수 있는 밴드가 하나도 없다."
+        )
+        gaia_form.addRow("Gaia→표준 변환식:", self.param_gaia_transform)
+
         self.param_gaia_snr = QDoubleSpinBox()
         self.param_gaia_snr.setRange(0.0, 200.0)
         self.param_gaia_snr.setValue(float(getattr(self.params.P, "gaia_snr_calib_min", 20.0)))
@@ -2662,6 +2696,7 @@ class ZeropointCalibrationWindow(StepWindowBase):
                 (self.param_frame_min, 5),
                 (self.param_apply_ext, False),
                 (self.param_ext_mode, "absorb"),
+                (self.param_gaia_transform, "auto"),
                 (self.param_clip, 3.0),
                 (self.param_iters, 5),
                 (self.param_slope, 1.0),
@@ -2742,6 +2777,8 @@ class ZeropointCalibrationWindow(StepWindowBase):
         self.params.P.frame_zp_min_n = self.param_frame_min.value()
         self.params.P.cmd_apply_extinction = self.param_apply_ext.isChecked()
         self.params.P.cmd_extinction_mode = self.param_ext_mode.currentText().strip()
+        self.params.P.gaia_transform_source = str(
+            self.param_gaia_transform.currentData() or "auto")
         self.params.P.zp_clip_sigma = self.param_clip.value()
         self.params.P.zp_fit_iters = self.param_iters.value()
         self.params.P.zp_slope_absmax = self.param_slope.value()
@@ -3116,6 +3153,7 @@ class ZeropointCalibrationWindow(StepWindowBase):
             "frame_zp_min_n": getattr(self.params.P, "frame_zp_min_n", 5),
             "cmd_apply_extinction": getattr(self.params.P, "cmd_apply_extinction", False),
             "cmd_extinction_mode": getattr(self.params.P, "cmd_extinction_mode", "absorb"),
+            "gaia_transform_source": getattr(self.params.P, "gaia_transform_source", "auto"),
             "zp_clip_sigma": getattr(self.params.P, "zp_clip_sigma", 3.0),
             "zp_fit_iters": getattr(self.params.P, "zp_fit_iters", 5),
             "zp_slope_absmax": getattr(self.params.P, "zp_slope_absmax", 1.0),

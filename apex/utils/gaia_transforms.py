@@ -74,6 +74,45 @@ GAIA_TO_BAND: dict[str, tuple] = {
 }
 
 
+#: The value that means "let APEX pick per band" — the merged table.
+GAIA_TRANSFORM_AUTO = "auto"
+
+
+def gaia_transform_choices() -> list[tuple[str, str, tuple[str, ...]]]:
+    """``(key, label, covered bands)`` for every selectable transform.
+
+    The window builds its dropdown from this, so a new table added to
+    ``GAIA_TRANSFORM_TABLES`` shows up without touching the GUI.
+
+    **The covered bands belong in the label.** Choosing a single source is not
+    only a change of coefficients — it drops every band that source has no
+    relation for. Pick Jordi+2010 on a Johnson B/V night and there is no
+    reference left at all, and the only sign of it is one skip line per band in
+    the log. Naming the coverage in the dropdown puts that in front of the
+    choice instead of behind it.
+    """
+    out: list[tuple[str, str, tuple[str, ...]]] = [
+        (GAIA_TRANSFORM_AUTO, "auto (밴드마다 최적)",
+         tuple(sorted(GAIA_TO_BAND))),
+    ]
+    for key, table in GAIA_TRANSFORM_TABLES.items():
+        bands = tuple(sorted(table))
+        # The published label is inside the entries; take the first one so the
+        # dropdown reads the way the paper does, not the way the dict key does.
+        label = next((e[3] for e in table.values() if len(e) > 3), key)
+        out.append((key, str(label), bands))
+    return out
+
+
+def gaia_transform_label(source: str | None) -> str:
+    """Human label for a stored key, for logs and provenance."""
+    key = (str(source or GAIA_TRANSFORM_AUTO)).strip().lower()
+    for k, label, bands in gaia_transform_choices():
+        if k == key:
+            return f"{label} ({'·'.join(bands)})"
+    return f"{source} (알 수 없음 — auto 로 되돌림)"
+
+
 def get_gaia_to_band(source: str | None = None) -> dict[str, tuple]:
     """Return the Gaia→band transform table for the given *source*.
 

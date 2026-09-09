@@ -20,6 +20,8 @@ from apex.utils.astro_utils import normalize_filter_name
 from apex.utils.cmd_gaia_enrichment import load_master_table as _load_master_table, merge_gaia_columns_from_catalog as _merge_gaia_columns_from_catalog
 from apex.utils.constants import MAG_ERR_COEFF, MAD_TO_SIGMA
 from apex.utils.gaia_quality import gaia_corrected_excess_factor, gaia_cstar_sigma, gaia_quality_mask, gaia_quality_report
+from apex.utils.gaia_transforms import (get_gaia_to_band as _get_gaia_to_band,
+                                        gaia_transform_label as _gaia_transform_label)
 from apex.utils.gaia_transforms import GAIA_TO_BAND as _GAIA_TO_BAND, FILTER_COLOR_PREF as _FILTER_COLOR_PREF, BAND_ALIASES as _BAND_ALIASES, build_color_pairs as _build_color_pairs, teff_from_color as _teff_from_color, TEFF_COLOR_ANCHORS as _TEFF_COLOR_ANCHORS, filter_bands_from_columns as _filter_bands_from_columns
 from apex.utils.io_utils import parse_int64_series, read_ecsv_int64_source_id
 from apex.utils.photometry_provenance import build_photometry_provenance, collapse_provenance_values, format_photometry_provenance, summarize_photometry_table
@@ -775,14 +777,24 @@ def _poly_eval_array(x, coeffs) -> np.ndarray:
         xp *= x
     return y
 
-def _gaia_reference_mag_for_band(df: pd.DataFrame, band: str) -> np.ndarray:
-    """Transform Gaia observed G/BP/RP into the requested native filter."""
+def _gaia_reference_mag_for_band(df: pd.DataFrame, band: str,
+                                 transform_source: str | None = None) -> np.ndarray:
+    """Transform Gaia observed G/BP/RP into the requested native filter.
+
+    ``transform_source`` names the published relation to use; ``None`` and
+    ``"auto"`` keep the merged table. It is threaded through the QC chain
+    rather than read from a module global so the diagnostic plots compare
+    against the same relation the zero point was fitted with — a QC figure
+    drawn against a different paper than the calibration would look like a
+    real disagreement.
+    """
     if "gaia_G" not in df.columns:
         return np.full(len(df), np.nan, dtype=float)
+    table = _get_gaia_to_band(transform_source)
     key = _BAND_ALIASES.get(band, band)
-    if key not in _GAIA_TO_BAND:
+    if key not in table:
         return np.full(len(df), np.nan, dtype=float)
-    coeffs, lo, hi, _, _ = _GAIA_TO_BAND[key]
+    coeffs, lo, hi, _, _ = table[key]
     g = pd.to_numeric(df["gaia_G"], errors="coerce").to_numpy(dtype=float)
     color = _gaia_observed_color(df)
     out = np.full(len(df), np.nan, dtype=float)
@@ -822,7 +834,8 @@ def _synthetic_gaia_cmd_arrays(df: pd.DataFrame) -> dict | None:
         "snr_bands": snr_bands,
     }
 
-def _native_gaia_transformed_cmd_arrays(df: pd.DataFrame) -> dict | None:
+def _native_gaia_transformed_cmd_arrays(df: pd.DataFrame,
+                                        transform_source: str | None = None) -> dict | None:
     axes = select_cmd_qc_axes(df, system="std")
     if axes is None:
         return None
@@ -837,9 +850,9 @@ def _native_gaia_transformed_cmd_arrays(df: pd.DataFrame) -> dict | None:
     apex_b = pd.to_numeric(df[_cmd_mag_col("std", b)], errors="coerce").to_numpy(dtype=float)
     apex_y = pd.to_numeric(df[_cmd_mag_col("std", y_band)], errors="coerce").to_numpy(dtype=float)
 
-    gaia_a = _gaia_reference_mag_for_band(df, a)
-    gaia_b = _gaia_reference_mag_for_band(df, b)
-    gaia_y = _gaia_reference_mag_for_band(df, y_band)
+    gaia_a = _gaia_reference_mag_for_band(df, a, transform_source)
+    gaia_b = _gaia_reference_mag_for_band(df, b, transform_source)
+    gaia_y = _gaia_reference_mag_for_band(df, y_band, transform_source)
 
     apex_color = apex_a - apex_b
     gaia_color = gaia_a - gaia_b
@@ -861,13 +874,14 @@ def _native_gaia_transformed_cmd_arrays(df: pd.DataFrame) -> dict | None:
         "snr_bands": list(dict.fromkeys([a, b, y_band])),
     }
 
-def build_gaia_cmd_comparison(df: pd.DataFrame) -> pd.DataFrame:
+def build_gaia_cmd_comparison(df: pd.DataFrame,
+                              transform_source: str | None = None) -> pd.DataFrame:
     """Compare final APEX CMD with Gaia on the same matched-star CMD axes."""
     if not isinstance(df, pd.DataFrame) or df.empty:
         return pd.DataFrame()
     arrs = _synthetic_gaia_cmd_arrays(df)
     if arrs is None:
-        arrs = _native_gaia_transformed_cmd_arrays(df)
+        arrs = _native_gaia_transformed_cmd_arrays(df, transform_source)
     if arrs is None:
         return pd.DataFrame()
 
@@ -912,7 +926,8 @@ def build_gaia_cmd_comparison(df: pd.DataFrame) -> pd.DataFrame:
     }]
     return pd.DataFrame(rows)
 
-def build_gaia_cmd_drift_table(df: pd.DataFrame, bin_width: float = 0.5) -> pd.DataFrame:
+def build_gaia_cmd_drift_table(df: pd.DataFrame, bin_width: float = 0.5,
+                               transform_source: str | None = None) -> pd.DataFrame:
     """Binned-median Delta(mag)/Delta(color) vs Gaia reference magnitude.
 
     This automates the bright->faint drift diagnostic that exposed the
@@ -926,7 +941,7 @@ def build_gaia_cmd_drift_table(df: pd.DataFrame, bin_width: float = 0.5) -> pd.D
         return pd.DataFrame()
     arrs = _synthetic_gaia_cmd_arrays(df)
     if arrs is None:
-        arrs = _native_gaia_transformed_cmd_arrays(df)
+        arrs = _native_gaia_transformed_cmd_arrays(df, transform_source)
     if arrs is None:
         return pd.DataFrame()
 
@@ -1026,13 +1041,14 @@ def _snr_cut_mask(df: pd.DataFrame, bands: list[str], threshold: float) -> tuple
 def build_gaia_cmd_snr_sweep(
     df: pd.DataFrame,
     snr_cuts: tuple[float, ...] = (5, 10, 20, 50, 100),
+    transform_source: str | None = None,
 ) -> pd.DataFrame:
     """Measure Gaia/APEX CMD residual sensitivity to the adopted SNR cut."""
     if not isinstance(df, pd.DataFrame) or df.empty:
         return pd.DataFrame()
     arrs = _synthetic_gaia_cmd_arrays(df)
     if arrs is None:
-        arrs = _native_gaia_transformed_cmd_arrays(df)
+        arrs = _native_gaia_transformed_cmd_arrays(df, transform_source)
     if arrs is None:
         return pd.DataFrame()
 
@@ -1175,13 +1191,15 @@ def draw_gaia_cmd_snr_sweep(fig: Figure, sweep_df: pd.DataFrame) -> bool:
     fig.subplots_adjust(left=0.08, right=0.95, bottom=0.08, top=0.90, wspace=0.46, hspace=0.34)
     return True
 
-def draw_gaia_cmd_comparison(fig: Figure, df: pd.DataFrame, summary_df: pd.DataFrame | None = None) -> bool:
+def draw_gaia_cmd_comparison(fig: Figure, df: pd.DataFrame,
+                             summary_df: pd.DataFrame | None = None,
+                             transform_source: str | None = None) -> bool:
     """Draw Gaia reference CMD beside APEX calibrated CMD on matched-star axes."""
     if not isinstance(df, pd.DataFrame) or df.empty:
         return False
     arrs = _synthetic_gaia_cmd_arrays(df)
     if arrs is None:
-        arrs = _native_gaia_transformed_cmd_arrays(df)
+        arrs = _native_gaia_transformed_cmd_arrays(df, transform_source)
     if arrs is None:
         return False
 
@@ -1265,7 +1283,8 @@ def draw_gaia_cmd_comparison(fig: Figure, df: pd.DataFrame, summary_df: pd.DataF
     fig.subplots_adjust(left=0.08, right=0.97, bottom=0.08, top=0.91, wspace=0.28, hspace=0.34)
     return True
 
-def export_gaia_cmd_comparison_products(output_dir: Path, log_func=None) -> list[Path]:
+def export_gaia_cmd_comparison_products(output_dir: Path, log_func=None,
+                                        transform_source: str | None = None) -> list[Path]:
     """Export Gaia-observed vs APEX-synthetic CMD comparison products."""
     output_dir = Path(output_dir)
     cmd_path = output_dir / "median_by_ID_filter_wide_cmd.csv"
@@ -1276,7 +1295,7 @@ def export_gaia_cmd_comparison_products(output_dir: Path, log_func=None) -> list
     except Exception:
         return []
 
-    summary = build_gaia_cmd_comparison(df)
+    summary = build_gaia_cmd_comparison(df, transform_source)
     if summary.empty:
         return []
 
@@ -1286,12 +1305,12 @@ def export_gaia_cmd_comparison_products(output_dir: Path, log_func=None) -> list
     saved.append(summary_path)
 
     fig = Figure(figsize=(11.2, 8.0), dpi=120)
-    if draw_gaia_cmd_comparison(fig, df, summary):
+    if draw_gaia_cmd_comparison(fig, df, summary, transform_source):
         fig_path = output_dir / "step10_gaia_cmd_comparison.png"
         fig.savefig(fig_path, dpi=160, bbox_inches="tight")
         saved.append(fig_path)
 
-    sweep = build_gaia_cmd_snr_sweep(df)
+    sweep = build_gaia_cmd_snr_sweep(df, transform_source=transform_source)
     if not sweep.empty:
         sweep_path = output_dir / "gaia_cmd_snr_sweep.csv"
         sweep.to_csv(sweep_path, index=False)
@@ -1302,7 +1321,7 @@ def export_gaia_cmd_comparison_products(output_dir: Path, log_func=None) -> list
             sweep_fig.savefig(sweep_fig_path, dpi=160, bbox_inches="tight")
             saved.append(sweep_fig_path)
 
-    drift = build_gaia_cmd_drift_table(df)
+    drift = build_gaia_cmd_drift_table(df, transform_source=transform_source)
     if not drift.empty:
         drift_path = output_dir / "gaia_cmd_drift_by_mag.csv"
         drift.to_csv(drift_path, index=False)
@@ -2480,15 +2499,23 @@ class ZeropointCalibrationRunner(ReportsProgress):
             self._log(f"Photometric filters in data: {data_filters}")
 
             # ── Gaia → filter reference magnitude for each detected filter ──────
+            # Which published relation to use is the user's (Parameters >
+            # "Gaia→표준 변환식"); "auto" keeps the merged table. A named source
+            # restricts every band to that one paper, and a band it has no
+            # relation for loses its reference entirely — hence the log line
+            # naming the choice and its coverage before the per-band lines.
+            _tf_src = str(getattr(P, "gaia_transform_source", "auto") or "auto")
+            gaia_table = _get_gaia_to_band(_tf_src)
             self._log("=== Gaia → Filter Transformations ===")
+            self._log(f"[ZP] 변환식: {_gaia_transform_label(_tf_src)}")
             ref_col_map: dict[str, str] = {}  # filt -> column name in out_cal
             ref_source_map: dict[str, str] = {}
             for filt in data_filters:
                 key = _BAND_ALIASES.get(filt, filt)
-                if key not in _GAIA_TO_BAND:
+                if key not in gaia_table:
                     self._log(f"[ZP][{filt}] No Gaia transformation available — skipping")
                     continue
-                coeffs, lo, hi, source, sig_approx = _GAIA_TO_BAND[key]
+                coeffs, lo, hi, source, sig_approx = gaia_table[key]
                 warn = " [WARNING: σ≈{:.2f} mag — use with caution]".format(sig_approx) if sig_approx >= 0.10 else ""
                 self._log(f"[ZP][{filt}] {source}  G-{filt}=poly(BP-RP)  σ≈{sig_approx:.3f}{warn}")
                 if sig_approx >= 0.10 and not getattr(self.params.P, "std_anchor_enable", False):
@@ -2860,7 +2887,8 @@ class ZeropointCalibrationRunner(ReportsProgress):
             m_bp_global = np.isfinite(bp) & (bp >= bpRP_lo) & (bp <= bpRP_hi)
             for filt in fit_params:
                 key = _BAND_ALIASES.get(filt, filt)
-                entry = _GAIA_TO_BAND.get(key)
+                entry = _get_gaia_to_band(
+                    getattr(P, "gaia_transform_source", "auto")).get(key)
                 if entry:
                     _, lo, hi, _, _ = entry
                     obs.loc[(obs["FILTER"] == filt) & m_bp_global & (bp >= lo) & (bp <= hi), "cal_ok"] = True
