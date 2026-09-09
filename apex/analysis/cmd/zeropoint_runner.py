@@ -141,6 +141,64 @@ def robust_weighted_polyfit(
         m = m_new
     return coeffs, int(m.sum()), scatter
 
+
+def repeatability_floor_by_filter(frame_df) -> dict[str, float]:
+    """밴드마다의 재현성 바닥 — 프레임 안에서 기준별들이 흩어지는 폭의 중앙값.
+
+    프레임마다 영점을 맞추고 남는 산포(`zp_scatter`)가 그 밴드에서 별 하나를
+    한 프레임으로 잴 때의 실제 재현성이다. **이것은 광자 잡음이 아니다** —
+    같은 SNR 이 예측하는 값보다 2~10 배 크다(M67 을 세 기기로 재서 확인,
+    `validation/ERROR_BUDGET.md` 4 절).
+    """
+    out: dict[str, float] = {}
+    if frame_df is None or not len(frame_df):
+        return out
+    if "filter" not in frame_df.columns or "zp_scatter" not in frame_df.columns:
+        return out
+    for filt, sub in frame_df.groupby("filter"):
+        sc = pd.to_numeric(sub["zp_scatter"], errors="coerce").to_numpy(float)
+        sc = sc[np.isfinite(sc) & (sc > 0)]
+        if sc.size:
+            out[str(filt)] = float(np.median(sc))
+    return out
+
+
+def apply_repeatability_floor(wide_err, floors: dict[str, float]):
+    """`mag_cal_err_*` 에 재현성 바닥을 제곱합으로 더한다.
+
+    **√N 으로 나누지 않는다.** M67 을 세 기기로 재 보니 이 항은 프레임을 쌓아도
+    안 줄어든다 — 같은 별을 두 기기로 잰 차이의 산포를 예측할 때
+
+        광자 잡음만              관측/예측 19.7
+        이 바닥을 √N 으로 나눠    관측/예측  3.7
+        이 바닥을 그대로          관측/예측  1.3
+
+    안 줄어든다는 것은 무작위 잡음이 아니라 **별마다 붙박이인 계통**(플랫 잔차,
+    위치·PSF 에 따라 조리개가 담는 몫)이라는 뜻이다.
+
+    광자만의 값은 `mag_cal_err_phot_*` 로 남긴다 — 없애면 예전 산출물과 견줄 수
+    없고, 두 몫 중 어느 것이 지배하는지도 못 본다.
+
+    반환: `(더한 표, 실제로 더한 {밴드: 바닥})`
+    """
+    applied: dict[str, float] = {}
+    if wide_err is None or not len(wide_err.columns) or not floors:
+        return wide_err, applied
+    phot = wide_err.copy()
+    phot.columns = [str(c).replace("mag_cal_err_", "mag_cal_err_phot_")
+                    for c in phot.columns]
+    for filt, floor in floors.items():
+        col = f"mag_cal_err_{filt}"
+        if col not in wide_err.columns or not np.isfinite(floor) or floor <= 0:
+            continue
+        e = pd.to_numeric(wide_err[col], errors="coerce").to_numpy(float)
+        wide_err[col] = np.sqrt(e ** 2 + float(floor) ** 2)
+        applied[str(filt)] = float(floor)
+    if applied:
+        wide_err = pd.concat([wide_err, phot], axis=1)
+    return wide_err, applied
+
+
 def _quad_coefficient_sigma(x, y, w, coeffs) -> float:
     """1-sigma on the quadratic coefficient, scaled by the fit's own residuals.
 
@@ -3038,6 +3096,16 @@ class ZeropointCalibrationRunner(ReportsProgress):
 
             wide_mag.columns = [f"mag_cal_{c}" for c in wide_mag.columns]
             wide_err.columns = [f"mag_cal_err_{c}" for c in wide_err.columns]
+
+            # ── 재현성 바닥 ────────────────────────────────────────────────
+            # 여기까지의 `mag_cal_err` 는 광자·읽기 잡음만 담는다. 계산은
+            # `repeatability_floor_by_filter` · `apply_repeatability_floor` 로
+            # 빼 두었다 — 왜 이렇게 하는지는 그 함수들의 설명에 있다.
+            floors = repeatability_floor_by_filter(frame_df)
+            wide_err, applied = apply_repeatability_floor(wide_err, floors)
+            for _filt, _floor in sorted(applied.items()):
+                self._log(f"[ZP][{_filt}] 재현성 바닥 {_floor:.4f} mag 를 등급 오차에 "
+                          f"더했다 (광자만의 값은 mag_cal_err_phot_{_filt} 에 남겼다)")
             wide_snr.columns = [f"snr_{c}" for c in wide_snr.columns]
             wide_mag_w.columns = [f"mag_cal_wmean_{c}" for c in wide_mag_w.columns]
             wide_err_w.columns = [f"mag_cal_werr_{c}" for c in wide_err_w.columns]
