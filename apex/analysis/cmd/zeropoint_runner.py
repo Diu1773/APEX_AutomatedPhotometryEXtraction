@@ -142,6 +142,55 @@ def robust_weighted_polyfit(
     return coeffs, int(m.sum()), scatter
 
 
+
+#: 영점·색항의 불확실도를 낼 때 별을 다시 뽑는 횟수. 한 번이 500 별 남짓에
+#: 대한 절단 다섯 번이라 밴드마다 수십 밀리초다.
+_ZP_BOOTSTRAP_DRAWS = 200
+
+#: 다시 뽑을 때 쓰는 씨앗. 고정해 두어야 같은 자료가 같은 불확실도를 낸다 —
+#: 산출물의 수가 실행마다 달라지면 출처를 되짚을 수 없다.
+_ZP_BOOTSTRAP_SEED = 20260909
+
+
+def bootstrap_zp_ct(fit_fn, x, y, w, draws: int = _ZP_BOOTSTRAP_DRAWS,
+                    seed: int = _ZP_BOOTSTRAP_SEED, **fit_kwargs):
+    """영점과 색항의 불확실도 — 별을 복원추출로 다시 뽑아 매번 다시 맞춘다.
+
+    **적합 공분산에서 뽑으면 안 되는 이유가 있다.** 그 값은 「이 별들을 그대로
+    두고 잡음만 다시 뽑으면」의 폭이라 절단이 만드는 흔들림을 못 담는다.
+    MuSCAT3 의 r 은 같은 자료에서 절단 하나로 계수가 −0.381 에서 +0.021 로
+    0.40 움직인다 — 공분산은 그것을 0.05 로 보고한다.
+
+    별을 다시 뽑고 절단도 매번 새로 돌리면 「이 자료로 이 적합기를 돌리면 값이
+    얼마나 흔들리는가」가 기제를 몰라도 나온다. M67 을 세 기기로 재서 이 값이
+    두 기기 사이 계통 어긋남을 1.2 배 안에서 예측하는 것을 확인했다
+    (`validation/ERROR_BUDGET.md` 3 절).
+
+    반환: ``(sigma_zp, sigma_ct, n_ok)`` — 16~84 % 폭의 절반.
+    """
+    x = np.asarray(x, float)
+    y = np.asarray(y, float)
+    w = None if w is None else np.asarray(w, float)
+    n = int(x.size)
+    if n < 20:
+        return float("nan"), float("nan"), 0
+    rng = np.random.default_rng(seed)
+    zps: list[float] = []
+    cts: list[float] = []
+    for _ in range(max(1, int(draws))):
+        idx = rng.integers(0, n, n)
+        zp, ct, _n, _s = fit_fn(x[idx], y[idx],
+                                w=None if w is None else w[idx], **fit_kwargs)
+        if np.isfinite(zp) and np.isfinite(ct):
+            zps.append(float(zp))
+            cts.append(float(ct))
+    if len(zps) < 30:
+        return float("nan"), float("nan"), len(zps)
+    zlo, zhi = np.percentile(zps, [16, 84])
+    clo, chi = np.percentile(cts, [16, 84])
+    return float((zhi - zlo) / 2.0), float((chi - clo) / 2.0), len(zps)
+
+
 def repeatability_floor_by_filter(frame_df) -> dict[str, float]:
     """밴드마다의 재현성 바닥 — 프레임 안에서 기준별들이 흩어지는 폭의 중앙값.
 
@@ -2716,6 +2765,24 @@ class ZeropointCalibrationRunner(ReportsProgress):
                     clip_sigma=clip_sigma, iters=fit_iters, slope_absmax=s_max, min_n=min_match,
                 )
 
+                # 계수를 냈으면 그 계수가 얼마나 흔들리는지도 같이 낸다.
+                # 없으면 사용자는 -0.204 와 -0.204 ± 0.311 을 구별할 길이 없다.
+                zp_sig, ct_sig, _nboot = bootstrap_zp_ct(
+                    self._robust_linfit, color_x[m_fit], delta[m_fit],
+                    w_filt[m_fit], clip_sigma=clip_sigma, iters=fit_iters,
+                    slope_absmax=s_max, min_n=min_match,
+                )
+                if np.isfinite(ct_sig) and ct_sig >= abs(ct_f):
+                    # 계수가 자기 불확실도보다 작다 = 이 자료로는 못 잰다.
+                    # 적용은 막지 않는다(그건 사용자 몫이다). 다만 조용히
+                    # 넘어가지는 않는다 — 색 끝에서 실제로 등급을 옮긴다.
+                    self._log(
+                        f"[ZP][{filt}] 주의: 색항 {ct_f:+.4f} 가 자기 불확실도 "
+                        f"±{ct_sig:.4f} 보다 작다 — 이 자료로는 색항을 못 잰다. "
+                        f"색 범위 끝에서 최대 {ct_sig * (float(np.nanmax(color_x[m_fit])) - float(np.nanmin(color_x[m_fit]))) / 2:.3f} "
+                        "등급까지 옮길 수 있다."
+                    )
+
                 # Quadratic color term: measured every run, applied only when
                 # the *instrument's* curvature has been supplied.
                 #
@@ -2804,6 +2871,10 @@ class ZeropointCalibrationRunner(ReportsProgress):
                     filt, build_photometry_provenance()
                 )
                 coeff_rows.append({"filter": filt, "zp": zp_f, "ct": ct_f, "ct2": ct2_f,
+                                   "zp_sigma": zp_sig, "ct_sigma": ct_sig,
+                                   "ct_measurable": (bool(np.isfinite(ct_sig)
+                                                          and ct_sig < abs(ct_f))
+                                                     if np.isfinite(ct_sig) else None),
                                    "ct2_fitted": ct2_fit, "ct2_sigma": ct2_sig,
                                    "N": Nf,
                                    "scatter_rms": sc_f, "color_col": color_col_name,
