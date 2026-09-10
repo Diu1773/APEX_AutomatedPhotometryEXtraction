@@ -1,0 +1,1527 @@
+[
+  {
+    "kind": "magnitude",
+    "pair": "Moravian vs MuSCAT3",
+    "band": "g",
+    "n": 211,
+    "mad_pooled": 0.04219913470219299,
+    "mad_within_bin": 0.03428299273336088,
+    "bins": [
+      {
+        "lo": 10.0,
+        "hi": 12.0,
+        "median": 0.010159317866072826,
+        "mad": 0.03428299273336088,
+        "n": 15
+      },
+      {
+        "lo": 12.0,
+        "hi": 13.0,
+        "median": 0.028511162860853645,
+        "mad": 0.02138973784080644,
+        "n": 25
+      },
+      {
+        "lo": 13.0,
+        "hi": 14.0,
+        "median": 0.019974830827134582,
+        "mad": 0.027141792130482664,
+        "n": 47
+      },
+      {
+        "lo": 14.0,
+        "hi": 15.0,
+        "median": 0.025049047460159457,
+        "mad": 0.023665814742164955,
+        "n": 37
+      },
+      {
+        "lo": 15.0,
+        "hi": 16.0,
+        "median": -0.012653759582984314,
+        "mad": 0.053750713167978977,
+        "n": 34
+      },
+      {
+        "lo": 16.0,
+        "hi": 17.0,
+        "median": 0.026239703953830684,
+        "mad": 0.05757687339756201,
+        "n": 13
+      },
+      {
+        "lo": 17.0,
+        "hi": 20.0,
+        "median": -0.06384551358480373,
+        "mad": 0.18745580474189436,
+        "n": 40
+      }
+    ]
+  },
+  {
+    "kind": "magnitude",
+    "pair": "Moravian vs MuSCAT3",
+    "band": "r",
+    "n": 211,
+    "mad_pooled": 0.05464095801798524,
+    "mad_within_bin": 0.0508664257596758,
+    "bins": [
+      {
+        "lo": 10.0,
+        "hi": 12.0,
+        "median": -0.10126373025151558,
+        "mad": 0.12940060147991433,
+        "n": 15
+      },
+      {
+        "lo": 12.0,
+        "hi": 13.0,
+        "median": 0.004276024091122821,
+        "mad": 0.020530505087920314,
+        "n": 40
+      },
+      {
+        "lo": 13.0,
+        "hi": 14.0,
+        "median": -0.0020145339708275145,
+        "mad": 0.014273551909604824,
+        "n": 51
+      },
+      {
+        "lo": 14.0,
+        "hi": 15.0,
+        "median": 0.02877335030718431,
+        "mad": 0.027833375700191638,
+        "n": 38
+      },
+      {
+        "lo": 15.0,
+        "hi": 16.0,
+        "median": 0.06036121857983545,
+        "mad": 0.07389947581915997,
+        "n": 25
+      },
+      {
+        "lo": 16.0,
+        "hi": 17.0,
+        "median": NaN,
+        "mad": NaN,
+        "n": 6
+      },
+      {
+        "lo": 17.0,
+        "hi": 20.0,
+        "median": 0.30098757817835775,
+        "mad": 0.11255635325345853,
+        "n": 35
+      }
+    ]
+  },
+  {
+    "kind": "magnitude",
+    "pair": "Moravian vs MuSCAT3",
+    "band": "i",
+    "n": 236,
+    "mad_pooled": 0.018057576838740038,
+    "mad_within_bin": 0.021200358863314558,
+    "bins": [
+      {
+        "lo": 10.0,
+        "hi": 12.0,
+        "median": 0.012101923511576018,
+        "mad": 0.015493495440537948,
+        "n": 15
+      },
+      {
+        "lo": 12.0,
+        "hi": 13.0,
+        "median": 0.02313355380631066,
+        "mad": 0.00850750346209951,
+        "n": 47
+      },
+      {
+        "lo": 13.0,
+        "hi": 14.0,
+        "median": 0.013835265906212868,
+        "mad": 0.012827670389005792,
+        "n": 48
+      },
+      {
+        "lo": 14.0,
+        "hi": 15.0,
+        "median": 0.005980119950621976,
+        "mad": 0.021200358863314558,
+        "n": 40
+      },
+      {
+        "lo": 15.0,
+        "hi": 16.0,
+        "median": 0.009242479388824165,
+        "mad": 0.02408219575785181,
+        "n": 37
+      },
+      {
+        "lo": 16.0,
+        "hi": 17.0,
+        "median": 0.0183631271213045,
+        "mad": 0.04370033481207411,
+        "n": 33
+      },
+      {
+        "lo": 17.0,
+        "hi": 20.0,
+        "median": 0.062417394262983095,
+        "mad": 0.05131835535299565,
+        "n": 13
+      }
+    ]
+  },
+  {
+    "kind": "magnitude",
+    "pair": "Moravian vs kb26",
+    "band": "r",
+    "n": 541,
+    "mad_pooled": 0.17548201236765182,
+    "mad_within_bin": 0.06078143895514687,
+    "bins": [
+      {
+        "lo": 10.0,
+        "hi": 12.0,
+        "median": 0.12179823147630131,
+        "mad": 0.05917100873012568,
+        "n": 31
+      },
+      {
+        "lo": 12.0,
+        "hi": 13.0,
+        "median": 0.11051822320102467,
+        "mad": 0.03184177431113263,
+        "n": 82
+      },
+      {
+        "lo": 13.0,
+        "hi": 14.0,
+        "median": 0.06356693915195599,
+        "mad": 0.04343852303896329,
+        "n": 118
+      },
+      {
+        "lo": 14.0,
+        "hi": 15.0,
+        "median": -0.04322826956942727,
+        "mad": 0.06239186918016806,
+        "n": 107
+      },
+      {
+        "lo": 15.0,
+        "hi": 16.0,
+        "median": -0.16920763420267804,
+        "mad": 0.07148764831734072,
+        "n": 125
+      },
+      {
+        "lo": 16.0,
+        "hi": 17.0,
+        "median": -0.2773083652559407,
+        "mad": 0.09233509894238244,
+        "n": 75
+      },
+      {
+        "lo": 17.0,
+        "hi": 20.0,
+        "median": NaN,
+        "mad": NaN,
+        "n": 2
+      }
+    ]
+  },
+  {
+    "kind": "magnitude",
+    "pair": "Moravian vs kb26",
+    "band": "i",
+    "n": 541,
+    "mad_pooled": 0.18727387382247376,
+    "mad_within_bin": 0.0735309374566173,
+    "bins": [
+      {
+        "lo": 10.0,
+        "hi": 12.0,
+        "median": 0.1382696737753797,
+        "mad": 0.07503517248634835,
+        "n": 31
+      },
+      {
+        "lo": 12.0,
+        "hi": 13.0,
+        "median": 0.11440213377949782,
+        "mad": 0.03685946029281694,
+        "n": 92
+      },
+      {
+        "lo": 13.0,
+        "hi": 14.0,
+        "median": 0.04285297107114161,
+        "mad": 0.0544800219896944,
+        "n": 119
+      },
+      {
+        "lo": 14.0,
+        "hi": 15.0,
+        "median": -0.08944564356574602,
+        "mad": 0.07202670242688626,
+        "n": 123
+      },
+      {
+        "lo": 15.0,
+        "hi": 16.0,
+        "median": -0.2362887093856063,
+        "mad": 0.0827434943928363,
+        "n": 130
+      },
+      {
+        "lo": 16.0,
+        "hi": 17.0,
+        "median": -0.3222641681254146,
+        "mad": 0.10955621140184041,
+        "n": 40
+      },
+      {
+        "lo": 17.0,
+        "hi": 20.0,
+        "median": NaN,
+        "mad": NaN,
+        "n": 0
+      }
+    ]
+  },
+  {
+    "kind": "magnitude",
+    "pair": "MuSCAT3 vs kb26",
+    "band": "r",
+    "n": 173,
+    "mad_pooled": 0.1170531717461111,
+    "mad_within_bin": 0.06737815420930963,
+    "bins": [
+      {
+        "lo": 10.0,
+        "hi": 12.0,
+        "median": 0.3101173339858603,
+        "mad": 0.13806052485867584,
+        "n": 16
+      },
+      {
+        "lo": 12.0,
+        "hi": 13.0,
+        "median": 0.12165835856094276,
+        "mad": 0.03127099849560544,
+        "n": 38
+      },
+      {
+        "lo": 13.0,
+        "hi": 14.0,
+        "median": 0.07950749705110915,
+        "mad": 0.038913180673132916,
+        "n": 53
+      },
+      {
+        "lo": 14.0,
+        "hi": 15.0,
+        "median": -0.054160144998043336,
+        "mad": 0.0702494887404359,
+        "n": 38
+      },
+      {
+        "lo": 15.0,
+        "hi": 16.0,
+        "median": -0.1986790051735765,
+        "mad": 0.06737815420930963,
+        "n": 22
+      },
+      {
+        "lo": 16.0,
+        "hi": 17.0,
+        "median": NaN,
+        "mad": NaN,
+        "n": 5
+      },
+      {
+        "lo": 17.0,
+        "hi": 20.0,
+        "median": NaN,
+        "mad": NaN,
+        "n": 0
+      }
+    ]
+  },
+  {
+    "kind": "magnitude",
+    "pair": "MuSCAT3 vs kb26",
+    "band": "i",
+    "n": 195,
+    "mad_pooled": 0.12991156309822918,
+    "mad_within_bin": 0.059633301556085844,
+    "bins": [
+      {
+        "lo": 10.0,
+        "hi": 12.0,
+        "median": 0.18031296300343325,
+        "mad": 0.09939836740868696,
+        "n": 18
+      },
+      {
+        "lo": 12.0,
+        "hi": 13.0,
+        "median": 0.11102978904543725,
+        "mad": 0.02432352651451993,
+        "n": 45
+      },
+      {
+        "lo": 13.0,
+        "hi": 14.0,
+        "median": 0.052102664987764946,
+        "mad": 0.03836718445290264,
+        "n": 48
+      },
+      {
+        "lo": 14.0,
+        "hi": 15.0,
+        "median": -0.058446599474269334,
+        "mad": 0.061425511807293616,
+        "n": 40
+      },
+      {
+        "lo": 15.0,
+        "hi": 16.0,
+        "median": -0.18332539420710958,
+        "mad": 0.057841091304878064,
+        "n": 35
+      },
+      {
+        "lo": 16.0,
+        "hi": 17.0,
+        "median": -0.21378451246037145,
+        "mad": 0.09898243773176804,
+        "n": 8
+      },
+      {
+        "lo": 17.0,
+        "hi": 20.0,
+        "median": NaN,
+        "mad": NaN,
+        "n": 0
+      }
+    ]
+  },
+  {
+    "kind": "magnitude_x_radius",
+    "pair": "Moravian vs MuSCAT3",
+    "band": "g",
+    "mag_lo": 12.0,
+    "mag_hi": 13.0,
+    "radial_ptp": NaN
+  },
+  {
+    "kind": "magnitude_x_radius",
+    "pair": "Moravian vs MuSCAT3",
+    "band": "g",
+    "mag_lo": 13.0,
+    "mag_hi": 14.0,
+    "radial_ptp": 0.02929943862361828
+  },
+  {
+    "kind": "magnitude_x_radius",
+    "pair": "Moravian vs MuSCAT3",
+    "band": "g",
+    "mag_lo": 14.0,
+    "mag_hi": 15.0,
+    "radial_ptp": NaN
+  },
+  {
+    "kind": "magnitude_x_radius",
+    "pair": "Moravian vs MuSCAT3",
+    "band": "g",
+    "mag_lo": 15.0,
+    "mag_hi": 16.0,
+    "radial_ptp": 0.009107125504095315
+  },
+  {
+    "kind": "magnitude_x_radius",
+    "pair": "Moravian vs MuSCAT3",
+    "band": "g",
+    "mag_lo": 17.0,
+    "mag_hi": 20.0,
+    "radial_ptp": 0.01719525380464404
+  },
+  {
+    "kind": "magnitude_x_radius",
+    "pair": "Moravian vs MuSCAT3",
+    "band": "r",
+    "mag_lo": 12.0,
+    "mag_hi": 13.0,
+    "radial_ptp": NaN
+  },
+  {
+    "kind": "magnitude_x_radius",
+    "pair": "Moravian vs MuSCAT3",
+    "band": "r",
+    "mag_lo": 13.0,
+    "mag_hi": 14.0,
+    "radial_ptp": 0.01860951783947229
+  },
+  {
+    "kind": "magnitude_x_radius",
+    "pair": "Moravian vs MuSCAT3",
+    "band": "r",
+    "mag_lo": 14.0,
+    "mag_hi": 15.0,
+    "radial_ptp": 0.0025294535458559864
+  },
+  {
+    "kind": "magnitude_x_radius",
+    "pair": "Moravian vs MuSCAT3",
+    "band": "r",
+    "mag_lo": 15.0,
+    "mag_hi": 16.0,
+    "radial_ptp": 0.08162617210743761
+  },
+  {
+    "kind": "magnitude_x_radius",
+    "pair": "Moravian vs MuSCAT3",
+    "band": "r",
+    "mag_lo": 17.0,
+    "mag_hi": 20.0,
+    "radial_ptp": 0.024663498399807082
+  },
+  {
+    "kind": "magnitude_x_radius",
+    "pair": "Moravian vs MuSCAT3",
+    "band": "i",
+    "mag_lo": 12.0,
+    "mag_hi": 13.0,
+    "radial_ptp": 0.014185901934489209
+  },
+  {
+    "kind": "magnitude_x_radius",
+    "pair": "Moravian vs MuSCAT3",
+    "band": "i",
+    "mag_lo": 13.0,
+    "mag_hi": 14.0,
+    "radial_ptp": 0.016203280053417757
+  },
+  {
+    "kind": "magnitude_x_radius",
+    "pair": "Moravian vs MuSCAT3",
+    "band": "i",
+    "mag_lo": 14.0,
+    "mag_hi": 15.0,
+    "radial_ptp": 0.018994917225391816
+  },
+  {
+    "kind": "magnitude_x_radius",
+    "pair": "Moravian vs MuSCAT3",
+    "band": "i",
+    "mag_lo": 15.0,
+    "mag_hi": 16.0,
+    "radial_ptp": 0.020251394038055537
+  },
+  {
+    "kind": "magnitude_x_radius",
+    "pair": "Moravian vs MuSCAT3",
+    "band": "i",
+    "mag_lo": 16.0,
+    "mag_hi": 17.0,
+    "radial_ptp": 0.008740038003404393
+  },
+  {
+    "kind": "magnitude_x_radius",
+    "pair": "Moravian vs kb26",
+    "band": "r",
+    "mag_lo": 10.0,
+    "mag_hi": 12.0,
+    "radial_ptp": 0.005239262226548469
+  },
+  {
+    "kind": "magnitude_x_radius",
+    "pair": "Moravian vs kb26",
+    "band": "r",
+    "mag_lo": 12.0,
+    "mag_hi": 13.0,
+    "radial_ptp": 0.07071332036150135
+  },
+  {
+    "kind": "magnitude_x_radius",
+    "pair": "Moravian vs kb26",
+    "band": "r",
+    "mag_lo": 13.0,
+    "mag_hi": 14.0,
+    "radial_ptp": 0.04232367057637809
+  },
+  {
+    "kind": "magnitude_x_radius",
+    "pair": "Moravian vs kb26",
+    "band": "r",
+    "mag_lo": 14.0,
+    "mag_hi": 15.0,
+    "radial_ptp": 0.07595647070274225
+  },
+  {
+    "kind": "magnitude_x_radius",
+    "pair": "Moravian vs kb26",
+    "band": "r",
+    "mag_lo": 15.0,
+    "mag_hi": 16.0,
+    "radial_ptp": 0.061792133942137006
+  },
+  {
+    "kind": "magnitude_x_radius",
+    "pair": "Moravian vs kb26",
+    "band": "r",
+    "mag_lo": 16.0,
+    "mag_hi": 17.0,
+    "radial_ptp": 0.0847707156022608
+  },
+  {
+    "kind": "magnitude_x_radius",
+    "pair": "Moravian vs kb26",
+    "band": "i",
+    "mag_lo": 10.0,
+    "mag_hi": 12.0,
+    "radial_ptp": 0.02945952942804375
+  },
+  {
+    "kind": "magnitude_x_radius",
+    "pair": "Moravian vs kb26",
+    "band": "i",
+    "mag_lo": 12.0,
+    "mag_hi": 13.0,
+    "radial_ptp": 0.0938957114722605
+  },
+  {
+    "kind": "magnitude_x_radius",
+    "pair": "Moravian vs kb26",
+    "band": "i",
+    "mag_lo": 13.0,
+    "mag_hi": 14.0,
+    "radial_ptp": 0.0825339103674132
+  },
+  {
+    "kind": "magnitude_x_radius",
+    "pair": "Moravian vs kb26",
+    "band": "i",
+    "mag_lo": 14.0,
+    "mag_hi": 15.0,
+    "radial_ptp": 0.08581641125789474
+  },
+  {
+    "kind": "magnitude_x_radius",
+    "pair": "Moravian vs kb26",
+    "band": "i",
+    "mag_lo": 15.0,
+    "mag_hi": 16.0,
+    "radial_ptp": 0.10483459846681065
+  },
+  {
+    "kind": "magnitude_x_radius",
+    "pair": "Moravian vs kb26",
+    "band": "i",
+    "mag_lo": 16.0,
+    "mag_hi": 17.0,
+    "radial_ptp": 0.027331255713917812
+  },
+  {
+    "kind": "magnitude_x_radius",
+    "pair": "MuSCAT3 vs kb26",
+    "band": "r",
+    "mag_lo": 12.0,
+    "mag_hi": 13.0,
+    "radial_ptp": NaN
+  },
+  {
+    "kind": "magnitude_x_radius",
+    "pair": "MuSCAT3 vs kb26",
+    "band": "r",
+    "mag_lo": 13.0,
+    "mag_hi": 14.0,
+    "radial_ptp": 0.003033910504100845
+  },
+  {
+    "kind": "magnitude_x_radius",
+    "pair": "MuSCAT3 vs kb26",
+    "band": "r",
+    "mag_lo": 14.0,
+    "mag_hi": 15.0,
+    "radial_ptp": 0.019243812791158277
+  },
+  {
+    "kind": "magnitude_x_radius",
+    "pair": "MuSCAT3 vs kb26",
+    "band": "i",
+    "mag_lo": 12.0,
+    "mag_hi": 13.0,
+    "radial_ptp": 0.01102383662086126
+  },
+  {
+    "kind": "magnitude_x_radius",
+    "pair": "MuSCAT3 vs kb26",
+    "band": "i",
+    "mag_lo": 13.0,
+    "mag_hi": 14.0,
+    "radial_ptp": 0.018863468661466598
+  },
+  {
+    "kind": "magnitude_x_radius",
+    "pair": "MuSCAT3 vs kb26",
+    "band": "i",
+    "mag_lo": 14.0,
+    "mag_hi": 15.0,
+    "radial_ptp": 0.007894437733815707
+  },
+  {
+    "kind": "magnitude_x_radius",
+    "pair": "MuSCAT3 vs kb26",
+    "band": "i",
+    "mag_lo": 15.0,
+    "mag_hi": 16.0,
+    "radial_ptp": 0.015422481354950612
+  },
+  {
+    "kind": "per_instrument",
+    "instrument": "Moravian",
+    "band": "g",
+    "n": 603,
+    "resid_mad": 0.02664322855797543,
+    "span": 0.024118987846801332,
+    "bins": [
+      {
+        "lo": 10.0,
+        "hi": 12.0,
+        "median": -0.018612862046049283,
+        "mad": 0.03549570946296292,
+        "n": 24
+      },
+      {
+        "lo": 12.0,
+        "hi": 13.0,
+        "median": -0.009763702571028876,
+        "mad": 0.021354260216674255,
+        "n": 60
+      },
+      {
+        "lo": 13.0,
+        "hi": 14.0,
+        "median": 0.0025543639226559556,
+        "mad": 0.02123567176181499,
+        "n": 131
+      },
+      {
+        "lo": 14.0,
+        "hi": 15.0,
+        "median": -0.003036458711418444,
+        "mad": 0.024130057047163662,
+        "n": 125
+      },
+      {
+        "lo": 15.0,
+        "hi": 16.0,
+        "median": 0.005506125800752049,
+        "mad": 0.026949220635282024,
+        "n": 127
+      },
+      {
+        "lo": 16.0,
+        "hi": 17.0,
+        "median": 0.00030783382250110236,
+        "mad": 0.03288765844610303,
+        "n": 129
+      },
+      {
+        "lo": 17.0,
+        "hi": 20.0,
+        "median": NaN,
+        "mad": NaN,
+        "n": 7
+      }
+    ]
+  },
+  {
+    "kind": "per_instrument",
+    "instrument": "Moravian",
+    "band": "i",
+    "n": 755,
+    "resid_mad": 0.02338017497928965,
+    "span": 0.0298759300864484,
+    "bins": [
+      {
+        "lo": 10.0,
+        "hi": 12.0,
+        "median": -0.015468935058859934,
+        "mad": 0.014625004523892692,
+        "n": 29
+      },
+      {
+        "lo": 12.0,
+        "hi": 13.0,
+        "median": -0.016353755211802934,
+        "mad": 0.019259696644116867,
+        "n": 103
+      },
+      {
+        "lo": 13.0,
+        "hi": 14.0,
+        "median": -0.0064434529536052665,
+        "mad": 0.014066225229729036,
+        "n": 145
+      },
+      {
+        "lo": 14.0,
+        "hi": 15.0,
+        "median": 0.0040492002770093904,
+        "mad": 0.015284669693917907,
+        "n": 155
+      },
+      {
+        "lo": 15.0,
+        "hi": 16.0,
+        "median": 0.006809851018041435,
+        "mad": 0.020592302905395033,
+        "n": 167
+      },
+      {
+        "lo": 16.0,
+        "hi": 17.0,
+        "median": 0.013522174874645465,
+        "mad": 0.026080953488454968,
+        "n": 145
+      },
+      {
+        "lo": 17.0,
+        "hi": 20.0,
+        "median": NaN,
+        "mad": NaN,
+        "n": 1
+      }
+    ]
+  },
+  {
+    "kind": "per_instrument",
+    "instrument": "Moravian",
+    "band": "r",
+    "n": 694,
+    "resid_mad": 0.027712435802560803,
+    "span": 0.035079577831787834,
+    "bins": [
+      {
+        "lo": 10.0,
+        "hi": 12.0,
+        "median": 0.0027250847792270605,
+        "mad": 0.014938425621819204,
+        "n": 29
+      },
+      {
+        "lo": 12.0,
+        "hi": 13.0,
+        "median": -0.01199506152839902,
+        "mad": 0.019075620301178296,
+        "n": 95
+      },
+      {
+        "lo": 13.0,
+        "hi": 14.0,
+        "median": -0.011161285551103628,
+        "mad": 0.016700279682680255,
+        "n": 143
+      },
+      {
+        "lo": 14.0,
+        "hi": 15.0,
+        "median": -0.001167246663266841,
+        "mad": 0.021609417274721224,
+        "n": 137
+      },
+      {
+        "lo": 15.0,
+        "hi": 16.0,
+        "median": 0.013249845648360292,
+        "mad": 0.02628061370104477,
+        "n": 163
+      },
+      {
+        "lo": 16.0,
+        "hi": 17.0,
+        "median": 0.023084516303388813,
+        "mad": 0.03645637773245885,
+        "n": 125
+      },
+      {
+        "lo": 17.0,
+        "hi": 20.0,
+        "median": NaN,
+        "mad": NaN,
+        "n": 1
+      }
+    ]
+  },
+  {
+    "kind": "per_instrument",
+    "instrument": "MuSCAT3",
+    "band": "g",
+    "n": 181,
+    "resid_mad": 0.015338233098822695,
+    "span": 0.06138605994446511,
+    "bins": [
+      {
+        "lo": 10.0,
+        "hi": 12.0,
+        "median": 0.009531443424533548,
+        "mad": 0.014304265704096155,
+        "n": 9
+      },
+      {
+        "lo": 12.0,
+        "hi": 13.0,
+        "median": 0.00741756058490764,
+        "mad": 0.011873923516739687,
+        "n": 19
+      },
+      {
+        "lo": 13.0,
+        "hi": 14.0,
+        "median": 0.00023486208491943494,
+        "mad": 0.011916667234089165,
+        "n": 43
+      },
+      {
+        "lo": 14.0,
+        "hi": 15.0,
+        "median": 0.003675393644120145,
+        "mad": 0.011001860005227883,
+        "n": 31
+      },
+      {
+        "lo": 15.0,
+        "hi": 16.0,
+        "median": -0.007950042785205558,
+        "mad": 0.021132062650895712,
+        "n": 31
+      },
+      {
+        "lo": 16.0,
+        "hi": 17.0,
+        "median": -0.008570739380179881,
+        "mad": 0.027844736026817182,
+        "n": 29
+      },
+      {
+        "lo": 17.0,
+        "hi": 20.0,
+        "median": -0.05185461651993156,
+        "mad": 0.05459510087253136,
+        "n": 19
+      }
+    ]
+  },
+  {
+    "kind": "per_instrument",
+    "instrument": "MuSCAT3",
+    "band": "i",
+    "n": 201,
+    "resid_mad": 0.007587367993432843,
+    "span": 0.01741539996917385,
+    "bins": [
+      {
+        "lo": 10.0,
+        "hi": 12.0,
+        "median": NaN,
+        "mad": NaN,
+        "n": 7
+      },
+      {
+        "lo": 12.0,
+        "hi": 13.0,
+        "median": 0.0006373956190728336,
+        "mad": 0.0033095362361392263,
+        "n": 37
+      },
+      {
+        "lo": 13.0,
+        "hi": 14.0,
+        "median": -0.0003332573953545026,
+        "mad": 0.003265227219614974,
+        "n": 43
+      },
+      {
+        "lo": 14.0,
+        "hi": 15.0,
+        "median": -0.0024371580436945983,
+        "mad": 0.006388167401093316,
+        "n": 40
+      },
+      {
+        "lo": 15.0,
+        "hi": 16.0,
+        "median": 0.0030260051766741736,
+        "mad": 0.013311343285763772,
+        "n": 33
+      },
+      {
+        "lo": 16.0,
+        "hi": 17.0,
+        "median": 0.014978241925479252,
+        "mad": 0.02072162455520569,
+        "n": 31
+      },
+      {
+        "lo": 17.0,
+        "hi": 20.0,
+        "median": NaN,
+        "mad": NaN,
+        "n": 7
+      }
+    ]
+  },
+  {
+    "kind": "per_instrument",
+    "instrument": "MuSCAT3",
+    "band": "r",
+    "n": 206,
+    "resid_mad": 0.05432056294004205,
+    "span": 0.18200067120499025,
+    "bins": [
+      {
+        "lo": 10.0,
+        "hi": 12.0,
+        "median": NaN,
+        "mad": NaN,
+        "n": 7
+      },
+      {
+        "lo": 12.0,
+        "hi": 13.0,
+        "median": -0.023229411345987043,
+        "mad": 0.020154334790759093,
+        "n": 31
+      },
+      {
+        "lo": 13.0,
+        "hi": 14.0,
+        "median": -0.027991632938748477,
+        "mad": 0.007274957734783971,
+        "n": 47
+      },
+      {
+        "lo": 14.0,
+        "hi": 15.0,
+        "median": -0.0032914488276377316,
+        "mad": 0.01805437729491339,
+        "n": 33
+      },
+      {
+        "lo": 15.0,
+        "hi": 16.0,
+        "median": 0.04156550626212779,
+        "mad": 0.047273737537738565,
+        "n": 36
+      },
+      {
+        "lo": 16.0,
+        "hi": 17.0,
+        "median": 0.12300190139770993,
+        "mad": 0.06458288236313993,
+        "n": 18
+      },
+      {
+        "lo": 17.0,
+        "hi": 20.0,
+        "median": 0.15400903826624177,
+        "mad": 0.04190553267163511,
+        "n": 33
+      }
+    ]
+  },
+  {
+    "kind": "per_instrument",
+    "instrument": "kb26",
+    "band": "B",
+    "n": 180,
+    "resid_mad": 0.09048763457381104,
+    "span": 0.37640834885949737,
+    "bins": [
+      {
+        "lo": 10.0,
+        "hi": 12.0,
+        "median": 0.2924470076904684,
+        "mad": 0.06610857147486299,
+        "n": 17
+      },
+      {
+        "lo": 12.0,
+        "hi": 13.0,
+        "median": 0.20717296989613088,
+        "mad": 0.09415940320222235,
+        "n": 13
+      },
+      {
+        "lo": 13.0,
+        "hi": 14.0,
+        "median": 0.0032622809842588474,
+        "mad": 0.05403224963157372,
+        "n": 101
+      },
+      {
+        "lo": 14.0,
+        "hi": 15.0,
+        "median": -0.08396134116902898,
+        "mad": 0.038911113458541854,
+        "n": 48
+      },
+      {
+        "lo": 15.0,
+        "hi": 16.0,
+        "median": NaN,
+        "mad": NaN,
+        "n": 0
+      },
+      {
+        "lo": 16.0,
+        "hi": 17.0,
+        "median": NaN,
+        "mad": NaN,
+        "n": 0
+      },
+      {
+        "lo": 17.0,
+        "hi": 20.0,
+        "median": NaN,
+        "mad": NaN,
+        "n": 0
+      }
+    ]
+  },
+  {
+    "kind": "per_instrument",
+    "instrument": "kb26",
+    "band": "V",
+    "n": 353,
+    "resid_mad": 0.11130924754294964,
+    "span": 0.3201281568204313,
+    "bins": [
+      {
+        "lo": 10.0,
+        "hi": 12.0,
+        "median": 0.18078625651472535,
+        "mad": 0.038720548749003374,
+        "n": 25
+      },
+      {
+        "lo": 12.0,
+        "hi": 13.0,
+        "median": 0.0993237751938767,
+        "mad": 0.02180222634943727,
+        "n": 62
+      },
+      {
+        "lo": 13.0,
+        "hi": 14.0,
+        "median": 0.0329050630297254,
+        "mad": 0.045029612254623055,
+        "n": 106
+      },
+      {
+        "lo": 14.0,
+        "hi": 15.0,
+        "median": -0.07178021096972609,
+        "mad": 0.05167964451084568,
+        "n": 122
+      },
+      {
+        "lo": 15.0,
+        "hi": 16.0,
+        "median": -0.13934190030570592,
+        "mad": 0.03972914713268092,
+        "n": 36
+      },
+      {
+        "lo": 16.0,
+        "hi": 17.0,
+        "median": NaN,
+        "mad": NaN,
+        "n": 0
+      },
+      {
+        "lo": 17.0,
+        "hi": 20.0,
+        "median": NaN,
+        "mad": NaN,
+        "n": 0
+      }
+    ]
+  },
+  {
+    "kind": "per_instrument",
+    "instrument": "kb26",
+    "band": "i",
+    "n": 410,
+    "resid_mad": 0.13066858083852792,
+    "span": 0.278113865758999,
+    "bins": [
+      {
+        "lo": 10.0,
+        "hi": 12.0,
+        "median": 0.0954592834473158,
+        "mad": 0.042021419852737295,
+        "n": 22
+      },
+      {
+        "lo": 12.0,
+        "hi": 13.0,
+        "median": 0.1060743692129793,
+        "mad": 0.03555030654728895,
+        "n": 75
+      },
+      {
+        "lo": 13.0,
+        "hi": 14.0,
+        "median": 0.024164096419585945,
+        "mad": 0.04786102242155381,
+        "n": 130
+      },
+      {
+        "lo": 14.0,
+        "hi": 15.0,
+        "median": -0.09931890714783975,
+        "mad": 0.06733334611952305,
+        "n": 134
+      },
+      {
+        "lo": 15.0,
+        "hi": 16.0,
+        "median": -0.1720394965460197,
+        "mad": 0.04854638461494514,
+        "n": 41
+      },
+      {
+        "lo": 16.0,
+        "hi": 17.0,
+        "median": NaN,
+        "mad": NaN,
+        "n": 0
+      },
+      {
+        "lo": 17.0,
+        "hi": 20.0,
+        "median": NaN,
+        "mad": NaN,
+        "n": 0
+      }
+    ]
+  },
+  {
+    "kind": "per_instrument",
+    "instrument": "kb26",
+    "band": "r",
+    "n": 450,
+    "resid_mad": 0.13442303879740505,
+    "span": 0.2756446451859853,
+    "bins": [
+      {
+        "lo": 10.0,
+        "hi": 12.0,
+        "median": 0.0984749907136444,
+        "mad": 0.017477256262272048,
+        "n": 21
+      },
+      {
+        "lo": 12.0,
+        "hi": 13.0,
+        "median": 0.10566493206703376,
+        "mad": 0.03314992814221894,
+        "n": 68
+      },
+      {
+        "lo": 13.0,
+        "hi": 14.0,
+        "median": 0.052051881807515965,
+        "mad": 0.04325466044964327,
+        "n": 130
+      },
+      {
+        "lo": 14.0,
+        "hi": 15.0,
+        "median": -0.05444792145439292,
+        "mad": 0.06118657197137759,
+        "n": 112
+      },
+      {
+        "lo": 15.0,
+        "hi": 16.0,
+        "median": -0.16997971311895155,
+        "mad": 0.057870239512929446,
+        "n": 115
+      },
+      {
+        "lo": 16.0,
+        "hi": 17.0,
+        "median": NaN,
+        "mad": NaN,
+        "n": 1
+      },
+      {
+        "lo": 17.0,
+        "hi": 20.0,
+        "median": NaN,
+        "mad": NaN,
+        "n": 0
+      }
+    ]
+  },
+  {
+    "kind": "flux_offset",
+    "instrument": "Moravian",
+    "band": "g",
+    "n_points": 6,
+    "m_c": 28.499999999997755,
+    "offset_const": -0.0038360479222987643,
+    "rms_sky_model": 0.008161871388458187,
+    "rms_linear": 0.004519758401102494,
+    "winner": "직선"
+  },
+  {
+    "kind": "flux_offset",
+    "instrument": "Moravian",
+    "band": "i",
+    "n_points": 6,
+    "m_c": 28.499999999999538,
+    "offset_const": -0.0023094174676294515,
+    "rms_sky_model": 0.011272531725287633,
+    "rms_linear": 0.003173742039033518,
+    "winner": "직선"
+  },
+  {
+    "kind": "flux_offset",
+    "instrument": "Moravian",
+    "band": "r",
+    "n_points": 6,
+    "m_c": 28.4999999998035,
+    "offset_const": 0.002460710872795974,
+    "rms_sky_model": 0.012585064184166505,
+    "rms_linear": 0.0092710261169198,
+    "winner": "직선"
+  },
+  {
+    "kind": "flux_offset",
+    "instrument": "MuSCAT3",
+    "band": "g",
+    "n_points": 7,
+    "m_c": 21.74637778934504,
+    "offset_const": 0.003261504189078949,
+    "rms_sky_model": 0.004462663670881221,
+    "rms_linear": 0.00961151594085944,
+    "winner": "하늘"
+  },
+  {
+    "kind": "flux_offset",
+    "instrument": "MuSCAT3",
+    "band": "i",
+    "n_points": 5,
+    "m_c": 28.499999999925063,
+    "offset_const": 0.0031799061914636333,
+    "rms_sky_model": 0.006163543266095291,
+    "rms_linear": 0.004169413855686506,
+    "winner": "직선"
+  },
+  {
+    "kind": "flux_offset",
+    "instrument": "MuSCAT3",
+    "band": "r",
+    "n_points": 6,
+    "m_c": 30.499999999975707,
+    "offset_const": 0.0440142744196361,
+    "rms_sky_model": 0.07105446463773879,
+    "rms_linear": 0.021297442320109713,
+    "winner": "직선"
+  },
+  {
+    "kind": "flux_offset",
+    "instrument": "kb26",
+    "band": "B",
+    "n_points": 4,
+    "m_c": 15.880375274862272,
+    "offset_const": 0.24158852696160785,
+    "rms_sky_model": 0.06569441249409194,
+    "rms_linear": 0.03593519462028736,
+    "winner": "직선"
+  },
+  {
+    "kind": "flux_offset",
+    "instrument": "kb26",
+    "band": "V",
+    "n_points": 5,
+    "m_c": 17.11927121513505,
+    "offset_const": 0.1078951245132971,
+    "rms_sky_model": 0.05315710601066878,
+    "rms_linear": 0.013922031155396447,
+    "winner": "직선"
+  },
+  {
+    "kind": "flux_offset",
+    "instrument": "kb26",
+    "band": "i",
+    "n_points": 5,
+    "m_c": 17.1255452359446,
+    "offset_const": 0.07782946063744058,
+    "rms_sky_model": 0.04234168008659373,
+    "rms_linear": 0.04120375239212869,
+    "winner": "직선"
+  },
+  {
+    "kind": "flux_offset",
+    "instrument": "kb26",
+    "band": "r",
+    "n_points": 5,
+    "m_c": 17.11119093858108,
+    "offset_const": 0.09458982833140091,
+    "rms_sky_model": 0.025067980075890634,
+    "rms_linear": 0.044648890145897444,
+    "winner": "하늘"
+  },
+  {
+    "kind": "colour_vs_magnitude",
+    "instrument": "Moravian",
+    "band": "g",
+    "n": 603,
+    "rho_colour_mag": 0.4981492724215441,
+    "span_colour": 0.02869320490551086,
+    "span_mag": 0.010257690716173107,
+    "span_colour_held": 0.026910019462229595,
+    "span_mag_held": 0.014300208262969072,
+    "resid_mad": 0.02664322855797543,
+    "resid_mad_after_mag": 0.02569522957106753,
+    "resid_mad_after_shuffled": 0.02600145492479773
+  },
+  {
+    "kind": "colour_vs_magnitude",
+    "instrument": "Moravian",
+    "band": "i",
+    "n": 755,
+    "rho_colour_mag": 0.556045441271144,
+    "span_colour": 0.024721322657168976,
+    "span_mag": 0.0268784409615197,
+    "span_colour_held": 0.012853785208139623,
+    "span_mag_held": 0.011425503507459744,
+    "resid_mad": 0.02338017497928965,
+    "resid_mad_after_mag": 0.01928137923960716,
+    "resid_mad_after_shuffled": 0.02308343118743593
+  },
+  {
+    "kind": "colour_vs_magnitude",
+    "instrument": "Moravian",
+    "band": "r",
+    "n": 694,
+    "rho_colour_mag": 0.5536131356120848,
+    "span_colour": 0.043558713148387884,
+    "span_mag": 0.03389224869155871,
+    "span_colour_held": 0.02211045425321756,
+    "span_mag_held": 0.01676175217913123,
+    "resid_mad": 0.027712435802560803,
+    "resid_mad_after_mag": 0.023155696248309442,
+    "resid_mad_after_shuffled": 0.027561562550155523
+  },
+  {
+    "kind": "colour_vs_magnitude",
+    "instrument": "MuSCAT3",
+    "band": "g",
+    "n": 181,
+    "rho_colour_mag": 0.6908490917877876,
+    "span_colour": 0.033931378254837496,
+    "span_mag": 0.03426041631488802,
+    "span_colour_held": 0.00016512416363068105,
+    "span_mag_held": 0.007666459886399357,
+    "resid_mad": 0.015338233098822695,
+    "resid_mad_after_mag": 0.015207732133492507,
+    "resid_mad_after_shuffled": 0.016194271613952205
+  },
+  {
+    "kind": "colour_vs_magnitude",
+    "instrument": "MuSCAT3",
+    "band": "i",
+    "n": 201,
+    "rho_colour_mag": 0.6837876069802723,
+    "span_colour": 0.018174292419210758,
+    "span_mag": 0.014970756666658369,
+    "span_colour_held": 0.0015694069130262056,
+    "span_mag_held": 0.002212661754656231,
+    "resid_mad": 0.007587367993432843,
+    "resid_mad_after_mag": 0.0071165999494296455,
+    "resid_mad_after_shuffled": 0.007482015020447481
+  },
+  {
+    "kind": "colour_vs_magnitude",
+    "instrument": "MuSCAT3",
+    "band": "r",
+    "n": 206,
+    "rho_colour_mag": 0.7786947506183228,
+    "span_colour": 0.18654284261982976,
+    "span_mag": 0.18214949693506283,
+    "span_colour_held": 0.015023308131988676,
+    "span_mag_held": 0.003693417643538678,
+    "resid_mad": 0.05432056294004205,
+    "resid_mad_after_mag": 0.02399660847060269,
+    "resid_mad_after_shuffled": 0.05707567577745509
+  },
+  {
+    "kind": "colour_vs_magnitude",
+    "instrument": "kb26",
+    "band": "B",
+    "n": 180,
+    "rho_colour_mag": -0.19117228946192624,
+    "span_colour": 0.21901674896548773,
+    "span_mag": 0.32417967690785865,
+    "span_colour_held": 0.05850715690099717,
+    "span_mag_held": 0.119599066219783,
+    "resid_mad": 0.09048763457381104,
+    "resid_mad_after_mag": 0.05385595515955329,
+    "resid_mad_after_shuffled": 0.09278529934991994
+  },
+  {
+    "kind": "colour_vs_magnitude",
+    "instrument": "kb26",
+    "band": "V",
+    "n": 353,
+    "rho_colour_mag": 0.05763127395711828,
+    "span_colour": 0.15540384638305316,
+    "span_mag": 0.23527859750618418,
+    "span_colour_held": 0.03247512254367857,
+    "span_mag_held": 0.10754190710428002,
+    "resid_mad": 0.11130924754294964,
+    "resid_mad_after_mag": 0.03861088105119828,
+    "resid_mad_after_shuffled": 0.11102338519855869
+  },
+  {
+    "kind": "colour_vs_magnitude",
+    "instrument": "kb26",
+    "band": "i",
+    "n": 410,
+    "rho_colour_mag": 0.1033552645073713,
+    "span_colour": 0.2035148990706266,
+    "span_mag": 0.25769196929864213,
+    "span_colour_held": 0.04465217620953377,
+    "span_mag_held": 0.16461640989263504,
+    "resid_mad": 0.13066858083852792,
+    "resid_mad_after_mag": 0.05229530276380059,
+    "resid_mad_after_shuffled": 0.12706086446816853
+  },
+  {
+    "kind": "colour_vs_magnitude",
+    "instrument": "kb26",
+    "band": "r",
+    "n": 450,
+    "rho_colour_mag": 0.22716210786131386,
+    "span_colour": 0.23579628000533726,
+    "span_mag": 0.2864663940141212,
+    "span_colour_held": 0.038369595332190976,
+    "span_mag_held": 0.16681078378871517,
+    "resid_mad": 0.13442303879740505,
+    "resid_mad_after_mag": 0.044055360937795496,
+    "resid_mad_after_shuffled": 0.1312130544471986
+  }
+]
