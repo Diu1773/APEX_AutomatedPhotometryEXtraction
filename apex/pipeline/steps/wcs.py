@@ -38,6 +38,39 @@ def _resolve_use_cropped(result_dir: Path) -> bool:
     return bool(list(cropped_dir.glob("*.fit*")))
 
 
+def _frames_carrying_a_header_wcs(
+    file_list: List[str], data_dir: Path, result_dir: Path, use_cropped: bool
+) -> int:
+    """헤더에 하늘 좌표가 붙어 있는 프레임의 수.
+
+    **「한 장도 못 풀었다」와 「이어서 못 간다」는 다른 말이다.** 6 단계는 5 단계의
+    산출물이 없으면 프레임 헤더의 측성 해를 읽어 쓴다(`refbuild.py` 의
+    `w.has_celestial` 갈래). 관측소가 이미 푼 프레임 — LCO 의 BANZAI 처리본 같은 것
+    — 은 그 길로 정상적으로 끝까지 간다.
+
+    그러니 풀이 엔진이 한 장도 못 풀었을 때 실패로 볼지 말지는 **헤더에 쓸 수 있는
+    좌표가 남아 있느냐**로 갈린다. 헤더만 읽으므로 화소는 건드리지 않는다.
+    """
+    from astropy.wcs import WCS
+
+    from apex.utils.io_utils import read_fits_header
+
+    roots = [step2_cropped_dir(result_dir), data_dir] if use_cropped else [data_dir]
+    n = 0
+    for name in file_list:
+        for root in roots:
+            path = Path(root) / str(name)
+            if not path.exists():
+                continue
+            try:
+                if WCS(read_fits_header(path), relax=True).has_celestial:
+                    n += 1
+            except Exception:  # noqa: BLE001 - 못 읽는 헤더는 없는 것으로 친다
+                pass
+            break
+    return n
+
+
 class WcsStep(PipelineStep):
     index = 5
     key = "wcs"
@@ -109,6 +142,28 @@ class WcsStep(PipelineStep):
         except Exception:  # noqa: BLE001 - QC must not fail a finished solve
             if ctx.logger is not None:
                 ctx.logger.exception('Could not write Step 5 QC figure')
+
+        # **한 장도 못 풀었는데 초록으로 끝나면 안 된다.** 여태 이 단계는 몇 장을
+        # 풀었든 OK 를 돌려주었다. `0/30 frames solved` 라고 적기는 하지만 상태가
+        # 초록이라 자동 실행은 못 알아챈다. 게다가 한 장도 못 풀면
+        # `wcs_solve_summary.csv` 가 아예 안 쓰이므로, **스스로 `is_complete` 에서
+        # 「완료 아님」이라고 판정할 산출물을 안 내고서 OK 를 돌려주던 셈이다.**
+        #
+        # 그렇다고 무조건 실패로 볼 수도 없다. 6 단계는 프레임 헤더의 측성 해를
+        # 읽어 쓸 수 있고, 관측소가 이미 푼 프레임(LCO 의 BANZAI 처리본 등)은 그
+        # 길로 끝까지 간다. 그래서 **이어서 갈 수 있느냐**로 가른다.
+        if n_ok == 0 and file_list:
+            n_hdr = _frames_carrying_a_header_wcs(
+                file_list, Path(ctx.data_dir), ctx.result_dir, use_cropped)
+            if n_hdr:
+                msg += (f"; 한 장도 못 풀었다 — 헤더에 측성 해가 있는 "
+                        f"{n_hdr}/{len(file_list)} 장으로 이어서 간다")
+            else:
+                return StepResult(
+                    index=self.index, key=self.key, status=StepStatus.FAILED,
+                    message=(msg + "; 헤더에도 측성 해가 없어 이어서 갈 수 없다"),
+                    outputs=[str(out_dir)],
+                )
 
         return StepResult(
             index=self.index, key=self.key, status=StepStatus.OK,

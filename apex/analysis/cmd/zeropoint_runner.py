@@ -456,19 +456,128 @@ def _first_text(df: pd.DataFrame, column: str) -> str:
     vals = df[column].dropna().astype(str)
     return vals.iloc[0] if len(vals) else ""
 
+def magnitude_drift_by_filter(
+    cal_df: pd.DataFrame | None,
+    coeff_df: pd.DataFrame | None,
+    snr_cut: float = 20.0,
+) -> dict[str, dict]:
+    """필터마다 「밝은 쪽과 어두운 쪽의 영점이 얼마나 다른가」.
+
+    영점 모형은 색에 대해서만 기울기를 갖는다 — ``mag_cal = mag_inst + zp + ct·C``.
+    **밝기에 대한 기울기는 모형에 없다.** 그래서 기기가 밝기에 따라 치우치면 그
+    치우침이 통째로 잔차에 남고, 잔차의 산포(``fit_scatter_rms``)에 섞여 들어가
+    **별마다의 흩어짐처럼 보인다.**
+
+    실제로 그런 기기가 있었다. LCO 0.4 m(kb26)의 M67 은 밝은 쪽과 어두운 쪽의
+    영점이 네 밴드 모두 0.28~0.38 등급 다르다. 같은 시야를 같은 기준에 견준
+    Moravian 과 MuSCAT3 는 0.03 안쪽이다. 관측소 자신의 파이프라인으로 보정하고
+    관측소 자신의 측광으로 재도 같은 값이 나오므로 **기기 쪽 성질**이다
+    (`validation/ERROR_BUDGET.md` 7~8 절).
+
+    APEX 는 이 수치를 이미 내고 있었지만 **CMD 에 쓰는 한 밴드에 대해서만**
+    이었다(``gaia_cmd_drift_by_mag.csv``). 여기서는 **영점을 맞춘 모든 필터**에
+    대해 낸다.
+
+    재는 법은 기존 CMD 쪽과 같은 규약이다 — 기준 등급의 아래 5 분의 1 과 위
+    5 분의 1 을 잘라 잔차의 중앙값을 빼고, 어두운 쪽에서 밝은 쪽을 뺀다.
+
+    **표본을 적합과 같게 잘라야 한다.** 보정성 별 표에는 적합이 안 쓴 별까지
+    들어 있고, 거기에는 신호가 거의 없는 별도 섞여 있다. kb26 의 B 는 그 별들을
+    넣느냐 빼느냐로 **값의 부호가 뒤집힌다** — SNR 20 이상만 두면 9.9~14.5 등급
+    범위에서 −0.32 이고, 20.2 등급까지 다 넣으면 +0.26 이다. 어두운 쪽에서
+    Gaia 의 BP 가 오염되어 기준 등급 자체가 못 미더운 탓이다
+    (`memory/project_b_filter_faint_bias.md`). 그러므로 `snr_cut` 으로 적합과 같은
+    문턱을 걸고, **어느 등급 범위에서 잰 값인지 함께 낸다.**
+
+    Returns
+    -------
+    필터 이름 -> ``{"drift", "bright_mag", "faint_mag", "n"}``. 잴 수 없는
+    필터는 아예 안 들어간다.
+    """
+    if not isinstance(cal_df, pd.DataFrame) or cal_df.empty:
+        return {}
+    if not isinstance(coeff_df, pd.DataFrame) or coeff_df.empty:
+        return {}
+    if "filter" not in coeff_df.columns:
+        return {}
+
+    out: dict[str, dict] = {}
+    for _, row in coeff_df.iterrows():
+        filt = str(row.get("filter", "")).strip()
+        if not filt:
+            continue
+        ccol = str(row.get("color_col", "none"))
+        d_col, r_col = f"delta_{filt}", f"ref_{filt}"
+        if d_col not in cal_df.columns or r_col not in cal_df.columns:
+            continue
+        delta = pd.to_numeric(cal_df[d_col], errors="coerce").to_numpy(float)
+        ref = pd.to_numeric(cal_df[r_col], errors="coerce").to_numpy(float)
+        # SNR 열이 없는 기기도 있다. 그때는 문턱을 걸지 않는다 — 없는 열을
+        # 이유로 별을 전부 버리면 안 된다.
+        s_col = f"snr_{filt}"
+        if s_col in cal_df.columns:
+            snr = pd.to_numeric(cal_df[s_col], errors="coerce").to_numpy(float)
+            snr_ok = np.isfinite(snr) & (snr >= float(snr_cut))
+        else:
+            snr_ok = np.ones(delta.shape, dtype=bool)
+
+        # `float(x) or 0.0` 으로 쓰면 안 된다 — NaN 은 참이라 그대로 NaN 이 나오고,
+        # 그러면 잔차가 통째로 NaN 이 되어 **그 필터가 조용히 사라진다.** 옛 계수
+        # 파일에는 `ct2` 가 아예 없거나 NaN 으로 들어 있다.
+        def _num(key: str, default: float = 0.0) -> float:
+            try:
+                v = float(row.get(key, default))
+            except (TypeError, ValueError):
+                return default
+            return v if np.isfinite(v) else default
+
+        model = np.full(delta.shape, _num("zp", np.nan))
+        c_col = f"color_{ccol}"
+        if ccol != "none" and c_col in cal_df.columns:
+            c = pd.to_numeric(cal_df[c_col], errors="coerce").to_numpy(float)
+            model = model + _num("ct") * c + _num("ct2") * c * c
+        resid = delta - model
+
+        ok = np.isfinite(resid) & np.isfinite(ref) & snr_ok
+        if int(ok.sum()) < 40:
+            continue
+        r, m = resid[ok], ref[ok]
+        q20, q80 = np.nanpercentile(m, [20.0, 80.0])
+        bright, faint = m <= q20, m >= q80
+        # 기존 CMD 쪽과 같은 문턱 — 양쪽에 열다섯 별씩은 있어야 중앙값이 선다.
+        if int(bright.sum()) < 15 or int(faint.sum()) < 15:
+            continue
+        out[filt] = {
+            "drift": float(np.median(r[faint]) - np.median(r[bright])),
+            "bright_mag": float(q20),
+            "faint_mag": float(q80),
+            "n": int(bright.sum() + faint.sum()),
+            "snr_cut": float(snr_cut),
+        }
+    return out
+
+
 def build_zp_qc_summary(
     coeff_df: pd.DataFrame,
     frame_df: pd.DataFrame | None = None,
     cut_df: pd.DataFrame | None = None,
     reject_df: pd.DataFrame | None = None,
+    cal_df: pd.DataFrame | None = None,
+    snr_cut: float = 20.0,
 ) -> pd.DataFrame:
-    """Build a compact per-filter Step 10 calibration QC table."""
+    """Build a compact per-filter Step 10 calibration QC table.
+
+    ``cal_df`` 는 보정성 별 표(``gaia_sdss_calibrator_by_ID.csv``)다. 주면
+    필터마다의 **밝기 치우침**(밝은 쪽과 어두운 쪽의 영점 차이)을 함께 낸다 —
+    영점 모형에 밝기 기울기가 없어서 잔차 산포에 섞여 들어가던 값이다.
+    """
     coeff_df = coeff_df.copy() if isinstance(coeff_df, pd.DataFrame) else pd.DataFrame()
     frame_df = frame_df.copy() if isinstance(frame_df, pd.DataFrame) else pd.DataFrame()
     cut_df = cut_df.copy() if isinstance(cut_df, pd.DataFrame) else pd.DataFrame()
     reject_df = reject_df.copy() if isinstance(reject_df, pd.DataFrame) else pd.DataFrame()
 
     filters = _zp_filter_values(coeff_df, frame_df, cut_df, reject_df)
+    drift = magnitude_drift_by_filter(cal_df, coeff_df, snr_cut)
     rows = []
     for filt in filters:
         coeff = _zp_filter_subset(coeff_df, filt)
@@ -495,6 +604,14 @@ def build_zp_qc_summary(
             "n_rejected_frames": int(len(rejects)),
             "n_total_measurements": int(_zp_median(cuts, "n_total")) if np.isfinite(_zp_median(cuts, "n_total")) else 0,
             "n_kept_measurements": int(_zp_median(cuts, "n_kept")) if np.isfinite(_zp_median(cuts, "n_kept")) else 0,
+            # 밝기 치우침 — 어두운 5 분의 1 에서 밝은 5 분의 1 을 뺀 영점 차이.
+            # 0.02 등급을 넘으면 그 필터의 등급 눈금이 밝기를 따라 미끄러진다는 뜻이고,
+            # 그만큼은 흩어짐이 아니라 계통이다.
+            "bright_to_faint_drift": drift.get(filt, {}).get("drift", np.nan),
+            "drift_bright_mag": drift.get(filt, {}).get("bright_mag", np.nan),
+            "drift_faint_mag": drift.get(filt, {}).get("faint_mag", np.nan),
+            "n_drift_calibrators": int(drift.get(filt, {}).get("n", 0)),
+            "drift_snr_cut": drift.get(filt, {}).get("snr_cut", np.nan),
         })
 
     summary = pd.DataFrame(rows)
@@ -604,8 +721,14 @@ def draw_zp_qc_overview(
     fig.tight_layout(rect=(0, 0, 1, 0.95))
     return True
 
-def export_zp_qc_products(output_dir: Path, log_func=None) -> list[Path]:
-    """Export Step 10 QC summary and overview figure from existing calibration outputs."""
+def export_zp_qc_products(output_dir: Path, log_func=None,
+                          snr_cut: float = 20.0) -> list[Path]:
+    """Export Step 10 QC summary and overview figure from existing calibration outputs.
+
+    ``snr_cut`` 은 밝기 치우침을 잴 표본을 적합과 같게 자르는 문턱이다. 부르는
+    쪽이 그 실행에 쓴 값을 그대로 넘긴다 — 기본값을 쓰면 표본이 달라져 값이
+    달라진다.
+    """
     output_dir = Path(output_dir)
     coeff_path = output_dir / "zp_fit_coefficients.csv"
     if not coeff_path.exists() or coeff_path.stat().st_size == 0:
@@ -628,7 +751,9 @@ def export_zp_qc_products(output_dir: Path, log_func=None) -> list[Path]:
     cut_df = _read_optional("frame_zeropoint_cut_summary.csv")
     reject_df = _read_optional("frame_zeropoint_rejects.csv")
 
-    summary = build_zp_qc_summary(coeff_df, frame_df, cut_df, reject_df)
+    cal_df = _read_optional("gaia_sdss_calibrator_by_ID.csv")
+    summary = build_zp_qc_summary(coeff_df, frame_df, cut_df, reject_df,
+                                  cal_df, snr_cut)
     if summary.empty:
         return []
 
@@ -637,6 +762,22 @@ def export_zp_qc_products(output_dir: Path, log_func=None) -> list[Path]:
     summary_path = output_dir / "zp_qc_summary.csv"
     summary.to_csv(summary_path, index=False)
     saved.append(summary_path)
+
+    # 표에만 있으면 아무도 안 본다. CMD 쪽이 한 밴드에 대해 이미 하던 대로,
+    # 영점을 맞춘 필터 전부의 밝기 치우침을 한 줄로 적는다. 문턱 0.02 는 기존
+    # CMD QC 가 쓰는 것과 같은 값이다.
+    if log_func and "bright_to_faint_drift" in summary.columns:
+        parts = []
+        for _, r in summary.iterrows():
+            v = pd.to_numeric(pd.Series([r.get("bright_to_faint_drift")]),
+                              errors="coerce").iloc[0]
+            if pd.isna(v):
+                continue
+            parts.append(f"{r.get('filter')}={float(v):+.3f}")
+        if parts:
+            log_func(f"[ZP QC] bright->faint drift: {' '.join(parts)} mag "
+                     f"(SNR>={float(snr_cut):g} calibrators; "
+                     f"|drift|>~0.02 = magnitude-dependent calibration systematic)")
 
     fig = Figure(figsize=(11.0, 7.6), dpi=120)
     if draw_zp_qc_overview(fig, coeff_df, frame_df, summary):
@@ -3292,7 +3433,7 @@ class ZeropointCalibrationRunner(ReportsProgress):
             out_cmd_path = output_dir / "median_by_ID_filter_wide_cmd.csv"
             df_out.to_csv(out_cmd_path, index=False, na_rep="NaN")
             self._log(f"Saved {out_cmd_path.name} | rows={len(df_out)}")
-            export_zp_qc_products(output_dir, self._log)
+            export_zp_qc_products(output_dir, self._log, snr_cut)
             export_cmd_qc_products(output_dir, self._log)
             export_gaia_cmd_comparison_products(output_dir, self._log)
 

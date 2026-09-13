@@ -3121,7 +3121,14 @@ class ZeropointCalibrationWindow(StepWindowBase):
         except Exception:
             pass
         try:
-            export_zp_qc_products(step10_zp_dir(self.params.P.result_dir), self.log)
+            # 밝기 치우침을 잴 표본은 적합과 같은 문턱으로 잘라야 한다. 기본값을
+            # 쓰면 신호가 거의 없는 별까지 들어와 값이 달라진다(kb26 의 B 는
+            # 부호가 뒤집힌다). 러너가 쓰는 것과 같은 자리에서 읽는다.
+            _P = self.params.P
+            _snr_cut = float(getattr(_P, "gaia_snr_calib_min",
+                                     getattr(_P, "cmd_snr_calib_min", 20.0)))
+            export_zp_qc_products(step10_zp_dir(self.params.P.result_dir),
+                                  self.log, _snr_cut)
             export_cmd_qc_products(step10_zp_dir(self.params.P.result_dir), self.log)
             export_gaia_cmd_comparison_products(step10_zp_dir(self.params.P.result_dir), self.log)
         except Exception:
