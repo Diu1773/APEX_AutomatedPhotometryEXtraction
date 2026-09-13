@@ -72,6 +72,9 @@ sys.path.insert(0, str(Path(__file__).absolute().parent))
 
 from fetch_lco import download, query  # noqa: E402
 
+#: 기본은 kb26 의 2019-05-03 이지만 **박아 두지 않는다.** 같은 0.4 m 급의 다른
+#: 카메라로 같은 성단을 찍은 밤이 또 있고(kb27 의 2019-04-15, 관측소도 다르다),
+#: 밝기 치우침이 카메라에 붙박인 것인지 그 밤의 것인지 가르려면 그 밤이 필요하다.
 INSTRUMENT = "kb26"
 NIGHT = "2019-05-03"          # 과학·보정이 모두 이 밤에 있다
 CALIB_TYPES = ("BIAS", "DARK", "SKYFLAT")
@@ -99,15 +102,20 @@ def _run(label: str, out: Path, rows: list) -> tuple[int, int]:
 
 def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(
-        description=f"LCO {INSTRUMENT} 의 M67 을 받는다 ({NIGHT} 밤)")
+        description="LCO 0.4 m 의 M67 을 받는다 (기기·밤은 옵션)")
     ap.add_argument("--out", required=True, help="받을 폴더")
     ap.add_argument("--part", nargs="+", default=["science", "calib", "banzai"],
                     choices=["science", "calib", "banzai"],
                     help="받을 부분 (기본: 셋 다)")
     ap.add_argument("--bands", nargs="+", default=list(DEFAULT_BANDS),
                     help=f"밴드 (기본: {' '.join(DEFAULT_BANDS)})")
+    ap.add_argument("--instrument", default=INSTRUMENT,
+                    help=f"기기 이름 (기본: {INSTRUMENT})")
+    ap.add_argument("--night", default=NIGHT,
+                    help=f"관측 밤, dayobs (기본: {NIGHT})")
     a = ap.parse_args(argv)
 
+    instrument, night = a.instrument, a.night
     out = Path(a.out)
     bands = list(a.bands)
     parts = set(a.part)
@@ -115,35 +123,37 @@ def main(argv: list[str] | None = None) -> int:
     t0 = time.perf_counter()
 
     if "science" in parts:
-        print(f"== M67 원본 (level 0 · {INSTRUMENT} · {NIGHT} 밤) ==", flush=True)
+        print(f"== M67 원본 (level 0 · {instrument} · {night} 밤) ==", flush=True)
         for band in bands:
-            rows = query("M67", 0, 300, INSTRUMENT, band, dayobs=NIGHT)
+            rows = query("M67", 0, 300, instrument, band, dayobs=night)
             n, b = _run(band, out / "science" / band, rows)
             total_n += n
             total_b += b
 
     if "calib" in parts:
-        print(f"\n== 보정 프레임 ({NIGHT} 밤, 과학과 같은 밤) ==", flush=True)
+        print(f"\n== 보정 프레임 ({instrument} · {night} 밤, 과학과 같은 밤) ==",
+              flush=True)
         for ctype in CALIB_TYPES:
             if ctype in FILTER_FREE:
-                rows = query(None, 0, 800, INSTRUMENT, None,
-                             config_type=ctype, dayobs=NIGHT)
+                rows = query(None, 0, 800, instrument, None,
+                             config_type=ctype, dayobs=night)
                 n, b = _run(ctype, out / "calib" / ctype.lower(), rows)
                 total_n += n
                 total_b += b
                 continue
             for band in bands:
-                rows = query(None, 0, 800, INSTRUMENT, band,
-                             config_type=ctype, dayobs=NIGHT)
+                rows = query(None, 0, 800, instrument, band,
+                             config_type=ctype, dayobs=night)
                 n, b = _run(f"{ctype} {band}",
                             out / "calib" / ctype.lower() / band, rows)
                 total_n += n
                 total_b += b
 
     if "banzai" in parts:
-        print(f"\n== BANZAI 처리본 (level 91 · {NIGHT} 밤) ==", flush=True)
+        print(f"\n== BANZAI 처리본 (level 91 · {instrument} · {night} 밤) ==",
+              flush=True)
         for band in bands:
-            rows = query("M67", 91, 300, INSTRUMENT, band, dayobs=NIGHT)
+            rows = query("M67", 91, 300, instrument, band, dayobs=night)
             n, b = _run(band, out / "banzai" / band, rows)
             total_n += n
             total_b += b

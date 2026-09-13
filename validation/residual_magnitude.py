@@ -61,6 +61,10 @@ TRIO = {
     "MuSCAT3": REPO / "validation/external_muscat3/results",
     "kb26": REPO / "validation/external_kb26/results",
     "kb26-BANZAI": REPO / "validation/external_kb26_banzai/results",
+    # 다섯째 「kb27」은 **같은 0.4 m 급의 다른 카메라**가 같은 성단을 찍은 다른
+    # 밤이다(2019-04-15, 하와이). 검출기 모델도 처리 설정도 같으므로, 치우침이
+    # 검출기 종류에 붙박인 것인지 그 카메라·그 밤의 것인지 여기서 갈린다.
+    "kb27": REPO / "validation/external_kb27/results",
 }
 BANDS = ("g", "r", "i")
 MAG_EDGES = [10.0, 12.0, 13.0, 14.0, 15.0, 16.0, 17.0, 20.0]

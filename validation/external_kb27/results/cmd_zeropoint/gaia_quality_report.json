@@ -1,0 +1,18 @@
+{
+ "n_input": 580,
+ "cuts": {
+  "ruwe": {
+   "applied": true,
+   "threshold": 1.4,
+   "n_rejected": 82,
+   "n_finite": 577
+  },
+  "bp_rp_excess": {
+   "applied": false,
+   "reason": "disabled by configuration"
+  }
+ },
+ "n_passed": 498,
+ "n_rejected": 82,
+ "gaia_source": "vizier_fallback"
+}

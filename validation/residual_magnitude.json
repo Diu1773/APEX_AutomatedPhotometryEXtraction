@@ -414,6 +414,124 @@
   },
   {
     "kind": "magnitude",
+    "pair": "Moravian vs kb27",
+    "band": "r",
+    "n": 405,
+    "mad_pooled": 0.07809988839449135,
+    "mad_within_bin": 0.037197157250111426,
+    "bins": [
+      {
+        "lo": 10.0,
+        "hi": 12.0,
+        "median": 0.043357857002892075,
+        "mad": 0.027175010731508183,
+        "n": 31
+      },
+      {
+        "lo": 12.0,
+        "hi": 13.0,
+        "median": 0.04105534382513554,
+        "mad": 0.031225061987799653,
+        "n": 81
+      },
+      {
+        "lo": 13.0,
+        "hi": 14.0,
+        "median": 0.00230465392314283,
+        "mad": 0.037197157250111426,
+        "n": 118
+      },
+      {
+        "lo": 14.0,
+        "hi": 15.0,
+        "median": -0.060019946532054114,
+        "mad": 0.06393177435928642,
+        "n": 102
+      },
+      {
+        "lo": 15.0,
+        "hi": 16.0,
+        "median": -0.17612764299223294,
+        "mad": 0.0744680572306884,
+        "n": 71
+      },
+      {
+        "lo": 16.0,
+        "hi": 17.0,
+        "median": NaN,
+        "mad": NaN,
+        "n": 1
+      },
+      {
+        "lo": 17.0,
+        "hi": 20.0,
+        "median": NaN,
+        "mad": NaN,
+        "n": 0
+      }
+    ]
+  },
+  {
+    "kind": "magnitude",
+    "pair": "Moravian vs kb27",
+    "band": "i",
+    "n": 405,
+    "mad_pooled": 0.0634498960863039,
+    "mad_within_bin": 0.042696921529019924,
+    "bins": [
+      {
+        "lo": 10.0,
+        "hi": 12.0,
+        "median": 0.05101445734821297,
+        "mad": 0.042696921529019924,
+        "n": 31
+      },
+      {
+        "lo": 12.0,
+        "hi": 13.0,
+        "median": 0.020411139340808404,
+        "mad": 0.03075416884178873,
+        "n": 91
+      },
+      {
+        "lo": 13.0,
+        "hi": 14.0,
+        "median": -0.01694643174452004,
+        "mad": 0.02630019415039053,
+        "n": 119
+      },
+      {
+        "lo": 14.0,
+        "hi": 15.0,
+        "median": -0.06767926356923226,
+        "mad": 0.06349102119588765,
+        "n": 113
+      },
+      {
+        "lo": 15.0,
+        "hi": 16.0,
+        "median": -0.11535299474047989,
+        "mad": 0.07420566202293245,
+        "n": 45
+      },
+      {
+        "lo": 16.0,
+        "hi": 17.0,
+        "median": NaN,
+        "mad": NaN,
+        "n": 0
+      },
+      {
+        "lo": 17.0,
+        "hi": 20.0,
+        "median": NaN,
+        "mad": NaN,
+        "n": 0
+      }
+    ]
+  },
+  {
+    "kind": "magnitude",
     "pair": "MuSCAT3 vs kb26",
     "band": "r",
     "n": 173,
@@ -650,6 +768,124 @@
   },
   {
     "kind": "magnitude",
+    "pair": "MuSCAT3 vs kb27",
+    "band": "r",
+    "n": 149,
+    "mad_pooled": 0.08449768252156628,
+    "mad_within_bin": 0.06826372483361562,
+    "bins": [
+      {
+        "lo": 10.0,
+        "hi": 12.0,
+        "median": 0.19702335939302262,
+        "mad": 0.16862512508740976,
+        "n": 16
+      },
+      {
+        "lo": 12.0,
+        "hi": 13.0,
+        "median": 0.03147904621564379,
+        "mad": 0.03263080266274656,
+        "n": 39
+      },
+      {
+        "lo": 13.0,
+        "hi": 14.0,
+        "median": 0.0018130351716214577,
+        "mad": 0.05230102244146476,
+        "n": 52
+      },
+      {
+        "lo": 14.0,
+        "hi": 15.0,
+        "median": -0.11113493458115098,
+        "mad": 0.08422642722576647,
+        "n": 34
+      },
+      {
+        "lo": 15.0,
+        "hi": 16.0,
+        "median": NaN,
+        "mad": NaN,
+        "n": 7
+      },
+      {
+        "lo": 16.0,
+        "hi": 17.0,
+        "median": NaN,
+        "mad": NaN,
+        "n": 0
+      },
+      {
+        "lo": 17.0,
+        "hi": 20.0,
+        "median": NaN,
+        "mad": NaN,
+        "n": 0
+      }
+    ]
+  },
+  {
+    "kind": "magnitude",
+    "pair": "MuSCAT3 vs kb27",
+    "band": "i",
+    "n": 152,
+    "mad_pooled": 0.046177444956039426,
+    "mad_within_bin": 0.040843547237363026,
+    "bins": [
+      {
+        "lo": 10.0,
+        "hi": 12.0,
+        "median": 0.04831086284738717,
+        "mad": 0.053459667700428176,
+        "n": 18
+      },
+      {
+        "lo": 12.0,
+        "hi": 13.0,
+        "median": -0.001269230526256493,
+        "mad": 0.023447305546065455,
+        "n": 46
+      },
+      {
+        "lo": 13.0,
+        "hi": 14.0,
+        "median": -0.03544434334490276,
+        "mad": 0.028227426774297883,
+        "n": 47
+      },
+      {
+        "lo": 14.0,
+        "hi": 15.0,
+        "median": -0.08282722414031252,
+        "mad": 0.07411473536511912,
+        "n": 34
+      },
+      {
+        "lo": 15.0,
+        "hi": 16.0,
+        "median": NaN,
+        "mad": NaN,
+        "n": 5
+      },
+      {
+        "lo": 16.0,
+        "hi": 17.0,
+        "median": NaN,
+        "mad": NaN,
+        "n": 1
+      },
+      {
+        "lo": 17.0,
+        "hi": 20.0,
+        "median": NaN,
+        "mad": NaN,
+        "n": 0
+      }
+    ]
+  },
+  {
+    "kind": "magnitude",
     "pair": "kb26 vs kb26-BANZAI",
     "band": "r",
     "n": 634,
@@ -763,6 +999,242 @@
         "median": NaN,
         "mad": NaN,
         "n": 3
+      }
+    ]
+  },
+  {
+    "kind": "magnitude",
+    "pair": "kb26 vs kb27",
+    "band": "r",
+    "n": 485,
+    "mad_pooled": 0.07591678444777122,
+    "mad_within_bin": 0.07767902738535895,
+    "bins": [
+      {
+        "lo": 10.0,
+        "hi": 12.0,
+        "median": -0.0707972782858235,
+        "mad": 0.027361480161107232,
+        "n": 39
+      },
+      {
+        "lo": 12.0,
+        "hi": 13.0,
+        "median": -0.07190128358343362,
+        "mad": 0.03351130181928386,
+        "n": 94
+      },
+      {
+        "lo": 13.0,
+        "hi": 14.0,
+        "median": -0.05464938385651674,
+        "mad": 0.05351204713992236,
+        "n": 130
+      },
+      {
+        "lo": 14.0,
+        "hi": 15.0,
+        "median": -0.001445270666443399,
+        "mad": 0.1069191784883521,
+        "n": 108
+      },
+      {
+        "lo": 15.0,
+        "hi": 16.0,
+        "median": -0.0004217779882011996,
+        "mad": 0.15655840479666408,
+        "n": 90
+      },
+      {
+        "lo": 16.0,
+        "hi": 17.0,
+        "median": 0.14126908498888469,
+        "mad": 0.10184600763079553,
+        "n": 19
+      },
+      {
+        "lo": 17.0,
+        "hi": 20.0,
+        "median": NaN,
+        "mad": NaN,
+        "n": 1
+      }
+    ]
+  },
+  {
+    "kind": "magnitude",
+    "pair": "kb26 vs kb27",
+    "band": "i",
+    "n": 485,
+    "mad_pooled": 0.10693671163694156,
+    "mad_within_bin": 0.08156480774077862,
+    "bins": [
+      {
+        "lo": 10.0,
+        "hi": 12.0,
+        "median": -0.09385060231338649,
+        "mad": 0.048547121396534054,
+        "n": 39
+      },
+      {
+        "lo": 12.0,
+        "hi": 13.0,
+        "median": -0.09307013407804376,
+        "mad": 0.03716059716380092,
+        "n": 103
+      },
+      {
+        "lo": 13.0,
+        "hi": 14.0,
+        "median": -0.049179872836266014,
+        "mad": 0.0685875096526267,
+        "n": 130
+      },
+      {
+        "lo": 14.0,
+        "hi": 15.0,
+        "median": 0.0205426970640028,
+        "mad": 0.1057217102715352,
+        "n": 114
+      },
+      {
+        "lo": 15.0,
+        "hi": 16.0,
+        "median": 0.11880736391689872,
+        "mad": 0.1495340170641035,
+        "n": 81
+      },
+      {
+        "lo": 16.0,
+        "hi": 17.0,
+        "median": 0.2279864212097138,
+        "mad": 0.09454210582893054,
+        "n": 10
+      },
+      {
+        "lo": 17.0,
+        "hi": 20.0,
+        "median": NaN,
+        "mad": NaN,
+        "n": 0
+      }
+    ]
+  },
+  {
+    "kind": "magnitude",
+    "pair": "kb26-BANZAI vs kb27",
+    "band": "r",
+    "n": 483,
+    "mad_pooled": 0.07241333206322566,
+    "mad_within_bin": 0.07733132448872887,
+    "bins": [
+      {
+        "lo": 10.0,
+        "hi": 12.0,
+        "median": -0.06920088368014099,
+        "mad": 0.023902662921485723,
+        "n": 39
+      },
+      {
+        "lo": 12.0,
+        "hi": 13.0,
+        "median": -0.06851333385975877,
+        "mad": 0.03487221152025847,
+        "n": 94
+      },
+      {
+        "lo": 13.0,
+        "hi": 14.0,
+        "median": -0.04804648023595259,
+        "mad": 0.05556969678604483,
+        "n": 130
+      },
+      {
+        "lo": 14.0,
+        "hi": 15.0,
+        "median": -0.004032237939643579,
+        "mad": 0.09909295219141293,
+        "n": 110
+      },
+      {
+        "lo": 15.0,
+        "hi": 16.0,
+        "median": -0.0030541765261631326,
+        "mad": 0.16341872088733042,
+        "n": 87
+      },
+      {
+        "lo": 16.0,
+        "hi": 17.0,
+        "median": 0.10818167965363834,
+        "mad": 0.10835234097147593,
+        "n": 18
+      },
+      {
+        "lo": 17.0,
+        "hi": 20.0,
+        "median": NaN,
+        "mad": NaN,
+        "n": 1
+      }
+    ]
+  },
+  {
+    "kind": "magnitude",
+    "pair": "kb26-BANZAI vs kb27",
+    "band": "i",
+    "n": 483,
+    "mad_pooled": 0.10625321536048253,
+    "mad_within_bin": 0.08588655863650158,
+    "bins": [
+      {
+        "lo": 10.0,
+        "hi": 12.0,
+        "median": -0.09343365480109256,
+        "mad": 0.05004163132610527,
+        "n": 39
+      },
+      {
+        "lo": 12.0,
+        "hi": 13.0,
+        "median": -0.09141937156277535,
+        "mad": 0.03853144937334755,
+        "n": 103
+      },
+      {
+        "lo": 13.0,
+        "hi": 14.0,
+        "median": -0.04457810084598801,
+        "mad": 0.06968736028686257,
+        "n": 130
+      },
+      {
+        "lo": 14.0,
+        "hi": 15.0,
+        "median": 0.021120303589595935,
+        "mad": 0.1020857569861406,
+        "n": 116
+      },
+      {
+        "lo": 15.0,
+        "hi": 16.0,
+        "median": 0.10994828092634545,
+        "mad": 0.14961890766930297,
+        "n": 78
+      },
+      {
+        "lo": 16.0,
+        "hi": 17.0,
+        "median": 0.2677949309398713,
+        "mad": 0.12153862778453685,
+        "n": 9
+      },
+      {
+        "lo": 17.0,
+        "hi": 20.0,
+        "median": NaN,
+        "mad": NaN,
+        "n": 0
       }
     ]
   },
@@ -1080,6 +1552,86 @@
   },
   {
     "kind": "magnitude_x_radius",
+    "pair": "Moravian vs kb27",
+    "band": "r",
+    "mag_lo": 10.0,
+    "mag_hi": 12.0,
+    "radial_ptp": 0.0074014369141703895
+  },
+  {
+    "kind": "magnitude_x_radius",
+    "pair": "Moravian vs kb27",
+    "band": "r",
+    "mag_lo": 12.0,
+    "mag_hi": 13.0,
+    "radial_ptp": 0.006128260235947813
+  },
+  {
+    "kind": "magnitude_x_radius",
+    "pair": "Moravian vs kb27",
+    "band": "r",
+    "mag_lo": 13.0,
+    "mag_hi": 14.0,
+    "radial_ptp": 0.010778398914045084
+  },
+  {
+    "kind": "magnitude_x_radius",
+    "pair": "Moravian vs kb27",
+    "band": "r",
+    "mag_lo": 14.0,
+    "mag_hi": 15.0,
+    "radial_ptp": 0.03622410150547495
+  },
+  {
+    "kind": "magnitude_x_radius",
+    "pair": "Moravian vs kb27",
+    "band": "r",
+    "mag_lo": 15.0,
+    "mag_hi": 16.0,
+    "radial_ptp": 0.04807305113924176
+  },
+  {
+    "kind": "magnitude_x_radius",
+    "pair": "Moravian vs kb27",
+    "band": "i",
+    "mag_lo": 10.0,
+    "mag_hi": 12.0,
+    "radial_ptp": 0.03282941770228298
+  },
+  {
+    "kind": "magnitude_x_radius",
+    "pair": "Moravian vs kb27",
+    "band": "i",
+    "mag_lo": 12.0,
+    "mag_hi": 13.0,
+    "radial_ptp": 0.011594028784369215
+  },
+  {
+    "kind": "magnitude_x_radius",
+    "pair": "Moravian vs kb27",
+    "band": "i",
+    "mag_lo": 13.0,
+    "mag_hi": 14.0,
+    "radial_ptp": 0.015450591172003314
+  },
+  {
+    "kind": "magnitude_x_radius",
+    "pair": "Moravian vs kb27",
+    "band": "i",
+    "mag_lo": 14.0,
+    "mag_hi": 15.0,
+    "radial_ptp": 0.026854248067039954
+  },
+  {
+    "kind": "magnitude_x_radius",
+    "pair": "Moravian vs kb27",
+    "band": "i",
+    "mag_lo": 15.0,
+    "mag_hi": 16.0,
+    "radial_ptp": 0.059055271476489146
+  },
+  {
+    "kind": "magnitude_x_radius",
     "pair": "MuSCAT3 vs kb26",
     "band": "r",
     "mag_lo": 12.0,
@@ -1192,6 +1744,54 @@
   },
   {
     "kind": "magnitude_x_radius",
+    "pair": "MuSCAT3 vs kb27",
+    "band": "r",
+    "mag_lo": 12.0,
+    "mag_hi": 13.0,
+    "radial_ptp": 0.0028179784599853264
+  },
+  {
+    "kind": "magnitude_x_radius",
+    "pair": "MuSCAT3 vs kb27",
+    "band": "r",
+    "mag_lo": 13.0,
+    "mag_hi": 14.0,
+    "radial_ptp": 0.0023579235960342615
+  },
+  {
+    "kind": "magnitude_x_radius",
+    "pair": "MuSCAT3 vs kb27",
+    "band": "r",
+    "mag_lo": 14.0,
+    "mag_hi": 15.0,
+    "radial_ptp": NaN
+  },
+  {
+    "kind": "magnitude_x_radius",
+    "pair": "MuSCAT3 vs kb27",
+    "band": "i",
+    "mag_lo": 12.0,
+    "mag_hi": 13.0,
+    "radial_ptp": 0.017002559000413697
+  },
+  {
+    "kind": "magnitude_x_radius",
+    "pair": "MuSCAT3 vs kb27",
+    "band": "i",
+    "mag_lo": 13.0,
+    "mag_hi": 14.0,
+    "radial_ptp": 0.006835372786125227
+  },
+  {
+    "kind": "magnitude_x_radius",
+    "pair": "MuSCAT3 vs kb27",
+    "band": "i",
+    "mag_lo": 14.0,
+    "mag_hi": 15.0,
+    "radial_ptp": 0.011406621609009626
+  },
+  {
+    "kind": "magnitude_x_radius",
     "pair": "kb26 vs kb26-BANZAI",
     "band": "r",
     "mag_lo": 10.0,
@@ -1285,6 +1885,166 @@
     "mag_lo": 16.0,
     "mag_hi": 17.0,
     "radial_ptp": 0.007446535067671789
+  },
+  {
+    "kind": "magnitude_x_radius",
+    "pair": "kb26 vs kb27",
+    "band": "r",
+    "mag_lo": 10.0,
+    "mag_hi": 12.0,
+    "radial_ptp": 0.10759746682005122
+  },
+  {
+    "kind": "magnitude_x_radius",
+    "pair": "kb26 vs kb27",
+    "band": "r",
+    "mag_lo": 12.0,
+    "mag_hi": 13.0,
+    "radial_ptp": 0.06777003241377688
+  },
+  {
+    "kind": "magnitude_x_radius",
+    "pair": "kb26 vs kb27",
+    "band": "r",
+    "mag_lo": 13.0,
+    "mag_hi": 14.0,
+    "radial_ptp": 0.08031783907481227
+  },
+  {
+    "kind": "magnitude_x_radius",
+    "pair": "kb26 vs kb27",
+    "band": "r",
+    "mag_lo": 14.0,
+    "mag_hi": 15.0,
+    "radial_ptp": 0.12454733362193515
+  },
+  {
+    "kind": "magnitude_x_radius",
+    "pair": "kb26 vs kb27",
+    "band": "r",
+    "mag_lo": 15.0,
+    "mag_hi": 16.0,
+    "radial_ptp": 0.22442473832956278
+  },
+  {
+    "kind": "magnitude_x_radius",
+    "pair": "kb26 vs kb27",
+    "band": "i",
+    "mag_lo": 10.0,
+    "mag_hi": 12.0,
+    "radial_ptp": 0.10543609099082207
+  },
+  {
+    "kind": "magnitude_x_radius",
+    "pair": "kb26 vs kb27",
+    "band": "i",
+    "mag_lo": 12.0,
+    "mag_hi": 13.0,
+    "radial_ptp": 0.09171581748546309
+  },
+  {
+    "kind": "magnitude_x_radius",
+    "pair": "kb26 vs kb27",
+    "band": "i",
+    "mag_lo": 13.0,
+    "mag_hi": 14.0,
+    "radial_ptp": 0.1266544137437151
+  },
+  {
+    "kind": "magnitude_x_radius",
+    "pair": "kb26 vs kb27",
+    "band": "i",
+    "mag_lo": 14.0,
+    "mag_hi": 15.0,
+    "radial_ptp": 0.1602704187021855
+  },
+  {
+    "kind": "magnitude_x_radius",
+    "pair": "kb26 vs kb27",
+    "band": "i",
+    "mag_lo": 15.0,
+    "mag_hi": 16.0,
+    "radial_ptp": 0.14872187590886732
+  },
+  {
+    "kind": "magnitude_x_radius",
+    "pair": "kb26-BANZAI vs kb27",
+    "band": "r",
+    "mag_lo": 10.0,
+    "mag_hi": 12.0,
+    "radial_ptp": 0.10551081788006655
+  },
+  {
+    "kind": "magnitude_x_radius",
+    "pair": "kb26-BANZAI vs kb27",
+    "band": "r",
+    "mag_lo": 12.0,
+    "mag_hi": 13.0,
+    "radial_ptp": 0.06928694659652557
+  },
+  {
+    "kind": "magnitude_x_radius",
+    "pair": "kb26-BANZAI vs kb27",
+    "band": "r",
+    "mag_lo": 13.0,
+    "mag_hi": 14.0,
+    "radial_ptp": 0.07564437043320282
+  },
+  {
+    "kind": "magnitude_x_radius",
+    "pair": "kb26-BANZAI vs kb27",
+    "band": "r",
+    "mag_lo": 14.0,
+    "mag_hi": 15.0,
+    "radial_ptp": 0.11296301258067931
+  },
+  {
+    "kind": "magnitude_x_radius",
+    "pair": "kb26-BANZAI vs kb27",
+    "band": "r",
+    "mag_lo": 15.0,
+    "mag_hi": 16.0,
+    "radial_ptp": 0.21806245712043193
+  },
+  {
+    "kind": "magnitude_x_radius",
+    "pair": "kb26-BANZAI vs kb27",
+    "band": "i",
+    "mag_lo": 10.0,
+    "mag_hi": 12.0,
+    "radial_ptp": 0.10285817471178227
+  },
+  {
+    "kind": "magnitude_x_radius",
+    "pair": "kb26-BANZAI vs kb27",
+    "band": "i",
+    "mag_lo": 12.0,
+    "mag_hi": 13.0,
+    "radial_ptp": 0.08945104946744564
+  },
+  {
+    "kind": "magnitude_x_radius",
+    "pair": "kb26-BANZAI vs kb27",
+    "band": "i",
+    "mag_lo": 13.0,
+    "mag_hi": 14.0,
+    "radial_ptp": 0.12274565646148261
+  },
+  {
+    "kind": "magnitude_x_radius",
+    "pair": "kb26-BANZAI vs kb27",
+    "band": "i",
+    "mag_lo": 14.0,
+    "mag_hi": 15.0,
+    "radial_ptp": 0.14698591030437758
+  },
+  {
+    "kind": "magnitude_x_radius",
+    "pair": "kb26-BANZAI vs kb27",
+    "band": "i",
+    "mag_lo": 15.0,
+    "mag_hi": 16.0,
+    "radial_ptp": 0.15209781962957258
   },
   {
     "kind": "per_instrument",
@@ -2113,6 +2873,242 @@
     ]
   },
   {
+    "kind": "per_instrument",
+    "instrument": "kb27",
+    "band": "B",
+    "n": 218,
+    "resid_mad": 0.08258389677110248,
+    "span": 0.02914627381200896,
+    "bins": [
+      {
+        "lo": 10.0,
+        "hi": 12.0,
+        "median": 0.01611320606006128,
+        "mad": 0.06177209958285367,
+        "n": 16
+      },
+      {
+        "lo": 12.0,
+        "hi": 13.0,
+        "median": 0.013492047524390927,
+        "mad": 0.06065633725621728,
+        "n": 16
+      },
+      {
+        "lo": 13.0,
+        "hi": 14.0,
+        "median": -0.01303306775194768,
+        "mad": 0.09549168235580327,
+        "n": 114
+      },
+      {
+        "lo": 14.0,
+        "hi": 15.0,
+        "median": 0.013058147234933593,
+        "mad": 0.06919926229734505,
+        "n": 71
+      },
+      {
+        "lo": 15.0,
+        "hi": 16.0,
+        "median": NaN,
+        "mad": NaN,
+        "n": 0
+      },
+      {
+        "lo": 16.0,
+        "hi": 17.0,
+        "median": NaN,
+        "mad": NaN,
+        "n": 0
+      },
+      {
+        "lo": 17.0,
+        "hi": 20.0,
+        "median": NaN,
+        "mad": NaN,
+        "n": 0
+      }
+    ]
+  },
+  {
+    "kind": "per_instrument",
+    "instrument": "kb27",
+    "band": "V",
+    "n": 367,
+    "resid_mad": 0.07012184090934696,
+    "span": 0.11322264349526479,
+    "bins": [
+      {
+        "lo": 10.0,
+        "hi": 12.0,
+        "median": 0.08852348603790205,
+        "mad": 0.05773931013868257,
+        "n": 28
+      },
+      {
+        "lo": 12.0,
+        "hi": 13.0,
+        "median": 0.017394501171284382,
+        "mad": 0.04427862701926927,
+        "n": 73
+      },
+      {
+        "lo": 13.0,
+        "hi": 14.0,
+        "median": -0.016987326530532254,
+        "mad": 0.0620446354697136,
+        "n": 123
+      },
+      {
+        "lo": 14.0,
+        "hi": 15.0,
+        "median": -0.02469915745736273,
+        "mad": 0.08058691209580598,
+        "n": 133
+      },
+      {
+        "lo": 15.0,
+        "hi": 16.0,
+        "median": 0.04015969419900367,
+        "mad": 0.06434110292275246,
+        "n": 8
+      },
+      {
+        "lo": 16.0,
+        "hi": 17.0,
+        "median": NaN,
+        "mad": NaN,
+        "n": 0
+      },
+      {
+        "lo": 17.0,
+        "hi": 20.0,
+        "median": NaN,
+        "mad": NaN,
+        "n": 0
+      }
+    ]
+  },
+  {
+    "kind": "per_instrument",
+    "instrument": "kb27",
+    "band": "i",
+    "n": 375,
+    "resid_mad": 0.0530992145172063,
+    "span": 0.06825707342005272,
+    "bins": [
+      {
+        "lo": 10.0,
+        "hi": 12.0,
+        "median": 0.04449919139349223,
+        "mad": 0.031037897501416802,
+        "n": 25
+      },
+      {
+        "lo": 12.0,
+        "hi": 13.0,
+        "median": 0.011588344496949787,
+        "mad": 0.03834771356436321,
+        "n": 89
+      },
+      {
+        "lo": 13.0,
+        "hi": 14.0,
+        "median": -0.005487985815837426,
+        "mad": 0.04540845099094965,
+        "n": 147
+      },
+      {
+        "lo": 14.0,
+        "hi": 15.0,
+        "median": -0.023757882026560484,
+        "mad": 0.06118384279665123,
+        "n": 106
+      },
+      {
+        "lo": 15.0,
+        "hi": 16.0,
+        "median": NaN,
+        "mad": NaN,
+        "n": 0
+      },
+      {
+        "lo": 16.0,
+        "hi": 17.0,
+        "median": NaN,
+        "mad": NaN,
+        "n": 0
+      },
+      {
+        "lo": 17.0,
+        "hi": 20.0,
+        "median": NaN,
+        "mad": NaN,
+        "n": 0
+      }
+    ]
+  },
+  {
+    "kind": "per_instrument",
+    "instrument": "kb27",
+    "band": "r",
+    "n": 427,
+    "resid_mad": 0.07520509917884113,
+    "span": 0.1601145286199639,
+    "bins": [
+      {
+        "lo": 10.0,
+        "hi": 12.0,
+        "median": 0.049036016054513354,
+        "mad": 0.04276545079014988,
+        "n": 24
+      },
+      {
+        "lo": 12.0,
+        "hi": 13.0,
+        "median": 0.040772853135189635,
+        "mad": 0.03967679985818916,
+        "n": 81
+      },
+      {
+        "lo": 13.0,
+        "hi": 14.0,
+        "median": 0.009694278312224691,
+        "mad": 0.05550749763690321,
+        "n": 150
+      },
+      {
+        "lo": 14.0,
+        "hi": 15.0,
+        "median": -0.03887712723459669,
+        "mad": 0.07012292900760285,
+        "n": 134
+      },
+      {
+        "lo": 15.0,
+        "hi": 16.0,
+        "median": -0.11107851256545054,
+        "mad": 0.11056954623399716,
+        "n": 34
+      },
+      {
+        "lo": 16.0,
+        "hi": 17.0,
+        "median": NaN,
+        "mad": NaN,
+        "n": 1
+      },
+      {
+        "lo": 17.0,
+        "hi": 20.0,
+        "median": NaN,
+        "mad": NaN,
+        "n": 0
+      }
+    ]
+  },
+  {
     "kind": "flux_offset",
     "instrument": "Moravian",
     "band": "g",
@@ -2264,6 +3260,50 @@
     "offset_const": 0.09201001567939317,
     "rms_sky_model": 0.02585285927909554,
     "rms_linear": 0.04421754411778217,
+    "winner": "하늘"
+  },
+  {
+    "kind": "flux_offset",
+    "instrument": "kb27",
+    "band": "B",
+    "n_points": 4,
+    "m_c": 21.268433489931137,
+    "offset_const": 0.008258233679209552,
+    "rms_sky_model": 0.011832688340647615,
+    "rms_linear": 0.011055264824662655,
+    "winner": "직선"
+  },
+  {
+    "kind": "flux_offset",
+    "instrument": "kb27",
+    "band": "V",
+    "n_points": 5,
+    "m_c": 21.144122503387305,
+    "offset_const": 0.022844496007706563,
+    "rms_sky_model": 0.041101708494794637,
+    "rms_linear": 0.03472112786094386,
+    "winner": "직선"
+  },
+  {
+    "kind": "flux_offset",
+    "instrument": "kb27",
+    "band": "i",
+    "n_points": 4,
+    "m_c": 17.677351913697883,
+    "offset_const": 0.03040803606997036,
+    "rms_sky_model": 0.011706940524119493,
+    "rms_linear": 0.0014887701817540985,
+    "winner": "직선"
+  },
+  {
+    "kind": "flux_offset",
+    "instrument": "kb27",
+    "band": "r",
+    "n_points": 5,
+    "m_c": 17.660798262762917,
+    "offset_const": 0.04107719402698506,
+    "rms_sky_model": 0.011583752491913929,
+    "rms_linear": 0.021841529599245263,
     "winner": "하늘"
   },
   {
@@ -2461,6 +3501,62 @@
     "resid_mad": 0.13161536073944,
     "resid_mad_after_mag": 0.042218280456875784,
     "resid_mad_after_shuffled": 0.1317902011223307
+  },
+  {
+    "kind": "colour_vs_magnitude",
+    "instrument": "kb27",
+    "band": "B",
+    "n": 218,
+    "rho_colour_mag": -0.1692227713545463,
+    "span_colour": 0.02696347307799485,
+    "span_mag": 0.04893268337900514,
+    "span_colour_held": 0.05261397400348855,
+    "span_mag_held": 0.04340488742173587,
+    "resid_mad": 0.08258389677110248,
+    "resid_mad_after_mag": 0.07865018766144873,
+    "resid_mad_after_shuffled": 0.0776317005436017
+  },
+  {
+    "kind": "colour_vs_magnitude",
+    "instrument": "kb27",
+    "band": "V",
+    "n": 367,
+    "rho_colour_mag": -0.06733203966987213,
+    "span_colour": 0.04957933274745718,
+    "span_mag": 0.06977182395548454,
+    "span_colour_held": 0.043861957263311435,
+    "span_mag_held": 0.05174315607236801,
+    "resid_mad": 0.07012184090934696,
+    "resid_mad_after_mag": 0.06634359420805393,
+    "resid_mad_after_shuffled": 0.07087495458133278
+  },
+  {
+    "kind": "colour_vs_magnitude",
+    "instrument": "kb27",
+    "band": "i",
+    "n": 375,
+    "rho_colour_mag": -0.23542719236319548,
+    "span_colour": 0.032564596925480416,
+    "span_mag": 0.05670244237682809,
+    "span_colour_held": 0.021097301855062867,
+    "span_mag_held": 0.0342552550909061,
+    "resid_mad": 0.0530992145172063,
+    "resid_mad_after_mag": 0.04963751573347999,
+    "resid_mad_after_shuffled": 0.05187387049890886
+  },
+  {
+    "kind": "colour_vs_magnitude",
+    "instrument": "kb27",
+    "band": "r",
+    "n": 427,
+    "rho_colour_mag": -0.029927094445643454,
+    "span_colour": 0.08429358350422689,
+    "span_mag": 0.1202328860848576,
+    "span_colour_held": 0.03017302682308598,
+    "span_mag_held": 0.04608357641191274,
+    "resid_mad": 0.07520509917884113,
+    "resid_mad_after_mag": 0.0590979124335899,
+    "resid_mad_after_shuffled": 0.07314856118675711
   },
   {
     "kind": "slope_by_position",
@@ -2812,5 +3908,109 @@
       0.23756022985223968
     ],
     "end_to_end": -0.011100825950968396
+  },
+  {
+    "kind": "slope_by_position",
+    "instrument": "kb27",
+    "band": "B",
+    "axis": "세로",
+    "spans": [
+      0.024473658957465005,
+      0.06508462623139222,
+      0.05407974462681686,
+      0.05181338166090299
+    ],
+    "end_to_end": 0.027339722703437985
+  },
+  {
+    "kind": "slope_by_position",
+    "instrument": "kb27",
+    "band": "B",
+    "axis": "가로",
+    "spans": [
+      0.006409557876528638,
+      0.0007516298019960566,
+      0.04451501375811606,
+      0.021865276636785058
+    ],
+    "end_to_end": 0.01545571876025642
+  },
+  {
+    "kind": "slope_by_position",
+    "instrument": "kb27",
+    "band": "V",
+    "axis": "세로",
+    "spans": [
+      0.05631852497543832,
+      0.037394256097467604,
+      0.1556532897911591,
+      0.08152463725678238
+    ],
+    "end_to_end": 0.025206112281344062
+  },
+  {
+    "kind": "slope_by_position",
+    "instrument": "kb27",
+    "band": "V",
+    "axis": "가로",
+    "spans": [
+      0.04138881867224553,
+      0.13630895130418175,
+      0.11179146987508926,
+      0.025226283347252743
+    ],
+    "end_to_end": -0.01616253532499279
+  },
+  {
+    "kind": "slope_by_position",
+    "instrument": "kb27",
+    "band": "i",
+    "axis": "세로",
+    "spans": [
+      0.030438388928911486,
+      0.013128976454495067,
+      0.05236635541406409,
+      0.0399669872756232
+    ],
+    "end_to_end": 0.009528598346711714
+  },
+  {
+    "kind": "slope_by_position",
+    "instrument": "kb27",
+    "band": "i",
+    "axis": "가로",
+    "spans": [
+      0.03229890436212379,
+      0.05118354301243988,
+      0.09284818262846439,
+      0.04553479064660859
+    ],
+    "end_to_end": 0.013235886284484799
+  },
+  {
+    "kind": "slope_by_position",
+    "instrument": "kb27",
+    "band": "r",
+    "axis": "세로",
+    "spans": [
+      0.0844943278021062,
+      0.06592491964214986,
+      0.11991985522592863,
+      0.060804414660192485
+    ],
+    "end_to_end": -0.02368991314191371
+  },
+  {
+    "kind": "slope_by_position",
+    "instrument": "kb27",
+    "band": "r",
+    "axis": "가로",
+    "spans": [
+      0.13515692747087704,
+      0.08980594311977463,
+      0.1350489841820377,
+      0.17537112279915634
+    ],
+    "end_to_end": 0.0402141953282793
   }
 ]
