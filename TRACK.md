@@ -15,7 +15,7 @@
 .venv-deploy/Scripts/python.exe -m pytest tests/ -q
 ```
 
-- **통과 기준:** 1,524 passed, 0 failed, 0 skipped  (2026-09-10 · 재현성 바닥 다섯 · 계수 불확실도 일곱이 더해졌다)
+- **통과 기준:** 1,555 passed, 0 failed, 0 skipped  (2026-09-14 · 받기·설정 열둘 · 밝기 치우침 열셋 · 5 단계 상태 여섯이 더해졌다)
 - **깨끗한 상태에서 돌릴 것 (F-288).** 이 오라클은 **다른 무거운 것이 도는
   중에 재면 값이 안 맞는다.** `test_forced_photometry_headless.py` 의
   `test_step7_records_the_aperture_it_used_whichever_path_it_took` 가 남은 RAM 이
