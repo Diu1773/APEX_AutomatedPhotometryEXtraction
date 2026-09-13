@@ -36,6 +36,25 @@ validation/_ndet_m3B/
 validation/fig_two_targets.png
 validation/psf_archive/
 
+# 외부 기기 워크스페이스의 프레임 — `validation/external_*` 은 E: 를 가리키는
+# 디렉터리 접합이라 원본 FITS 가 레포 안에 보인다. 결과 CSV 와 문서만 담는다.
+# kb26 의 BANZAI 프레임 30 장이 0.21 GB 이고 아카이브에서 다시 받을 수 있다
+# (`scripts/fetch_lco_kb26_m67.py --part banzai`).
+validation/external_*/raw/
+validation/external_*/inputs/
+*.fits.fz
+
+# 같은 워크스페이스의 중간 산출물 — 프레임마다 한 벌씩 나오므로 수백 개다.
+# 결론이 서는 곳은 `cmd_zeropoint/` 와 `step6_refbuild/` 두 곳뿐이고, 기존
+# `external_kb26` 도 그 둘만 담고 있다. 중간 것은 다시 돌리면 나온다.
+validation/external_*/results/cache/
+validation/external_*/results/step1_file_selection/
+validation/external_*/results/step2_crop/
+validation/external_*/results/step3_sky/
+validation/external_*/results/step4_detection/
+validation/external_*/results/step5_wcs/
+validation/external_*/results/step7_forced_phot/
+
 # Paper figure inputs: intermediate CSV stays on disk, out of git (~627 MB).
 # figures/, captions/, 논문작업/ and fig*.py remain tracked.
 validation/paper/data/

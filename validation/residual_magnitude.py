@@ -53,10 +53,14 @@ sys.path.insert(0, str(REPO / "validation" / "external_muscat3"))
 from apex.utils.gaia_quality import gaia_quality_report  # noqa: E402
 from compare_magnitudes import join, load_workspace, mad  # noqa: E402
 
+#: 넷째 「kb26-BANZAI」는 **kb26 과 같은 밤의 같은 프레임**인데 보정을 APEX 의
+#: Step 0 이 아니라 관측소의 BANZAI 가 한 것이다. 나머지는 전부 같으므로 둘의
+#: 차이가 곧 보정 층의 몫이다.
 TRIO = {
     "Moravian": Path("E:/APEX_validation/reprocess/M67/result"),
     "MuSCAT3": REPO / "validation/external_muscat3/results",
     "kb26": REPO / "validation/external_kb26/results",
+    "kb26-BANZAI": REPO / "validation/external_kb26_banzai/results",
 }
 BANDS = ("g", "r", "i")
 MAG_EDGES = [10.0, 12.0, 13.0, 14.0, 15.0, 16.0, 17.0, 20.0]
@@ -438,6 +442,96 @@ def colour_vs_magnitude() -> list[dict]:
     return out
 
 
+def slope_by_detector_position() -> list[dict]:
+    """밝기 기울기가 **검출기 위치**를 따라 달라지나 — 전하 전송 손실의 지문.
+
+    직선에 가까운 밝기 기울기를 내는 기제 가운데 CCD 에서 흔한 것이 **전하 전송
+    손실**(charge transfer inefficiency, 읽어 내는 동안 화소에서 화소로 전하를
+    옮길 때 일부가 걸려 남는 것)이다. 걸리는 전하의 **비율**이 어두운 별에서 크므로
+    어두운 별이 더 어두워지고 밝은 별은 거의 안 변한다 — 방향이 맞는다.
+
+    **가려낼 수 있는 지문이 하나 있다.** 손실은 옮긴 횟수에 비례하므로 **읽어 내는
+    장치에서 먼 화소일수록 커진다.** 그러니 밝기 기울기를 검출기 세로·가로 위치로
+    나눠 보면, 전하 전송 손실이면 한쪽 끝에서 다른 끝으로 가며 기울기가 한 방향으로
+    커진다. 검출기 응답의 비선형이면 위치와 무관하다.
+
+    **적합을 쓰지 않는다.** 위치 구간마다 밝기 구간의 중앙값을 내고, 가장 밝은
+    구간과 가장 어두운 구간의 차이를 그 위치의 「폭」으로 쓴다.
+    """
+    out: list[dict] = []
+    print()
+    print("=== 6. 밝기 기울기가 검출기 위치를 따라 달라지나 ===")
+    print("읽어 내는 장치에서 멀수록 커지면 전하 전송 손실이고, 위치와 무관하면 응답의 비선형이다.")
+    print()
+    print("{:<10}{:<4}{:<6}{:>10}{:>10}{:>10}{:>10}{:>11}".format(
+        "기기", "밴드", "축", "1/4", "2/4", "3/4", "4/4", "끝끝 차이"))
+    print("-" * 71)
+    for label, rd in TRIO.items():
+        zp_dir = Path(rd) / "cmd_zeropoint"
+        cal_p, co_p = (zp_dir / "gaia_sdss_calibrator_by_ID.csv",
+                       zp_dir / "zp_fit_coefficients.csv")
+        if not (cal_p.exists() and co_p.exists()):
+            continue
+        cal, co = pd.read_csv(cal_p), pd.read_csv(co_p).set_index("filter")
+        if "x_pix" not in cal.columns or "y_pix" not in cal.columns:
+            continue
+        try:
+            qual = np.asarray(gaia_quality_report(cal, cstar_nsigma=None)[0], bool)
+        except Exception:  # noqa: BLE001
+            qual = np.ones(len(cal), bool)
+        xp = pd.to_numeric(cal["x_pix"], errors="coerce").to_numpy(float)
+        yp = pd.to_numeric(cal["y_pix"], errors="coerce").to_numpy(float)
+        for band in [str(b) for b in co.index]:
+            colname = str(co.loc[band, "color_col"])
+            cc, dc, rc = f"color_{colname}", f"delta_{band}", f"ref_{band}"
+            if dc not in cal.columns or cc not in cal.columns or rc not in cal.columns:
+                continue
+            d = pd.to_numeric(cal[dc], errors="coerce").to_numpy(float)
+            c = pd.to_numeric(cal[cc], errors="coerce").to_numpy(float)
+            mg = pd.to_numeric(cal[rc], errors="coerce").to_numpy(float)
+            s = (pd.to_numeric(cal[f"snr_{band}"], errors="coerce").to_numpy(float)
+                 if f"snr_{band}" in cal.columns else np.full(len(cal), np.inf))
+            r = d - (float(co.loc[band, "zp"]) + float(co.loc[band, "ct"]) * c)
+            m = (np.isfinite(r) & np.isfinite(mg) & np.isfinite(xp) & np.isfinite(yp)
+                 & np.isfinite(s) & (s >= SNR_CUT) & qual)
+            if m.sum() < 120:
+                continue
+            rr, mm = r[m] - np.median(r[m]), mg[m]
+            for axis, pos in (("세로", yp[m]), ("가로", xp[m])):
+                edges = np.percentile(pos, [0, 25, 50, 75, 100])
+                spans, cells = [], []
+                for lo, hi in zip(edges[:-1], edges[1:]):
+                    k = (pos >= lo) & (pos <= hi)
+                    if k.sum() < 25:
+                        cells.append("·".rjust(10))
+                        spans.append(np.nan)
+                        continue
+                    meds = [x[2] for x in _binned(rr[k], mm[k], MAG_EDGES)
+                            if np.isfinite(x[2])]
+                    v = (float(max(meds) - min(meds)) if len(meds) >= 2 else np.nan)
+                    spans.append(v)
+                    cells.append(("·" if not np.isfinite(v) else f"{v:.3f}").rjust(10))
+                ok = [v for v in spans if np.isfinite(v)]
+                ends = (spans[-1] - spans[0]
+                        if len(spans) == 4 and np.isfinite(spans[0])
+                        and np.isfinite(spans[-1]) else np.nan)
+                if len(ok) < 3:
+                    continue
+                print("{:<10}{:<4}{:<6}{}{}".format(
+                    label, band, axis, "".join(cells),
+                    ("·".rjust(11) if not np.isfinite(ends) else f"{ends:+.3f}".rjust(11))))
+                out.append(dict(kind="slope_by_position", instrument=label,
+                                band=band, axis=axis,
+                                spans=[None if not np.isfinite(v) else float(v)
+                                       for v in spans],
+                                end_to_end=(None if not np.isfinite(ends)
+                                            else float(ends))))
+    print()
+    print("  칸의 수는 그 위치 구간 안에서 잰 밝기 폭이다. 1/4 은 좌표가 작은 쪽,")
+    print("  4/4 는 큰 쪽이다. 한 방향으로 커지면 읽어 내는 거리의 이야기다.")
+    return out
+
+
 _LAST_PER_INSTRUMENT: list[dict] = []
 
 
@@ -450,7 +544,8 @@ def main() -> int:
             print(f"[{name}] 등급 표가 없어 건너뛴다")
     global _LAST_PER_INSTRUMENT
     _LAST_PER_INSTRUMENT = per_instrument()
-    rows = pairs_table(ws) + two_way(ws) + _LAST_PER_INSTRUMENT + flux_offset_model() + colour_vs_magnitude()
+    rows = (pairs_table(ws) + two_way(ws) + _LAST_PER_INSTRUMENT + flux_offset_model() + colour_vs_magnitude()
+            + slope_by_detector_position())
     p = REPO / "validation/residual_magnitude.json"
     p.write_text(json.dumps(rows, ensure_ascii=False, indent=2, default=str),
                  encoding="utf-8")

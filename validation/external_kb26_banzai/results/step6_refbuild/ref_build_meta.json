@@ -1,0 +1,40 @@
+{
+  "ref_frame": "lsc0m412-kb26-20190503-0086-e91.fits.fz",
+  "ref_filter": "r",
+  "ref_per_date": true,
+  "ref_frames_by_date": {
+    "20190503": "lsc0m412-kb26-20190503-0086-e91.fits.fz"
+  },
+  "ref_filters_by_date": {
+    "20190503": "r"
+  },
+  "sat_drop_pct": 20.0,
+  "elong_drop_pct": 20.0,
+  "ref_cat_max_sources": 0,
+  "ref_cat_min_sources": 50,
+  "ref_cat_max_elong": 1.5,
+  "ref_cat_max_abs_round": 0.4,
+  "ref_cat_sharp_min": 0.2,
+  "ref_cat_sharp_max": 1.0,
+  "ref_cat_min_peak_adu": 0.0,
+  "wcs_match_radius_arcsec": 2.0,
+  "wcs_min_match_rate": 0.2,
+  "wcs_min_match_n": 50,
+  "wcs_max_sep_med_arcsec": 1.5,
+  "wcs_max_sep_p90_arcsec": 2.5,
+  "wcs_max_dup_rate": 0.1,
+  "filters": [
+    "B",
+    "V",
+    "i",
+    "r",
+    "zs"
+  ],
+  "n_ref_total": null,
+  "n_ref_after_qualitycuts": null,
+  "n_ref_used": null,
+  "used_full_detections": null,
+  "sky_med_median": 21.099055290222168,
+  "sky_sigma_median": 15.4247407913208,
+  "timestamp": "2026-09-14 02:08:42"
+}
