@@ -2664,13 +2664,21 @@ class ZeropointCalibrationWindow(StepWindowBase):
             "카탈로그 후보를 찾습니다 (네트워크, 10~60초). 후보를 고르면 "
             "위 칸이 채워집니다.")
         self.param_anchor_find.clicked.connect(self._discover_anchor_catalogs)
-        anchor_form.addRow("", self.param_anchor_find)
+        # **줄을 가로지르게 둔다.** 폼 레이아웃은 이름 칸의 너비를 모든 줄이
+        # 나눠 쓰므로, 이름 없는 줄에 넓은 위젯을 놓으면 그 위젯이 「값 칸」의
+        # 최소 너비를 혼자 결정한다. 이 섹션의 최소가 161(가장 긴 이름) +
+        # 252(이 버튼) + 6 = 419 px 이 되어 대화상자가 가로로 12 px 넘쳤다.
+        # 이 둘은 이름이 붙는 값이 아니라 동작이므로 가로지르는 것이 맞다.
+        anchor_form.addRow(self.param_anchor_find)
 
         self.param_anchor_candidates = QComboBox()
         self.param_anchor_candidates.setVisible(False)
+        # 찾은 카탈로그 설명이 길어서 내용에 맞춰 늘리면 또 넘친다.
+        self.param_anchor_candidates.setSizeAdjustPolicy(
+            QComboBox.AdjustToMinimumContentsLength)
         self.param_anchor_candidates.activated.connect(
             self._pick_anchor_candidate)
-        anchor_form.addRow("", self.param_anchor_candidates)
+        anchor_form.addRow(self.param_anchor_candidates)
 
         self.param_anchor_radius = QDoubleSpinBox()
         self.param_anchor_radius.setRange(0.1, 10.0)
