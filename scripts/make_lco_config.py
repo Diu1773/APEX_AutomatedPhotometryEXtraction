@@ -76,8 +76,13 @@ def build(job: Path) -> dict:
     print(f"헤더를 읽은 프레임: {frame.name}")
 
     pixscale = float(h.get("PIXSCALE") or 0.0)
+    # **CD1_1 하나로 재면 안 된다.** CD 행렬은 화소 크기와 회전을 함께 담으므로
+    # CD1_1 = 화소크기·cos(각) 이다. 시야가 90 도 돌아 있으면 CD1_1 이 거의 0 이
+    # 되고 거기에 3600 을 곱한 값은 화소 크기가 아니다 — LCO kb26 의 BANZAI
+    # 프레임에서 0.573 초각이 0.0076 으로 나왔다(75 배). 한 열의 길이를 쓴다.
     cd11 = float(h.get("CD1_1") or 0.0)
-    cd_scale = abs(cd11) * 3600.0 if cd11 else 0.0
+    cd21 = float(h.get("CD2_1") or 0.0)
+    cd_scale = math.hypot(cd11, cd21) * 3600.0
     if pixscale and cd_scale and abs(pixscale - cd_scale) / pixscale > 0.02:
         print(f"  주의: PIXSCALE {pixscale:.4f} 와 CD 행렬 {cd_scale:.4f} 가 2 % 넘게 다르다")
     scale = pixscale or cd_scale
@@ -115,9 +120,15 @@ def build(job: Path) -> dict:
     # CCDXPIXE 는 단위가 [m] 이라고 적혀 있으나 실제로는 화소 개수라 못 쓴다.
     data.setdefault("match", {})["pixel_scale_arcsec"] = round(scale, 4)
 
+    # **이미 보정된 프레임인가.** 아카이브는 원본과 관측소가 보정한 것을 같은
+    # 이름꼴로 내놓는다 — LCO 는 `e00` 이 원본, `e91` 이 BANZAI 가 보정한 것이고
+    # 헤더의 `RLEVEL` 이 0 과 91 로 갈린다. 보정본에 bias·dark·flat 을 다시 빼면
+    # 안 되고, 오버스캔은 이미 잘려 나갔는데 `BIASSEC` 키워드는 헤더에 그대로
+    # 남아 있어서 그대로 두면 **없는 영역을 자른다.**
+    reduced = int(float(h.get("RLEVEL") or 0)) >= 91
     cal = data.setdefault("calibration", {})
-    cal["enabled"] = True
-    over = _parse_biassec(h.get("BIASSEC"))
+    cal["enabled"] = not reduced
+    over = None if reduced else _parse_biassec(h.get("BIASSEC"))
     if over:
         edge, width = over
         cal["overscan"] = {"enable": True, "edge": edge,
@@ -125,6 +136,9 @@ def build(job: Path) -> dict:
         print(f"  오버스캔: {edge} 쪽 {width} 열 (BIASSEC {h.get('BIASSEC')})")
     else:
         cal.setdefault("overscan", {})["enable"] = False
+    if reduced:
+        print(f"  이미 보정된 프레임이다 (RLEVEL {h.get('RLEVEL')}) — "
+              f"보정(Step 0)과 오버스캔을 끈다")
 
     print(f"  대상    : {data['target']['name']} "
           f"({data['target']['ra_deg']:.4f}, {data['target']['dec_deg']:.4f})")

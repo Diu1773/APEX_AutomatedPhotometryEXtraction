@@ -152,7 +152,17 @@ def download(rows: list[dict], out: Path) -> int:
             except (urllib.error.URLError, TimeoutError, OSError) as exc:
                 print(f"[{i}/{len(rows)}] 실패({attempt + 1}/{RETRIES}) {name}: {exc}",
                       flush=True)
-                tmp.unlink(missing_ok=True)
+                # **치우다 터지면 안 된다.** 이 줄은 이미 `except` 안이라 여기서
+                # 나는 예외는 아무도 안 받고 받기 전체를 끝낸다. 윈도에서는 다른
+                # 프로세스가 그 파일을 아직 붙들고 있으면 `unlink` 이
+                # `PermissionError` 를 던지고, 실제로 2026-09-14 에 BANZAI
+                # 서른 장 중 여섯 장을 받은 자리에서 그렇게 죽었다. 못 치운
+                # 부스러기는 다음 실행이 덮어쓰므로 남겨도 된다.
+                try:
+                    tmp.unlink(missing_ok=True)
+                except OSError as rm_exc:
+                    print(f"[{i}/{len(rows)}] 부스러기를 못 치웠다 "
+                          f"{tmp.name}: {rm_exc}", flush=True)
                 if attempt < RETRIES - 1:
                     _sleep(attempt)
         if not ok:
