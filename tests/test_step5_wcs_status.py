@@ -158,3 +158,53 @@ def test_missing_selection_is_still_blocked(tmp_path, with_wcs):
     ctx = _workspace(tmp_path, with_wcs=with_wcs)
     (step1_dir(ctx.result_dir) / "selection.json").unlink()
     assert WcsStep().run(ctx).status == StepStatus.BLOCKED
+
+
+# ---------------------------------------------------------------------------
+# 못 센 이유를 갈라서 센다
+# ---------------------------------------------------------------------------
+#
+# 사장님 교정(2026-09-14, C-237): *"fallback들 있으면 항상 무슨로직으로
+# 들어가는지 디버깅관리도 해야돼"*.
+#
+# 「24 중 4 장에 좌표가 있다」만으로는 나머지 스무 장이 **좌표가 없는 것인지,
+# 파일을 못 찾은 것인지, 헤더가 깨진 것인지** 알 수 없다. 셋은 고치는 방법이
+# 서로 다르다 — 풀거나, 경로를 고치거나, 그 프레임을 버리거나.
+
+
+def test_the_tally_separates_why_a_frame_was_not_counted(tmp_path):
+    """네 가지를 갈라 센다."""
+    from apex.pipeline.steps.wcs import _frames_carrying_a_header_wcs
+
+    data = tmp_path / "data"
+    data.mkdir()
+    _frame(data / "good.fits", with_wcs=True)
+    _frame(data / "plain.fits", with_wcs=False)
+    (data / "broken.fits").write_bytes(b"not a FITS file at all" * 8)
+
+    tally = _frames_carrying_a_header_wcs(
+        ["good.fits", "plain.fits", "broken.fits", "gone.fits"],
+        data, tmp_path / "result", False)
+
+    assert tally["with_wcs"] == 1
+    assert tally["no_wcs"] == 1
+    assert tally["unreadable"] == 1
+    assert tally["not_found"] == 1
+
+
+def test_the_step_message_says_what_the_rest_were(tmp_path, monkeypatch):
+    """단계 메시지가 「나머지는 무엇이었나」를 적는다."""
+    ctx = _workspace(tmp_path, with_wcs=True)
+    # 한 장을 지워 「파일 없음」을 만든다.
+    (ctx.data_dir / "f2.fits").unlink()
+    res = _run_with_no_solutions(ctx, monkeypatch)
+    assert res.status == StepStatus.OK
+    assert "not_found=1" in res.message, res.message
+
+
+def test_a_total_failure_also_says_why(tmp_path, monkeypatch):
+    """이어서 못 갈 때도 이유를 적는다 — 실패만 알리면 고칠 데를 모른다."""
+    ctx = _workspace(tmp_path, with_wcs=False)
+    res = _run_with_no_solutions(ctx, monkeypatch)
+    assert res.status == StepStatus.FAILED
+    assert "no_wcs=2" in res.message, res.message

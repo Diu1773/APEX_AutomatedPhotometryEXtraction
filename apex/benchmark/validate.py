@@ -179,19 +179,45 @@ def run_artificial_star_suite(
     if synth_overrides:
         synth.update(synth_overrides)
 
-    parameter_file = "apex_config.json"
-    if config is not None:
-        parameter_file = getattr(config, "parameter_file", parameter_file)
-    # Self-contained runs (config=None, CI, or a fresh checkout) must not depend
-    # on a user's runtime config. When the named file is absent, fall back to the
-    # repo runtime file if present, else the committed example.
-    if not Path(parameter_file).exists():
-        _runtime = _repo_root() / "apex_config.json"
-        _example = _repo_root() / "parameters.example.json"
-        if _runtime.exists():
-            parameter_file = str(_runtime)
-        elif _example.exists():
-            parameter_file = str(_example)
+    # **어느 설정 파일을 골랐는지 적는다.** 이 갈래는 여태 조용했고, 잘못 고르면
+    # 한참 뒤 엉뚱한 곳에서 터진다 — 사용자의 `apex_config.json` 이 외장 디스크를
+    # 가리키면 벤치마크 한복판에서 `[WinError 3] 'E:'` 가 난다.
+    #
+    # 그리고 **고르는 순서가 바로 아래 의도와 거꾸로였다.** 「자립 실행(config=None,
+    # CI, 새 체크아웃)은 사용자의 런타임 설정에 기대면 안 된다」고 적어 놓고
+    # 사용자의 `apex_config.json` 을 먼저 집고 있었다. config 를 안 준 실행은
+    # 저장소에 담긴 예시를 먼저 쓴다. config 를 준 실행은 예전 순서 그대로다.
+    from apex.utils.fallback_log import note_fallback
+
+    _runtime = _repo_root() / "apex_config.json"
+    _example = _repo_root() / "parameters.example.json"
+
+    if config is None:
+        # **자립 실행.** 예시를 먼저 쓴다. 여태는 기본값이 그냥
+        # ``"apex_config.json"`` 이었고, 현재 폴더에 사용자의 그 파일이 **있으면**
+        # 아래 갈래를 아예 안 타고 그대로 썼다 — 주석이 말한 것과 정확히 반대다.
+        order = [_example, _runtime]
+        why = "self-contained run (config=None)"
+        parameter_file = "apex_config.json"
+    else:
+        parameter_file = getattr(config, "parameter_file", "apex_config.json")
+        if Path(parameter_file).exists():
+            parameter_file_note = ""
+            order, why = [], ""
+        else:
+            order = [_runtime, _example]
+            why = f"'{parameter_file}' does not exist"
+
+    if why:
+        chose = f"{parameter_file} (nothing on disk)"
+        for candidate in order:
+            if candidate.exists():
+                parameter_file, chose = str(candidate), candidate.name
+                break
+        parameter_file_note = note_fallback(
+            None, "validate.parameter_file", chose, why)
+    else:
+        parameter_file_note = ""
     gain = _resolve_gain(config)
     synth.setdefault("gain", gain)
 
@@ -236,6 +262,10 @@ def run_artificial_star_suite(
             "reason": f"benchmark run failed: {exc}",
             "reference_frame": str(reference_frame),
             "synthetic_frame_params": synth if generated_frame else None,
+            # **실패했을 때야말로 어느 설정을 썼는지가 필요하다.** 「벤치마크가
+            # 실패했다」만으로는 왜 없는 경로를 봤는지 알 수 없다.
+            "parameter_file": str(parameter_file),
+            "parameter_file_note": parameter_file_note,
         }
 
     import pandas as pd  # local import keeps top-level import-light
@@ -305,6 +335,9 @@ def run_artificial_star_suite(
         "reference_frame": str(reference_frame),
         "generated_synthetic_frame": bool(generated_frame),
         "synthetic_frame_params": synth if generated_frame else None,
+        # 어느 설정 파일로 돌았는지. 고른 갈래가 보고서에 남아야 나중에 재현된다.
+        "parameter_file": str(parameter_file),
+        "parameter_file_note": parameter_file_note,
         "n_trials": int(trials),
         "stars_per_trial": int(stars_per_trial),
         "n_injected": n_injected,

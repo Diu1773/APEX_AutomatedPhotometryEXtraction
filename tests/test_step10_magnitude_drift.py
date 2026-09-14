@@ -84,14 +84,22 @@ def test_the_colour_term_is_removed_first():
 
 
 def test_too_few_stars_reports_nothing_rather_than_a_number():
-    """별이 모자라면 값을 지어내지 않는다."""
-    assert magnitude_drift_by_filter(_calibrators(n=30), _coeff()) == {}
+    """별이 모자라면 값을 지어내지 않는다 — 대신 **사유를 적는다.**"""
+    got = magnitude_drift_by_filter(_calibrators(n=30), _coeff())["r"]
+    assert np.isnan(got["drift"])
+    assert got["note"] == "too_few_stars"
 
 
 def test_a_filter_without_a_reference_column_is_skipped():
-    """기준 등급이 없는 필터는 건너뛴다 — kb26 의 zs 가 그렇다."""
+    """기준 등급이 없는 필터는 못 잰다 — kb26 의 zs 가 그렇다.
+
+    **못 재는 것과 값이 0 인 것은 다르고, 못 재는 이유도 여러 가지다.**
+    그래서 자리를 남기고 사유를 적는다.
+    """
     cal = _calibrators().drop(columns=["ref_r"])
-    assert magnitude_drift_by_filter(cal, _coeff()) == {}
+    got = magnitude_drift_by_filter(cal, _coeff())["r"]
+    assert np.isnan(got["drift"])
+    assert got["note"] == "no_reference_column"
 
 
 def test_the_summary_carries_the_drift_columns():
@@ -187,7 +195,101 @@ def test_a_legacy_coefficient_file_without_ct2_still_works():
 
 
 def test_a_filter_with_no_zeropoint_is_left_out_rather_than_faked():
-    """영점을 못 맞춘 필터는 값을 내지 않는다 — kb26 의 zs 가 그렇다."""
+    """영점을 못 맞춘 필터는 값을 내지 않고 그 사유를 적는다."""
     no_zp = _coeff()
     no_zp.loc[0, "zp"] = np.nan
-    assert magnitude_drift_by_filter(_calibrators(), no_zp) == {}
+    got = magnitude_drift_by_filter(_calibrators(), no_zp)["r"]
+    assert np.isnan(got["drift"])
+    assert got["note"] == "no_zeropoint"
+
+
+# ---------------------------------------------------------------------------
+# 어느 갈래로 갔는지 남기는가
+# ---------------------------------------------------------------------------
+#
+# 사장님 교정(2026-09-14, C-237): *"fallback들 있으면 항상 무슨로직으로
+# 들어가는지 디버깅관리도 해야돼"*.
+#
+# 이 함수에는 조용히 건너뛰는 갈래가 여럿 있었다 — 열이 없어서, 영점이 없어서,
+# 별이 모자라서. 건너뛰면 산출물에 빈칸만 남고 **나중에 파일만 보는 사람이
+# 「왜 이 필터가 없지」를 물을 방법이 없다.** 로그는 그 실행을 지켜본 사람에게만
+# 존재하므로 사유를 **값으로도** 남겨야 한다.
+
+
+def test_every_filter_in_the_coefficients_gets_a_row():
+    """못 재도 자리는 남긴다 — 조용히 빠지지 않는다."""
+    got = magnitude_drift_by_filter(_calibrators(n=30), _coeff())
+    assert "r" in got, "못 쟀다고 필터를 통째로 빼면 사유를 알 길이 없다"
+    assert np.isnan(got["r"]["drift"])
+
+
+@pytest.mark.parametrize("make, expected", [
+    (lambda: (_calibrators(n=30), _coeff()), "too_few_stars"),
+    (lambda: (_calibrators().drop(columns=["ref_r"]), _coeff()),
+     "no_reference_column"),
+    (lambda: (_calibrators().drop(columns=["delta_r"]), _coeff()),
+     "no_delta_column"),
+])
+def test_each_skip_says_why(make, expected):
+    """건너뛴 갈래마다 다른 사유가 붙는다."""
+    cal, co = make()
+    assert magnitude_drift_by_filter(cal, co)["r"]["note"] == expected
+
+
+def test_a_filter_without_a_zeropoint_says_so():
+    """영점이 없어 못 잰 것과 별이 모자라 못 잰 것은 다른 일이다."""
+    no_zp = _coeff()
+    no_zp.loc[0, "zp"] = np.nan
+    got = magnitude_drift_by_filter(_calibrators(), no_zp)["r"]
+    assert got["note"] == "no_zeropoint"
+    assert np.isnan(got["drift"])
+
+
+def test_measuring_without_the_snr_gate_is_flagged():
+    """문턱을 못 건 채로 잰 값은 같은 값이 아니다 — 그렇게 표시한다."""
+    cal = _calibrators(drift=0.20)          # snr_r 열이 없다
+    got = magnitude_drift_by_filter(cal, _coeff(), snr_cut=20.0)["r"]
+    assert np.isfinite(got["drift"])
+    assert got["note"] == "ok_no_snr_gate"
+
+
+def test_measuring_without_the_colour_term_is_flagged():
+    """색항을 못 뺀 채로 잰 값도 표시한다."""
+    cal = _with_snr(_calibrators(drift=0.20)).drop(columns=["color_r_i"])
+    got = magnitude_drift_by_filter(cal, _coeff(), snr_cut=20.0)["r"]
+    assert got["note"] == "ok_no_colour_term"
+
+
+def test_a_normal_measurement_says_ok():
+    """정상으로 잰 것도 사유가 있다 — 빈칸은 「안 적었다」와 구별이 안 된다."""
+    cal = _with_snr(_calibrators(drift=0.20))
+    assert magnitude_drift_by_filter(cal, _coeff(), snr_cut=20.0)["r"]["note"] == "ok"
+
+
+def test_the_summary_carries_the_reason():
+    """`zp_qc_summary.csv` 에도 사유가 실린다."""
+    summary = build_zp_qc_summary(_coeff(), None, None, None,
+                                  _calibrators(n=30), 20.0)
+    row = summary[summary["filter"] == "r"].iloc[0]
+    assert np.isnan(float(row["bright_to_faint_drift"]))
+    assert str(row["drift_note"]) == "too_few_stars"
+
+
+def test_the_log_names_the_filters_it_could_not_measure(tmp_path):
+    """로그도 못 잰 필터를 이름과 사유로 적는다."""
+    import pandas as _pd
+
+    from apex.analysis.cmd.zeropoint_runner import export_zp_qc_products
+
+    d = tmp_path / "cmd_zeropoint"
+    d.mkdir(parents=True)
+    _coeff().to_csv(d / "zp_fit_coefficients.csv", index=False)
+    _calibrators(n=30).to_csv(d / "gaia_sdss_calibrator_by_ID.csv", index=False)
+
+    lines: list[str] = []
+    export_zp_qc_products(d, lines.append, 20.0)
+    joined = " ".join(lines)
+    assert "not measured" in joined, f"못 잰 필터를 로그에 안 적었다: {lines}"
+    assert "r(too_few_stars)" in joined
+    assert "drift_note" in joined, "어디를 보면 되는지 안 알려 준다"
+    assert "drift_note" in _pd.read_csv(d / "zp_qc_summary.csv").columns

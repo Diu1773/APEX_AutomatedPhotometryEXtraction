@@ -24,6 +24,7 @@ from apex.utils.gaia_transforms import (get_gaia_to_band as _get_gaia_to_band,
                                         gaia_transform_label as _gaia_transform_label)
 from apex.utils.gaia_transforms import GAIA_TO_BAND as _GAIA_TO_BAND, FILTER_COLOR_PREF as _FILTER_COLOR_PREF, BAND_ALIASES as _BAND_ALIASES, build_color_pairs as _build_color_pairs, teff_from_color as _teff_from_color, TEFF_COLOR_ANCHORS as _TEFF_COLOR_ANCHORS, filter_bands_from_columns as _filter_bands_from_columns
 from apex.utils.io_utils import parse_int64_series, read_ecsv_int64_source_id
+from apex.utils.fallback_log import note_fallback
 from apex.utils.photometry_provenance import build_photometry_provenance, collapse_provenance_values, format_photometry_provenance, summarize_photometry_table
 from apex.utils.qc_utils import filter_frame_df_by_qc, should_use_frame_quality_qc
 from apex.utils.step_paths import step2_cropped_dir, crop_is_active, step7_forced_phot_dir, step5_wcs_dir, tool_extinction_dir
@@ -489,11 +490,33 @@ def magnitude_drift_by_filter(
     (`memory/project_b_filter_faint_bias.md`). 그러므로 `snr_cut` 으로 적합과 같은
     문턱을 걸고, **어느 등급 범위에서 잰 값인지 함께 낸다.**
 
+    **못 잰 필터도 빠뜨리지 않고 사유를 남긴다.** 앞서는 잴 수 없으면 그냥
+    건너뛰었는데, 그러면 산출물에 빈칸만 남아서 **나중에 파일만 보는 사람이
+    「왜 이 필터가 없지」를 물을 방법이 없다.** 로그는 그 실행을 지켜본 사람에게만
+    존재하므로, 사유를 **값으로도** 적는다.
+
     Returns
     -------
-    필터 이름 -> ``{"drift", "bright_mag", "faint_mag", "n"}``. 잴 수 없는
-    필터는 아예 안 들어간다.
+    필터 이름 -> ``{"drift", "bright_mag", "faint_mag", "n", "snr_cut", "note"}``.
+    ``note`` 가 사유이고, 못 잰 필터는 ``drift`` 가 NaN 이다.
+
+        ok                    정상으로 쟀다
+        ok_no_snr_gate        쟀지만 SNR 열이 없어 문턱을 못 걸었다
+        ok_no_colour_term     쟀지만 색 열이 없어 색항을 못 뺐다
+        no_delta_column       그 필터의 잔차 열이 없다
+        no_reference_column   그 필터의 기준 등급 열이 없다
+        no_zeropoint          영점이 유한하지 않다 (적합이 안 된 필터)
+        too_few_stars         문턱을 건 뒤 남은 별이 모자란다
+        too_few_at_the_ends   양 끝 5 분위에 별이 모자란다
     """
+    def _fail(reason: str, **extra) -> dict:
+        """못 잰 필터의 자리. 값은 비우고 사유만 채운다."""
+        row = {"drift": float("nan"), "bright_mag": float("nan"),
+               "faint_mag": float("nan"), "n": 0,
+               "snr_cut": float(snr_cut), "note": reason}
+        row.update(extra)
+        return row
+
     if not isinstance(cal_df, pd.DataFrame) or cal_df.empty:
         return {}
     if not isinstance(coeff_df, pd.DataFrame) or coeff_df.empty:
@@ -508,18 +531,24 @@ def magnitude_drift_by_filter(
             continue
         ccol = str(row.get("color_col", "none"))
         d_col, r_col = f"delta_{filt}", f"ref_{filt}"
-        if d_col not in cal_df.columns or r_col not in cal_df.columns:
+        if d_col not in cal_df.columns:
+            out[filt] = _fail("no_delta_column")
+            continue
+        if r_col not in cal_df.columns:
+            out[filt] = _fail("no_reference_column")
             continue
         delta = pd.to_numeric(cal_df[d_col], errors="coerce").to_numpy(float)
         ref = pd.to_numeric(cal_df[r_col], errors="coerce").to_numpy(float)
         # SNR 열이 없는 기기도 있다. 그때는 문턱을 걸지 않는다 — 없는 열을
         # 이유로 별을 전부 버리면 안 된다.
         s_col = f"snr_{filt}"
+        gated = True
         if s_col in cal_df.columns:
             snr = pd.to_numeric(cal_df[s_col], errors="coerce").to_numpy(float)
             snr_ok = np.isfinite(snr) & (snr >= float(snr_cut))
         else:
             snr_ok = np.ones(delta.shape, dtype=bool)
+            gated = False
 
         # `float(x) or 0.0` 으로 쓰면 안 된다 — NaN 은 참이라 그대로 NaN 이 나오고,
         # 그러면 잔차가 통째로 NaN 이 되어 **그 필터가 조용히 사라진다.** 옛 계수
@@ -531,28 +560,42 @@ def magnitude_drift_by_filter(
                 return default
             return v if np.isfinite(v) else default
 
-        model = np.full(delta.shape, _num("zp", np.nan))
+        zp = _num("zp", np.nan)
+        if not np.isfinite(zp):
+            out[filt] = _fail("no_zeropoint")
+            continue
+        model = np.full(delta.shape, zp)
         c_col = f"color_{ccol}"
-        if ccol != "none" and c_col in cal_df.columns:
+        coloured = ccol != "none" and c_col in cal_df.columns
+        if coloured:
             c = pd.to_numeric(cal_df[c_col], errors="coerce").to_numpy(float)
             model = model + _num("ct") * c + _num("ct2") * c * c
         resid = delta - model
 
         ok = np.isfinite(resid) & np.isfinite(ref) & snr_ok
         if int(ok.sum()) < 40:
+            out[filt] = _fail("too_few_stars", n_usable=int(ok.sum()))
             continue
         r, m = resid[ok], ref[ok]
         q20, q80 = np.nanpercentile(m, [20.0, 80.0])
         bright, faint = m <= q20, m >= q80
         # 기존 CMD 쪽과 같은 문턱 — 양쪽에 열다섯 별씩은 있어야 중앙값이 선다.
         if int(bright.sum()) < 15 or int(faint.sum()) < 15:
+            out[filt] = _fail("too_few_at_the_ends",
+                              n_usable=int(ok.sum()))
             continue
+        note = "ok"
+        if not gated:
+            note = "ok_no_snr_gate"
+        elif not coloured:
+            note = "ok_no_colour_term"
         out[filt] = {
             "drift": float(np.median(r[faint]) - np.median(r[bright])),
             "bright_mag": float(q20),
             "faint_mag": float(q80),
             "n": int(bright.sum() + faint.sum()),
             "snr_cut": float(snr_cut),
+            "note": note,
         }
     return out
 
@@ -564,12 +607,16 @@ def build_zp_qc_summary(
     reject_df: pd.DataFrame | None = None,
     cal_df: pd.DataFrame | None = None,
     snr_cut: float = 20.0,
+    color_term_skipped: set[str] | None = None,
 ) -> pd.DataFrame:
     """Build a compact per-filter Step 10 calibration QC table.
 
     ``cal_df`` 는 보정성 별 표(``gaia_sdss_calibrator_by_ID.csv``)다. 주면
     필터마다의 **밝기 치우침**(밝은 쪽과 어두운 쪽의 영점 차이)을 함께 낸다 —
     영점 모형에 밝기 기울기가 없어서 잔차 산포에 섞여 들어가던 값이다.
+
+    ``color_term_skipped`` 는 **색항을 못 붙이고 0 으로 간 필터**의 이름이다.
+    색보정을 한 등급과 안 한 등급은 숫자만 보고는 가를 수 없으므로 표에 적는다.
     """
     coeff_df = coeff_df.copy() if isinstance(coeff_df, pd.DataFrame) else pd.DataFrame()
     frame_df = frame_df.copy() if isinstance(frame_df, pd.DataFrame) else pd.DataFrame()
@@ -578,6 +625,7 @@ def build_zp_qc_summary(
 
     filters = _zp_filter_values(coeff_df, frame_df, cut_df, reject_df)
     drift = magnitude_drift_by_filter(cal_df, coeff_df, snr_cut)
+    skipped = {str(x) for x in (color_term_skipped or ())}
     rows = []
     for filt in filters:
         coeff = _zp_filter_subset(coeff_df, filt)
@@ -612,6 +660,12 @@ def build_zp_qc_summary(
             "drift_faint_mag": drift.get(filt, {}).get("faint_mag", np.nan),
             "n_drift_calibrators": int(drift.get(filt, {}).get("n", 0)),
             "drift_snr_cut": drift.get(filt, {}).get("snr_cut", np.nan),
+            # **빈칸에는 사유를 붙인다.** 값이 NaN 인 것만 남기면 나중에 파일만
+            # 보는 사람이 「왜 이 필터가 없지」를 물을 방법이 없다.
+            "drift_note": drift.get(filt, {}).get("note", "not_fitted"),
+            # 색항을 실제로 붙였나. 색축이 "none" 인 필터는 원래 안 붙이는 것이고,
+            # 여기서 False 가 되는 것은 **붙이려 했는데 못 붙인** 경우다.
+            "color_term_applied": filt not in skipped,
         })
 
     summary = pd.DataFrame(rows)
@@ -722,7 +776,8 @@ def draw_zp_qc_overview(
     return True
 
 def export_zp_qc_products(output_dir: Path, log_func=None,
-                          snr_cut: float = 20.0) -> list[Path]:
+                          snr_cut: float = 20.0,
+                          color_term_skipped: set[str] | None = None) -> list[Path]:
     """Export Step 10 QC summary and overview figure from existing calibration outputs.
 
     ``snr_cut`` 은 밝기 치우침을 잴 표본을 적합과 같게 자르는 문턱이다. 부르는
@@ -753,7 +808,7 @@ def export_zp_qc_products(output_dir: Path, log_func=None,
 
     cal_df = _read_optional("gaia_sdss_calibrator_by_ID.csv")
     summary = build_zp_qc_summary(coeff_df, frame_df, cut_df, reject_df,
-                                  cal_df, snr_cut)
+                                  cal_df, snr_cut, color_term_skipped)
     if summary.empty:
         return []
 
@@ -767,17 +822,26 @@ def export_zp_qc_products(output_dir: Path, log_func=None,
     # 영점을 맞춘 필터 전부의 밝기 치우침을 한 줄로 적는다. 문턱 0.02 는 기존
     # CMD QC 가 쓰는 것과 같은 값이다.
     if log_func and "bright_to_faint_drift" in summary.columns:
-        parts = []
+        parts, skipped = [], []
         for _, r in summary.iterrows():
+            filt = str(r.get("filter"))
+            note = str(r.get("drift_note") or "")
             v = pd.to_numeric(pd.Series([r.get("bright_to_faint_drift")]),
                               errors="coerce").iloc[0]
             if pd.isna(v):
+                # **못 잰 필터도 적는다.** 빠진 것을 조용히 빼면 로그를 읽는
+                # 사람이 그 필터를 아예 잊는다.
+                skipped.append(f"{filt}({note or 'unknown'})")
                 continue
-            parts.append(f"{r.get('filter')}={float(v):+.3f}")
+            mark = "" if note == "ok" else f"[{note}]"
+            parts.append(f"{filt}={float(v):+.3f}{mark}")
         if parts:
             log_func(f"[ZP QC] bright->faint drift: {' '.join(parts)} mag "
                      f"(SNR>={float(snr_cut):g} calibrators; "
                      f"|drift|>~0.02 = magnitude-dependent calibration systematic)")
+        if skipped:
+            log_func(f"[ZP QC] bright->faint drift not measured: "
+                     f"{' '.join(skipped)} (reason in zp_qc_summary.drift_note)")
 
     fig = Figure(figsize=(11.0, 7.6), dpi=120)
     if draw_zp_qc_overview(fig, coeff_df, frame_df, summary):
@@ -2722,6 +2786,9 @@ class ZeropointCalibrationRunner(ReportsProgress):
             fit_iters    = int(getattr(P, "zp_fit_iters", 5))
             slope_absmax = float(getattr(P, "zp_slope_absmax", 1.0))
             snr_cut      = float(getattr(P, "gaia_snr_calib_min", getattr(P, "cmd_snr_calib_min", 20.0)))
+            #: 색항을 못 붙이고 0 으로 간 필터. 로그는 그 실행을 지켜본 사람에게만
+            #: 남으므로 산출물에도 적는다 (`zp_qc_summary.color_term_applied`).
+            color_term_skipped: set[str] = set()
             quad_by_filter = parse_quadratic_color_terms(
                 getattr(P, "zp_quadratic_color_term", ""))
             if quad_by_filter:
@@ -3133,7 +3200,14 @@ class ZeropointCalibrationRunner(ReportsProgress):
                             fp["ct"] * _cvals + float(fp.get("ct2", 0.0)) * _cvals * _cvals
                         )
                     else:
+                        # **색항을 조용히 0 으로 두면 안 된다.** 색보정을 한
+                        # 등급과 안 한 등급은 숫자만 보고는 가를 수 없다.
                         obs.loc[m_f, "color_term"] = 0.0
+                        note_fallback(self._log, f"zeropoint.color_term[{filt}]",
+                                      "0 (no colour correction applied)",
+                                      f"fitted colour axis '{ccol_name}' but "
+                                      f"column '{ccol}' is missing")
+                        color_term_skipped.add(str(filt))
                 else:
                     obs.loc[m_f, "color_term"] = 0.0
 
@@ -3253,7 +3327,14 @@ class ZeropointCalibrationRunner(ReportsProgress):
                             fp["ct"] * _cvals + float(fp.get("ct2", 0.0)) * _cvals * _cvals
                         )
                     else:
+                        # **색항을 조용히 0 으로 두면 안 된다.** 색보정을 한
+                        # 등급과 안 한 등급은 숫자만 보고는 가를 수 없다.
                         obs.loc[m_f, "color_term"] = 0.0
+                        note_fallback(self._log, f"zeropoint.color_term[{filt}]",
+                                      "0 (no colour correction applied)",
+                                      f"fitted colour axis '{ccol_name}' but "
+                                      f"column '{ccol}' is missing")
+                        color_term_skipped.add(str(filt))
                 else:
                     obs.loc[m_f, "color_term"] = 0.0
 
@@ -3433,7 +3514,8 @@ class ZeropointCalibrationRunner(ReportsProgress):
             out_cmd_path = output_dir / "median_by_ID_filter_wide_cmd.csv"
             df_out.to_csv(out_cmd_path, index=False, na_rep="NaN")
             self._log(f"Saved {out_cmd_path.name} | rows={len(df_out)}")
-            export_zp_qc_products(output_dir, self._log, snr_cut)
+            export_zp_qc_products(output_dir, self._log, snr_cut,
+                                  color_term_skipped)
             export_cmd_qc_products(output_dir, self._log)
             export_gaia_cmd_comparison_products(output_dir, self._log)
 

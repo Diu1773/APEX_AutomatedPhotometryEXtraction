@@ -41,7 +41,7 @@ def _resolve_use_cropped(result_dir: Path) -> bool:
 def _frames_carrying_a_header_wcs(
     file_list: List[str], data_dir: Path, result_dir: Path, use_cropped: bool
 ) -> int:
-    """헤더에 하늘 좌표가 붙어 있는 프레임의 수.
+    """헤더에 하늘 좌표가 붙어 있는 프레임의 수 — **못 센 이유까지 갈라서.**
 
     **「한 장도 못 풀었다」와 「이어서 못 간다」는 다른 말이다.** 6 단계는 5 단계의
     산출물이 없으면 프레임 헤더의 측성 해를 읽어 쓴다(`refbuild.py` 의
@@ -50,25 +50,40 @@ def _frames_carrying_a_header_wcs(
 
     그러니 풀이 엔진이 한 장도 못 풀었을 때 실패로 볼지 말지는 **헤더에 쓸 수 있는
     좌표가 남아 있느냐**로 갈린다. 헤더만 읽으므로 화소는 건드리지 않는다.
+
+    Returns
+    -------
+    ``{"with_wcs", "no_wcs", "unreadable", "not_found"}`` 의 장수. 넷을 갈라
+    세는 이유는 **고치는 방법이 서로 다르기 때문**이다 — 좌표가 없으면 풀어야
+    하고, 파일을 못 찾으면 경로가 틀린 것이고, 헤더가 깨졌으면 그 프레임이
+    문제다.
     """
     from astropy.wcs import WCS
 
     from apex.utils.io_utils import read_fits_header
 
     roots = [step2_cropped_dir(result_dir), data_dir] if use_cropped else [data_dir]
-    n = 0
+    # **왜 안 세어졌는지를 갈라 센다.** 「24 중 4 장에 좌표가 있다」만으로는
+    # 나머지 스무 장이 좌표가 없는 것인지, 파일을 못 찾은 것인지, 헤더가 깨진
+    # 것인지 알 수 없다. 셋은 고치는 방법이 서로 다르다.
+    tally = {"with_wcs": 0, "no_wcs": 0, "unreadable": 0, "not_found": 0}
     for name in file_list:
+        path = None
         for root in roots:
-            path = Path(root) / str(name)
-            if not path.exists():
-                continue
-            try:
-                if WCS(read_fits_header(path), relax=True).has_celestial:
-                    n += 1
-            except Exception:  # noqa: BLE001 - 못 읽는 헤더는 없는 것으로 친다
-                pass
-            break
-    return n
+            candidate = Path(root) / str(name)
+            if candidate.exists():
+                path = candidate
+                break
+        if path is None:
+            tally["not_found"] += 1
+            continue
+        try:
+            has = WCS(read_fits_header(path), relax=True).has_celestial
+        except Exception:  # noqa: BLE001 - 못 읽는 헤더는 따로 센다
+            tally["unreadable"] += 1
+            continue
+        tally["with_wcs" if has else "no_wcs"] += 1
+    return tally
 
 
 class WcsStep(PipelineStep):
@@ -153,15 +168,22 @@ class WcsStep(PipelineStep):
         # 읽어 쓸 수 있고, 관측소가 이미 푼 프레임(LCO 의 BANZAI 처리본 등)은 그
         # 길로 끝까지 간다. 그래서 **이어서 갈 수 있느냐**로 가른다.
         if n_ok == 0 and file_list:
-            n_hdr = _frames_carrying_a_header_wcs(
+            tally = _frames_carrying_a_header_wcs(
                 file_list, Path(ctx.data_dir), ctx.result_dir, use_cropped)
+            n_hdr = int(tally["with_wcs"])
+            # 0 이 아닌 항목만 적는다 — 정상일 때 메시지가 길어지지 않게.
+            why = " ".join(f"{k}={v}" for k, v in tally.items()
+                           if k != "with_wcs" and v)
             if n_hdr:
                 msg += (f"; 한 장도 못 풀었다 — 헤더에 측성 해가 있는 "
                         f"{n_hdr}/{len(file_list)} 장으로 이어서 간다")
+                if why:
+                    msg += f" (나머지: {why})"
             else:
                 return StepResult(
                     index=self.index, key=self.key, status=StepStatus.FAILED,
-                    message=(msg + "; 헤더에도 측성 해가 없어 이어서 갈 수 없다"),
+                    message=(msg + "; 헤더에도 측성 해가 없어 이어서 갈 수 없다"
+                             + (f" ({why})" if why else "")),
                     outputs=[str(out_dir)],
                 )
 

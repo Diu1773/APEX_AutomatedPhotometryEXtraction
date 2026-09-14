@@ -100,6 +100,19 @@ def test_iraf_suite_skips_cleanly_without_inputs(tmp_path):
     assert result2["status"] == "skipped"
 
 
+#: 이 suite 는 `validation/cmd_step12_synthetic.py` 를 가져다 쓴다. 그 폴더는
+#: 외장 디스크를 가리키는 접합이라 디스크가 빠지면 못 읽는다. **조용히 통과시키면
+#: 안 된다** — 검증이 안 돌았는데 초록으로 보이기 때문이다. 사유를 달아 건너뛴다.
+_HAS_VALIDATION_TREE = (Path(__file__).absolute().parents[1]
+                        / "validation" / "cmd_step12_synthetic.py").exists()
+
+
+@pytest.mark.skipif(
+    not _HAS_VALIDATION_TREE,
+    # 사유는 영문으로 — 콘솔 코드페이지에 따라 한글이 escape 되어 나온다.
+    reason="validation/cmd_step12_synthetic.py is missing "
+           "(external drive not connected)",
+)
 def test_known_targets_synthetic_recovery_runs(tmp_path):
     result = run_known_targets_suite(tmp_path, config=None)
     assert result["status"] == "ok"
