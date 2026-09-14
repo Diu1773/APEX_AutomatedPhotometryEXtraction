@@ -81,7 +81,7 @@ class InstrumentConfig:
                     default_bin = getattr(params.P, "camera_binning", 2)
                 self.binning = int(float(default_bin or 2))
             except Exception:
-                # fallback-ok: 헤더에 없을 때의 약속된 기본값이다 · 좌표는 십진수로 못 읽으면 시분초로 다시 읽는다
+                # fallback-ok: 비닝을 못 읽으면 2 다 — 바로 위 `getattr(..., 2)` 와 같은 약속된 기본값이다
                 self.binning = 2
 
         self.pix_scale_1x = self._pixel_scale_arcsec(1)
@@ -179,7 +179,7 @@ class InstrumentConfig:
                 else:
                     raise ValueError("non-finite numeric coordinates")
             except Exception:
-                # fallback-ok: 헤더에 없을 때의 약속된 기본값이다 · 좌표는 십진수로 못 읽으면 시분초로 다시 읽는다
+                # fallback-ok: 십진수로 못 읽으면 시분초 표기로 한 번 더 읽는다 — 그것도 실패하면 예외가 위로 올라간다
                 coord = SkyCoord(str(ra_raw), str(dec_raw), unit=(u.hourangle, u.deg))
 
         try:

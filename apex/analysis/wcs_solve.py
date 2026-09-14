@@ -202,7 +202,7 @@ def _split_command(value: str) -> list[str]:
     try:
         return shlex.split(value)
     except Exception:
-        # fallback-ok: 쪼개지 못하면 통째로 한 덩이로 넘긴다 · 없는 SIP 차수는 0 이 맞다 · 스키마 0 은 아래에서 걸러진다
+        # fallback-ok: 명령줄을 못 쪼개면 통째로 한 덩이로 넘긴다 — 따옴표가 안 맞는 설정에서도 원문 그대로 실행되게
         return [value]
 
 
@@ -391,6 +391,7 @@ def _shared_compute_wcs_qc_metrics(
         & (yg < float(ny))
     )
     if not np.any(ok_g):
+        out["qc_note"] = "no catalogue star lands on the detector"
         return out
 
     gaia_xy = np.column_stack((xg[ok_g], yg[ok_g]))
@@ -414,6 +415,7 @@ def _shared_compute_wcs_qc_metrics(
     j = np.asarray(j, int)
     ok = np.isfinite(d) & (d <= match_r_px) & (j >= 0) & (j < len(gaia_xy))
     if not np.any(ok):
+        out["qc_note"] = "no detection is within the match radius"
         return out
 
     det_candidates = np.where(ok)[0]
@@ -430,6 +432,7 @@ def _shared_compute_wcs_qc_metrics(
         keep_det.append(det_i)
         keep_gaia.append(gaia_i)
     if not keep_det:
+        out["qc_note"] = "no one-to-one match survived"
         return out
 
     det_keep = np.asarray(keep_det, dtype=int)
@@ -439,6 +442,7 @@ def _shared_compute_wcs_qc_metrics(
     r = np.hypot(dx, dy)
     finite_r = np.isfinite(r)
     if not np.any(finite_r):
+        out["qc_note"] = "all residuals are non-finite"
         return out
     if not np.all(finite_r):
         dx = dx[finite_r]
@@ -452,6 +456,7 @@ def _shared_compute_wcs_qc_metrics(
     out["match_rate_cat"] = float(n_match / max(int(len(gaia_xy)), 1))
     out["match_rate_eff"] = float(max(out["match_rate"], out["match_rate_cat"]))
     if n_match == 0:
+        out["qc_note"] = "zero matches after pairing"
         return out
 
     out["dx_med_px"] = float(np.nanmedian(dx)) if len(dx) else np.nan
@@ -1137,7 +1142,7 @@ class WcsWorkerBase:
             b_order = hdr.get("B_ORDER", 0)
             return max(int(a_order), int(b_order))
         except Exception:
-            # fallback-ok: 쪼개지 못하면 통째로 한 덩이로 넘긴다 · 없는 SIP 차수는 0 이 맞다 · 스키마 0 은 아래에서 걸러진다
+            # fallback-ok: SIP 키워드가 없는 헤더는 차수가 0 인 것이 맞다 — 왜곡항이 없다는 뜻이다
             return 0
 
     def _resolve_source_fits_path(self, fname: str):
@@ -1242,7 +1247,7 @@ class WcsWorkerBase:
             try:
                 schema = int(meta.get("cache_schema", 0) or 0)
             except Exception:
-                # fallback-ok: 쪼개지 못하면 통째로 한 덩이로 넘긴다 · 없는 SIP 차수는 0 이 맞다 · 스키마 0 은 아래에서 걸러진다
+                # fallback-ok: 스키마를 못 읽으면 0 이고, 바로 아래 `if schema >= 2` 가 걸러 캐시를 안 쓴다
                 schema = 0
             if schema >= 2:
                 continue
@@ -1400,6 +1405,7 @@ class WcsWorkerBase:
             & (yg < float(ny))
         )
         if not np.any(ok_g):
+            out["qc_note"] = "no catalogue star lands on the detector"
             return out
 
         gaia_xy = np.column_stack((xg[ok_g], yg[ok_g]))
@@ -1423,6 +1429,7 @@ class WcsWorkerBase:
         j = np.asarray(j, int)
         ok = np.isfinite(d) & (d <= match_r_px) & (j >= 0) & (j < len(gaia_xy))
         if not np.any(ok):
+            out["qc_note"] = "no detection is within the match radius"
             return out
 
         det_candidates = np.where(ok)[0]
@@ -1439,6 +1446,7 @@ class WcsWorkerBase:
             keep_det.append(det_i)
             keep_gaia.append(gaia_i)
         if not keep_det:
+            out["qc_note"] = "no one-to-one match survived"
             return out
 
         det_keep = np.asarray(keep_det, dtype=int)
@@ -1448,6 +1456,7 @@ class WcsWorkerBase:
         r = np.hypot(dx, dy)
         finite_r = np.isfinite(r)
         if not np.any(finite_r):
+            out["qc_note"] = "all residuals are non-finite"
             return out
         if not np.all(finite_r):
             dx = dx[finite_r]
@@ -1461,6 +1470,7 @@ class WcsWorkerBase:
         out["match_rate_cat"] = float(n_match / max(int(len(gaia_xy)), 1))
         out["match_rate_eff"] = float(max(out["match_rate"], out["match_rate_cat"]))
         if n_match == 0:
+            out["qc_note"] = "zero matches after pairing"
             return out
 
         dx_med = float(np.nanmedian(dx)) if len(dx) else np.nan
@@ -3519,7 +3529,7 @@ class AstrometryNetWorkerBase:
             xy = df[["x", "y"]].values
             return xy, df
         except Exception:
-            # fallback-ok: 쪼개지 못하면 통째로 한 덩이로 넘긴다 · 없는 SIP 차수는 0 이 맞다 · 스키마 0 은 아래에서 걸러진다
+            # fallback-ok: 검출 표를 못 읽으면 빈 배열이다 — 없음이 그대로 드러나고 별을 지어내지 않는다
             return np.empty((0, 2)), None
 
     def _wcs_rotation_deg(self, w: WCS) -> float:
@@ -3609,18 +3619,21 @@ class AstrometryNetWorkerBase:
                 pass
 
         if w is None or (not w.has_celestial):
+            out["qc_note"] = "no celestial WCS"
             return out
         if len(det_xy) == 0:
+            out["qc_note"] = "no detections"
             return out
         if gaia_ra_deg.size == 0 or gaia_dec_deg.size == 0:
+            out["qc_note"] = "no catalogue stars"
             return out
 
         try:
             xg, yg = w.celestial.all_world2pix(gaia_ra_deg, gaia_dec_deg, 0)
             xg = np.asarray(xg, float)
             yg = np.asarray(yg, float)
-        except Exception:
-            # fallback-ok: 손대지 못했으므로 받은 것을 그대로 돌려준다 — 바뀐 것이 없다는 뜻이고 없는 값을 지어내지 않는다
+        except Exception as exc:
+            out["qc_note"] = f"projection failed: {exc.__class__.__name__}"
             return out
 
         ok_g = (
@@ -3632,6 +3645,7 @@ class AstrometryNetWorkerBase:
             & (yg < float(ny))
         )
         if not np.any(ok_g):
+            out["qc_note"] = "no catalogue star lands on the detector"
             return out
 
         gaia_xy = np.column_stack((xg[ok_g], yg[ok_g]))
@@ -3655,6 +3669,7 @@ class AstrometryNetWorkerBase:
         j = np.asarray(j, int)
         ok = np.isfinite(d) & (d <= match_r_px) & (j >= 0) & (j < len(gaia_xy))
         if not np.any(ok):
+            out["qc_note"] = "no detection is within the match radius"
             return out
 
         det_candidates = np.where(ok)[0]
@@ -3671,6 +3686,7 @@ class AstrometryNetWorkerBase:
             keep_det.append(det_i)
             keep_gaia.append(gaia_i)
         if not keep_det:
+            out["qc_note"] = "no one-to-one match survived"
             return out
 
         det_keep = np.asarray(keep_det, dtype=int)
@@ -3680,6 +3696,7 @@ class AstrometryNetWorkerBase:
         r = np.hypot(dx, dy)
         finite_r = np.isfinite(r)
         if not np.any(finite_r):
+            out["qc_note"] = "all residuals are non-finite"
             return out
         if not np.all(finite_r):
             dx = dx[finite_r]
@@ -3693,6 +3710,7 @@ class AstrometryNetWorkerBase:
         out["match_rate_cat"] = float(n_match / max(int(len(gaia_xy)), 1))
         out["match_rate_eff"] = float(max(out["match_rate"], out["match_rate_cat"]))
         if n_match == 0:
+            out["qc_note"] = "zero matches after pairing"
             return out
 
         out["dx_med_px"] = float(np.nanmedian(dx)) if len(dx) else np.nan
@@ -4692,7 +4710,7 @@ class AstrometryNetWorkerBase:
                         wcs_rot_deg = self._wcs_rotation_deg(w)
                         center_ra, center_dec = self._wcs_center_coords(w, nx, ny)
                 except Exception:
-                    # fallback-ok: 쪼개지 못하면 통째로 한 덩이로 넘긴다 · 없는 SIP 차수는 0 이 맞다 · 스키마 0 은 아래에서 걸러진다
+                    # fallback-ok: WCS 를 못 읽으면 `wcs_ok = False` 를 함께 세워 아래가 그 갈래를 안 탄다
                     w = None
                     wcs_ok = False
 

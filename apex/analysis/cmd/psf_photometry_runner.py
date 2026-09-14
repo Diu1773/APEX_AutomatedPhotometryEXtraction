@@ -1037,6 +1037,8 @@ def _clone_psf_model(model):
     try:
         return model.copy()
     except Exception:
+        # fallback-ok: 얕은 복사를 못 하면 깊은 복사로 한 번 더 해 본다 — 둘 다
+        # 안 되면 아래에서 원본을 그대로 돌려준다
         try:
             return copy.deepcopy(model)
         except Exception:

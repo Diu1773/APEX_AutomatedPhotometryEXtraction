@@ -3190,7 +3190,11 @@ class ZeropointCalibrationRunner(ReportsProgress):
                 for f in fit_params
                 if f"mag_inst_{f}" in wide_raw.columns
             }
-            solved_colors = solve_standard_colors(inst_mags_all, fit_params)
+            # **로그를 넘겨야 기록이 실제로 남는다.** 안 넘기면 적합이 깨진 밴드의
+            # 색을 빼면서 아무 말도 안 하게 되고, 시험만 통과하고 운영에서는
+            # 조용해진다.
+            solved_colors = solve_standard_colors(
+                inst_mags_all, fit_params, log=self._log)
             color_df = wide_raw[["ID"]].copy()
             for filt, fp in fit_params.items():
                 ccol_name = fp["color_col"]

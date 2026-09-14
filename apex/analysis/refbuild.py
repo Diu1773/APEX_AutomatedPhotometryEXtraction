@@ -974,7 +974,11 @@ def run_refbuild(
             filt = _get_filter_from_filename(fname) or "unknown"
         fwhm_px = _safe_float(meta.get("fwhm_px"), np.nan)
         n_sources = int(meta.get("n_sources", 0) or 0)
-        sat_count = int(meta.get("sat_star_count", 0) or 0)
+        # **`or 0` 으로 누르면 안 된다.** 4 단계는 포화 별을 **못 셌을 때** 이 값을
+        # None 으로 남긴다(F-329). `None or 0` 은 0 이라, 못 센 프레임이 「포화 별이
+        # 하나도 없는 가장 깨끗한 프레임」으로 읽혀 아래 순위에서 1 등이 된다.
+        # NaN 으로 두면 `_drop_top_percent` 와 정렬이 그 줄을 뒤로 보낸다.
+        sat_count = _safe_float(meta.get("sat_star_count"), np.nan)
         med_elong = _safe_float(meta.get("median_elongation"), np.nan)
         med_round = _safe_float(meta.get("median_roundness"), np.nan)
         shape_metric = med_elong
