@@ -217,3 +217,61 @@ def test_slowly_contracting_color_still_converges():
         f"{len(bv_true) - n_ok} of {len(bv_true)} stars came back NaN; "
         "the color loop stopped before it settled")
     assert np.allclose(colors["B_V"], bv_true, atol=1e-5)
+
+
+# ---------------------------------------------------------------------------
+# 적합이 깨진 밴드
+# ---------------------------------------------------------------------------
+#
+# 사장님 교정(2026-09-14, C-237): fallback 을 탔으면 탔다고 적어야 한다.
+#
+# `_coef` 는 없거나 유한하지 않은 계수를 0 으로 친다. `ct2` 는 옛 계수 파일에
+# 아예 없으므로 0 이 맞다. 그런데 **`zp` 가 유한하지 않은 것은 그 밴드의 적합이
+# 깨졌다는 뜻**이고, 0 으로 치면 `zp_a - zp_b` 가 조용히 틀린 색을 만든다.
+# 그 색은 진짜 색과 겉보기가 같아서 아래로 흘러가도 아무도 못 알아챈다.
+
+
+def test_a_pair_with_a_broken_zero_point_yields_no_colour():
+    """영점이 NaN 인 밴드가 낀 짝은 색을 내지 않는다."""
+    inst = {"g": np.array([14.0, 15.0]), "r": np.array([13.5, 14.2])}
+    params = {
+        "g": {"zp": float("nan"), "ct": 0.1, "color_col": "g_r"},
+        "r": {"zp": -5.0, "ct": 0.2, "color_col": "g_r"},
+    }
+    assert solve_standard_colors(inst, params) == {}
+
+
+def test_it_says_which_band_was_broken():
+    """무엇 때문에 색이 없는지 적는다."""
+    inst = {"g": np.array([14.0, 15.0]), "r": np.array([13.5, 14.2])}
+    params = {
+        "g": {"zp": float("nan"), "ct": 0.1, "color_col": "g_r"},
+        "r": {"zp": -5.0, "ct": 0.2, "color_col": "g_r"},
+    }
+    lines: list[str] = []
+    solve_standard_colors(inst, params, log=lines.append)
+    assert lines, "색을 못 낸 이유를 한 줄도 안 적었다"
+    assert "g_r" in lines[0] and "g" in lines[0]
+    assert "[fallback]" in lines[0]
+
+
+def test_a_healthy_pair_is_unaffected():
+    """멀쩡한 짝은 그대로 풀린다 — 걸러 내는 것이지 막는 것이 아니다."""
+    inst = {"g": np.array([14.0, 15.0]), "r": np.array([13.5, 14.2])}
+    params = {
+        "g": {"zp": -5.0, "ct": 0.1, "color_col": "g_r"},
+        "r": {"zp": -5.2, "ct": 0.2, "color_col": "g_r"},
+    }
+    got = solve_standard_colors(inst, params)
+    assert "g_r" in got
+    assert np.all(np.isfinite(got["g_r"]))
+
+
+def test_a_missing_colour_term_is_still_allowed():
+    """`ct` 가 없는 것은 색항이 없다는 뜻이라 막지 않는다."""
+    inst = {"g": np.array([14.0, 15.0]), "r": np.array([13.5, 14.2])}
+    params = {
+        "g": {"zp": -5.0, "color_col": "g_r"},
+        "r": {"zp": -5.2, "color_col": "g_r"},
+    }
+    assert "g_r" in solve_standard_colors(inst, params)

@@ -295,6 +295,10 @@ def _shared_wcs_center_coords(w: WCS, nx: int, ny: int) -> tuple[float, float]:
 
 def _shared_empty_wcs_qc_metrics(n_detect: int = 0) -> dict:
     return {
+        # **`n_match = 0` 은 두 가지를 뜻할 수 있다** — WCS 는 멀쩡한데 맞은 별이
+        # 없는 것과, 계산을 못 해서 빈 채로 돌아온 것. 숫자만 보고는 가를 수
+        # 없으므로 사유를 값으로 함께 싣는다. 정상으로 끝나면 빈 문자열이다.
+        "qc_note": "",
         "n_detect": int(max(0, n_detect)),
         "n_catalog_in_fov": 0,
         "n_match": 0,
@@ -355,19 +359,25 @@ def _shared_compute_wcs_qc_metrics(
             if np.isfinite(c_ra) and np.isfinite(c_dec):
                 c_sky = SkyCoord(c_ra * u.deg, c_dec * u.deg, frame="icrs")
                 out["center_offset_arcsec"] = float(c_sky.separation(center_coord).arcsec)
-        except Exception:
-            pass
+        except Exception as exc:
+            out["qc_note"] = f"center offset not computed: {exc.__class__.__name__}"
 
-    if w is None or (not w.has_celestial) or len(det_xy) == 0:
+    if w is None or (not w.has_celestial):
+        out["qc_note"] = "no celestial WCS"
+        return out
+    if len(det_xy) == 0:
+        out["qc_note"] = "no detections"
         return out
     if gaia_ra_deg.size == 0 or gaia_dec_deg.size == 0:
+        out["qc_note"] = "no catalogue stars"
         return out
 
     try:
         xg, yg = w.celestial.all_world2pix(gaia_ra_deg, gaia_dec_deg, 0)
         xg = np.asarray(xg, float)
         yg = np.asarray(yg, float)
-    except Exception:
+    except Exception as exc:
+        out["qc_note"] = f"projection failed: {exc.__class__.__name__}"
         return out
 
     ok_g = (
@@ -1344,21 +1354,26 @@ class WcsWorkerBase:
                 if np.isfinite(c_ra) and np.isfinite(c_dec):
                     c_sky = SkyCoord(c_ra * u.deg, c_dec * u.deg, frame="icrs")
                     out["center_offset_arcsec"] = float(c_sky.separation(center_coord).arcsec)
-            except Exception:
-                pass
+            except Exception as exc:
+                out["qc_note"] = (
+                    f"center offset not computed: {exc.__class__.__name__}")
 
         if w is None or (not w.has_celestial):
+            out["qc_note"] = "no celestial WCS"
             return out
         if len(det_xy) == 0:
+            out["qc_note"] = "no detections"
             return out
         if gaia_ra_deg.size == 0 or gaia_dec_deg.size == 0:
+            out["qc_note"] = "no catalogue stars"
             return out
 
         try:
             xg, yg = w.celestial.all_world2pix(gaia_ra_deg, gaia_dec_deg, 0)
             xg = np.asarray(xg, float)
             yg = np.asarray(yg, float)
-        except Exception:
+        except Exception as exc:
+            out["qc_note"] = f"projection failed: {exc.__class__.__name__}"
             return out
 
         ok_g = (

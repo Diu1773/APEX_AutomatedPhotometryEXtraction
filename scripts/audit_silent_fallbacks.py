@@ -17,6 +17,13 @@
     세는 것     except 안에 대입/return 이 있고, 로그·예외가 없다
     안 세는 것  값을 안 만드는 정리 코드 · 로그를 남기는 것 · 다시 던지는 것
 
+## 둘로 가른다
+
+    없음을 표시      `None`·`NaN`·빈 표·사유를 담은 값. 아래로 흘러가도 **없음이
+                    그대로 드러나므로** 조용해도 해롭지 않다.
+    그럴듯한 값      `0`·`False`·기본값. **진짜 결과와 겉보기가 같다** — 색항 0 은
+                    진짜 색항 0 과 숫자만 보고는 가를 수 없다. 이쪽이 고칠 것이다.
+
 **이 수를 0 으로 만드는 것이 목표가 아니다.** 어떤 자리는 정말로 조용해도 되고
 (기록이 실행을 깨뜨리면 안 되는 자리), 어떤 자리는 화면 꾸미기다. 목표는 **수가
 슬그머니 늘지 않게 지켜보는 것**이고, 계산 층부터 줄여 가는 것이다.
@@ -44,8 +51,30 @@ CALC_PREFIXES = ("apex/analysis", "apex/core", "apex/utils", "apex/pipeline",
                  "apex/config", "apex/cmd", "apex/lightcurve")
 
 
+#: 이 이름의 자리에 값을 넣는 것도 「적었다」로 본다. 로그로 흘려보내지 않고
+#: **산출물에 사유를 담는** 방식이고, 오히려 더 오래 남는다.
+NOTE_TARGETS = ("note", "reason", "status", "error", "warning", "message")
+
+
+def _assigns_a_reason(handler: ast.ExceptHandler) -> bool:
+    """사유를 담을 자리에 값을 넣나 — `out["qc_note"] = ...` 같은 것."""
+    for node in ast.walk(handler):
+        targets: list = []
+        if isinstance(node, ast.Assign):
+            targets = list(node.targets)
+        elif isinstance(node, (ast.AnnAssign, ast.AugAssign)):
+            targets = [node.target]
+        for t in targets:
+            name = ast.unparse(t).lower()
+            if any(k in name for k in NOTE_TARGETS):
+                return True
+    return False
+
+
 def _records_something(handler: ast.ExceptHandler) -> bool:
     """그 갈래가 기록을 남기거나 예외를 다시 던지나."""
+    if _assigns_a_reason(handler):
+        return True
     for node in ast.walk(handler):
         if isinstance(node, ast.Raise):
             return True
@@ -58,14 +87,34 @@ def _records_something(handler: ast.ExceptHandler) -> bool:
     return False
 
 
-def _produces_a_value(handler: ast.ExceptHandler) -> bool:
-    """그 갈래가 값을 만들어 계산을 잇나."""
+def _substituted_values(handler: ast.ExceptHandler) -> list[ast.expr]:
+    """그 갈래가 만들어 내보내는 값들. 비었으면 계산을 안 잇는다."""
+    out: list[ast.expr] = []
     for node in ast.walk(handler):
-        if isinstance(node, (ast.Assign, ast.AnnAssign, ast.AugAssign)):
-            return True
-        if isinstance(node, ast.Return) and node.value is not None:
-            return True
-    return False
+        if isinstance(node, ast.Assign):
+            out.append(node.value)
+        elif isinstance(node, (ast.AnnAssign, ast.AugAssign)) and node.value is not None:
+            out.append(node.value)
+        elif isinstance(node, ast.Return) and node.value is not None:
+            out.append(node.value)
+    return out
+
+
+#: 「없다」를 뜻하는 값. 이런 값은 아래로 흘러가도 없음이 그대로 드러나므로
+#: 조용해도 해롭지 않다. 해로운 것은 **그럴듯한 값**이다 — 색항 0 은 진짜
+#: 색항 0 과 겉보기가 같아서 숫자만 보고는 가를 수 없다.
+_ABSENCE = {"None", "{}", "[]", "()", "''", '""', "pd.DataFrame()", "set()",
+            "dict()", "list()", "tuple()"}
+
+
+def _marks_absence(value: ast.expr) -> bool:
+    src = ast.unparse(value)
+    if src in _ABSENCE or "nan" in src.lower():
+        return True
+    # 사유를 담은 값도 조용하지 않다 — 읽는 쪽이 무슨 일이 있었는지 알 수 있다.
+    lowered = src.lower()
+    return any(t in lowered for t in ("'error'", '"error"', "str(exc)", "str(e)",
+                                      "reason", "_error:", "failed"))
 
 
 def scan(root: Path = REPO / "apex") -> list[dict]:
@@ -79,11 +128,16 @@ def scan(root: Path = REPO / "apex") -> list[dict]:
         for node in ast.walk(tree):
             if not isinstance(node, ast.ExceptHandler):
                 continue
-            if not _produces_a_value(node) or _records_something(node):
+            if _records_something(node):
+                continue
+            values = _substituted_values(node)
+            if not values:
                 continue
             rows.append({
                 "file": rel, "line": node.lineno,
                 "layer": "calc" if rel.startswith(CALC_PREFIXES) else "gui",
+                "kind": ("absence" if all(_marks_absence(v) for v in values)
+                         else "plausible"),
             })
     return rows
 
@@ -91,18 +145,28 @@ def scan(root: Path = REPO / "apex") -> list[dict]:
 def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(description="조용한 fallback 을 센다")
     ap.add_argument("--layer", choices=["calc", "gui", "all"], default="all")
+    ap.add_argument("--kind", choices=["absence", "plausible", "all"],
+                    default="all", help="plausible 이 고쳐야 할 쪽이다")
     ap.add_argument("--show", action="store_true", help="자리를 하나씩 찍는다")
     ap.add_argument("--json", default="", help="이 경로에 목록을 쓴다")
     a = ap.parse_args(argv)
 
     rows = scan()
+    everything = list(rows)
     if a.layer != "all":
         rows = [r for r in rows if r["layer"] == a.layer]
+    if a.kind != "all":
+        rows = [r for r in rows if r["kind"] == a.kind]
 
-    by_layer = Counter(r["layer"] for r in rows)
+    split = Counter((r["layer"], r["kind"]) for r in everything)
     by_file = Counter(r["file"] for r in rows)
-    print(f"값을 만들면서 조용한 갈래 {len(rows)} 곳 · 파일 {len(by_file)} 개")
-    print(f"  계산 {by_layer.get('calc', 0)} · 화면 {by_layer.get('gui', 0)}")
+    print(f"값을 만들면서 조용한 갈래 {len(everything)} 곳")
+    print("  없음을 표시 (해롭지 않다) · 그럴듯한 값으로 갈아치움 (고쳐야 한다)")
+    for layer in ("calc", "gui"):
+        print(f"    {layer:<5} {split.get((layer, 'absence'), 0):>4}"
+              f" · {split.get((layer, 'plausible'), 0):>4}")
+    print()
+    print(f"골라 본 것 {len(rows)} 곳 · 파일 {len(by_file)} 개")
     print()
     print("많은 파일부터:")
     for f, n in by_file.most_common(15):

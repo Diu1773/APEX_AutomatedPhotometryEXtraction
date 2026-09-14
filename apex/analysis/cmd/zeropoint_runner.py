@@ -320,6 +320,7 @@ def solve_standard_colors(
     inst_mags: dict[str, np.ndarray],
     fit_params: dict[str, dict],
     iters: int = 6,
+    log=None,
 ) -> dict[str, np.ndarray]:
     """Solve the *standard* color indices from instrumental magnitudes alone.
 
@@ -383,6 +384,11 @@ def solve_standard_colors(
     if not pairs:
         return {}
 
+    # **없는 계수를 0 으로 치는 것이 늘 맞지는 않다.** `ct2` 는 옛 계수 파일에
+    # 아예 없으므로 0 이 맞다(2 차항이 없다는 뜻). 그런데 `zp` 나 `ct` 가 없거나
+    # 유한하지 않은 것은 **그 밴드의 적합이 깨졌다**는 뜻이고, 0 으로 치면
+    # `_coef(fa,"zp") - _coef(fb,"zp")` 가 조용히 틀린 색을 만든다. 그 경우는
+    # 아래 `_fit_is_usable` 이 걸러 그 짝의 색을 아예 NaN 으로 둔다.
     def _coef(f: str, key: str) -> float:
         try:
             v = float(fit_params[f][key])
@@ -390,8 +396,35 @@ def solve_standard_colors(
         except (KeyError, TypeError, ValueError):
             return 0.0
 
+    def _fit_is_usable(f: str) -> bool:
+        """그 밴드의 영점·색항이 쓸 수 있는 값인가."""
+        entry = fit_params.get(f) or {}
+        for key in ("zp", "ct"):
+            if key not in entry:
+                return key == "ct"          # ct 가 없는 것은 색항 없음이라 괜찮다
+            try:
+                if not np.isfinite(float(entry[key])):
+                    return False
+            except (TypeError, ValueError):
+                return False
+        return True
+
     # Initial guess: instrumental color + zeropoint difference (exact when all
     # color terms are zero).
+    # **적합이 깨진 밴드가 낀 짝은 아예 빼낸다.** 남겨 두면 `zp` 가 0 으로 치여
+    # 색이 조용히 어긋난다 — 그 색은 진짜 색과 겉보기가 같아서 아래로 흘러가도
+    # 아무도 못 알아챈다. 빼면 그 짝의 색이 없으므로 없음이 그대로 드러난다.
+    unusable = {name: (fa, fb) for name, (fa, fb) in pairs.items()
+                if not (_fit_is_usable(fa) and _fit_is_usable(fb))}
+    for name, (fa, fb) in unusable.items():
+        pairs.pop(name, None)
+        broken = [f for f in (fa, fb) if not _fit_is_usable(f)]
+        note_fallback(log, f"solve_standard_colors.{name}",
+                      "no standard colour (left as missing)",
+                      f"zero-point/colour term not finite for {', '.join(broken)}")
+    if not pairs:
+        return {}
+
     colors = {
         name: (
             np.asarray(inst_mags[fa], dtype=float)
