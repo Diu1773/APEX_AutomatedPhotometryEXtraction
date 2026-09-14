@@ -141,8 +141,18 @@ Step 10 이 `bright_to_faint_drift` 로 −0.28 을 찍고 로그에 경고를 �
 nonlinearity」 한 줄을 검색하면 첫 페이지에 나온다. 물리 가설을 세우기 전에 그 장비를
 **운영하는 쪽의 문서를 먼저 찾아야 했다.**
 
+**다만 그 식이 우리 자료를 다 설명하지는 못한다.** 맞춤에 안 쓴 것을 앞으로 밀어
+예측해 보니, 하늘이 낮을수록 가파르다는 **방향은 맞는데 세기가 모자라고**(실측은
+하늘 2.2~23 e- 사이에서 기울기가 2.2 배 변하는데 모형은 24 % 만 변한다),
+**조리개 의존은 아예 못 맞춘다**(실측 1.45 배, 모형 1.09 배). 게다가 **가장 잘
+고치는 (z,k) 와 가장 잘 예측하는 (z,k) 가 다르다.** 원인의 정체는 확정이고
+**식의 꼴은 확정이 아니다** — 저자들도 *"the form of the function ... is not
+optimal"* 이라고 적어 두었다. 그래서 D-021 에서 APEX 가 이 보정을 넣는다면
+보고서의 값을 박는 것이 아니라 **자료로 맞추는 절차**가 본체여야 한다.
+
 전문은 `validation/ERROR_BUDGET.md` 11 절이고 스크립트는
-`validation/external_kb26/lco_nonlinearity_correction.py` 다.
+`validation/external_kb26/lco_nonlinearity_correction.py`(맞춤)와
+`lco_model_forward_check.py`(예측 검증)다.
 
 ### 2026-09-14 — 기준까지 갈아 봤다, 그래도 kb26 은 남는다
 
