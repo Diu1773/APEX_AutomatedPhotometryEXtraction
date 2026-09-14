@@ -159,6 +159,7 @@ def night_offset_hours(lon_east_deg=None,
         try:
             tz = float(tz_offset_hours)
         except (TypeError, ValueError):
+            # fallback-ok: 바로 아래 `if tz != 0.0` 이 걸러낸다 — 0 은 「시차를 못 읽었다」는 뜻이다
             tz = 0.0
         if tz != 0.0 and abs(tz) <= 14.0:
             return tz, METHOD_CIVIL

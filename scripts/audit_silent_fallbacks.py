@@ -56,8 +56,25 @@ CALC_PREFIXES = ("apex/analysis", "apex/core", "apex/utils", "apex/pipeline",
 NOTE_TARGETS = ("note", "reason", "status", "error", "warning", "message")
 
 
+#: 이 이름을 세는 칸을 올리는 것도 「적었다」다 — `stats["failed"] += 1` 은
+#: 몇 번 못 했는지를 산출물에 남기는 일이라 로그 한 줄과 같은 값을 한다.
+COUNTER_NAMES = ("failed", "fail", "error", "skipped", "skip", "missing",
+                 "rejected", "invalid", "dropped", "unreadable")
+
+
+def _counts_a_failure(handler: ast.ExceptHandler) -> bool:
+    for node in ast.walk(handler):
+        if isinstance(node, ast.AugAssign):
+            name = ast.unparse(node.target).lower()
+            if any(k in name for k in COUNTER_NAMES):
+                return True
+    return False
+
+
 def _assigns_a_reason(handler: ast.ExceptHandler) -> bool:
     """사유를 담을 자리에 값을 넣나 — `out["qc_note"] = ...` 같은 것."""
+    if _counts_a_failure(handler):
+        return True
     for node in ast.walk(handler):
         targets: list = []
         if isinstance(node, ast.Assign):
@@ -117,14 +134,39 @@ def _marks_absence(value: ast.expr) -> bool:
                                       "reason", "_error:", "failed"))
 
 
+#: 「이 갈래는 조용해도 된다」를 코드에 적어 두는 표시. 뒤에 **왜** 가 따라와야
+#: 한다. 표시만 달고 이유를 안 적으면 세는 쪽에서 안 쳐 준다.
+#:
+#:     except (TypeError, ValueError):
+#:         # fallback-ok: 이 함수의 계약이 「값이거나 기본값」이다
+#:         return default
+#:
+#: 이것은 검사를 끄는 장치가 아니라 **근거를 남기게 하는 장치**다. 표시를 달려면
+#: 한 줄을 써야 하고, 그 한 줄이 나중에 읽는 사람에게 답이 된다.
+MARKER = "fallback-ok:"
+
+
+def _justified(lines: list[str], handler: ast.ExceptHandler) -> str:
+    """그 갈래에 적힌 근거. 없으면 빈 문자열."""
+    lo = max(0, handler.lineno - 1)
+    hi = min(len(lines), (handler.end_lineno or handler.lineno))
+    for raw in lines[lo:hi]:
+        if MARKER in raw:
+            reason = raw.split(MARKER, 1)[1].strip()
+            return reason
+    return ""
+
+
 def scan(root: Path = REPO / "apex") -> list[dict]:
     rows: list[dict] = []
     for path in sorted(root.rglob("*.py")):
         rel = path.relative_to(REPO).as_posix()
         try:
-            tree = ast.parse(path.read_text(encoding="utf-8"))
+            text = path.read_text(encoding="utf-8")
+            tree = ast.parse(text)
         except (OSError, SyntaxError):
             continue
+        lines = text.splitlines()
         for node in ast.walk(tree):
             if not isinstance(node, ast.ExceptHandler):
                 continue
@@ -133,11 +175,16 @@ def scan(root: Path = REPO / "apex") -> list[dict]:
             values = _substituted_values(node)
             if not values:
                 continue
+            if all(_marks_absence(v) for v in values):
+                kind = "absence"
+            elif _justified(lines, node):
+                kind = "justified"
+            else:
+                kind = "plausible"
             rows.append({
                 "file": rel, "line": node.lineno,
                 "layer": "calc" if rel.startswith(CALC_PREFIXES) else "gui",
-                "kind": ("absence" if all(_marks_absence(v) for v in values)
-                         else "plausible"),
+                "kind": kind,
             })
     return rows
 
@@ -145,7 +192,8 @@ def scan(root: Path = REPO / "apex") -> list[dict]:
 def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(description="조용한 fallback 을 센다")
     ap.add_argument("--layer", choices=["calc", "gui", "all"], default="all")
-    ap.add_argument("--kind", choices=["absence", "plausible", "all"],
+    ap.add_argument("--kind",
+                    choices=["absence", "plausible", "justified", "all"],
                     default="all", help="plausible 이 고쳐야 할 쪽이다")
     ap.add_argument("--show", action="store_true", help="자리를 하나씩 찍는다")
     ap.add_argument("--json", default="", help="이 경로에 목록을 쓴다")
@@ -162,9 +210,11 @@ def main(argv: list[str] | None = None) -> int:
     by_file = Counter(r["file"] for r in rows)
     print(f"값을 만들면서 조용한 갈래 {len(everything)} 곳")
     print("  없음을 표시 (해롭지 않다) · 그럴듯한 값으로 갈아치움 (고쳐야 한다)")
+    print("  (근거를 적어 둔 것은 따로 센다)")
     for layer in ("calc", "gui"):
-        print(f"    {layer:<5} {split.get((layer, 'absence'), 0):>4}"
-              f" · {split.get((layer, 'plausible'), 0):>4}")
+        print(f"    {layer:<5} 없음표시 {split.get((layer, 'absence'), 0):>4}"
+              f" · 근거있음 {split.get((layer, 'justified'), 0):>4}"
+              f" · **남은 것** {split.get((layer, 'plausible'), 0):>4}")
     print()
     print(f"골라 본 것 {len(rows)} 곳 · 파일 {len(by_file)} 개")
     print()

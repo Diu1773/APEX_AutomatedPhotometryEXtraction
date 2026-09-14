@@ -67,6 +67,7 @@ def _get_float(params: Any, name: str, default: float) -> float:
         value = float(getattr(params, name, default))
         return value if np.isfinite(value) else float(default)
     except Exception:
+        # fallback-ok: 이 함수의 계약이 「값이거나 기본값」이다 — 기본값을 돌려주는 것이 실패가 아니라 약속한 동작이고, 별마다 불리므로 로그를 넣으면 묻힌다
         return float(default)
 
 
@@ -75,6 +76,7 @@ def _get_int(params: Any, name: str, default: int) -> int:
         value = int(getattr(params, name, default))
         return value if value >= 0 else int(default)
     except Exception:
+        # fallback-ok: 이 함수의 계약이 「값이거나 기본값」이다 — 기본값을 돌려주는 것이 약속한 동작이다
         return int(default)
 
 

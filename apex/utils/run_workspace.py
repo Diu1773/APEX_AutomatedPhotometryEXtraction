@@ -134,6 +134,7 @@ def infer_run_parent_dir(root_dir: Path, input_dirs: list[Path] | None = None) -
         try:
             return Path(os.path.commonpath([str(p) for p in dirs]))
         except ValueError:
+            # fallback-ok: 윈도에서 드라이브가 섞이면 공통 경로가 없다 — 첫 입력의 부모로 정하고 바로 위 주석이 그 이유를 적고 있다
             # Mixed-drive Windows inputs have no commonpath; fall back to the first input parent.
             return dirs[0].parent
 
@@ -190,6 +191,7 @@ def build_merged_workspace_dir(result_dirs: list[Path]) -> Path:
     try:
         parent = Path(os.path.commonpath([str(p.parent) for p in dirs]))
     except ValueError:
+        # fallback-ok: 윈도에서 드라이브가 섞이면 공통 경로가 없다 — 첫 입력의 부모로 정하고 바로 위 주석이 그 이유를 적고 있다
         parent = dirs[0].parent
     label = infer_result_workspace_label(dirs)
     start_date, end_date = infer_result_workspace_date_range(dirs)

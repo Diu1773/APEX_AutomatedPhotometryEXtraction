@@ -48,6 +48,7 @@ def draw_refbuild_overview(fig, params, *, date_key='All', summary=None) -> bool
     try:
         df = pd.read_csv(stats_path)
     except Exception:
+        # fallback-ok: 못 했으면 「아니다」가 정직한 답이다 — 부르는 쪽은 참일 때만 그 길로 가므로 거짓이 조용히 흘러가지 않는다
         ax1.text(0.5, 0.5, "Failed to read ref stats", ha="center", va="center")
         ax2.axis("off")
         return False

@@ -844,6 +844,7 @@ class DetrendRunner:
         try:
             target_id = int(target_text)
         except Exception:
+            # fallback-ok: 못 했으면 「아니다」가 정직한 답이다 — 부르는 쪽은 참일 때만 그 길로 가므로 거짓이 조용히 흘러가지 않는다
             return False
 
         result_root = self._find_saved_current_result_root(target_id)
@@ -939,6 +940,7 @@ class DetrendRunner:
             try:
                 key = str(root.resolve())
             except Exception:
+                # fallback-ok: 손대지 못했으므로 받은 것을 그대로 돌려준다 — 바뀐 것이 없다는 뜻이고 없는 값을 지어내지 않는다
                 key = str(root)
             if key in seen:
                 continue
@@ -2560,6 +2562,7 @@ class DetrendRunner:
                             slope_err = np.nan
                             cov_zp_slope = np.nan
                 except Exception:
+                    # fallback-ok: 기울기·영점은 0 이지만 오차를 NaN 으로 두므로 쓰는 쪽에서 못 쓴 것이 드러난다
                     zp, slope = 0.0, 0.0
                     zp_err, slope_err = np.nan, np.nan
                     cov_zp_slope = np.nan
@@ -3018,6 +3021,7 @@ class DetrendRunner:
         try:
             target_id = int(target_text)
         except Exception:
+            # fallback-ok: 못 했으면 「아니다」가 정직한 답이다 — 부르는 쪽은 참일 때만 그 길로 가므로 거짓이 조용히 흘러가지 않는다
             return False
 
         root = self._find_saved_current_result_root(target_id)

@@ -254,6 +254,7 @@ def estimate_psf_core_cut(
     try:
         radius = float(radius_px)
     except Exception:
+        # fallback-ok: 바로 아래에서 유한·양수인지 다시 보므로 이 값이 그대로 쓰이지 않는다
         radius = 0.0
     if not np.isfinite(radius) or radius <= 0:
         radius = _auto_radius(

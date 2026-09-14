@@ -518,6 +518,7 @@ def scan_calibration_frames(paths: Iterable[str]) -> list[FrameInfo]:
         try:
             binning = int(header.get("XBINNING", 1) or 1)
         except (TypeError, ValueError):
+            # fallback-ok: 헤더의 기본값과 같은 1 이다 — 비닝을 안 적은 프레임의 약속된 값이고 값이 곧 계약이다
             binning = 1
         out.append(FrameInfo(
             path=str(p),

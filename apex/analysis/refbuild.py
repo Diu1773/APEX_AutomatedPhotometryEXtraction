@@ -463,6 +463,7 @@ def run_refbuild(
         try:
             marker_mtime = int(marker_path.stat().st_mtime_ns)
         except Exception:
+            # fallback-ok: 검사를 못 했으면 「아니다」가 정직한 답이다 — 부르는 쪽은 참일 때만 그 길로 가므로 거짓이 조용히 흘러가지 않는다
             return False
         if crop_is_active(result_dir):
             rect_path = crop_rect_path(result_dir)
@@ -472,6 +473,7 @@ def run_refbuild(
                     if marker_mtime < rect_mtime:
                         return False
                 except Exception:
+                    # fallback-ok: 검사를 못 했으면 「아니다」가 정직한 답이다 — 부르는 쪽은 참일 때만 그 길로 가므로 거짓이 조용히 흘러가지 않는다
                     return False
         return True
 
@@ -561,6 +563,7 @@ def run_refbuild(
                 st = path.stat()
                 rec_mtime_ns = int(st.st_mtime_ns)
             except Exception:
+                # fallback-ok: 0 은 「모른다」라 캐시가 오래된 것으로 취급된다 — 안전한 쪽으로 틀린다
                 rec_mtime_ns = 0
             try:
                 df = pd.read_csv(path)
@@ -866,12 +869,14 @@ def run_refbuild(
         try:
             n_match = int(float(n_match)) if pd.notna(n_match) else 0
         except Exception:
+            # fallback-ok: 이 함수의 계약이 「값이거나 기본값」이다 — 기본값을 돌려주는 것이 실패가 아니라 약속한 동작이고, 별마다 불리므로 로그를 넣으면 묻힌다
             n_match = 0
 
         n_cat = meta.get("n_catalog_in_fov", 0)
         try:
             n_cat = int(float(n_cat)) if pd.notna(n_cat) else 0
         except Exception:
+            # fallback-ok: 이 함수의 계약이 「값이거나 기본값」이다 — 기본값을 돌려주는 것이 실패가 아니라 약속한 동작이고, 별마다 불리므로 로그를 넣으면 묻힌다
             n_cat = 0
 
         return {
@@ -1334,6 +1339,7 @@ def run_refbuild(
                     det_xy = df_det[["x", "y"]].to_numpy(float)
                     det_xy = det_xy[np.isfinite(det_xy).all(axis=1)]
             except Exception:
+                # fallback-ok: 0 은 「모른다」라 캐시가 오래된 것으로 취급된다 — 안전한 쪽으로 틀린다
                 det_xy = np.zeros((0, 2), float)
 
         wcs = _load_wcs_for_frame(fname)

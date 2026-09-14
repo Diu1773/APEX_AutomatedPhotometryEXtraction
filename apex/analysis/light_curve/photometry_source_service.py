@@ -45,6 +45,7 @@ def _signature_matches(path: Path, expected: dict | None) -> bool:
             and int(expected.get("mtime_ns", -1)) == int(stat.st_mtime_ns)
         )
     except (OSError, TypeError, ValueError):
+        # fallback-ok: 검사를 못 했으면 「아니다」가 정직한 답이다 — 부르는 쪽은 참일 때만 그 길로 가므로 거짓이 조용히 흘러가지 않는다
         return False
 
 
@@ -284,6 +285,7 @@ def load_filter_photometry_timeseries(
     try:
         index = pd.read_csv(aperture_index)
     except Exception:
+        # fallback-ok: 바로 아래에서 0 이하인지 다시 보므로 이 값이 그대로 쓰이지 않는다
         return pd.DataFrame(), source
     if "file" not in index.columns:
         return pd.DataFrame(), source
@@ -371,6 +373,7 @@ def load_filter_photometry_timeseries(
                 raw_night = int(float(index_row.get("night_id", 0)))
                 night_id = raw_night if raw_night > 0 else 0
             except (TypeError, ValueError):
+                # fallback-ok: 바로 아래에서 0 이하인지 다시 보므로 이 값이 그대로 쓰이지 않는다
                 night_id = 0
         if night_id <= 0:
             date_value = ""

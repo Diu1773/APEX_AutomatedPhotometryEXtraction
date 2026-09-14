@@ -35,6 +35,7 @@ def frame_quality_has_auto_qc(result_dir: Path) -> bool:
     try:
         dfq = pd.read_csv(qpath)
     except Exception:
+        # fallback-ok: 검사를 못 했으면 「아니다」가 정직한 답이다 — 부르는 쪽은 참일 때만 그 길로 가므로 거짓이 조용히 흘러가지 않는다
         return False
     if dfq.empty or "exclude_reason" not in dfq.columns:
         return False

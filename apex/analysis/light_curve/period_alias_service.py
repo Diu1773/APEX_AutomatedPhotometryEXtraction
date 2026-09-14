@@ -1148,6 +1148,7 @@ def _diagnose_multimode_once(
                     include_night_offsets=include_offsets,
                 )
             except (ValueError, np.linalg.LinAlgError):
+                # fallback-ok: 적합·표집에서 「이 후보는 받지 않는다」를 뜻하는 벌점이다 — 값이 곧 거부 신호라 따로 적을 것이 없다
                 return np.inf
             return float(fit["bic"])
 

@@ -1014,6 +1014,7 @@ def cmd_loglike(
     try:
         c_k, m_k, mass_k = interp_fn(log_age, mh, dm, e_color)
     except Exception:
+        # fallback-ok: 적합·표집에서 「이 후보는 받지 않는다」를 뜻하는 벌점이다 — 값이 곧 거부 신호라 따로 적을 것이 없다
         return -np.inf
 
     if c_k is None or len(c_k) < _MIN_ISO_POINTS:
@@ -1495,6 +1496,7 @@ def fit_isochrone_mcmc(
                 f"({np.array2string(tau, precision=1)})")
             tau = None
     except Exception as exc:  # noqa: BLE001 - reported, not hidden
+        # fallback-ok: 돌려주는 값 자체가 사유를 담고 있다 — 받는 쪽이 무슨 일이 있었는지 그 값만 보고 안다
         convergence_detail = f"{type(exc).__name__}: {exc}"
         tau = None
 

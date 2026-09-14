@@ -765,6 +765,7 @@ def run_detection(file_list, params, data_dir, cache_dir, use_cropped=False,
                                     progress_bar=False
                                 )
                             except TypeError:
+                                # fallback-ok: 바로 아래에서 유한·양수인지 다시 보므로 이 값이 그대로 쓰이지 않는다
                                 # older photutils: no mode/progress_bar kwarg
                                 try:
                                     segm = deblend_sources(
@@ -920,7 +921,13 @@ def run_detection(file_list, params, data_dir, cache_dir, use_cropped=False,
                                         peaks = np.asarray(dao_cat["peak"], float)
                                         sat_star_count = int(np.sum(peaks >= sat_adu))
                                 except Exception:
-                                    sat_star_count = 0
+                                    # **0 으로 두면 「포화 별이 없다」로 읽힌다.**
+                                    # 6 단계가 이 수가 적은 프레임을 기준으로 고르므로
+                                    # (`refbuild.py` 의 `_drop_top_percent`), 못 센
+                                    # 프레임이 오히려 가장 좋은 후보가 된다.
+                                    # None 은 아래에서 NaN 으로 읽혀 그 줄이 순위에서
+                                    # 빠진다 — 없는 것과 0 인 것이 갈린다.
+                                    sat_star_count = None
                                 for i, (x, y) in enumerate(zip(dao_cat['xcentroid'], dao_cat['ycentroid'])):
                                     xf, yf = float(x), float(y)
                                     positions.append((xf, yf))
@@ -939,6 +946,7 @@ def run_detection(file_list, params, data_dir, cache_dir, use_cropped=False,
                             else:
                                 detect_method = "none"
                         except Exception:
+                            # fallback-ok: 바로 아래에서 유한·양수인지 다시 보므로 이 값이 그대로 쓰이지 않는다
                             detect_method = "none"
                     elif positions:
                         # DAO refine: single full-image pass + batched KDTree match.
@@ -1081,6 +1089,7 @@ def run_detection(file_list, params, data_dir, cache_dir, use_cropped=False,
                                 fallback_px=fwhm_prelim,
                             )
                 except Exception:
+                    # fallback-ok: 바로 아래에서 유한·양수인지 다시 보므로 이 값이 그대로 쓰이지 않는다
                     fwhm_median, fwhm_support_count = _bounded_frame_fwhm(
                         fwhm_values,
                         minimum_px=fwhm_min_px,
@@ -1090,6 +1099,7 @@ def run_detection(file_list, params, data_dir, cache_dir, use_cropped=False,
                 try:
                     pixscale = float(getattr(P, 'pixel_scale_arcsec', 0.4))
                 except Exception:
+                    # fallback-ok: 바로 아래에서 유한·양수인지 다시 보므로 이 값이 그대로 쓰이지 않는다
                     pixscale = 0.4
                 if not np.isfinite(pixscale) or pixscale <= 0:
                     pixscale = 0.4

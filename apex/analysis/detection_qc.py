@@ -113,6 +113,7 @@ def _join_header_scan(result_dir, df: pd.DataFrame) -> pd.DataFrame:
     try:
         head = pd.read_csv(scan)
     except Exception:                               # noqa: BLE001
+        # fallback-ok: 손대지 못했으므로 받은 것을 그대로 돌려준다 — 바뀐 것이 없다는 뜻이고 없는 값을 지어내지 않는다
         return df
     if "Filename" not in head.columns:
         return df
@@ -195,6 +196,7 @@ def _safe_float(value, default=np.nan):
             return default
         return float(value)
     except Exception:
+        # fallback-ok: 이 함수의 계약이 「값이거나 기본값」이다 — 기본값을 돌려주는 것이 실패가 아니라 약속한 동작이고, 별마다 불리므로 로그를 넣으면 묻힌다
         return default
 
 

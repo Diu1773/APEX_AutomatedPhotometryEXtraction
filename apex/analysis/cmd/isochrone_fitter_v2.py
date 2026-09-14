@@ -541,6 +541,7 @@ class IsochroneFitterV2:
             return chi2
 
         except Exception:
+            # fallback-ok: 적합·표집에서 「이 후보는 받지 않는다」를 뜻하는 벌점이다 — 값이 곧 거부 신호라 따로 적을 것이 없다
             return 1e10
 
     def _de_callback(self, xk, convergence):

@@ -62,6 +62,7 @@ def _to_float(val, default):
         out = float(val)
         return out if np.isfinite(out) else float(default)
     except Exception:
+        # fallback-ok: 이 함수의 계약이 「값이거나 기본값」이다 — 기본값을 돌려주는 것이 실패가 아니라 약속한 동작이고, 별마다 불리므로 로그를 넣으면 묻힌다
         return float(default)
 
 def _to_int(val, default):
@@ -70,12 +71,14 @@ def _to_int(val, default):
             return int(default)
         return int(float(val))
     except Exception:
+        # fallback-ok: 이 함수의 계약이 「값이거나 기본값」이다 — 기본값을 돌려주는 것이 실패가 아니라 약속한 동작이고, 별마다 불리므로 로그를 넣으면 묻힌다
         return int(default)
 
 def _safe_float(x, default=np.nan):
     try:
         return float(x)
     except Exception:
+        # fallback-ok: 이 함수의 계약이 「값이거나 기본값」이다 — 기본값을 돌려주는 것이 실패가 아니라 약속한 동작이고, 별마다 불리므로 로그를 넣으면 묻힌다
         return default
 
 def _numeric_series(df: pd.DataFrame, column: str) -> pd.Series:
@@ -800,6 +803,7 @@ def _odd_int(value: float, min_value: int = 3, max_value: int | None = None) -> 
     try:
         v = int(round(float(value)))
     except Exception:
+        # fallback-ok: 이 함수의 계약이 「값이거나 기본값」이다 — 기본값을 돌려주는 것이 실패가 아니라 약속한 동작이고, 별마다 불리므로 로그를 넣으면 묻힌다
         v = int(min_value)
     v = max(int(min_value), v)
     if max_value is not None:
@@ -935,6 +939,7 @@ def _psf_file_signature(path: Path | None) -> dict | None:
         try:
             path_text = str(candidate.resolve())
         except Exception:
+            # fallback-ok: 손대지 못했으므로 받은 것을 그대로 돌려준다 — 바뀐 것이 없다는 뜻이고 없는 값을 지어내지 않는다
             path_text = str(candidate)
         return {
             "path": path_text,
@@ -1035,6 +1040,7 @@ def _clone_psf_model(model):
         try:
             return copy.deepcopy(model)
         except Exception:
+            # fallback-ok: 손대지 못했으므로 받은 것을 그대로 돌려준다 — 바뀐 것이 없다는 뜻이고 없는 값을 지어내지 않는다
             return model
 
 def _get_filter_lower(fits_path: Path) -> str:
@@ -1045,6 +1051,7 @@ def _get_filter_lower(fits_path: Path) -> str:
             return "unknown"
         return normalize_filter_name(f)
     except Exception:
+        # fallback-ok: 돌려주는 값 자체가 사유를 담고 있다 — 받는 쪽이 무슨 일이 있었는지 그 값만 보고 안다
         return "unknown"
 
 def _get_exptime(fits_path: Path, default=1.0) -> float:
@@ -2093,6 +2100,7 @@ class PsfPhotometryRunner(ReportsProgress):
                     from photutils.psf import SourceGrouper
                     _has_grouper = True
                 except ImportError:
+                    # fallback-ok: 못 했으면 「아니다」가 정직한 답이다 — 부르는 쪽은 참일 때만 그 길로 가므로 거짓이 조용히 흘러가지 않는다
                     _has_grouper = False
                 from astropy.table import Table, vstack as astropy_vstack
                 import photutils as _pu
@@ -3585,6 +3593,7 @@ class PsfPhotometryRunner(ReportsProgress):
                                     n_core_excluded_redetect += n_drop_core
                                 return tbl[keep_core]
                             except Exception:
+                                # fallback-ok: 손대지 못했으므로 받은 것을 그대로 돌려준다 — 바뀐 것이 없다는 뜻이고 없는 값을 지어내지 않는다
                                 return tbl
                     else:
                         redetect_finder = dao_redetect_finder

@@ -128,6 +128,7 @@ def coerce_setting(kind: str, value: Any, default: Any) -> Any:
     try:
         return int(float(text)) if kind == "int" else float(text)
     except (TypeError, ValueError):
+        # fallback-ok: 이 함수의 계약이 「값이거나 기본값」이다 — 기본값을 돌려주는 것이 실패가 아니라 약속한 동작이고, 별마다 불리므로 로그를 넣으면 묻힌다
         return default
 
 
@@ -798,6 +799,7 @@ def read_schema_version(data: dict[str, Any] | None) -> int:
     try:
         return int(value)
     except Exception:
+        # fallback-ok: 돌려주는 값 자체가 사유를 담고 있다 — 받는 쪽이 무슨 일이 있었는지 그 값만 보고 안다
         return LEGACY_SCHEMA_VERSION
 
 

@@ -49,6 +49,7 @@ def _is_usable_lightcurve_csv(path: Path) -> bool:
             first_row = next(reader, [])
         return len(header) >= 2 and len(first_row) >= 2
     except (OSError, UnicodeError, csv.Error):
+        # fallback-ok: 검사를 못 했으면 「아니다」가 정직한 답이다 — 부르는 쪽은 참일 때만 그 길로 가므로 거짓이 조용히 흘러가지 않는다
         return False
 
 

@@ -46,6 +46,7 @@ def _load_check_star_for_plot(result_dir: Path, filt: str | None = None):
         check_id, df = load_check_star_csv(result_dir, filt=filt)
         return check_id, (df if not df.empty else None)
     except Exception:
+        # fallback-ok: 그림 그리는 데 쓰는 값이다 — 없으면 기본 팔레트·빈 곡선으로 그리고 저장되는 수치는 안 건드린다
         return None, None
 
 class _DefaultPlotColors:
@@ -71,6 +72,7 @@ def _colors():
         from apex.gui.theme import Tokens as _live      # noqa: PLC0415
         return _live
     except Exception:                                   # noqa: BLE001
+        # fallback-ok: 그림 그리는 데 쓰는 값이다 — 없으면 기본 팔레트·빈 곡선으로 그리고 저장되는 수치는 안 건드린다
         return _DefaultPlotColors
 
 class PeriodSummaryPlotter:

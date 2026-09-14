@@ -42,6 +42,7 @@ def _finite(value, default=np.nan) -> float:
     try:
         out = float(value)
     except (TypeError, ValueError):
+        # fallback-ok: 이 함수의 계약이 「값이거나 기본값」이다 — 기본값을 돌려주는 것이 실패가 아니라 약속한 동작이고, 별마다 불리므로 로그를 넣으면 묻힌다
         return default
     return out if np.isfinite(out) else default
 
@@ -74,6 +75,7 @@ def draw_center_shift(ax_hist, ax_scatter, result_dir, fname: str,
     try:
         df = pd.read_csv(path, sep="\t")
     except Exception as exc:                        # noqa: BLE001
+        # fallback-ok: 못 했으면 「아니다」가 정직한 답이다 — 부르는 쪽은 참일 때만 그 길로 가므로 거짓이 조용히 흘러가지 않는다
         ax_hist.set_title(f"Read failed: {exc}", fontsize=9)
         return False
 

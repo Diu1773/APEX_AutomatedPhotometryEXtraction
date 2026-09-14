@@ -65,6 +65,7 @@ def _fmt_duration(seconds: float) -> str:
     try:
         value = float(seconds)
     except Exception:
+        # fallback-ok: 이 함수의 계약이 「값이거나 기본값」이다 — 기본값을 돌려주는 것이 실패가 아니라 약속한 동작이고, 별마다 불리므로 로그를 넣으면 묻힌다
         value = 0.0
     if not math.isfinite(value):
         value = 0.0
@@ -83,6 +84,7 @@ def _to_float(val, default: float) -> float:
         v = float(val) if val is not None else float(default)
         return v if np.isfinite(v) else float(default)
     except Exception:
+        # fallback-ok: 이 함수의 계약이 「값이거나 기본값」이다 — 기본값을 돌려주는 것이 실패가 아니라 약속한 동작이고, 별마다 불리므로 로그를 넣으면 묻힌다
         return float(default)
 
 
@@ -90,6 +92,7 @@ def _to_int(val, default: int) -> int:
     try:
         return int(float(val)) if val is not None else int(default)
     except Exception:
+        # fallback-ok: 이 함수의 계약이 「값이거나 기본값」이다 — 기본값을 돌려주는 것이 실패가 아니라 약속한 동작이고, 별마다 불리므로 로그를 넣으면 묻힌다
         return int(default)
 
 
@@ -1585,6 +1588,7 @@ def run_forced_photometry(
                 )
                 t_phot = time.time()
             except Exception as exc:
+                # fallback-ok: 돌려주는 값 자체가 사유를 담고 있다 — 받는 쪽이 무슨 일이 있었는지 그 값만 보고 안다
                 tb = traceback.format_exc()
                 (worker_status_cb(slot, fname, "Error", 100) if worker_status_cb else None)
                 return ("error", fname, filt, None, None, None,

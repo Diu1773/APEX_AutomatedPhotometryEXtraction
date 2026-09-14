@@ -145,6 +145,7 @@ def _is_up_to_date(target: Path, deps: list[Path]) -> bool:
         t = target.stat().st_mtime
         return all(Path(d).exists() and t >= Path(d).stat().st_mtime for d in deps)
     except Exception:
+        # fallback-ok: 검사를 못 했으면 「아니다」가 정직한 답이다 — 부르는 쪽은 참일 때만 그 길로 가므로 거짓이 조용히 흘러가지 않는다
         return False
 
 
@@ -154,6 +155,7 @@ def get_exptime_from_fits(path: Path, default: float = 1.0) -> float:
         with fits.open(path) as hdul:
             return float(hdul[0].header.get("EXPTIME", default))
     except Exception:
+        # fallback-ok: 이 함수의 계약이 「값이거나 기본값」이다 — 기본값을 돌려주는 것이 실패가 아니라 약속한 동작이고, 별마다 불리므로 로그를 넣으면 묻힌다
         return default
 
 
@@ -424,6 +426,7 @@ def is_reasonable_airmass(
     try:
         x = float(value)
     except Exception:
+        # fallback-ok: 검사를 못 했으면 「아니다」가 정직한 답이다 — 부르는 쪽은 참일 때만 그 길로 가므로 거짓이 조용히 흘러가지 않는다
         return False
     return bool(np.isfinite(x) and min_airmass <= x <= max_airmass)
 

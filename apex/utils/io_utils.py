@@ -160,6 +160,7 @@ def _parse_int64_col(series: pd.Series) -> pd.array:
                 return int(d)
             return int(sval)
         except (ValueError, OverflowError, InvalidOperation):
+            # fallback-ok: 이 함수의 계약이 「값이거나 기본값」이다 — 기본값을 돌려주는 것이 실패가 아니라 약속한 동작이고, 별마다 불리므로 로그를 넣으면 묻힌다
             return pd.NA
     return pd.array([_parse(v) for v in series], dtype="Int64")
 
@@ -242,6 +243,7 @@ def read_csv_int64_source_id(path: Union[str, Path], sep: str = ",", **kwargs) -
     try:
         df = pd.read_csv(path, sep=sep, dtype=dtype, **kwargs)
     except ValueError:
+        # fallback-ok: 옛 pandas 가 dtype 묶음을 거부하면 최소한만 지정해 다시 읽는다 · IPython 밖에서는 화면 지우기가 할 일이 없다
         # A dtype for a column the file does not have is fine on modern pandas;
         # fall back for any reader that rejects the mapping outright.
         df = pd.read_csv(path, sep=sep, dtype={"source_id": str}, **kwargs)
@@ -384,6 +386,7 @@ class TailLogger:
             from IPython.display import clear_output
             self._clear = lambda: clear_output(wait=True)
         except Exception:
+            # fallback-ok: 옛 pandas 가 dtype 묶음을 거부하면 최소한만 지정해 다시 읽는다 · IPython 밖에서는 화면 지우기가 할 일이 없다
             self._clear = lambda: None
 
     def write(self, msg: str):

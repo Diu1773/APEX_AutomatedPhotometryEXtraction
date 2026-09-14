@@ -486,6 +486,7 @@ def get_parallel_workers(params=None, stage=None, *, frame_bytes=None) -> int:
         try:
             forced = int(env_val)
         except ValueError:
+            # fallback-ok: 바로 아래 `if forced > 0` 이 걸러낸다 — 0 은 「환경변수가 쓸모없다」는 뜻이다
             forced = 0
         if forced > 0:
             chosen = max(1, min(forced, 4 * (os.cpu_count() or 4)))

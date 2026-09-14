@@ -180,6 +180,7 @@ def compute_anchor(
     try:
         std_ra, std_de = standard_positions_deg(std)
     except ValueError as exc:
+        # fallback-ok: 손대지 못했으므로 받은 것을 그대로 돌려준다 — 바뀐 것이 없다는 뜻이고 없는 값을 지어내지 않는다
         result.warnings.append(str(exc))
         return result
 

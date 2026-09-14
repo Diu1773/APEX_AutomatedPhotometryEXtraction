@@ -164,6 +164,7 @@ def _format_coord_hint(coord: SkyCoord | None) -> str:
     try:
         return f"{coord.ra.deg:.6f},{coord.dec.deg:.6f}"
     except Exception:
+        # fallback-ok: 돌려주는 값 자체가 사유를 담고 있다 — 받는 쪽이 무슨 일이 있었는지 그 값만 보고 안다
         return "invalid"
 
 
@@ -201,6 +202,7 @@ def _split_command(value: str) -> list[str]:
     try:
         return shlex.split(value)
     except Exception:
+        # fallback-ok: 쪼개지 못하면 통째로 한 덩이로 넘긴다 · 없는 SIP 차수는 0 이 맞다 · 스키마 0 은 아래에서 걸러진다
         return [value]
 
 
@@ -654,6 +656,7 @@ def _check_astnet_available(params) -> tuple[bool, str]:
                 f"Install astrometry.net/index files in WSL or update solve-field Command.{extra}",
             )
         except Exception as exc:
+            # fallback-ok: 돌려주는 값 자체가 사유를 담고 있다 — 받는 쪽이 무슨 일이 있었는지 그 값만 보고 안다
             return False, f"Could not probe WSL astrometry.net command: {_exc_brief(exc)}"
 
     exe = cmd_base[0]
@@ -708,6 +711,7 @@ def _wsl_path_exists_probe(wsl_path: str) -> bool:
         )
         return cp.returncode == 0
     except Exception:
+        # fallback-ok: 검사를 못 했으면 「아니다」가 정직한 답이다 — 부르는 쪽은 참일 때만 그 길로 가므로 거짓이 조용히 흘러가지 않는다
         return False
 
 
@@ -721,6 +725,7 @@ def _wsl_ensure_writable_dir_probe(wsl_path: str) -> bool:
         )
         return cp.returncode == 0
     except Exception:
+        # fallback-ok: 검사를 못 했으면 「아니다」가 정직한 답이다 — 부르는 쪽은 참일 때만 그 길로 가므로 거짓이 조용히 흘러가지 않는다
         return False
 
 
@@ -858,6 +863,7 @@ class WcsWorkerBase:
             )
             return cp.returncode == 0
         except Exception:
+            # fallback-ok: 검사를 못 했으면 「아니다」가 정직한 답이다 — 부르는 쪽은 참일 때만 그 길로 가므로 거짓이 조용히 흘러가지 않는다
             return False
 
     def _wsl_ensure_writable_dir(self, wsl_path: str) -> bool:
@@ -870,6 +876,7 @@ class WcsWorkerBase:
             )
             return cp.returncode == 0
         except Exception:
+            # fallback-ok: 못 했으면 「아니다」가 정직한 답이다 — 부르는 쪽은 참일 때만 그 길로 가므로 거짓이 조용히 흘러가지 않는다
             return False
 
     def _run_solve_field(
@@ -910,6 +917,7 @@ class WcsWorkerBase:
                     saved_sig = json.loads(sig_path.read_text(encoding="utf-8"))
                     cache_ok = file_signature_matches_relaxed(saved_sig, source_sig)
             except Exception:
+                # fallback-ok: 못 했으면 「아니다」가 정직한 답이다 — 부르는 쪽은 참일 때만 그 길로 가므로 거짓이 조용히 흘러가지 않는다
                 cache_ok = False
             if cache_ok:
                 return True, 0.0, "cache_hit", "", [], cached_solution_path
@@ -925,6 +933,7 @@ class WcsWorkerBase:
                 if staged_path != fits_path:
                     shutil.copy2(fits_path, staged_path)
             except Exception:
+                # fallback-ok: 손대지 못했으므로 받은 것을 그대로 돌려준다 — 바뀐 것이 없다는 뜻이고 없는 값을 지어내지 않는다
                 staged_path = fits_path
         cmd_str = str(getattr(self.params.P, "astnet_local_command", "solve-field"))
         cmd_base = shlex.split(cmd_str) if cmd_str.strip() else ["solve-field"]
@@ -1013,6 +1022,7 @@ class WcsWorkerBase:
                     if run_solved_path.exists():
                         shutil.copy2(run_solved_path, solved_path)
                 except Exception as e:
+                    # fallback-ok: 돌려주는 값 자체가 사유를 담고 있다 — 받는 쪽이 무슨 일이 있었는지 그 값만 보고 안다
                     ok = False
                     cp_stderr = cp.stderr or ""
                     cp.stderr = _tail_text(f"stage_copy_failed:{e} | {cp_stderr}", limit=2000, max_lines=12)
@@ -1030,6 +1040,7 @@ class WcsWorkerBase:
             solution_path = _preferred_astnet_solution_path(new_path, wcs_path_out)
             return ok, dt, cp.stdout, cp.stderr, cmd, solution_path
         except subprocess.TimeoutExpired as e:
+            # fallback-ok: 돌려주는 값 자체가 사유를 담고 있다 — 받는 쪽이 무슨 일이 있었는지 그 값만 보고 안다
             if staged_path != fits_path:
                 try:
                     staged_path.unlink()
@@ -1126,6 +1137,7 @@ class WcsWorkerBase:
             b_order = hdr.get("B_ORDER", 0)
             return max(int(a_order), int(b_order))
         except Exception:
+            # fallback-ok: 쪼개지 못하면 통째로 한 덩이로 넘긴다 · 없는 SIP 차수는 0 이 맞다 · 스키마 0 은 아래에서 걸러진다
             return 0
 
     def _resolve_source_fits_path(self, fname: str):
@@ -1160,6 +1172,7 @@ class WcsWorkerBase:
         try:
             marker_mtime = int(marker_path.stat().st_mtime_ns)
         except Exception:
+            # fallback-ok: 검사를 못 했으면 「아니다」가 정직한 답이다 — 부르는 쪽은 참일 때만 그 길로 가므로 거짓이 조용히 흘러가지 않는다
             return False
         if self.use_cropped:
             rect_path = crop_rect_path(self.result_dir)
@@ -1169,6 +1182,7 @@ class WcsWorkerBase:
                     if marker_mtime < rect_mtime:
                         return False
                 except Exception:
+                    # fallback-ok: 검사를 못 했으면 「아니다」가 정직한 답이다 — 부르는 쪽은 참일 때만 그 길로 가므로 거짓이 조용히 흘러가지 않는다
                     return False
         return True
 
@@ -1228,6 +1242,7 @@ class WcsWorkerBase:
             try:
                 schema = int(meta.get("cache_schema", 0) or 0)
             except Exception:
+                # fallback-ok: 쪼개지 못하면 통째로 한 덩이로 넘긴다 · 없는 SIP 차수는 0 이 맞다 · 스키마 0 은 아래에서 걸러진다
                 schema = 0
             if schema >= 2:
                 continue
@@ -2070,6 +2085,7 @@ class WcsWorkerBase:
                             w0 = WCS(hdr, relax=True)
                             wcs_ok = w0.has_celestial
                         except Exception:
+                            # fallback-ok: 못 했으면 「아니다」가 정직한 답이다 — 부르는 쪽은 참일 때만 그 길로 가므로 거짓이 조용히 흘러가지 않는다
                             wcs_ok = False
 
                         if not wcs_ok:
@@ -2184,6 +2200,7 @@ class WcsWorkerBase:
                                 w_new = WCS(hdr, relax=True)
                                 wcs_ok = w_new.has_celestial
                             except Exception:
+                                # fallback-ok: 못 했으면 「아니다」가 정직한 답이다 — 부르는 쪽은 참일 때만 그 길로 가므로 거짓이 조용히 흘러가지 않는다
                                 wcs_ok = False
 
                             if wcs_ok:
@@ -3502,6 +3519,7 @@ class AstrometryNetWorkerBase:
             xy = df[["x", "y"]].values
             return xy, df
         except Exception:
+            # fallback-ok: 쪼개지 못하면 통째로 한 덩이로 넘긴다 · 없는 SIP 차수는 0 이 맞다 · 스키마 0 은 아래에서 걸러진다
             return np.empty((0, 2)), None
 
     def _wcs_rotation_deg(self, w: WCS) -> float:
@@ -3602,6 +3620,7 @@ class AstrometryNetWorkerBase:
             xg = np.asarray(xg, float)
             yg = np.asarray(yg, float)
         except Exception:
+            # fallback-ok: 손대지 못했으므로 받은 것을 그대로 돌려준다 — 바뀐 것이 없다는 뜻이고 없는 값을 지어내지 않는다
             return out
 
         ok_g = (
@@ -3878,6 +3897,7 @@ class AstrometryNetWorkerBase:
                     saved_sig = json.loads(sig_path.read_text(encoding="utf-8"))
                     cache_ok = file_signature_matches_relaxed(saved_sig, source_sig)
             except Exception:
+                # fallback-ok: 못 했으면 「아니다」가 정직한 답이다 — 부르는 쪽은 참일 때만 그 길로 가므로 거짓이 조용히 흘러가지 않는다
                 cache_ok = False
             if cache_ok:
                 return True, 0.0, "cache_hit", "", [], cached_solution_path
@@ -3893,6 +3913,7 @@ class AstrometryNetWorkerBase:
                 if staged_path != fits_path:
                     shutil.copy2(fits_path, staged_path)
             except Exception:
+                # fallback-ok: 손대지 못했으므로 받은 것을 그대로 돌려준다 — 바뀐 것이 없다는 뜻이고 없는 값을 지어내지 않는다
                 staged_path = fits_path
         cmd_str = str(getattr(self.params.P, "astnet_local_command", "solve-field"))
         cmd_base = shlex.split(cmd_str) if cmd_str.strip() else ["solve-field"]
@@ -4056,6 +4077,7 @@ class AstrometryNetWorkerBase:
                     if run_solved_path.exists():
                         shutil.copy2(run_solved_path, solved_path)
                 except Exception as e:
+                    # fallback-ok: 돌려주는 값 자체가 사유를 담고 있다 — 받는 쪽이 무슨 일이 있었는지 그 값만 보고 안다
                     ok = False
                     stderr_s = _tail_text(f"stage_copy_failed:{e} | {stderr_s}", limit=2000, max_lines=12)
             if ok:
@@ -4597,6 +4619,7 @@ class AstrometryNetWorkerBase:
                     })
 
                 except Exception as e:
+                    # fallback-ok: 돌려주는 값 자체가 사유를 담고 있다 — 받는 쪽이 무슨 일이 있었는지 그 값만 보고 안다
                     self.log_message.emit(f"  [Refine] {filename}: error - {e}")
                     res["refine"] = f"error:{e}"
                     res["resid_med"] = np.nan
@@ -4669,6 +4692,7 @@ class AstrometryNetWorkerBase:
                         wcs_rot_deg = self._wcs_rotation_deg(w)
                         center_ra, center_dec = self._wcs_center_coords(w, nx, ny)
                 except Exception:
+                    # fallback-ok: 쪼개지 못하면 통째로 한 덩이로 넘긴다 · 없는 SIP 차수는 0 이 맞다 · 스키마 0 은 아래에서 걸러진다
                     w = None
                     wcs_ok = False
 

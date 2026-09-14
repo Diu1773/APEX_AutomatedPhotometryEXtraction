@@ -79,6 +79,7 @@ def _date_from_dateobs(date_obs: str | None) -> str:
         t = Time(str(date_obs).strip())
         return t.to_datetime().strftime("%Y-%m-%d")
     except Exception:
+        # fallback-ok: 돌려주는 값 자체가 사유를 담고 있다 — 받는 쪽이 무슨 일이 있었는지 그 값만 보고 안다
         return "unknown"
 
 def _load_headers_table(result_dir: Path) -> pd.DataFrame:
@@ -513,6 +514,7 @@ class RawLightCurveBuilder:
             if "AIRMASS" in hdr:
                 del hdr["AIRMASS"]
         except Exception:
+            # fallback-ok: 손대지 못했으므로 받은 것을 그대로 돌려준다 — 바뀐 것이 없다는 뜻이고 없는 값을 지어내지 않는다
             hdr = header
         info = compute_airmass_from_header(hdr, lat, lon, alt, tz, formula=formula)
         am = _safe_float(info.get("airmass", np.nan))

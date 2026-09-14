@@ -124,6 +124,7 @@ def config_fingerprint(params: Any) -> dict[str, Any]:
     try:
         return {"path": str(p), "sha256": hashlib.sha256(p.read_bytes()).hexdigest()}
     except OSError:
+        # fallback-ok: 해시가 None 이면 「못 읽었다」가 그대로 드러난다 — 경로는 남으므로 무엇을 못 읽었는지 안다
         return {"path": str(p), "sha256": None}
 
 
@@ -147,6 +148,7 @@ def settings_snapshot(params: Any, names: Optional[Iterable[str]] = None) -> dic
         try:
             out[name] = _plain(getattr(P, name))
         except Exception:                            # noqa: BLE001 - see docstring
+            # fallback-ok: 돌려주는 값 자체가 사유를 담고 있다 — 받는 쪽이 무슨 일이 있었는지 그 값만 보고 안다
             out[name] = "<unreadable>"
     return out
 

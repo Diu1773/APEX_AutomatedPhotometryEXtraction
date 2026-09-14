@@ -362,6 +362,7 @@ def fit_cluster_isochrone(
         out.iso_color = _app(b1) - _app(b2)
         out.iso_mag = _app(mag_band)
     except Exception:
+        # fallback-ok: 그림에 그릴 곡선을 다른 경로로 다시 만든다 — 표시용이고 저장되는 적합값은 안 건드린다
         bands_app, _mass = mb.apparent(float(median[0]), float(median[1]),
                                        float(median[2]), e_bv_med)
         if bands_app is not None:
@@ -378,6 +379,7 @@ def fit_cluster_isochrone(
         dfin = np.isfinite(dcol) & np.isfinite(dvm)
         out.obs_color, out.obs_mag = dcol[dfin], dvm[dfin]
     except Exception:
+        # fallback-ok: 그림에 그릴 곡선을 다른 경로로 다시 만든다 — 표시용이고 저장되는 적합값은 안 건드린다
         out.obs_color, out.obs_mag = obs_c, obs_m
     # Truncate the displayed isochrone just above the brightest observed member.
     # The post-turn-off EEP blocks (thermal-pulse AGB, post-AGB → WD) oscillate

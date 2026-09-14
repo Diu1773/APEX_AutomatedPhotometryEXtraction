@@ -17,6 +17,7 @@ def cache_schema_value(payload: Mapping | None, default: int = 0) -> int:
     try:
         return int(payload.get("cache_schema", default) or default)
     except Exception:
+        # fallback-ok: 이 함수의 계약이 「값이거나 기본값」이다 — 기본값을 돌려주는 것이 실패가 아니라 약속한 동작이고, 별마다 불리므로 로그를 넣으면 묻힌다
         return int(default)
 
 
@@ -45,6 +46,7 @@ def norm_path_key(path_value) -> str:
     try:
         s = str(path_value).strip().replace("\\", "/")
     except Exception:
+        # fallback-ok: 이 함수의 계약이 「값이거나 기본값」이다 — 기본값을 돌려주는 것이 실패가 아니라 약속한 동작이고, 별마다 불리므로 로그를 넣으면 묻힌다
         s = str(path_value).replace("\\", "/")
     if len(s) >= 3 and s[1] == ":" and s[2] == "/" and s[0].isalpha():
         s = f"/mnt/{s[0].lower()}/{s[3:]}"
@@ -98,6 +100,7 @@ def file_signature_matches(saved_sig: dict, current_sig: dict) -> bool:
         saved_mtime_ns = int(saved_sig.get("source_mtime_ns"))
         curr_mtime_ns = int(current_sig.get("source_mtime_ns"))
     except Exception:
+        # fallback-ok: 검사를 못 했으면 「아니다」가 정직한 답이다 — 부르는 쪽은 참일 때만 그 길로 가므로 거짓이 조용히 흘러가지 않는다
         return False
     return saved_mtime_ns == curr_mtime_ns
 
@@ -141,6 +144,7 @@ def file_signature_matches_relaxed(saved_sig: dict, current_sig: dict) -> bool:
         saved_size = int(saved_sig.get("source_size"))
         curr_size = int(current_sig.get("source_size"))
     except Exception:
+        # fallback-ok: 못 했으면 「아니다」가 정직한 답이다 — 부르는 쪽은 참일 때만 그 길로 가므로 거짓이 조용히 흘러가지 않는다
         return False
     if saved_size <= 0 or curr_size <= 0:
         return False
@@ -189,6 +193,7 @@ def parse_astap_wcs_file(wcs_path: Path) -> dict:
     try:
         lines = wcs_path.read_text(encoding="utf-8", errors="ignore").splitlines()
     except Exception:
+        # fallback-ok: 손대지 못했으므로 받은 것을 그대로 돌려준다 — 바뀐 것이 없다는 뜻이고 없는 값을 지어내지 않는다
         return d
     for ln in lines:
         s = ln.strip()
@@ -210,5 +215,6 @@ def parse_astap_wcs_file(wcs_path: Path) -> dict:
             else:
                 d[key] = int(val)
         except Exception:
+            # fallback-ok: 손대지 못했으므로 받은 것을 그대로 돌려준다 — 바뀐 것이 없다는 뜻이고 없는 값을 지어내지 않는다
             d[key] = val
     return d

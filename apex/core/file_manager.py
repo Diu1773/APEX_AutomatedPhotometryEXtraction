@@ -108,6 +108,7 @@ class FileManager:
                     try:
                         rel = fpath.relative_to(root_dir)
                     except ValueError:
+                        # fallback-ok: 상대 경로를 못 구하면 폴더 이름과 파일 이름으로 만든다 — 이름이 겹치면 뒤에서 고유하게 바꾼다
                         rel = Path(subdir.name) / fpath.name
                     collected.append((fpath.name, fpath, rel))
 
@@ -226,6 +227,7 @@ class FileManager:
                     == Path(self.params.P.data_dir).resolve()
                 )
             except Exception:
+                # fallback-ok: 못 했으면 「아니다」가 정직한 답이다 — 부르는 쪽은 참일 때만 그 길로 가므로 거짓이 조용히 흘러가지 않는다
                 conventional_output = False
             if not map_matches and not conventional_output:
                 return None

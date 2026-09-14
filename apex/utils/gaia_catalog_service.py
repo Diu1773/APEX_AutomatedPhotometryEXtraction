@@ -44,6 +44,7 @@ def _get_gaia():
         Gaia = _Gaia
         _HAS_GAIA = True
     except Exception:
+        # fallback-ok: astroquery 가 없는 설치를 위한 것이고, 부르는 쪽이 `_HAS_GAIA` 로 갈라 다른 길을 간다
         Gaia = None
         _HAS_GAIA = False
     return Gaia
@@ -199,6 +200,7 @@ def gaia_runtime_available() -> tuple[bool, str]:
     try:
         from astroquery.utils.tap.core import TapPlus  # noqa: F401
     except Exception as exc:
+        # fallback-ok: 돌려주는 값 자체가 사유를 담고 있다 — 받는 쪽이 무슨 일이 있었는지 그 값만 보고 안다
         return (
             True,
             f"astroquery.gaia is importable, but VizieR TAP fallback is unavailable: {_exc_brief(exc)}.{ssl_detail}",
@@ -263,6 +265,7 @@ class GaiaCatalogService:
         try:
             return bool(self.stop_fn and self.stop_fn())
         except Exception:
+            # fallback-ok: 검사를 못 했으면 「아니다」가 정직한 답이다 — 부르는 쪽은 참일 때만 그 길로 가므로 거짓이 조용히 흘러가지 않는다
             return False
 
     @property
@@ -464,6 +467,7 @@ WHERE 1=CONTAINS(
             ra = pd.to_numeric(df.get("ra"), errors="coerce")
             dec = pd.to_numeric(df.get("dec"), errors="coerce")
         except Exception:
+            # fallback-ok: 못 했으면 「아니다」가 정직한 답이다 — 부르는 쪽은 참일 때만 그 길로 가므로 거짓이 조용히 흘러가지 않는다
             return False
         valid = ra.notna() & dec.notna()
         n_valid = int(valid.sum())
@@ -555,6 +559,7 @@ WHERE 1=CONTAINS(
                     # radius, so dropping the radius gate here loses no safety.
                     same_field = bool(dist_deg < 0.03)
                 except Exception:
+                    # fallback-ok: 못 했으면 「아니다」가 정직한 답이다 — 부르는 쪽은 참일 때만 그 길로 가므로 거짓이 조용히 흘러가지 않는다
                     same_field = False
             else:
                 same_field = True

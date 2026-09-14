@@ -27,6 +27,7 @@ try:
     from astroscrappy import detect_cosmics
     HAS_ASTROSCRAPPY = True
 except Exception:                       # pragma: no cover - optional dependency
+    # fallback-ok: 못 했으면 「아니다」가 정직한 답이다 — 부르는 쪽은 참일 때만 그 길로 가므로 거짓이 조용히 흘러가지 않는다
     HAS_ASTROSCRAPPY = False
 
 
@@ -81,6 +82,7 @@ def _interp_mask(data: np.ndarray, mask: np.ndarray) -> np.ndarray:
     try:
         from scipy.ndimage import median_filter
     except Exception:
+        # fallback-ok: 손대지 못했으므로 받은 것을 그대로 돌려준다 — 바뀐 것이 없다는 뜻이고 없는 값을 지어내지 않는다
         return data
     out = data.copy()
     med = median_filter(np.nan_to_num(data, nan=float(np.nanmedian(data))),

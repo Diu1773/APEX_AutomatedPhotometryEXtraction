@@ -136,6 +136,7 @@ def merge_gaia_columns_from_catalog(
         try:
             merged = out.merge(use, on=join_col, how="left", suffixes=("", "__gaia"))
         except Exception:
+            # fallback-ok: 돌려주는 값 자체가 사유를 담고 있다 — 받는 쪽이 무슨 일이 있었는지 그 값만 보고 안다
             out = out.drop(columns=[join_col], errors="ignore")
             continue
 

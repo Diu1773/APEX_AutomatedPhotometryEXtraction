@@ -228,6 +228,7 @@ def _sigma_clip_refine(
                 **fit_kwargs,
             )
         except Exception:
+            # fallback-ok: SIP 적합이 깨지면 평평한 TAN 으로 한 번만 다시 맞춘다 — 결과의 SIP 차수가 0 으로 나오므로 QC 에서 드러난다
             # If SIP fit blew up, retry once with plain TAN before giving up.
             if use_sip:
                 try:

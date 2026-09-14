@@ -39,6 +39,7 @@ def update_param_file(param_file, sections: Mapping[Sequence[str], Mapping[str, 
     try:
         data, path = load_config_data(param_file or "parameters.toml")
     except Exception:
+        # fallback-ok: 못 했으면 「아니다」가 정직한 답이다 — 부르는 쪽은 참일 때만 그 길로 가므로 거짓이 조용히 흘러가지 않는다
         return False
     if not data and not path.exists():
         # Nothing to merge into — the workspace has no config yet.

@@ -26,6 +26,7 @@ def _valid_radec(ra, dec) -> bool:
         ra = float(ra)
         dec = float(dec)
     except (TypeError, ValueError):
+        # fallback-ok: 검사를 못 했으면 「아니다」가 정직한 답이다 — 부르는 쪽은 참일 때만 그 길로 가므로 거짓이 조용히 흘러가지 않는다
         return False
     if not (math.isfinite(ra) and math.isfinite(dec)):
         return False

@@ -394,6 +394,7 @@ def solve_standard_colors(
             v = float(fit_params[f][key])
             return v if np.isfinite(v) else 0.0
         except (KeyError, TypeError, ValueError):
+            # fallback-ok: 여기서 0 이 되는 것은 ct2·색범위뿐이다 — zp·ct 가 성하지 않은 밴드는 앞의 `_fit_is_usable` 이 이미 뺐다
             return 0.0
 
     def _fit_is_usable(f: str) -> bool:
@@ -406,6 +407,7 @@ def solve_standard_colors(
                 if not np.isfinite(float(entry[key])):
                     return False
             except (TypeError, ValueError):
+                # fallback-ok: 검사를 못 했으면 「아니다」가 정직한 답이다 — 부르는 쪽은 참일 때만 그 길로 가므로 거짓이 조용히 흘러가지 않는다
                 return False
         return True
 
@@ -590,6 +592,7 @@ def magnitude_drift_by_filter(
             try:
                 v = float(row.get(key, default))
             except (TypeError, ValueError):
+                # fallback-ok: 이 함수의 계약이 「값이거나 기본값」이다 — 기본값을 돌려주는 것이 실패가 아니라 약속한 동작이고, 별마다 불리므로 로그를 넣으면 묻힌다
                 return default
             return v if np.isfinite(v) else default
 
@@ -1763,6 +1766,7 @@ class ZeropointCalibrationRunner(ReportsProgress):
         try:
             master = pd.read_csv(step7_path, sep="\t")
         except Exception:
+            # fallback-ok: 손대지 못했으므로 받은 것을 그대로 돌려준다 — 바뀐 것이 없다는 뜻이고 없는 값을 지어내지 않는다
             return table
         if "ID" not in master.columns:
             return table
@@ -1968,6 +1972,7 @@ class ZeropointCalibrationRunner(ReportsProgress):
             w0 = self._wcs_from_header(header)
             return bool(w0.has_celestial)
         except Exception:
+            # fallback-ok: 검사를 못 했으면 「아니다」가 정직한 답이다 — 부르는 쪽은 참일 때만 그 길로 가므로 거짓이 조용히 흘러가지 않는다
             return False
 
     @staticmethod
@@ -2137,6 +2142,7 @@ class ZeropointCalibrationRunner(ReportsProgress):
                     getattr(params_obj, "gaia_snr_calib_min", cmd_snr_min)
                 )
             except (TypeError, ValueError):
+                # fallback-ok: 여기서 0 이 되는 것은 ct2·색범위뿐이다 — zp·ct 가 성하지 않은 밴드는 앞의 `_fit_is_usable` 이 이미 뺐다
                 snr_min = 20.0
             snr_min = max(0.0, snr_min)
             summary = []
@@ -2486,6 +2492,7 @@ class ZeropointCalibrationRunner(ReportsProgress):
                 try:
                     dfp = pd.read_csv(p, sep="\t")
                 except Exception:
+                    # fallback-ok: 여기서 0 이 되는 것은 ct2·색범위뿐이다 — zp·ct 가 성하지 않은 밴드는 앞의 `_fit_is_usable` 이 이미 뺐다
                     dfp = pd.read_csv(p)
 
                 if source_info.get("source") == "psf" and "flags_psf" in dfp.columns:
