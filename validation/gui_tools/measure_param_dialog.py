@@ -39,10 +39,50 @@ def _patch_exec():
 
     def _fake(self, *a, **k):
         CAPTURED.append(self)
+        # **대화상자가 살아 있는 동안 여기서 재 버린다.** 그냥 Rejected 만 돌려
+        # 주면 부르는 쪽이 취소로 보고 대화상자를 지우는 경우가 있는데, 그 뒤에
+        # 밖에서 만지면 프로세스가 통째로 죽는다 — CMD 3·5 번이 실제로
+        # `0xC0000409`(스택 버퍼 오버런)로 죽었고, 그래서 그 둘을 못 쟀다.
+        # 재는 일을 `exec_` 안으로 옮기면 그 창들도 잴 수 있다.
+        if _MEASURE_INSIDE:
+            try:
+                MEASURED.append(_measure_live(self))
+            except Exception as exc:                  # 재기 실패가 창을 못 열게 하면 안 된다
+                print(f"(가로챈 자리에서 재다가 실패했다: {exc})")
         return QDialog.Rejected
 
     QDialog.exec_ = _fake
     QDialog.exec = _fake
+
+
+#: `exec_` 안에서 잴지. main 이 켠다.
+_MEASURE_INSIDE = False
+#: 그렇게 잰 결과.
+MEASURED: list = []
+
+
+def _measure_live(dlg):
+    """살아 있는 대화상자를 펼치고 띄워서 잰다 — `exec_` 안에서 불린다."""
+    from PyQt5.QtWidgets import QApplication
+
+    app = QApplication.instance()
+    if _EXPAND:
+        from apex.gui.workflow.ui_helpers import CollapsibleSection
+        n = 0
+        for sec in dlg.findChildren(CollapsibleSection):
+            sec.set_expanded(True)
+            n += 1
+        print(f"(섹션 {n} 개를 펼쳐서 잰다)")
+    dlg.show()
+    _pump(app, 1.5)
+    info = measure(dlg)
+    info["expanded"] = bool(_EXPAND)
+    dlg.hide()
+    return info
+
+
+#: 섹션을 펼쳐서 잴지. main 이 설정한다.
+_EXPAND = True
 
 
 def _pump(app, seconds: float) -> None:
@@ -167,6 +207,8 @@ def main(argv: list[str] | None = None) -> int:
                     help="접힌 채로 잰다 (기본은 전부 펼쳐서 잰다)")
     ap.add_argument("--no-autofit", dest="autofit", action="store_false",
                     help="폭 자동 맞추기를 끄고 잰다 — 고침 전후를 같은 자리에서 견줄 때")
+    ap.add_argument("--modal", action="store_true",
+                    help="`exec_` 을 가로채지 않고 진짜 모달로 띄운 뒤 타이머로 잰다")
     a = ap.parse_args(argv)
 
     from PyQt5.QtWidgets import QApplication, QPushButton
@@ -174,12 +216,17 @@ def main(argv: list[str] | None = None) -> int:
     from apex.gui.theme import apply_theme
     from apex.utils.app_setup import configure_fonts
 
+    global _MEASURE_INSIDE, _EXPAND
+    _MEASURE_INSIDE = True
+    _EXPAND = bool(a.expand)
+
     app = QApplication.instance() or QApplication(sys.argv[:1])
     # **폰트를 안 잡으면 굴림으로 떨어져 너비가 실제와 달라진다.** 가로 넘침을
     # 재는 일이라 이 한 줄이 결과를 바꾼다.
     configure_fonts(app)
     apply_theme(app)
-    _patch_exec()
+    if not a.modal:
+        _patch_exec()
     if not a.autofit:
         # **대조군이다.** 고침 전후를 다른 날 다른 상태에서 견주면 무엇이 바뀐
         # 것인지 못 가르므로, 같은 실행 조건에서 끄고 켜 본다.
@@ -205,29 +252,40 @@ def main(argv: list[str] | None = None) -> int:
     if target is None:
         print("Parameters 버튼을 못 찾았다")
         return 1
-    target.click()
+    if a.modal:
+        # **가로채지 않고 진짜 모달로 띄운다.** `exec_` 을 덧칠하면 부르는 쪽이
+        # 취소로 보고 대화상자를 지우는 창이 있고, 그 뒤에 만지면 프로세스가
+        # `0xC0000409` 로 죽는다 (CMD 3·5 번). 여기서는 `exec_` 이 제 이벤트
+        # 루프를 돌게 두고, 타이머가 떠 있는 모달을 찾아 재고 닫는다.
+        from PyQt5.QtCore import QTimer
+
+        def _grab():
+            dlg = app.activeModalWidget()
+            if dlg is None:
+                QTimer.singleShot(200, _grab)
+                return
+            CAPTURED.append(dlg)
+            try:
+                MEASURED.append(_measure_live(dlg))
+            except Exception as exc:                  # 재기 실패로 멈추면 안 된다
+                print(f"(모달을 재다가 실패했다: {exc})")
+            dlg.reject()
+
+        QTimer.singleShot(300, _grab)
+
+    target.click()          # 모달이면 여기서 막혔다가 위 타이머가 풀어 준다
     app.processEvents()
 
-    if not CAPTURED:
+    if MEASURED:
+        # `exec_` 안에서 이미 쟀다 — 대화상자가 확실히 살아 있는 시점이다.
+        info = MEASURED[-1]
+    elif CAPTURED:
+        # 옛 경로. 대화상자가 아직 살아 있으면 여기서도 잴 수 있다.
+        dlg = CAPTURED[-1]
+        info = _measure_live(dlg)
+    else:
         print("대화상자가 안 잡혔다")
         return 1
-    dlg = CAPTURED[-1]
-    # **접힌 채로 재면 안 넘친다.** 사용자가 실제로 부딪히는 것은 섹션을 펼친
-    # 상태이므로, 기본은 전부 펼쳐서 잰다.
-    if a.expand:
-        from apex.gui.workflow.ui_helpers import CollapsibleSection
-        n = 0
-        for sec in dlg.findChildren(CollapsibleSection):
-            sec.set_expanded(True)
-            n += 1
-        print(f"(섹션 {n} 개를 펼쳐서 잰다)")
-    # **레이아웃이 앉기 전에 재면 숫자가 앞뒤가 안 맞는다** — 창 폭보다 보이는
-    # 너비가 넓게 나온다. 실제로 띄우고 이벤트 루프를 한두 번 돌린 뒤에 잰다
-    # (`memory/project_gui_render_harness.md`).
-    dlg.show()
-    _pump(app, 1.5)
-    info = measure(dlg)
-    info["expanded"] = bool(a.expand)
 
     print(f"창: {info.get('title')}  {info.get('dialog_w')}x{info.get('dialog_h')}")
     print(f"보이는 너비 {info.get('viewport_w')} · 내용 최소 너비 "

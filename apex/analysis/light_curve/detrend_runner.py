@@ -381,24 +381,59 @@ class DetrendRunner:
 
     # -- three axes the window builds on its canvas --------------------------
 
+    # These are read *and written*. The GUI window subclasses this runner and
+    # assigns its own axes onto its canvas in `setup_step_ui`; without setters
+    # that assignment raises `AttributeError: property 'ax_raw' ... has no
+    # setter` and LC Step 11 cannot be opened at all (2026-09-15).
     @property
     def ax_raw(self):
         return self._axes()[0]
+
+    @ax_raw.setter
+    def ax_raw(self, value):
+        self._set_axis(0, value)
 
     @property
     def ax_corr(self):
         return self._axes()[1]
 
+    @ax_corr.setter
+    def ax_corr(self, value):
+        self._set_axis(1, value)
+
     @property
     def ax_diag(self):
         return self._axes()[2]
 
+    @ax_diag.setter
+    def ax_diag(self, value):
+        self._set_axis(2, value)
+
+    def _set_axis(self, index: int, value) -> None:
+        """Replace one of the three axes, keeping the other two.
+
+        The window sets all three in a row, so the first assignment must not
+        build headless axes on a throwaway figure — it starts the tuple as
+        three `None` and each assignment fills its slot.
+        """
+        axes = getattr(self, "_headless_axes", None)
+        if axes is None:
+            axes = (None, None, None)
+        axes = list(axes)
+        axes[index] = value
+        self._headless_axes = tuple(axes)
+
     def _axes(self):
         """Raw / corrected / diagnostic, stacked — the window's 311-312-313."""
-        if getattr(self, "_headless_axes", None) is None:
+        axes = getattr(self, "_headless_axes", None)
+        if axes is None or any(ax is None for ax in axes):
             fig = self._plot_figure()
-            self._headless_axes = (fig.add_subplot(311), fig.add_subplot(312),
-                                   fig.add_subplot(313))
+            made = (fig.add_subplot(311), fig.add_subplot(312),
+                    fig.add_subplot(313))
+            # Keep anything already assigned; only fill the empty slots.
+            axes = tuple(old if old is not None else new
+                         for old, new in zip(axes or (None, None, None), made))
+            self._headless_axes = axes
         return self._headless_axes
 
     # -- presentation the batch path has no equivalent of --------------------

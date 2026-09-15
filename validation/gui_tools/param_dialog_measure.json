@@ -1,214 +1,250 @@
 {
-  "title": "Calibration Parameters",
-  "dialog_w": 500,
-  "dialog_h": 620,
-  "viewport_w": 452,
-  "content_min_w": 396,
-  "content_hint_w": 656,
-  "overflow": -56,
+  "title": "Step 8 PSF Parameters",
+  "dialog_w": 650,
+  "dialog_h": 720,
+  "viewport_w": 611,
+  "content_min_w": 611,
+  "content_hint_w": 611,
+  "overflow": 0,
   "h_scrollbar_visible": false,
   "widest": [
     {
-      "min_w": 388,
-      "hint_w": 648,
+      "min_w": 603,
+      "hint_w": 603,
       "leaf": false,
       "what": "CollapsibleSection"
     },
     {
-      "min_w": 342,
-      "hint_w": 602,
+      "min_w": 593,
+      "hint_w": 593,
+      "leaf": false,
+      "what": "CollapsibleSection"
+    },
+    {
+      "min_w": 557,
+      "hint_w": 557,
       "leaf": false,
       "what": "QWidget"
     },
     {
-      "min_w": 137,
-      "hint_w": 602,
-      "leaf": true,
-      "what": "QLabel: Gaia 변환 참조가 부정확한 밴드(특히 Johnson U, σ≈0.20)를 VizieR 표준성 카탈로그(Landolt 계열,"
-    },
-    {
-      "min_w": 342,
-      "hint_w": 342,
-      "leaf": true,
-      "what": "QPushButton: Find catalogs for this field (VizieR)"
-    },
-    {
-      "min_w": 323,
-      "hint_w": 335,
-      "leaf": false,
-      "what": "CollapsibleSection"
-    },
-    {
-      "min_w": 123,
-      "hint_w": 303,
-      "leaf": true,
-      "what": "QLabel: Adjust zero-point calibration parameters. Changes apply to the next ca"
-    },
-    {
-      "min_w": 303,
-      "hint_w": 303,
-      "leaf": false,
-      "what": "CollapsibleSection"
-    },
-    {
-      "min_w": 291,
-      "hint_w": 291,
-      "leaf": false,
-      "what": "CollapsibleSection"
-    },
-    {
-      "min_w": 277,
-      "hint_w": 289,
+      "min_w": 547,
+      "hint_w": 547,
       "leaf": false,
       "what": "QWidget"
     },
     {
-      "min_w": 257,
-      "hint_w": 257,
+      "min_w": 514,
+      "hint_w": 514,
+      "leaf": false,
+      "what": "CollapsibleSection"
+    },
+    {
+      "min_w": 468,
+      "hint_w": 468,
       "leaf": false,
       "what": "QWidget"
     },
     {
-      "min_w": 98,
-      "hint_w": 256,
+      "min_w": 462,
+      "hint_w": 462,
       "leaf": false,
-      "what": "QListView"
+      "what": "CollapsibleSection"
     },
     {
-      "min_w": 98,
-      "hint_w": 256,
+      "min_w": 462,
+      "hint_w": 462,
       "leaf": false,
-      "what": "QListView"
+      "what": "CollapsibleSection"
     },
     {
-      "min_w": 98,
-      "hint_w": 256,
+      "min_w": 419,
+      "hint_w": 419,
       "leaf": false,
-      "what": "QListView"
+      "what": "CollapsibleSection"
     },
     {
-      "min_w": 245,
-      "hint_w": 245,
+      "min_w": 416,
+      "hint_w": 416,
+      "leaf": false,
+      "what": "QWidget"
+    },
+    {
+      "min_w": 416,
+      "hint_w": 416,
+      "leaf": false,
+      "what": "QWidget"
+    },
+    {
+      "min_w": 408,
+      "hint_w": 408,
+      "leaf": true,
+      "what": "QCheckBox: Share EPSF per filter (faster; disable if seeing varies >1px across fr"
+    },
+    {
+      "min_w": 392,
+      "hint_w": 392,
+      "leaf": true,
+      "what": "QCheckBox: Also save background-restored star-subtracted images for every pass"
+    },
+    {
+      "min_w": 373,
+      "hint_w": 373,
       "leaf": false,
       "what": "QWidget"
     }
   ],
   "widest_leaves": [
     {
-      "min_w": 137,
-      "hint_w": 602,
+      "min_w": 408,
+      "hint_w": 408,
       "leaf": true,
-      "what": "QLabel: Gaia 변환 참조가 부정확한 밴드(특히 Johnson U, σ≈0.20)를 VizieR 표준성 카탈로그(Landolt 계열,"
+      "what": "QCheckBox: Share EPSF per filter (faster; disable if seeing varies >1px across fr"
     },
     {
-      "min_w": 342,
-      "hint_w": 342,
+      "min_w": 392,
+      "hint_w": 392,
       "leaf": true,
-      "what": "QPushButton: Find catalogs for this field (VizieR)"
+      "what": "QCheckBox: Also save background-restored star-subtracted images for every pass"
     },
     {
-      "min_w": 123,
-      "hint_w": 303,
+      "min_w": 312,
+      "hint_w": 312,
       "leaf": true,
-      "what": "QLabel: Adjust zero-point calibration parameters. Changes apply to the next ca"
+      "what": "QCheckBox: Anchor PSF fluxes to clean Step 7 aperture references"
     },
     {
-      "min_w": 244,
-      "hint_w": 244,
+      "min_w": 309,
+      "hint_w": 309,
       "leaf": true,
-      "what": "QLabel: Anchor mag_std to standards:"
+      "what": "QCheckBox: Reject locally contaminated/core ePSF reference stars"
+    },
+    {
+      "min_w": 256,
+      "hint_w": 256,
+      "leaf": true,
+      "what": "QCheckBox: Fit close neighbours together (CPU-limited)"
+    },
+    {
+      "min_w": 252,
+      "hint_w": 252,
+      "leaf": true,
+      "what": "QCheckBox: Save residual FITS (required for iter viewer)"
+    },
+    {
+      "min_w": 249,
+      "hint_w": 249,
+      "leaf": true,
+      "what": "QCheckBox: Hard-exclude crowded core during PSF fit"
+    },
+    {
+      "min_w": 224,
+      "hint_w": 224,
+      "leaf": true,
+      "what": "QCheckBox: Use error image (slower, higher RAM)"
+    },
+    {
+      "min_w": 89,
+      "hint_w": 217,
+      "leaf": true,
+      "what": "QLabel: Adjust PSF photometry parameters. Changes apply to the next run."
+    },
+    {
+      "min_w": 211,
+      "hint_w": 211,
+      "leaf": true,
+      "what": "QLabel: Minimum neighbor distance (xFWHM):"
     }
   ],
   "widest_rows": [
     {
-      "total": 348,
+      "total": 414,
       "label_w": 0,
-      "field_w": 342,
-      "span_w": 342,
-      "label": "(가로지름) QPushButton: Find catalogs for this field (VizieR)",
-      "field": "QPushButton: Find catalogs for this field (VizieR)",
-      "section": "External Standard Anchor"
+      "field_w": 408,
+      "span_w": 0,
+      "label": "",
+      "field": "QCheckBox: Share EPSF per filter (faster; disable if seeing varies >1px across fr",
+      "section": "ePSF Model"
+    },
+    {
+      "total": 398,
+      "label_w": 0,
+      "field_w": 392,
+      "span_w": 0,
+      "label": "",
+      "field": "QCheckBox: Also save background-restored star-subtracted images for every pass",
+      "section": "Output"
     },
     {
       "total": 328,
-      "label_w": 244,
-      "field_w": 78,
+      "label_w": 117,
+      "field_w": 205,
       "span_w": 0,
-      "label": "QLabel: Anchor mag_std to standards:",
-      "field": "QCheckBox: Enable",
-      "section": "External Standard Anchor"
+      "label": "QLabel: Catalog position lock:",
+      "field": "QComboBox: Always (catalog positions fixed) | Never (fit every position)",
+      "section": "PSF Fit"
     },
     {
-      "total": 320,
-      "label_w": 152,
-      "field_w": 162,
+      "total": 318,
+      "label_w": 0,
+      "field_w": 312,
       "span_w": 0,
-      "label": "QLabel: Gaia→표준 변환식:",
-      "field": "QComboBox: auto (밴드마다 최적) | Pancino+2022 dwarf (B) | Riello+2021 (B·I·R·U·V)",
-      "section": "Calibration Star Selection"
+      "label": "",
+      "field": "QCheckBox: Anchor PSF fluxes to clean Step 7 aperture references",
+      "section": "PSF Flux Scale"
     },
     {
-      "total": 267,
-      "label_w": 165,
-      "field_w": 96,
+      "total": 315,
+      "label_w": 0,
+      "field_w": 309,
       "span_w": 0,
-      "label": "QLabel: CMD calib SNR min:",
+      "label": "",
+      "field": "QCheckBox: Reject locally contaminated/core ePSF reference stars",
+      "section": "ePSF Model"
+    },
+    {
+      "total": 292,
+      "label_w": 56,
+      "field_w": 230,
+      "span_w": 0,
+      "label": "QLabel: Fit engine:",
+      "field": "QComboBox: APEX iterative - CPU, recommended | photutils - validation, slower",
+      "section": "Mode"
+    },
+    {
+      "total": 288,
+      "label_w": 211,
+      "field_w": 71,
+      "span_w": 0,
+      "label": "QLabel: Minimum neighbor distance (xFWHM):",
       "field": "QDoubleSpinBox",
-      "section": "Zero-point Fit"
+      "section": "PSF Flux Scale"
     },
     {
-      "total": 259,
+      "total": 282,
+      "label_w": 97,
+      "field_w": 179,
+      "span_w": 0,
+      "label": "QLabel: Fit window mode:",
+      "field": "QComboBox: Auto (PSF energy) | Manual (FWHM multiplier)",
+      "section": "PSF Fit"
+    },
+    {
+      "total": 273,
       "label_w": 175,
-      "field_w": 78,
+      "field_w": 92,
       "span_w": 0,
-      "label": "QLabel: Apply extinction (k·X):",
-      "field": "QCheckBox: Enable",
-      "section": "Zero-point Fit"
-    },
-    {
-      "total": 258,
-      "label_w": 176,
-      "field_w": 76,
-      "span_w": 0,
-      "label": "QLabel: Match radius (arcsec):",
+      "label": "QLabel: Post-fit reduced chi2 maximum:",
       "field": "QDoubleSpinBox",
-      "section": "External Standard Anchor"
+      "section": "Residual Re-detection"
     },
     {
-      "total": 257,
-      "label_w": 155,
-      "field_w": 96,
+      "total": 265,
+      "label_w": 188,
+      "field_w": 71,
       "span_w": 0,
-      "label": "QLabel: Calib star SNR min:",
+      "label": "QLabel: Substar neighbor radius (×FWHM):",
       "field": "QDoubleSpinBox",
-      "section": "Calibration Star Selection"
-    },
-    {
-      "total": 245,
-      "label_w": 153,
-      "field_w": 86,
-      "span_w": 0,
-      "label": "QLabel: Pixel scale (arcsec):",
-      "field": "QDoubleSpinBox",
-      "section": "Matching"
-    },
-    {
-      "total": 243,
-      "label_w": 155,
-      "field_w": 82,
-      "span_w": 0,
-      "label": "QLabel: Min matched stars:",
-      "field": "QSpinBox",
-      "section": "External Standard Anchor"
-    },
-    {
-      "total": 240,
-      "label_w": 152,
-      "field_w": 82,
-      "span_w": 0,
-      "label": "QLabel: Frame ZP min refs:",
-      "field": "QSpinBox",
-      "section": "Zero-point Fit"
+      "section": "PSF Fit"
     }
   ],
   "expanded": true
