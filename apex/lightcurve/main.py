@@ -21,7 +21,7 @@ os.chdir(_ROOT)  # apex_config.json lives at project root
 
 from PyQt5.QtWidgets import QApplication, QMessageBox
 from PyQt5.QtCore import Qt
-from apex.utils.app_setup import configure_fonts
+from apex.utils.app_setup import configure_fonts, install_slot_exception_guard
 
 
 def main() -> int:
@@ -41,6 +41,7 @@ def main() -> int:
     app.setApplicationName("APEX LC")
     app.setOrganizationName("APEX Project")
     configure_fonts(app)
+    install_slot_exception_guard()
     from apex.gui.theme import apply_theme
     apply_theme(app)
     try:

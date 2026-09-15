@@ -61,3 +61,29 @@ def configure_fonts(app: QApplication) -> None:
             app.setFont(QFont(qt_fam, 9))
     except Exception:
         pass
+
+
+def install_slot_exception_guard() -> None:
+    """Keep an unhandled exception in a Qt slot from killing the app silently.
+
+    PyQt5 calls ``qFatal()`` on an unhandled Python exception raised inside a
+    slot, so the process just vanishes — no traceback, no log line, and
+    ``faulthandler`` sees nothing because it is not a signal. Two real bugs hid
+    behind that in 2026-09-15 (a missing import and two leftover lines, both
+    plain ``NameError``), and Windows reported them as 0xC0000409.
+
+    Setting ``sys.excepthook`` is enough: PyQt calls it and skips the abort.
+    """
+    import logging
+    import sys
+    import traceback
+
+    def _hook(kind, value, tb):
+        # Record only. Putting a QMessageBox here kills the process just as the
+        # abort did — the hook runs while the slot is still on the stack, and a
+        # modal from there does not survive (measured 2026-09-15).
+        text = "".join(traceback.format_exception(kind, value, tb))
+        logging.getLogger("apex").error("unhandled exception\n%s", text)
+        sys.stderr.write(text)
+
+    sys.excepthook = _hook
