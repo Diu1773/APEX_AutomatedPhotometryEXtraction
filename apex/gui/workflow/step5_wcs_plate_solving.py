@@ -37,6 +37,7 @@ from PyQt5.QtWidgets import (
 
 from PyQt5.QtCore import Qt, QThread, pyqtSignal
 
+from apex.gui.layout_rules import FittedDialog
 from .step_window_base import StepWindowBase
 from .run_control import RunControlBar, format_duration, progress_status_text
 from .log_panel import WorkflowLogWindow, WorkerStatusPanel, append_timestamped_log, show_raised

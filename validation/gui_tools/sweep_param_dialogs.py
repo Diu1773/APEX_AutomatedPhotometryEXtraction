@@ -29,20 +29,20 @@ Step 10 의 파라미터 창이 12 px 넘쳤고 원인은 폼 레이아웃의 �
 
 ## 덮는 범위 (2026-09-15, CMD 기준)
 
-열두 창 가운데 **다섯만 실제로 잰다.** 나머지를 못 재는 이유가 서로 다르므로 갈라
-둔다 — 「넘치는 창 0 개」는 **잰 다섯에 대한 말**이지 열둘 전부가 아니다.
+열두 창 가운데 **파라미터 창을 가진 일곱을 전부 잰다.** 나머지 다섯은 그 창 자체가
+없으므로 잴 것이 없고, 그래서 「넘치는 창 0 개」는 **파라미터 창 전부에 대한 말**이다.
 
-    잰 창          4 · 6 · 8 · 9 · 10
-    버튼이 없다    1 · 2 · 7 · 11 · 12   — 파라미터 창 자체가 없어 잴 것이 없다
-    앱이 죽는다    3 · 5                 — **도구가 아니라 앱 쪽 결함이다**
+    잰 창          3 · 4 · 5 · 6 · 8 · 9 · 10   — 파라미터 창을 가진 일곱 전부
+    버튼이 없다    1 · 2 · 7 · 11 · 12          — 파라미터 창 자체가 없어 잴 것이 없다
 
-**앞서 이 자리에 「앱이 아니라 도구의 한계」라고 적었던 것은 틀렸다.** 처음에는
-`QDialog.exec_` 을 가로친 탓으로 보고 재는 시점을 옮기고, 다시 진짜 모달로 띄우는
-길까지 만들어 봤지만 세 방법 모두 같은 자리에서 죽었다. 그래서 **아무것도 덧칠하지
-않고 Parameters 만 눌러 보니**, 3 번은 「Photometry Parameters」가 뜬 뒤 닫는 순간에,
-5 번은 대화상자가 뜨기도 전에 프로세스가 `0xC0000409`(스택 버퍼 오버런)로 죽었다.
-같은 방식으로 4 번은 끝까지 멀쩡하다. 재현은
-`Main/FAILURES.md` 의 해당 항목에 적어 두었고, **이 둘은 못 본 채로 남아 있다.**
+**3·5 번은 한동안 못 쟀는데, 그 원인은 도구가 아니라 앱이었다.** 두 창의
+`open_parameters_dialog` 이 없는 이름을 참조해 `NameError` 를 냈고, Qt 슬롯 안의
+예외는 PyQt5 가 프로세스를 끝내 버리므로 네이티브 크래시처럼 보였다
+(`Main/FAILURES.md` F-350). 그것을 고치고 나니 둘 다 잡힌다.
+
+**기본 경로는 `exec_` 을 가로채지 않는 쪽이다.** 가로채면 부르는 쪽이 취소로 보고
+대화상자를 정리해 버리는 창이 있어 잡히지 않는다. 옛 경로가 필요하면 `--intercept`
+를 준다.
 
 실행:
     python -X utf8 validation/gui_tools/sweep_param_dialogs.py
@@ -89,7 +89,7 @@ def _screen_size(offscreen: bool) -> tuple[int, int]:
 
 
 def measure_one(step: int, mode: str, params: str,
-                offscreen: bool = False) -> dict:
+                offscreen: bool = False, modal: bool = True) -> dict:
     """창 하나를 새 프로세스에서 재고 숫자만 뽑아 온다."""
     env = dict(os.environ)
     if offscreen:
@@ -100,6 +100,8 @@ def measure_one(step: int, mode: str, params: str,
         env.pop("QT_QPA_PLATFORM", None)
     cmd = [sys.executable, "-X", "utf8", str(TOOL), "--step", str(step),
            "--mode", mode]
+    if modal:
+        cmd.append("--modal")
     if params:
         cmd += ["--params", params]
     try:
@@ -142,6 +144,8 @@ def main(argv=None) -> int:
     ap.add_argument("--params", default="", help="apex_config.json 경로")
     ap.add_argument("--offscreen", action="store_true",
                     help="일부러 좁은 가상 화면(800×600)에서 잰다 — 평소엔 쓰지 않는다")
+    ap.add_argument("--intercept", action="store_true",
+                    help="`exec_` 을 가로채는 옛 경로로 잰다 — 창에 따라 잡히지 않는다")
     a = ap.parse_args(argv)
     modes = ["cmd", "lc"] if a.mode == "both" else [a.mode]
 
@@ -161,7 +165,8 @@ def main(argv=None) -> int:
               f"{'넘침':>8}  가로 스크롤바")
         print("-" * 64)
         for step in STEPS:
-            r = measure_one(step, mode, a.params, a.offscreen)
+            r = measure_one(step, mode, a.params, a.offscreen,
+                            not a.intercept)
             rows.append(r)
             if r["status"] != "쟀다":
                 print(f"{step:>4}{r['status']:>8}   {r.get('note', '')}")

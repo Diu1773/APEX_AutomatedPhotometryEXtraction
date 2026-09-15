@@ -1,250 +1,115 @@
 {
-  "title": "Step 8 PSF Parameters",
-  "dialog_w": 650,
-  "dialog_h": 720,
-  "viewport_w": 611,
-  "content_min_w": 611,
-  "content_hint_w": 611,
-  "overflow": 0,
+  "title": "QC Parameters",
+  "dialog_w": 420,
+  "dialog_h": 480,
+  "viewport_w": 381,
+  "content_min_w": 277,
+  "content_hint_w": 277,
+  "overflow": -104,
   "h_scrollbar_visible": false,
   "widest": [
     {
-      "min_w": 603,
-      "hint_w": 603,
+      "min_w": 269,
+      "hint_w": 269,
       "leaf": false,
       "what": "CollapsibleSection"
     },
     {
-      "min_w": 593,
-      "hint_w": 593,
+      "min_w": 71,
+      "hint_w": 256,
       "leaf": false,
-      "what": "CollapsibleSection"
+      "what": "QListView"
     },
     {
-      "min_w": 557,
-      "hint_w": 557,
-      "leaf": false,
-      "what": "QWidget"
-    },
-    {
-      "min_w": 547,
-      "hint_w": 547,
-      "leaf": false,
-      "what": "QWidget"
-    },
-    {
-      "min_w": 514,
-      "hint_w": 514,
-      "leaf": false,
-      "what": "CollapsibleSection"
-    },
-    {
-      "min_w": 468,
-      "hint_w": 468,
-      "leaf": false,
-      "what": "QWidget"
-    },
-    {
-      "min_w": 462,
-      "hint_w": 462,
-      "leaf": false,
-      "what": "CollapsibleSection"
-    },
-    {
-      "min_w": 462,
-      "hint_w": 462,
-      "leaf": false,
-      "what": "CollapsibleSection"
-    },
-    {
-      "min_w": 419,
-      "hint_w": 419,
-      "leaf": false,
-      "what": "CollapsibleSection"
-    },
-    {
-      "min_w": 416,
-      "hint_w": 416,
-      "leaf": false,
-      "what": "QWidget"
-    },
-    {
-      "min_w": 416,
-      "hint_w": 416,
-      "leaf": false,
-      "what": "QWidget"
-    },
-    {
-      "min_w": 408,
-      "hint_w": 408,
+      "min_w": 81,
+      "hint_w": 244,
       "leaf": true,
-      "what": "QCheckBox: Share EPSF per filter (faster; disable if seeing varies >1px across fr"
+      "what": "QLabel: Adjust QC auto-selection thresholds and preview Y-scale."
     },
     {
-      "min_w": 392,
-      "hint_w": 392,
-      "leaf": true,
-      "what": "QCheckBox: Also save background-restored star-subtracted images for every pass"
-    },
-    {
-      "min_w": 373,
-      "hint_w": 373,
+      "min_w": 223,
+      "hint_w": 223,
       "leaf": false,
       "what": "QWidget"
+    },
+    {
+      "min_w": 201,
+      "hint_w": 201,
+      "leaf": false,
+      "what": "CollapsibleSection"
     }
   ],
   "widest_leaves": [
     {
-      "min_w": 408,
-      "hint_w": 408,
+      "min_w": 81,
+      "hint_w": 244,
       "leaf": true,
-      "what": "QCheckBox: Share EPSF per filter (faster; disable if seeing varies >1px across fr"
-    },
-    {
-      "min_w": 392,
-      "hint_w": 392,
-      "leaf": true,
-      "what": "QCheckBox: Also save background-restored star-subtracted images for every pass"
-    },
-    {
-      "min_w": 312,
-      "hint_w": 312,
-      "leaf": true,
-      "what": "QCheckBox: Anchor PSF fluxes to clean Step 7 aperture references"
-    },
-    {
-      "min_w": 309,
-      "hint_w": 309,
-      "leaf": true,
-      "what": "QCheckBox: Reject locally contaminated/core ePSF reference stars"
-    },
-    {
-      "min_w": 256,
-      "hint_w": 256,
-      "leaf": true,
-      "what": "QCheckBox: Fit close neighbours together (CPU-limited)"
-    },
-    {
-      "min_w": 252,
-      "hint_w": 252,
-      "leaf": true,
-      "what": "QCheckBox: Save residual FITS (required for iter viewer)"
-    },
-    {
-      "min_w": 249,
-      "hint_w": 249,
-      "leaf": true,
-      "what": "QCheckBox: Hard-exclude crowded core during PSF fit"
-    },
-    {
-      "min_w": 224,
-      "hint_w": 224,
-      "leaf": true,
-      "what": "QCheckBox: Use error image (slower, higher RAM)"
-    },
-    {
-      "min_w": 89,
-      "hint_w": 217,
-      "leaf": true,
-      "what": "QLabel: Adjust PSF photometry parameters. Changes apply to the next run."
-    },
-    {
-      "min_w": 211,
-      "hint_w": 211,
-      "leaf": true,
-      "what": "QLabel: Minimum neighbor distance (xFWHM):"
+      "what": "QLabel: Adjust QC auto-selection thresholds and preview Y-scale."
     }
   ],
   "widest_rows": [
     {
-      "total": 414,
-      "label_w": 0,
-      "field_w": 408,
+      "total": 188,
+      "label_w": 111,
+      "field_w": 71,
       "span_w": 0,
-      "label": "",
-      "field": "QCheckBox: Share EPSF per filter (faster; disable if seeing varies >1px across fr",
-      "section": "ePSF Model"
+      "label": "QLabel: Outlier sigma(MAD):",
+      "field": "QDoubleSpinBox",
+      "section": "QC Auto-selection"
     },
     {
-      "total": 398,
-      "label_w": 0,
-      "field_w": 392,
+      "total": 168,
+      "label_w": 91,
+      "field_w": 71,
       "span_w": 0,
-      "label": "",
-      "field": "QCheckBox: Also save background-restored star-subtracted images for every pass",
-      "section": "Output"
+      "label": "QLabel: Outlier frac 최대:",
+      "field": "QDoubleSpinBox",
+      "section": "QC Auto-selection"
     },
     {
-      "total": 328,
-      "label_w": 117,
-      "field_w": 205,
+      "total": 148,
+      "label_w": 34,
+      "field_w": 108,
       "span_w": 0,
-      "label": "QLabel: Catalog position lock:",
-      "field": "QComboBox: Always (catalog positions fixed) | Never (fit every position)",
-      "section": "PSF Fit"
+      "label": "QLabel: Mode:",
+      "field": "QComboBox: Auto | Robust(MAD) | Fixed",
+      "section": "QC Preview Y-Scale"
     },
     {
-      "total": 318,
-      "label_w": 0,
-      "field_w": 312,
+      "total": 141,
+      "label_w": 67,
+      "field_w": 68,
       "span_w": 0,
-      "label": "",
-      "field": "QCheckBox: Anchor PSF fluxes to clean Step 7 aperture references",
-      "section": "PSF Flux Scale"
+      "label": "QLabel: 최소 포인트:",
+      "field": "QSpinBox",
+      "section": "QC Auto-selection"
     },
     {
-      "total": 315,
-      "label_w": 0,
-      "field_w": 309,
-      "span_w": 0,
-      "label": "",
-      "field": "QCheckBox: Reject locally contaminated/core ePSF reference stars",
-      "section": "ePSF Model"
-    },
-    {
-      "total": 292,
+      "total": 140,
       "label_w": 56,
-      "field_w": 230,
+      "field_w": 78,
       "span_w": 0,
-      "label": "QLabel: Fit engine:",
-      "field": "QComboBox: APEX iterative - CPU, recommended | photutils - validation, slower",
-      "section": "Mode"
+      "label": "QLabel: RMS 최대:",
+      "field": "QDoubleSpinBox",
+      "section": "QC Auto-selection"
     },
     {
-      "total": 288,
-      "label_w": 211,
+      "total": 118,
+      "label_w": 41,
       "field_w": 71,
       "span_w": 0,
-      "label": "QLabel: Minimum neighbor distance (xFWHM):",
+      "label": "QLabel: MAD x:",
       "field": "QDoubleSpinBox",
-      "section": "PSF Flux Scale"
+      "section": "QC Preview Y-Scale"
     },
     {
-      "total": 282,
-      "label_w": 97,
-      "field_w": 179,
-      "span_w": 0,
-      "label": "QLabel: Fit window mode:",
-      "field": "QComboBox: Auto (PSF energy) | Manual (FWHM multiplier)",
-      "section": "PSF Fit"
-    },
-    {
-      "total": 273,
-      "label_w": 175,
-      "field_w": 92,
-      "span_w": 0,
-      "label": "QLabel: Post-fit reduced chi2 maximum:",
-      "field": "QDoubleSpinBox",
-      "section": "Residual Re-detection"
-    },
-    {
-      "total": 265,
-      "label_w": 188,
+      "total": 112,
+      "label_w": 35,
       "field_w": 71,
       "span_w": 0,
-      "label": "QLabel: Substar neighbor radius (×FWHM):",
+      "label": "QLabel: ±mag:",
       "field": "QDoubleSpinBox",
-      "section": "PSF Fit"
+      "section": "QC Preview Y-Scale"
     }
   ],
   "expanded": true

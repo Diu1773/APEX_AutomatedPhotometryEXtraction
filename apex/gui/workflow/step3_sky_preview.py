@@ -1075,8 +1075,12 @@ Mag:  {mag_str} ± {mag_err_str}
             info_text=("Adjust aperture photometry parameters. "
                        "Changes apply immediately to measurements."),
         )
-        buttons.rejected.connect(dialog.reject)
-        dialog.exec_()
+        # `run_param_dialog` builds, shows and closes the dialog itself. Two
+        # leftover lines from the older hand-built dialog used to run here and
+        # touched names this function never defines (`buttons`, `dialog`),
+        # raising NameError right after the user closed the dialog. Inside a Qt
+        # slot PyQt5 turns an unhandled exception into process termination, so
+        # the app simply vanished (Windows reported 0xC0000409).
 
     def open_stretch_plot(self):
         """Open stretch plot window showing histogram with draggable min/max markers"""

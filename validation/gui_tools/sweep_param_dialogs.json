@@ -20,8 +20,14 @@
     {
       "step": 3,
       "mode": "lc",
-      "status": "못 쟀다",
-      "note": "_warnings.warn(f\"[workspace] {_issue}\")"
+      "status": "쟀다",
+      "title": "Photometry Parameters",
+      "dialog_w": 440,
+      "viewport_w": 418,
+      "content_min_w": 265,
+      "overflow": -153,
+      "h_scrollbar": "False",
+      "widest": []
     },
     {
       "step": 4,
@@ -38,8 +44,14 @@
     {
       "step": 5,
       "mode": "lc",
-      "status": "못 쟀다",
-      "note": "_warnings.warn(f\"[workspace] {_issue}\")"
+      "status": "쟀다",
+      "title": "Astrometry.net Parameters",
+      "dialog_w": 540,
+      "viewport_w": 501,
+      "content_min_w": 396,
+      "overflow": -105,
+      "h_scrollbar": "False",
+      "widest": []
     },
     {
       "step": 6,
@@ -93,7 +105,7 @@
       "step": 11,
       "mode": "lc",
       "status": "못 쟀다",
-      "note": "AttributeError: property 'ax_raw' of 'DetrendNightMergeWindow' object has no setter"
+      "note": "Parameters 버튼을 못 찾았다"
     },
     {
       "step": 12,
