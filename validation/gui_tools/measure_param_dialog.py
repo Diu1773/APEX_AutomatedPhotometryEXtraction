@@ -165,6 +165,8 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--section", default="", help="이 이름의 섹션만 따로 그림으로")
     ap.add_argument("--collapsed", dest="expand", action="store_false",
                     help="접힌 채로 잰다 (기본은 전부 펼쳐서 잰다)")
+    ap.add_argument("--no-autofit", dest="autofit", action="store_false",
+                    help="폭 자동 맞추기를 끄고 잰다 — 고침 전후를 같은 자리에서 견줄 때")
     a = ap.parse_args(argv)
 
     from PyQt5.QtWidgets import QApplication, QPushButton
@@ -178,6 +180,12 @@ def main(argv: list[str] | None = None) -> int:
     configure_fonts(app)
     apply_theme(app)
     _patch_exec()
+    if not a.autofit:
+        # **대조군이다.** 고침 전후를 다른 날 다른 상태에서 견주면 무엇이 바뀐
+        # 것인지 못 가르므로, 같은 실행 조건에서 끄고 켜 본다.
+        from apex.gui.workflow import ui_helpers
+        ui_helpers.fit_parameter_dialog_width = lambda _dlg: 0
+        print("(폭 자동 맞추기를 껐다 — 대조군)")
 
     from apex.gui.main_window import MainWindowWorkflow
 

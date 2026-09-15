@@ -2,109 +2,145 @@
   "title": "Calibration Parameters",
   "dialog_w": 500,
   "dialog_h": 620,
-  "viewport_w": 461,
-  "content_min_w": 306,
-  "content_hint_w": 513,
-  "overflow": -155,
+  "viewport_w": 452,
+  "content_min_w": 396,
+  "content_hint_w": 656,
+  "overflow": -56,
   "h_scrollbar_visible": false,
   "widest": [
     {
-      "min_w": 298,
-      "hint_w": 505,
+      "min_w": 388,
+      "hint_w": 648,
       "leaf": false,
       "what": "CollapsibleSection"
     },
     {
-      "min_w": 252,
-      "hint_w": 459,
+      "min_w": 342,
+      "hint_w": 602,
       "leaf": false,
       "what": "QWidget"
     },
     {
-      "min_w": 92,
-      "hint_w": 459,
+      "min_w": 137,
+      "hint_w": 602,
       "leaf": true,
       "what": "QLabel: Gaia 변환 참조가 부정확한 밴드(특히 Johnson U, σ≈0.20)를 VizieR 표준성 카탈로그(Landolt 계열,"
     },
     {
-      "min_w": 71,
-      "hint_w": 256,
-      "leaf": false,
-      "what": "QListView"
-    },
-    {
-      "min_w": 71,
-      "hint_w": 256,
-      "leaf": false,
-      "what": "QListView"
-    },
-    {
-      "min_w": 71,
-      "hint_w": 256,
-      "leaf": false,
-      "what": "QListView"
-    },
-    {
-      "min_w": 254,
-      "hint_w": 254,
-      "leaf": false,
-      "what": "CollapsibleSection"
-    },
-    {
-      "min_w": 88,
-      "hint_w": 253,
-      "leaf": true,
-      "what": "QLabel: Adjust zero-point calibration parameters. Changes apply to the next ca"
-    },
-    {
-      "min_w": 252,
-      "hint_w": 252,
+      "min_w": 342,
+      "hint_w": 342,
       "leaf": true,
       "what": "QPushButton: Find catalogs for this field (VizieR)"
     },
     {
-      "min_w": 235,
-      "hint_w": 235,
+      "min_w": 323,
+      "hint_w": 335,
       "leaf": false,
       "what": "CollapsibleSection"
     },
     {
-      "min_w": 226,
-      "hint_w": 226,
+      "min_w": 123,
+      "hint_w": 303,
+      "leaf": true,
+      "what": "QLabel: Adjust zero-point calibration parameters. Changes apply to the next ca"
+    },
+    {
+      "min_w": 303,
+      "hint_w": 303,
       "leaf": false,
       "what": "CollapsibleSection"
     },
     {
-      "min_w": 208,
-      "hint_w": 208,
+      "min_w": 291,
+      "hint_w": 291,
+      "leaf": false,
+      "what": "CollapsibleSection"
+    },
+    {
+      "min_w": 277,
+      "hint_w": 289,
+      "leaf": false,
+      "what": "QWidget"
+    },
+    {
+      "min_w": 257,
+      "hint_w": 257,
+      "leaf": false,
+      "what": "QWidget"
+    },
+    {
+      "min_w": 98,
+      "hint_w": 256,
+      "leaf": false,
+      "what": "QListView"
+    },
+    {
+      "min_w": 98,
+      "hint_w": 256,
+      "leaf": false,
+      "what": "QListView"
+    },
+    {
+      "min_w": 98,
+      "hint_w": 256,
+      "leaf": false,
+      "what": "QListView"
+    },
+    {
+      "min_w": 245,
+      "hint_w": 245,
       "leaf": false,
       "what": "QWidget"
     }
   ],
   "widest_leaves": [
     {
-      "min_w": 92,
-      "hint_w": 459,
+      "min_w": 137,
+      "hint_w": 602,
       "leaf": true,
       "what": "QLabel: Gaia 변환 참조가 부정확한 밴드(특히 Johnson U, σ≈0.20)를 VizieR 표준성 카탈로그(Landolt 계열,"
     },
     {
-      "min_w": 88,
-      "hint_w": 253,
+      "min_w": 342,
+      "hint_w": 342,
+      "leaf": true,
+      "what": "QPushButton: Find catalogs for this field (VizieR)"
+    },
+    {
+      "min_w": 123,
+      "hint_w": 303,
       "leaf": true,
       "what": "QLabel: Adjust zero-point calibration parameters. Changes apply to the next ca"
     },
     {
-      "min_w": 252,
-      "hint_w": 252,
+      "min_w": 244,
+      "hint_w": 244,
       "leaf": true,
-      "what": "QPushButton: Find catalogs for this field (VizieR)"
+      "what": "QLabel: Anchor mag_std to standards:"
     }
   ],
   "widest_rows": [
     {
-      "total": 269,
-      "label_w": 101,
+      "total": 348,
+      "label_w": 0,
+      "field_w": 342,
+      "span_w": 342,
+      "label": "(가로지름) QPushButton: Find catalogs for this field (VizieR)",
+      "field": "QPushButton: Find catalogs for this field (VizieR)",
+      "section": "External Standard Anchor"
+    },
+    {
+      "total": 328,
+      "label_w": 244,
+      "field_w": 78,
+      "span_w": 0,
+      "label": "QLabel: Anchor mag_std to standards:",
+      "field": "QCheckBox: Enable",
+      "section": "External Standard Anchor"
+    },
+    {
+      "total": 320,
+      "label_w": 152,
       "field_w": 162,
       "span_w": 0,
       "label": "QLabel: Gaia→표준 변환식:",
@@ -112,85 +148,67 @@
       "section": "Calibration Star Selection"
     },
     {
-      "total": 258,
-      "label_w": 0,
-      "field_w": 252,
-      "span_w": 252,
-      "label": "(가로지름) QPushButton: Find catalogs for this field (VizieR)",
-      "field": "QPushButton: Find catalogs for this field (VizieR)",
-      "section": "External Standard Anchor"
-    },
-    {
-      "total": 224,
-      "label_w": 161,
-      "field_w": 57,
-      "span_w": 0,
-      "label": "QLabel: Anchor mag_std to standards:",
-      "field": "QCheckBox: Enable",
-      "section": "External Standard Anchor"
-    },
-    {
-      "total": 196,
-      "label_w": 112,
-      "field_w": 78,
+      "total": 267,
+      "label_w": 165,
+      "field_w": 96,
       "span_w": 0,
       "label": "QLabel: CMD calib SNR min:",
       "field": "QDoubleSpinBox",
       "section": "Zero-point Fit"
     },
     {
-      "total": 189,
-      "label_w": 105,
+      "total": 259,
+      "label_w": 175,
       "field_w": 78,
-      "span_w": 0,
-      "label": "QLabel: Calib star SNR min:",
-      "field": "QDoubleSpinBox",
-      "section": "Calibration Star Selection"
-    },
-    {
-      "total": 188,
-      "label_w": 118,
-      "field_w": 64,
-      "span_w": 0,
-      "label": "QLabel: Match radius (arcsec):",
-      "field": "QDoubleSpinBox",
-      "section": "External Standard Anchor"
-    },
-    {
-      "total": 182,
-      "label_w": 119,
-      "field_w": 57,
       "span_w": 0,
       "label": "QLabel: Apply extinction (k·X):",
       "field": "QCheckBox: Enable",
       "section": "Zero-point Fit"
     },
     {
-      "total": 180,
-      "label_w": 103,
-      "field_w": 71,
+      "total": 258,
+      "label_w": 176,
+      "field_w": 76,
+      "span_w": 0,
+      "label": "QLabel: Match radius (arcsec):",
+      "field": "QDoubleSpinBox",
+      "section": "External Standard Anchor"
+    },
+    {
+      "total": 257,
+      "label_w": 155,
+      "field_w": 96,
+      "span_w": 0,
+      "label": "QLabel: Calib star SNR min:",
+      "field": "QDoubleSpinBox",
+      "section": "Calibration Star Selection"
+    },
+    {
+      "total": 245,
+      "label_w": 153,
+      "field_w": 86,
       "span_w": 0,
       "label": "QLabel: Pixel scale (arcsec):",
       "field": "QDoubleSpinBox",
       "section": "Matching"
     },
     {
-      "total": 180,
-      "label_w": 91,
-      "field_w": 83,
-      "span_w": 0,
-      "label": "QLabel: Extinction mode:",
-      "field": "QComboBox: absorb | two_step",
-      "section": "Zero-point Fit"
-    },
-    {
-      "total": 177,
-      "label_w": 103,
-      "field_w": 68,
+      "total": 243,
+      "label_w": 155,
+      "field_w": 82,
       "span_w": 0,
       "label": "QLabel: Min matched stars:",
       "field": "QSpinBox",
       "section": "External Standard Anchor"
+    },
+    {
+      "total": 240,
+      "label_w": 152,
+      "field_w": 82,
+      "span_w": 0,
+      "label": "QLabel: Frame ZP min refs:",
+      "field": "QSpinBox",
+      "section": "Zero-point Fit"
     }
   ],
   "expanded": true

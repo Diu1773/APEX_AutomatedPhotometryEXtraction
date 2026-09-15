@@ -163,6 +163,66 @@ def create_parameter_button(text: str = "Parameters") -> QPushButton:
     return style_button(QPushButton(text), height=Tokens.H_BUTTON)
 
 
+def fit_parameter_dialog_width(dialog: QDialog) -> int:
+    """Widen a parameter dialog until its scroll content fits, and report the gain.
+
+    The `width` passed to `configure_parameter_dialog` is a hand-picked number,
+    so a single longer label or wider combo silently pushes the content past the
+    viewport and a horizontal scrollbar appears. That is a defect on its own —
+    the reader has to drag sideways to see values (F-325 was the same family,
+    fixed then by shrinking the content instead of by sizing the dialog).
+
+    Measured on Step 8 (2026-09-15): content needed 611 px but the viewport was
+    581 px, because the requested 620 px loses ~39 px to the frame and the
+    vertical scrollbar. Sizing from the content removes that whole class.
+
+    This only ever widens, never narrows, so dialogs that already fit are
+    untouched. `clamp_to_screen` still caps it, and on a screen too small to fit
+    the content the horizontal scrollbar correctly stays.
+    """
+    from apex.gui.layout_rules import clamp_to_screen
+
+    # Measure only once the layout is current. Sections are added after the
+    # dialog is constructed, so on the first pass the hints are still stale and
+    # the fit silently does nothing — which is exactly what happened to Step 9
+    # (no collapsible sections, so nothing later triggered a second pass).
+    dialog.ensurePolished()
+    if dialog.layout() is not None:
+        dialog.layout().activate()
+
+    needed = 0
+    for area in dialog.findChildren(QScrollArea):
+        content = area.widget()
+        if content is None:
+            continue
+        content.ensurePolished()
+        if content.layout() is not None:
+            content.layout().activate()
+        bar = area.verticalScrollBar()
+        # Reserve the vertical scrollbar whenever the policy can produce one,
+        # not only when it happens to be up right now. At the moment this runs
+        # the dialog has just been laid out and the bar is often not visible
+        # yet, so keying off `isVisible()` under-reserves by exactly its width —
+        # measured on Step 8, that left 17 px of the original 30 px overflow.
+        # Reserving a bar that never appears costs 17 px of width and nothing else.
+        may_scroll = (bar is not None
+                      and area.verticalScrollBarPolicy() != Qt.ScrollBarAlwaysOff)
+        reserve = bar.sizeHint().width() if may_scroll else 0
+        needed = max(needed,
+                     content.minimumSizeHint().width() + reserve + 2 * area.frameWidth())
+    if needed <= 0:
+        return 0
+    layout = dialog.layout()
+    if layout is not None:
+        m = layout.contentsMargins()
+        needed += m.left() + m.right()
+    if needed <= dialog.width():
+        return 0
+    before = dialog.width()
+    dialog.resize(*clamp_to_screen(needed, dialog.height(), dialog))
+    return dialog.width() - before
+
+
 def configure_parameter_dialog(dialog: QDialog, title: str, width: int = 560, height: int = 620) -> None:
     """Apply common title, size, and visual style to a parameter dialog."""
     dialog.setWindowTitle(title)
@@ -172,6 +232,63 @@ def configure_parameter_dialog(dialog: QDialog, title: str, width: int = 560, he
     dialog.resize(*clamp_to_screen(width, height, dialog))
     dialog.setStyleSheet(PARAM_DIALOG_STYLE)
     QTimer.singleShot(0, lambda: install_parameter_wheel_guard(dialog))
+    # Deferred on purpose: sections are added after this call returns, so the
+    # content width is only knowable once the event loop has laid the dialog out.
+    QTimer.singleShot(0, lambda: install_parameter_dialog_autofit(dialog))
+
+
+class _ShowRefit(QObject):
+    """Re-fit the dialog width on its first show.
+
+    Fitting before the dialog is shown reads stale content hints: measured on
+    Step 9 (no collapsible sections), the content minimum was still small at
+    that point, so the fit decided nothing was needed while the shown dialog
+    then overflowed by 106 px. Step 8 only looked fixed because its sections
+    fire the expand hook after the dialog is up.
+    """
+
+    def __init__(self, dialog: QDialog):
+        super().__init__(dialog)
+        self._dialog = dialog
+        self._done = False
+
+    def eventFilter(self, obj, event):  # noqa: N802 - Qt naming
+        if not self._done and event.type() == QEvent.Show and obj is self._dialog:
+            self._done = True
+            # Next event-loop turn: on Show the layout has not run yet.
+            QTimer.singleShot(0, lambda: fit_parameter_dialog_width(self._dialog))
+        return False
+
+
+def install_parameter_dialog_autofit(dialog: QDialog) -> None:
+    """Fit the dialog to its content now, and again whenever a section expands.
+
+    Fitting once is not enough. Sections open collapsed, so the first fit only
+    sees the collapsed content, and the width a user actually needs appears the
+    moment they expand one — which is exactly when they are trying to read the
+    values. Re-fitting on expand keeps the horizontal scrollbar away for the
+    state the reader is in.
+
+    Widening only, never narrowing: collapsing a section leaves the dialog as
+    wide as it was, which avoids the window jumping around while the reader
+    opens and closes sections.
+    """
+    fit_parameter_dialog_width(dialog)
+    # The dialog is usually not shown yet when this runs, and an unshown dialog
+    # reports content hints that are too small — so fit again on first show.
+    if getattr(dialog, "_apex_show_refit", None) is None:
+        refit = _ShowRefit(dialog)
+        setattr(dialog, "_apex_show_refit", refit)
+        dialog.installEventFilter(refit)
+    for section in dialog.findChildren(CollapsibleSection):
+        button = getattr(section, "toggle_button", None)
+        if button is None:
+            continue
+        # Queued so the re-fit runs after the layout has taken the newly shown
+        # content into account; a direct call would measure the old width.
+        button.toggled.connect(
+            lambda _checked, d=dialog: QTimer.singleShot(
+                0, lambda: fit_parameter_dialog_width(d)))
 
 
 def create_collapsible_section(

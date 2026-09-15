@@ -1,0 +1,111 @@
+{
+  "screen": [
+    2560,
+    1392
+  ],
+  "offscreen": false,
+  "rows": [
+    {
+      "step": 1,
+      "mode": "cmd",
+      "status": "못 쟀다",
+      "note": "Parameters 버튼을 못 찾았다"
+    },
+    {
+      "step": 2,
+      "mode": "cmd",
+      "status": "못 쟀다",
+      "note": "Parameters 버튼을 못 찾았다"
+    },
+    {
+      "step": 3,
+      "mode": "cmd",
+      "status": "못 쟀다",
+      "note": "_warnings.warn(f\"[workspace] {_issue}\")"
+    },
+    {
+      "step": 4,
+      "mode": "cmd",
+      "status": "쟀다",
+      "title": "Detection Parameters",
+      "dialog_w": 540,
+      "viewport_w": 492,
+      "content_min_w": 491,
+      "overflow": -1,
+      "h_scrollbar": "False",
+      "widest": []
+    },
+    {
+      "step": 5,
+      "mode": "cmd",
+      "status": "못 쟀다",
+      "note": "_warnings.warn(f\"[workspace] {_issue}\")"
+    },
+    {
+      "step": 6,
+      "mode": "cmd",
+      "status": "쟀다",
+      "title": "Master Catalog Build Parameters",
+      "dialog_w": 479,
+      "viewport_w": 431,
+      "content_min_w": 431,
+      "overflow": 0,
+      "h_scrollbar": "False",
+      "widest": []
+    },
+    {
+      "step": 7,
+      "mode": "cmd",
+      "status": "못 쟀다",
+      "note": "Parameters 버튼을 못 찾았다"
+    },
+    {
+      "step": 8,
+      "mode": "cmd",
+      "status": "쟀다",
+      "title": "Step 8 PSF Parameters",
+      "dialog_w": 921,
+      "viewport_w": 873,
+      "content_min_w": 873,
+      "overflow": 0,
+      "h_scrollbar": "False",
+      "widest": []
+    },
+    {
+      "step": 9,
+      "mode": "cmd",
+      "status": "쟀다",
+      "title": "Editor Parameters",
+      "dialog_w": 566,
+      "viewport_w": 544,
+      "content_min_w": 518,
+      "overflow": -26,
+      "h_scrollbar": "False",
+      "widest": []
+    },
+    {
+      "step": 10,
+      "mode": "cmd",
+      "status": "쟀다",
+      "title": "Calibration Parameters",
+      "dialog_w": 500,
+      "viewport_w": 452,
+      "content_min_w": 396,
+      "overflow": -56,
+      "h_scrollbar": "False",
+      "widest": []
+    },
+    {
+      "step": 11,
+      "mode": "cmd",
+      "status": "못 쟀다",
+      "note": "Parameters 버튼을 못 찾았다"
+    },
+    {
+      "step": 12,
+      "mode": "cmd",
+      "status": "못 쟀다",
+      "note": "Parameters 버튼을 못 찾았다"
+    }
+  ]
+}
